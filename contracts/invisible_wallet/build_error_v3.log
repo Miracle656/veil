@@ -1,0 +1,80 @@
+   Compiling invisible-wallet v0.1.0 (C:\Users\OWNER\veil\contracts\invisible_wallet)
+error: no global memory allocator found but one is required; link to std or add `#[global_allocator]` to a static item that implements the GlobalAlloc trait
+
+warning: unexpected `cfg` condition value: `testutils`
+  --> src\lib.rs:26:1
+   |
+26 | #[contract]
+   | ^^^^^^^^^^^
+   |
+   = note: no expected values for `feature`
+   = note: using a cfg inside a attribute macro will use the cfgs from the destination crate and not the ones from the defining crate
+   = help: try referring to `contract` crate for guidance on how handle this unexpected cfg
+   = help: the attribute macro `contract` may come from an old version of the `soroban_sdk_macros` crate, try updating your dependency with `cargo update -p soroban_sdk_macros`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: `#[warn(unexpected_cfgs)]` on by default
+   = note: this warning originates in the attribute macro `contract` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `testutils`
+  --> src\lib.rs:29:1
+   |
+29 | #[contractimpl]
+   | ^^^^^^^^^^^^^^^
+   |
+   = note: no expected values for `feature`
+   = note: using a cfg inside a attribute macro will use the cfgs from the destination crate and not the ones from the defining crate
+   = help: try referring to `contractimpl` crate for guidance on how handle this unexpected cfg
+   = help: the attribute macro `contractimpl` may come from an old version of the `soroban_sdk_macros` crate, try updating your dependency with `cargo update -p soroban_sdk_macros`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: this warning originates in the attribute macro `contractimpl` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused imports: `TryIntoVal` and `Val`
+ --> src\auth.rs:1:47
+  |
+1 | use soroban_sdk::{Env, Bytes, BytesN, String, TryIntoVal, Val};
+  |                                               ^^^^^^^^^^  ^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `alloc::string::ToString`
+ --> src\auth.rs:6:5
+  |
+6 | use alloc::string::ToString;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unexpected `cfg` condition value: `testutils`
+ --> src\storage.rs:3:1
+  |
+3 | #[contracttype]
+  | ^^^^^^^^^^^^^^^
+  |
+  = note: no expected values for `feature`
+  = note: using a cfg inside a attribute macro will use the cfgs from the destination crate and not the ones from the defining crate
+  = help: try referring to `contracttype` crate for guidance on how handle this unexpected cfg
+  = help: the attribute macro `contracttype` may come from an old version of the `soroban_sdk_macros` crate, try updating your dependency with `cargo update -p soroban_sdk_macros`
+  = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+  = note: this warning originates in the attribute macro `contracttype` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unexpected `cfg` condition value: `testutils`
+  --> src\lib.rs:29:1
+   |
+29 | #[contractimpl]
+   | ^^^^^^^^^^^^^^^
+   |
+   = note: no expected values for `feature`
+   = note: using a cfg inside a attribute macro will use the cfgs from the destination crate and not the ones from the defining crate
+   = help: try referring to `soroban_sdk::contractclient` crate for guidance on how handle this unexpected cfg
+   = help: the attribute macro `soroban_sdk::contractclient` may come from an old version of the `soroban_sdk_macros` crate, try updating your dependency with `cargo update -p soroban_sdk_macros`
+   = note: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration
+   = note: this warning originates in the attribute macro `soroban_sdk::contractclient` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: use of deprecated method `p256::elliptic_curve::generic_array::GenericArray::<T, N>::as_slice`: please upgrade to generic-array 1.x
+   --> src\auth.rs:125:32
+    |
+125 |     if ad_prefix != rp_id_hash.as_slice() {
+    |                                ^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: `invisible-wallet` (lib) generated 7 warnings
+error: could not compile `invisible-wallet` (lib) due to 1 previous error; 7 warnings emitted

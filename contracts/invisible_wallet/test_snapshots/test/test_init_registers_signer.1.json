@@ -81,7 +81,32 @@
                     "executable": {
                       "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     },
-                    "storage": null
+                    "storage": [
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Origin"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "string": "https://test.example"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "RpId"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "string": "localhost"
+                        }
+                      }
+                    ]
                   }
                 }
               }
@@ -134,7 +159,17 @@
               }
             ],
             "data": {
-              "bytes": "040c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e"
+              "vec": [
+                {
+                  "bytes": "040c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e"
+                },
+                {
+                  "string": "localhost"
+                },
+                {
+                  "string": "https://test.example"
+                }
+              ]
             }
           }
         }

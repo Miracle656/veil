@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contractimpl, contracterror,
-    Env, Address, Bytes, BytesN, Vec, Symbol, Val,
+    Env, Address, Bytes, BytesN, Vec, Symbol, Val, String,
     auth::Context, FromVal, TryIntoVal,
 };
 
@@ -19,6 +19,8 @@ pub enum WalletError {
     InvalidSignature         = 5,
     SignatureVerificationFailed = 6,
     InvalidChallenge         = 7,
+    RpIdMismatch             = 8,
+    OriginMismatch           = 9,
 }
 
 #[contract]
@@ -26,11 +28,13 @@ pub struct InvisibleWallet;
 
 #[contractimpl]
 impl InvisibleWallet {
-    pub fn init(env: Env, initial_signer: BytesN<65>) -> Result<(), WalletError> {
+    pub fn init(env: Env, initial_signer: BytesN<65>, rp_id: String, origin: String) -> Result<(), WalletError> {
         if storage::has_signer(&env, &initial_signer) {
             return Err(WalletError::AlreadyInitialized);
         }
         storage::add_signer(&env, &initial_signer);
+        storage::set_rp_id(&env, &rp_id);
+        storage::set_origin(&env, &origin);
         Ok(())
     }
 
@@ -87,7 +91,10 @@ impl InvisibleWallet {
             return Err(WalletError::SignerNotAuthorized);
         }
 
-        auth::verify_webauthn(&env, &signature_payload, public_key, auth_data, client_data_json, sig_bytes)
+        let rp_id = storage::get_rp_id(&env).unwrap();
+        let origin = storage::get_origin(&env).unwrap();
+
+        auth::verify_webauthn(&env, &signature_payload, public_key, auth_data, client_data_json, sig_bytes, rp_id, origin)
     }
 
     pub fn execute(env: Env, target: Address, func: Symbol, args: Vec<Val>) {
@@ -99,7 +106,7 @@ impl InvisibleWallet {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{Env, Bytes, BytesN};
+    use soroban_sdk::{Env, Bytes, BytesN, String};
     use sha2::{Sha256, Digest};
     use p256::ecdsa::{SigningKey, Signature as P256Sig, signature::hazmat::PrehashSigner};
 
@@ -115,9 +122,13 @@ mod test {
     fn make_webauthn_fixture(
         signing_key: &SigningKey,
         payload: &[u8; 32],
+        rp_id: &str,
     ) -> ([u8; 37], [u8; 43], [u8; 32], [u8; 64]) {
-        // Minimal authData: rpIdHash(32) + flags(1) + signCount(4) = 37 bytes
-        let auth_data = [0u8; 37];
+        let mut auth_data = [0u8; 37];
+        let mut h = Sha256::new();
+        h.update(rp_id.as_bytes());
+        let rp_hash: [u8; 32] = h.finalize().into();
+        auth_data[..32].copy_from_slice(&rp_hash);
 
         // clientDataJSON challenge must be base64url(payload)
         // For payload = [7u8; 32]: base64url = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc"
@@ -178,7 +189,7 @@ mod test {
         let contract_id = env.register_contract(None, InvisibleWallet);
         let client = InvisibleWalletClient::new(&env, &contract_id);
         let (_, pub_bytes) = test_keypair();
-        client.init(&BytesN::from_array(&env, &pub_bytes));
+        client.init(&BytesN::from_array(&env, &pub_bytes), &String::from_str(&env, "localhost"), &String::from_str(&env, "https://test.example"));
     }
 
     #[test]
@@ -188,8 +199,8 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
         let (_, pub_bytes) = test_keypair();
         let pub_key = BytesN::from_array(&env, &pub_bytes);
-        client.init(&pub_key);
-        assert_eq!(client.try_init(&pub_key), Err(Ok(WalletError::AlreadyInitialized)));
+        client.init(&pub_key, &String::from_str(&env, "localhost"), &String::from_str(&env, "https://test.example"));
+        assert_eq!(client.try_init(&pub_key, &String::from_str(&env, "localhost"), &String::from_str(&env, "https://test.example")), Err(Ok(WalletError::AlreadyInitialized)));
     }
 
     #[test]
@@ -197,9 +208,10 @@ mod test {
         let env = Env::default();
         let (signing_key, pub_bytes) = test_keypair();
         let payload = [7u8; 32];
+        let rp_id = "test.example";
 
         let (auth_data_raw, challenge_b64, _, sig_bytes) =
-            make_webauthn_fixture(&signing_key, &payload);
+            make_webauthn_fixture(&signing_key, &payload, rp_id);
 
         let result = auth::verify_webauthn(
             &env,
@@ -208,6 +220,8 @@ mod test {
             Bytes::from_array(&env, &auth_data_raw),
             build_client_data_json(&env, &challenge_b64),
             BytesN::from_array(&env, &sig_bytes),
+            String::from_str(&env, rp_id),
+            String::from_str(&env, "https://test.example"),
         );
         assert!(result.is_ok());
     }
@@ -223,9 +237,10 @@ mod test {
             (k, bytes)
         };
         let payload = [7u8; 32];
+        let rp_id = "test.example";
 
         let (auth_data_raw, challenge_b64, _, sig_bytes) =
-            make_webauthn_fixture(&signing_key, &payload);
+            make_webauthn_fixture(&signing_key, &payload, rp_id);
 
         let result = auth::verify_webauthn(
             &env,
@@ -234,6 +249,8 @@ mod test {
             Bytes::from_array(&env, &auth_data_raw),
             build_client_data_json(&env, &challenge_b64),
             BytesN::from_array(&env, &sig_bytes),
+            String::from_str(&env, rp_id),
+            String::from_str(&env, "https://test.example"),
         );
         assert_eq!(result, Err(WalletError::SignatureVerificationFailed));
     }
@@ -243,11 +260,11 @@ mod test {
         let env = Env::default();
         let (signing_key, pub_bytes) = test_keypair();
         let payload = [7u8; 32];
+        let rp_id = "test.example";
 
         let (auth_data_raw, challenge_b64, _, sig_bytes) =
-            make_webauthn_fixture(&signing_key, &payload);
+            make_webauthn_fixture(&signing_key, &payload, rp_id);
 
-        // Pass a different payload — challenge won't match
         let wrong_payload = [8u8; 32];
 
         let result = auth::verify_webauthn(
@@ -257,6 +274,8 @@ mod test {
             Bytes::from_array(&env, &auth_data_raw),
             build_client_data_json(&env, &challenge_b64),
             BytesN::from_array(&env, &sig_bytes),
+            String::from_str(&env, rp_id),
+            String::from_str(&env, "https://test.example"),
         );
         assert_eq!(result, Err(WalletError::InvalidChallenge));
     }
@@ -266,11 +285,11 @@ mod test {
         let env = Env::default();
         let (signing_key, pub_bytes) = test_keypair();
         let payload = [7u8; 32];
+        let rp_id = "test.example";
 
         let (_, challenge_b64, _, sig_bytes) =
-            make_webauthn_fixture(&signing_key, &payload);
+            make_webauthn_fixture(&signing_key, &payload, rp_id);
 
-        // Use different authData than what was signed
         let tampered_auth_data = [0xffu8; 37];
 
         let result = auth::verify_webauthn(
@@ -280,7 +299,56 @@ mod test {
             Bytes::from_array(&env, &tampered_auth_data),
             build_client_data_json(&env, &challenge_b64),
             BytesN::from_array(&env, &sig_bytes),
+            String::from_str(&env, rp_id),
+            String::from_str(&env, "https://test.example"),
         );
         assert_eq!(result, Err(WalletError::SignatureVerificationFailed));
+    }
+
+    #[test]
+    fn test_verify_webauthn_rpid_mismatch_fails() {
+        let env = Env::default();
+        let (signing_key, pub_bytes) = test_keypair();
+        let payload = [7u8; 32];
+        let rp_id = "test.example";
+
+        // Signature gets signed for rp_id="test.example"
+        let (auth_data_raw, challenge_b64, _, sig_bytes) =
+            make_webauthn_fixture(&signing_key, &payload, rp_id);
+
+        let result = auth::verify_webauthn(
+            &env,
+            &BytesN::from_array(&env, &payload),
+            BytesN::from_array(&env, &pub_bytes),
+            Bytes::from_array(&env, &auth_data_raw),
+            build_client_data_json(&env, &challenge_b64),
+            BytesN::from_array(&env, &sig_bytes),
+            String::from_str(&env, "different-rp.example"), // Mismatch
+            String::from_str(&env, "https://test.example"),
+        );
+        assert_eq!(result, Err(WalletError::RpIdMismatch));
+    }
+
+    #[test]
+    fn test_verify_webauthn_origin_mismatch_fails() {
+        let env = Env::default();
+        let (signing_key, pub_bytes) = test_keypair();
+        let payload = [7u8; 32];
+        let rp_id = "test.example";
+
+        let (auth_data_raw, challenge_b64, _, sig_bytes) =
+            make_webauthn_fixture(&signing_key, &payload, rp_id);
+
+        let result = auth::verify_webauthn(
+            &env,
+            &BytesN::from_array(&env, &payload),
+            BytesN::from_array(&env, &pub_bytes),
+            Bytes::from_array(&env, &auth_data_raw),
+            build_client_data_json(&env, &challenge_b64),
+            BytesN::from_array(&env, &sig_bytes),
+            String::from_str(&env, rp_id),
+            String::from_str(&env, "https://different.origin"), // Mismatch
+        );
+        assert_eq!(result, Err(WalletError::OriginMismatch));
     }
 }

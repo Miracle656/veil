@@ -1,4 +1,4 @@
-use soroban_sdk::{Env, Bytes, BytesN};
+use soroban_sdk::{Env, Bytes, BytesN, String};
 use p256::ecdsa::{VerifyingKey, Signature, signature::hazmat::PrehashVerifier};
 use sha2::{Sha256, Digest};
 use crate::WalletError;
@@ -65,6 +65,8 @@ pub fn verify_webauthn(
     auth_data: Bytes,
     client_data_json: Bytes,
     signature: BytesN<64>,
+    rp_id: String,
+    origin: String,
 ) -> Result<(), WalletError> {
     // 1. Verify the challenge in clientDataJSON is base64url(signature_payload)
     if !challenge_is_present(&client_data_json, &signature_payload.to_array()) {
@@ -101,5 +103,67 @@ pub fn verify_webauthn(
         .map_err(|_| WalletError::InvalidSignature)?;
 
     verifying_key.verify_prehash(&message_hash, &sig_obj)
-        .map_err(|_| WalletError::SignatureVerificationFailed)
+        .map_err(|_| WalletError::SignatureVerificationFailed)?;
+
+    // 5. Verify rpIdHash
+    let mut rp_id_buf = [0u8; 128];
+    let rp_id_len = rp_id.len() as usize;
+    if rp_id_len > 128 || auth_data.len() < 32 {
+        return Err(WalletError::RpIdMismatch); 
+    }
+    rp_id.copy_into_slice(&mut rp_id_buf[..rp_id_len]);
+    let rp_id_hash = {
+        let mut h = Sha256::new();
+        h.update(&rp_id_buf[..rp_id_len]);
+        h.finalize()
+    };
+    
+    let mut ad_prefix = [0u8; 32];
+    auth_data.slice(0..32).copy_into_slice(&mut ad_prefix);
+    if ad_prefix != rp_id_hash.as_slice() {
+        return Err(WalletError::RpIdMismatch);
+    }
+
+    // 6. Verify origin
+    // Locate "origin":" in the raw clientDataJSON bytes and assert the extracted value equals the stored origin
+    let mut origin_buf = [0u8; 128];
+    let origin_len = origin.len() as usize;
+    if origin_len > 128 {
+        return Err(WalletError::OriginMismatch);
+    }
+    origin.copy_into_slice(&mut origin_buf[..origin_len]);
+    let origin_bytes = &origin_buf[..origin_len];
+    
+    let needle = b"\"origin\":\"";
+    let n_len = needle.len();
+    let c_len = client_data_json.len() as usize;
+    
+    // clientDataJSON is typically small. 512 bytes is a safe upper bound for almost all assertions.
+    let mut cd_buf = [0u8; 512];
+    if c_len > 512 {
+        return Err(WalletError::OriginMismatch);
+    }
+    client_data_json.copy_into_slice(&mut cd_buf[..c_len]);
+    let cd_slice = &cd_buf[..c_len];
+
+    let mut found_origin = false;
+    if c_len >= n_len + origin_len + 1 {
+        let max_start = c_len - (n_len + origin_len + 1);
+        for start in 0..=max_start {
+            if &cd_slice[start..start + n_len] == needle {
+                if &cd_slice[start + n_len..start + n_len + origin_len] == origin_bytes {
+                    if cd_slice[start + n_len + origin_len] == b'"' {
+                        found_origin = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    if !found_origin {
+        return Err(WalletError::OriginMismatch);
+    }
+    
+    Ok(())
 }
