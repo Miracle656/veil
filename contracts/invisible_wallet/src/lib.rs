@@ -60,6 +60,7 @@ impl InvisibleWallet {
     ///   [1] Bytes       — WebAuthn authenticatorData
     ///   [2] Bytes       — WebAuthn clientDataJSON (must contain base64url(signature_payload) as challenge)
     ///   [3] BytesN<64>  — raw P-256 ECDSA signature (r || s)
+    #[allow(non_snake_case)]
     pub fn __check_auth(
         env: Env,
         signature_payload: BytesN<32>,
@@ -121,7 +122,7 @@ mod test {
     /// Returns (auth_data_bytes, client_data_json_bytes, message_hash, sig_bytes).
     fn make_webauthn_fixture(
         signing_key: &SigningKey,
-        payload: &[u8; 32],
+        _payload: &[u8; 32],
         rp_id: &str,
     ) -> ([u8; 37], [u8; 43], [u8; 32], [u8; 64]) {
         let mut auth_data = [0u8; 37];

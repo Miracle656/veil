@@ -120,7 +120,7 @@ pub fn verify_webauthn(
     
     let mut ad_prefix = [0u8; 32];
     auth_data.slice(0..32).copy_into_slice(&mut ad_prefix);
-    if ad_prefix != rp_id_hash.as_slice() {
+    if ad_prefix != rp_id_hash.as_ref() {
         return Err(WalletError::RpIdMismatch);
     }
 

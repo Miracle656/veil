@@ -25,6 +25,7 @@ pub fn set_guardian(env: &Env, guardian_key: &BytesN<65>) {
     env.storage().instance().set(&DataKey::Guardian, guardian_key);
 }
 
+#[allow(dead_code)]
 pub fn get_guardian(env: &Env) -> Option<BytesN<65>> {
     env.storage().instance().get(&DataKey::Guardian)
 }
