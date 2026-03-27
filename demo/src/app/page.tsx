@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { useInvisibleWallet, WebAuthnSignature } from '@/sdk/useInvisibleWallet';
+import { useInvisibleWallet, WebAuthnSignature } from 'invisible-wallet-sdk';
 import { rpc, Keypair, Contract, xdr, TransactionBuilder, Networks } from 'stellar-sdk';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { Buffer } from 'buffer';

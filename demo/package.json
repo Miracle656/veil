@@ -9,7 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "invisible-wallet-sdk": "file:../sdk",
+    "invisible-wallet-sdk": "file:../sdk/invisible-wallet-sdk-0.1.0.tgz",
     "lucide-react": "^1.6.0",
     "next": "16.2.1",
     "react": "19.2.4",
