@@ -43,6 +43,10 @@ pub enum WalletError {
     RecoveryTimelockActive      = 15,
     /// The submitted nonce does not match the on-chain nonce (replay or out-of-order).
     NonceMismatch               = 16,
+    /// The allowance is insufficient for this transfer.
+    InsufficientAllowance       = 17,
+    /// The allowance has expired.
+    AllowanceExpired            = 18,
 }
 
 #[contract]
@@ -123,7 +127,66 @@ impl InvisibleWallet {
         signature: Val,
         _auth_contexts: Vec<Context>,
     ) -> Result<(), WalletError> {
-        let parts: Vec<Val> = Vec::from_val(&env, &signature);
+        // Check if the signature is actually a Spender Address claiming an allowance
+        if let Ok(spender) = Address::try_from_val(&env, &signature) {
+            spender.require_auth();
+
+            for context in _auth_contexts.iter() {
+                let Context::Contract(c) = context else {
+                    return Err(WalletError::SignerNotAuthorized);
+                };
+
+                // We only allow token transfers via allowance
+                if c.fn_name != Symbol::new(&env, "transfer") {
+                    return Err(WalletError::SignerNotAuthorized);
+                }
+
+                if c.args.len() != 3 {
+                    return Err(WalletError::SignerNotAuthorized);
+                }
+
+                let from = Address::try_from_val(&env, &c.args.get(0).unwrap())
+                    .map_err(|_| WalletError::SignerNotAuthorized)?;
+                if from != env.current_contract_address() {
+                    return Err(WalletError::SignerNotAuthorized);
+                }
+
+                let amount = i128::try_from_val(&env, &c.args.get(2).unwrap())
+                    .map_err(|_| WalletError::SignerNotAuthorized)?;
+
+                let token = c.contract;
+
+                let key = storage::DataKey::Allowance {
+                    spender: spender.clone(),
+                    token: token.clone(),
+                };
+
+                let mut allowance: storage::Allowance = env
+                    .storage()
+                    .persistent()
+                    .get(&key)
+                    .ok_or(WalletError::InsufficientAllowance)?;
+
+                if let Some(expiry) = allowance.expiry {
+                    if env.ledger().timestamp() > expiry {
+                        return Err(WalletError::AllowanceExpired);
+                    }
+                }
+
+                if amount > allowance.amount {
+                    return Err(WalletError::InsufficientAllowance);
+                }
+
+                allowance.amount -= amount;
+                env.storage().persistent().set(&key, &allowance);
+            }
+
+            return Ok(());
+        }
+
+        // Standard WebAuthn flow
+        let parts: Vec<Val> = Vec::try_from_val(&env, &signature)
+            .map_err(|_| WalletError::InvalidSignatureFormat)?;
         if parts.len() != 5 {
             return Err(WalletError::InvalidSignatureFormat);
         }
@@ -199,6 +262,34 @@ impl InvisibleWallet {
     pub fn execute(env: Env, target: Address, func: Symbol, args: Vec<Val>) {
         env.current_contract_address().require_auth();
         env.invoke_contract::<Val>(&target, &func, args);
+    }
+
+    /// Set spending limit for a specific token and spender.
+    ///
+    /// Requires passkey authorization (i.e. from the contract itself).
+    pub fn approve(
+        env: Env,
+        spender: Address,
+        token: Address,
+        amount: i128,
+        expiry: Option<u64>,
+    ) {
+        env.current_contract_address().require_auth();
+        
+        if amount <= 0 {
+            panic!("Amount must be greater than 0");
+        }
+
+        let key = storage::DataKey::Allowance { spender, token };
+        let allowance = storage::Allowance { amount, expiry };
+        
+        env.storage().persistent().set(&key, &allowance);
+    }
+
+    /// Get the current allowance for a spender and token.
+    pub fn get_allowance(env: Env, spender: Address, token: Address) -> Option<storage::Allowance> {
+        let key = storage::DataKey::Allowance { spender, token };
+        env.storage().persistent().get(&key)
     }
 
     /// Set or update the guardian address for this wallet.
@@ -840,5 +931,166 @@ mod test {
         ]).into_val(&env);
         client.__check_auth(&BytesN::from_array(&env, &payload_2), &signature_1, &Vec::new(&env));
         assert_eq!(client.get_nonce(), 2);
+    }
+
+    // ── Allowance tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_allowance_approve_and_spend() {
+        let env = Env::default();
+        let (_, pub_bytes) = test_keypair();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        
+        let rp_id = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://test.example");
+        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        // 1. Approve 500
+        env.mock_all_auths();
+        client.approve(&spender, &token, &500, &None);
+
+        let allowance = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(allowance.amount, 500);
+        assert_eq!(allowance.expiry, None);
+
+        // 2. Spend 200
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                200i128.into_val(&env),
+            ]),
+        });
+        
+        let contexts = Vec::from_array(&env, [context]);
+        let signature = spender.to_val();
+
+        // Calling __check_auth as if the spender initiated the transfer
+        client.__check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &contexts);
+
+        // Check remaining allowance
+        let remaining = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(remaining.amount, 300);
+    }
+
+    #[test]
+    fn test_allowance_spend_over_limit() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.approve(&spender, &token, &100, &None);
+
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                150i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::InsufficientAllowance)));
+    }
+
+    #[test]
+    fn test_allowance_expired() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        env.ledger().set_timestamp(1000);
+        
+        // Approve with expiry in the past
+        client.approve(&spender, &token, &500, &Some(500));
+
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::AllowanceExpired)));
+    }
+
+    #[test]
+    fn test_allowance_exact_boundary() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.approve(&spender, &token, &100, &None);
+
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        client.__check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+
+        let remaining = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(remaining.amount, 0);
+    }
+
+    #[test]
+    fn test_allowance_overwrite() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.approve(&spender, &token, &100, &None);
+        client.approve(&spender, &token, &300, &None);
+
+        let remaining = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(remaining.amount, 300);
     }
 }

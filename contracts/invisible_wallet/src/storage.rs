@@ -26,6 +26,15 @@ pub enum DataKey {
     RecoveryPending,
     /// Strictly monotonic u64 nonce to prevent signature replay attacks.
     Nonce,
+    /// Granular spending limit for a spender and token.
+    Allowance { spender: soroban_sdk::Address, token: soroban_sdk::Address },
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Allowance {
+    pub amount: i128,
+    pub expiry: Option<u64>,
 }
 
 // ── Signers (Map-based) ──────────────────────────────────────────────────────
