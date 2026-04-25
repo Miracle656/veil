@@ -1,7 +1,7 @@
 /** @type {import('jest').Config} */
 const config = {
   preset: 'ts-jest',
-  testEnvironment: 'node',
+  testEnvironment: 'jsdom',
   roots: ['<rootDir>'],
   testMatch: ['**/__tests__/**/*.test.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
@@ -14,6 +14,7 @@ const config = {
       },
     }],
   },
+  setupFilesAfterEnv: [],
   collectCoverageFrom: [
     'lib/**/*.ts',
     '!lib/**/*.d.ts',
