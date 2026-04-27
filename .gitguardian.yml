@@ -1,0 +1,9 @@
+# GitGuardian configuration
+# Allowlist for testnet public values (NEXT_PUBLIC_* are browser-exposed constants)
+
+matches:
+  - name: Testnet Contract ID
+    match: CAGFEJM4FBYZMMZ364MINCEZO6MT7U7VMJSXQLR6UDYT7ICDLJUXWJIR
+    reason: Public testnet contract address (NEXT_PUBLIC_FACTORY_CONTRACT_ID)
+    ignore_on:
+      - path: .github/workflows/ci.yml
