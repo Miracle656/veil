@@ -7,6 +7,17 @@ on:
     branches: [main]
 
 jobs:
+  security-audit:
+    name: Security Audit — cargo audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo install cargo-audit
+      - run: cargo audit
+
   contracts:
     name: Rust contracts — build & test
     runs-on: ubuntu-latest
@@ -81,3 +92,77 @@ jobs:
       - run: npm ci || npm install
       - run: npx tsc --noEmit
       - run: npm run build
+
+  lighthouse-ci:
+    name: Wallet PWA — Lighthouse performance budget
+    runs-on: ubuntu-latest
+    needs: wallet
+    defaults:
+      run:
+        working-directory: frontend/wallet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/wallet/package-lock.json
+      - run: npm ci || npm install
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_NETWORK: testnet
+          NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAGFEJM4FBYZMMZ364MINCEZO6MT7U7VMJSXQLR6UDYT7ICDLJUXWJIR
+          NEXT_PUBLIC_HORIZON_URL: https://horizon-testnet.stellar.org
+          NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+          NEXT_PUBLIC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+
+      - name: Install Lighthouse CI
+        run: npm install -g @lhci/cli@latest
+
+      - name: Start static server
+        run: npx http-server .next/standalone -p 3000 --gzip &
+        shell: bash
+
+      - name: Wait for server
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:3000 > /dev/null; then
+              echo "Server is ready"
+              exit 0
+            fi
+            echo "Waiting for server... ($i/30)"
+            sleep 2
+          done
+          echo "Server failed to start"
+          exit 1
+
+      - name: Run Lighthouse CI
+        run: lhci autorun
+
+      - name: Comment PR with Lighthouse results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const resultsPath = 'frontend/wallet/.lhci/results/lhci_summary.json';
+            
+            if (fs.existsSync(resultsPath)) {
+              const results = JSON.parse(fs.readFileSync(resultsPath, 'utf-8'));
+              
+              let comment = '📊 **Lighthouse Performance Audit Results**\n\n';
+              comment += '| Category | Score | Threshold |\n';
+              comment += '|----------|-------|----------|\n';
+              comment += `| Performance | ${(results.scores.performance * 100).toFixed(0)}/100 | ≥ 80 |\n`;
+              comment += `| Accessibility | ${(results.scores.accessibility * 100).toFixed(0)}/100 | ≥ 90 |\n`;
+              comment += `| PWA | ${(results.scores.pwa * 100).toFixed(0)}/100 | ≥ 80 |\n`;
+              comment += `| Best Practices | ${(results.scores['best-practices'] * 100).toFixed(0)}/100 | ≥ 90 |\n\n`;
+              comment += `📈 [View full report](${results.reportUrl})\n`;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }

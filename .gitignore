@@ -1,6 +1,7 @@
 # Rust build artifacts
 target/
 Cargo.lock
+!contracts/Cargo.lock
 
 # Node / SDK
 node_modules/
