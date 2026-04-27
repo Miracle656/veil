@@ -1,0 +1,14 @@
+# Veil CODEOWNERS
+# This file defines required reviewers for sensitive paths in the repository
+
+# Assign contract code to maintainer
+contracts/ @Miracle656
+
+# Assign SDK core implementation to maintainer
+sdk/src/ @Miracle656
+
+# Assign CI/GitHub workflows and configuration to maintainer
+.github/ @Miracle656
+
+# Default fallback for all paths
+* @Miracle656
