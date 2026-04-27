@@ -69,6 +69,7 @@ jobs:
       - run: npm ci || npm install
       - run: npm run typecheck
       - run: npm run build
+        # gitguardian:ignore=true — public testnet values (NEXT_PUBLIC_* are browser-exposed)
         env:
           NEXT_PUBLIC_NETWORK: testnet
           NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAGFEJM4FBYZMMZ364MINCEZO6MT7U7VMJSXQLR6UDYT7ICDLJUXWJIR
@@ -109,6 +110,7 @@ jobs:
           cache-dependency-path: frontend/wallet/package-lock.json
       - run: npm ci || npm install
       - run: npm run build
+        # gitguardian:ignore=true — public testnet values (NEXT_PUBLIC_* are browser-exposed)
         env:
           NEXT_PUBLIC_NETWORK: testnet
           NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAGFEJM4FBYZMMZ364MINCEZO6MT7U7VMJSXQLR6UDYT7ICDLJUXWJIR
