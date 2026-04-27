@@ -1,0 +1,6 @@
+# Approved security advisories
+# Format: [[advisories]]
+#         id = "RUSTSEC-YYYY-XXXX"
+#         reason = "<justification>"
+#
+# Leave empty if no advisories are currently accepted

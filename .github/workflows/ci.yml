@@ -25,6 +25,20 @@ jobs:
       # cargo test is temporarily disabled — stellar-xdr 20.1.0 transitively
       # pulls a broken `arbitrary` feature on fresh CI builds. See issue #79.
 
+  security-audit:
+    name: Security audit — cargo audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run cargo audit
+        run: cargo audit
+
   sdk:
     name: SDK — typecheck & test
     runs-on: ubuntu-latest
