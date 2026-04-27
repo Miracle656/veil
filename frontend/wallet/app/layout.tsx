@@ -24,6 +24,14 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
+      {/* Inline script runs before first paint to apply stored theme and prevent flash */}
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){var t=localStorage.getItem('veil_theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');})();`,
+          }}
+        />
+      </head>
       <body>
         {children}
         <InstallBanner />

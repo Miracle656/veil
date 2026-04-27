@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Bytes, BytesN, Env, Map};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Map};
 
 
 /// Stores details of a pending guardian recovery request.
@@ -27,7 +27,14 @@ pub enum DataKey {
     /// Strictly monotonic u64 nonce to prevent signature replay attacks.
     Nonce,
     /// Granular spending limit for a spender and token.
-    Allowance { spender: soroban_sdk::Address, token: soroban_sdk::Address },
+    Allowance(AllowanceKey),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AllowanceKey {
+    pub spender: Address,
+    pub token: Address,
 }
 
 #[contracttype]

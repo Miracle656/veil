@@ -531,7 +531,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err));
-            return null;
+            throw err;
         } finally {
             setIsPending(false);
         }

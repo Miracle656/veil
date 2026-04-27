@@ -11,6 +11,10 @@ const Server = Horizon.Server
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { deriveStoredFeePayer } from '@/lib/deriveFeePayer'
+import { fetchPrices } from '@/lib/fetchPrice'
+import { sweepContractBalance } from '@/lib/sweepContractBalance'
+import { derToRawSignature, hexToUint8Array } from '@veil/utils'
+import type { WebAuthnSignature } from '@veil/sdk'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,11 +35,16 @@ export default function DashboardPage() {
   const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
   const [loading, setLoading]             = useState(true)
+  const [prices, setPrices]               = useState<Record<string, number | null>>({})
   const [isFunding, setIsFunding]         = useState(false)
   const [fundingError, setFundingError]   = useState<string | null>(null)
   const [copied, setCopied]               = useState(false)
   const [hasFeePayerKey, setHasFeePayerKey] = useState(true)
   const [agentBadge, setAgentBadge]         = useState(false)
+  const [contractXlm, setContractXlm]       = useState(0)
+  const [isSweeping, setIsSweeping]         = useState(false)
+  const [sweepError, setSweepError]         = useState<string | null>(null)
+  const [sweepDismissed, setSweepDismissed] = useState(false)
 
   const isTestnet = process.env.NEXT_PUBLIC_NETWORK === 'testnet'
 
@@ -91,6 +100,8 @@ export default function DashboardPage() {
         }
       }
     } catch { /* contract has no balance entry yet */ }
+
+    setContractXlm(contractXlm)
 
     // ── 2. Fee-payer G... balance (holds the testnet faucet XLM) ────────────
     const signerSecret    = sessionStorage.getItem('veil_signer_secret')
@@ -267,6 +278,18 @@ export default function DashboardPage() {
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [fetchData])
 
+  // Fetch live USDC prices from Lens after balances load.
+  // Runs in the background — does not block balance rendering and does not
+  // interact with the inactivity lock (no user-activity signals are emitted).
+  useEffect(() => {
+    if (assets.length === 0) return
+    let cancelled = false
+    fetchPrices(assets.map(a => ({ code: a.code, issuer: a.issuer }))).then(result => {
+      if (!cancelled) setPrices(result)
+    })
+    return () => { cancelled = true }
+  }, [assets])
+
   const xlmBalance = assets.find(a => a.code === 'XLM')?.balance ?? null
 
   const handleFund = async () => {
@@ -310,6 +333,67 @@ export default function DashboardPage() {
       setFundingError(err instanceof Error ? err.message : 'Funding failed. Please try again.')
     } finally {
       setIsFunding(false)
+    }
+  }
+
+  // ── Sweep C... SAC balance to fee-payer ─────────────────────────────────────
+  // Mirrors the signAuthEntry logic from useInvisibleWallet but without React
+  // state management so it can be used in a plain async handler.
+  const handleSweep = async () => {
+    setIsSweeping(true)
+    setSweepError(null)
+    try {
+      const signerSecret = sessionStorage.getItem('veil_signer_secret')
+        || localStorage.getItem('veil_signer_secret')
+      if (!signerSecret) throw new Error('Signing key not found. Return to dashboard and tap "Set up fee-payer".')
+      const feePayerKp = Keypair.fromSecret(signerSecret)
+
+      const rpcUrl          = isTestnet ? 'https://soroban-testnet.stellar.org' : 'https://soroban.stellar.org'
+      const networkPassphrase = isTestnet ? Networks.TESTNET : Networks.PUBLIC
+
+      const localSignAuthEntry = async (payload: Uint8Array): Promise<WebAuthnSignature | null> => {
+        const keyId        = localStorage.getItem('invisible_wallet_key_id')
+        const publicKeyHex = localStorage.getItem('invisible_wallet_public_key')
+        if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
+
+        const challenge  = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer
+        const credIdBin  = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'))
+        const credId     = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
+
+        const assertion = await navigator.credentials.get({
+          publicKey: {
+            challenge,
+            allowCredentials: [{ id: credId, type: 'public-key' }],
+            userVerification: 'required',
+          },
+        }) as PublicKeyCredential | null
+
+        if (!assertion) return null
+
+        const response   = assertion.response as AuthenticatorAssertionResponse
+        const rawSig     = derToRawSignature(response.signature)
+        const publicKeyBytes = hexToUint8Array(publicKeyHex)
+
+        return {
+          publicKey:      publicKeyBytes,
+          authData:       new Uint8Array(response.authenticatorData),
+          clientDataJSON: new Uint8Array(response.clientDataJSON),
+          signature:      rawSig,
+        }
+      }
+
+      await sweepContractBalance(walletAddress!, feePayerKp, localSignAuthEntry, rpcUrl, networkPassphrase)
+      setSweepDismissed(false)
+      await fetchData()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setSweepError(
+        msg.includes('NotAllowedError') || msg.includes('cancelled')
+          ? 'Passkey verification was cancelled. Please try again.'
+          : msg
+      )
+    } finally {
+      setIsSweeping(false)
     }
   }
 
@@ -403,6 +487,46 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* ── Sweep prompt: contract SAC balance detected ── */}
+        {!loading && contractXlm > 0 && !sweepDismissed && (
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'rgba(253,218,36,0.07)',
+            border: '1px solid rgba(253,218,36,0.25)',
+            borderRadius: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
+                Funds in contract wallet
+              </p>
+              <button
+                onClick={() => setSweepDismissed(true)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(246,247,248,0.4)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              {contractXlm.toFixed(7)} XLM arrived at your contract address (C…) and can&apos;t be spent directly. Move it to your spending wallet to use it.
+            </p>
+            {sweepError && (
+              <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginBottom: '0.625rem' }}>{sweepError}</p>
+            )}
+            <button
+              className="btn-gold"
+              onClick={handleSweep}
+              disabled={isSweeping}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem' }}
+            >
+              {isSweeping
+                ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                : 'Move to spending wallet'}
+            </button>
+          </div>
+        )}
+
         {/* ── Balance Display ── */}
         <div style={{ marginBottom: '2rem' }}>
           <p style={{ fontSize: '0.75rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--warm-grey)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
@@ -472,6 +596,26 @@ export default function DashboardPage() {
           />
         </div>
 
+        {/* ── Buy crypto ── */}
+        <div style={{ marginBottom: '2rem' }}>
+          <button
+            onClick={() => router.push('/buy')}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.625rem',
+              padding: '0.875rem 1.25rem', borderRadius: '12px', cursor: 'pointer',
+              background: 'rgba(253,218,36,0.06)', border: '1px solid rgba(253,218,36,0.2)',
+              color: 'var(--gold)', fontSize: '0.9375rem', fontWeight: 600,
+              transition: 'background 120ms',
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.75"/>
+              <path d="M2 10h20" stroke="currentColor" strokeWidth="1.75"/>
+            </svg>
+            Buy crypto
+          </button>
+        </div>
+
         {/* ── Assets section ── */}
         <section style={{ marginBottom: '2rem' }}>
           <h2 style={{ fontSize: '0.75rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--warm-grey)', letterSpacing: '0.08em', marginBottom: '0.75rem' }}>
@@ -496,6 +640,11 @@ export default function DashboardPage() {
                 const tokenHref = asset.issuer
                   ? `/token/${asset.code}?issuer=${asset.issuer}`
                   : `/token/${asset.code}`
+                const priceKey = asset.issuer ? `${asset.code}:${asset.issuer}` : asset.code
+                const unitPrice = prices[priceKey] ?? null
+                const usdValue  = unitPrice != null
+                  ? (parseFloat(asset.balance) * unitPrice).toFixed(2)
+                  : null
                 return (
                   <button
                     key={`${asset.code}-${asset.issuer ?? 'native'}`}
@@ -522,7 +671,7 @@ export default function DashboardPage() {
                         {parseFloat(asset.balance).toFixed(2)}
                       </p>
                       <p style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.125rem' }}>
-                        {asset.code}
+                        {usdValue != null ? `${asset.code} · $${usdValue}` : asset.code}
                       </p>
                     </div>
                   </button>

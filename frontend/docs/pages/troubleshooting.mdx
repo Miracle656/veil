@@ -1,0 +1,88 @@
+---
+title: Troubleshooting
+description: Recover your Veil wallet after clearing browser cache and understand fee-payer derivation.
+---
+
+import { Callout } from "nextra/components";
+
+# Troubleshooting
+
+## What happens when I clear my browser cache?
+
+If you clear your browser cache, Veil can lose the locally stored contract address and fee-payer secrets even though your wallet is still recoverable.
+
+- Your **passkey remains on your device**. The biometric credential is stored by the browser / OS, not in localStorage.
+- Your **wallet contract still exists on-chain**. The on-chain smart wallet is preserved on Stellar Soroban.
+- The wallet can re-derive the fee-payer account from the same credential ID, so you do not lose access to funds.
+
+<Callout type="warning">
+  Clearing browser cache may remove `localStorage` entries like the contract
+  address and fee-payer secret. This is a UI/storage loss, not a loss of your
+  on-chain wallet or passkey.
+</Callout>
+
+## Recovering your wallet
+
+1. Open the Veil wallet in your browser.
+2. If the app prompts you to unlock, choose **Unlock with passkey**.
+3. Confirm your biometric / Windows Hello prompt.
+4. Once authenticated, Veil will verify your wallet exists on-chain.
+5. If the fee-payer data is missing, the app will automatically re-create it.
+6. On the dashboard, look for the prompt or button labeled **Set up fee-payer** and tap it.
+
+### Why this works
+
+Veil stores only a small amount of client-side state in localStorage for performance. When it is cleared, the wallet can still recover because:
+
+- The passkey credential ID is preserved by your browser's authenticator container.
+- Veil uses that credential ID to deterministically regenerate the fee-payer keypair.
+- The smart contract address can be recovered on-chain via your passkey-backed wallet session.
+
+## Developer explanation: `deriveFeePayer.ts`
+
+The recovery flow is implemented in `frontend/wallet/lib/deriveFeePayer.ts`.
+
+This file exports two functions:
+
+- `deriveFeePayerKeypair(credentialIdBase64url)`
+- `deriveStoredFeePayer()`
+
+### How fee-payer derivation works
+
+`deriveFeePayerKeypair`:
+
+1. Decodes the WebAuthn credential ID from base64url.
+2. Runs it through HKDF-SHA256 with a fixed salt and info string.
+3. Produces 32 bytes of deterministic output.
+4. Uses those 32 bytes as the Ed25519 seed for a Stellar `Keypair`.
+
+This means the same `credentialId` always yields the same fee-payer keypair.
+
+### Why the credential ID is the right input
+
+The passkey credential ID is device-specific and recoverable via authentication. It is:
+
+- stable for the registered passkey
+- not stored in the wallet contract
+- enough to derive the fee-payer secret if localStorage was lost
+
+### Recovery UI entry point
+
+The lock screen at `frontend/wallet/app/lock/page.tsx` is the user-facing recovery entry point.
+
+It performs:
+
+- a biometric assertion using the stored passkey
+- `wallet.login()` to confirm the on-chain wallet exists
+- a call to `deriveStoredFeePayer()` if `veil_signer_secret` is missing
+
+<Callout type="info">
+  The wallet re-derives the fee-payer only when local storage has been cleared.
+  That makes cache-clear recovery seamless for users.
+</Callout>
+
+## If recovery still fails
+
+- Make sure your browser supports WebAuthn and the passkey is still registered.
+- Make sure you use the same browser and device where the passkey was created.
+- If the passkey is gone, you will need to register again and create a new wallet.

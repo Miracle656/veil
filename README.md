@@ -30,6 +30,53 @@ User device                        Stellar network
                                         └─ approve / reject
 ```
 
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Browser["Browser (WebAuthn)"]
+        UA["User Agent\n(Face ID / Fingerprint)"]
+        SDK["invisible-wallet-sdk\n(React hook)"]
+    end
+
+    subgraph Wallet["Veil Wallet PWA (Next.js)"]
+        UI["Dashboard / Send / Swap UI"]
+        FP["Fee-Payer G… account\n(HKDF-derived from passkey)"]
+    end
+
+    subgraph Stellar["Stellar Network (Soroban)"]
+        CONTRACT["Smart Wallet Contract C…\n(__check_auth: P-256 ECDSA verify)"]
+        FACTORY["Factory Contract\n(deploy wallet instances)"]
+        SAC["Native XLM SAC\n(token balances)"]
+    end
+
+    subgraph Services["Backend Services"]
+        LENS["Lens\nPrice oracle (x402 gated)\nGET /price/:assetA/:assetB"]
+        WRAITH["Wraith\nSAC event indexer\nGET /transfers/:address"]
+        AGENT["Veil AI Agent\n(Claude + WebSocket)"]
+        PG[("Postgres")]
+    end
+
+    UA -->|"biometric gesture"| SDK
+    SDK -->|"passkey credential"| UA
+    SDK -->|"WebAuthn signature Vec[5]"| CONTRACT
+    UI -->|"sign envelope"| FP
+    FP -->|"submit tx"| CONTRACT
+    CONTRACT -->|"deploy"| FACTORY
+    CONTRACT -->|"balance query"| SAC
+
+    UI -->|"price fetch"| LENS
+    UI -->|"transfer history"| WRAITH
+    UI -->|"chat / approve tx"| AGENT
+    AGENT -->|"get_price"| LENS
+    AGENT -->|"get_balance"| SAC
+    LENS --- PG
+    WRAITH --- PG
+```
+
+> See [docs/adr/0001-two-account-model.md](docs/adr/0001-two-account-model.md) for the design rationale behind the `C…` + `G…` two-account model.
+> See [docs/adr/0002-webauthn-signature-verification.md](docs/adr/0002-webauthn-signature-verification.md) for the full WebAuthn on-chain verification pipeline.
+
 ## Project structure
 
 ```

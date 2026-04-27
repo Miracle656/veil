@@ -76,7 +76,7 @@ fn sha2_hash(input: &[u8; 65]) -> [u8; 32] {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{Env, BytesN};
+    use soroban_sdk::{Bytes, Env, BytesN};
 
     const MOCK_WALLET_WASM: &[u8] = include_bytes!("../test-fixtures/mock_wallet.wasm");
 
@@ -102,6 +102,16 @@ mod test {
         let encoded = signing_key.verifying_key().to_encoded_point(false);
         let bytes: [u8; 65] = encoded.as_bytes().try_into().unwrap();
         BytesN::from_array(env, &bytes)
+    }
+
+    /// Dummy rp_id bytes for test deployments (represents "localhost").
+    fn make_rp_id(env: &Env) -> Bytes {
+        Bytes::from_slice(env, b"localhost")
+    }
+
+    /// Dummy origin bytes for test deployments (represents a test origin).
+    fn make_origin(env: &Env) -> Bytes {
+        Bytes::from_slice(env, b"http://localhost:3000")
     }
 
     /// Upload mock wallet WASM and return its hash for use with factory.init().
@@ -149,9 +159,11 @@ mod test {
         client.init(&wasm_hash);
 
         let pub_key = valid_pub_key(&env);
-        let wallet_address = client.deploy(&pub_key);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
+        let wallet_address = client.deploy(&pub_key, &rp_id, &origin);
 
-        // Deployment must return a non-factory address (i.e. a new contract was created)
+        // deploy_wallet: must return a valid Address distinct from the factory
         assert_ne!(wallet_address, contract_id);
 
         // Salt must be marked as deployed in storage
@@ -176,13 +188,42 @@ mod test {
         client.init(&wasm_hash);
 
         let pub_key = valid_pub_key(&env);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
 
         // First deploy succeeds
-        let _ = client.deploy(&pub_key);
+        let _ = client.deploy(&pub_key, &rp_id, &origin);
 
-        // Second deploy with the same key must fail
+        // Second deploy with the same key must return AlreadyDeployed
         assert_eq!(
-            client.try_deploy(&pub_key),
+            client.try_deploy(&pub_key, &rp_id, &origin),
+            Err(Ok(FactoryError::AlreadyDeployed))
+        );
+    }
+
+    /// Duplicate deploy is prevented regardless of rp_id / origin values —
+    /// the guard key is the SHA-256 of the public key, not the domain.
+    #[test]
+    fn test_duplicate_deploy_prevented() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, Factory);
+        let client = FactoryClient::new(&env, &contract_id);
+
+        let wasm_hash = install_mock_wallet(&env);
+        client.init(&wasm_hash);
+
+        let pub_key = valid_pub_key(&env);
+        let rp_id_a = make_rp_id(&env);
+        let origin_a = make_origin(&env);
+        let rp_id_b = Bytes::from_slice(&env, b"example.com");
+        let origin_b = Bytes::from_slice(&env, b"https://example.com");
+
+        let _ = client.deploy(&pub_key, &rp_id_a, &origin_a);
+
+        // Different domain values do not bypass the duplicate guard
+        assert_eq!(
+            client.try_deploy(&pub_key, &rp_id_b, &origin_b),
             Err(Ok(FactoryError::AlreadyDeployed))
         );
     }
@@ -195,8 +236,10 @@ mod test {
         let contract_id = env.register_contract(None, Factory);
         let client = FactoryClient::new(&env, &contract_id);
         let pub_key = valid_pub_key(&env);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
         assert_eq!(
-            client.try_deploy(&pub_key),
+            client.try_deploy(&pub_key, &rp_id, &origin),
             Err(Ok(FactoryError::NotInitialized))
         );
     }
@@ -211,8 +254,10 @@ mod test {
         let mut bad_key = [0u8; 65];
         bad_key[0] = 0x03;
         let pub_key = BytesN::from_array(&env, &bad_key);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
         assert_eq!(
-            client.try_deploy(&pub_key),
+            client.try_deploy(&pub_key, &rp_id, &origin),
             Err(Ok(FactoryError::InvalidPublicKey))
         );
     }
@@ -225,8 +270,10 @@ mod test {
         client.init(&dummy_wasm_hash(&env));
         // All zeros — prefix is 0x00, not a valid point
         let pub_key = BytesN::from_array(&env, &[0u8; 65]);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
         assert_eq!(
-            client.try_deploy(&pub_key),
+            client.try_deploy(&pub_key, &rp_id, &origin),
             Err(Ok(FactoryError::InvalidPublicKey))
         );
     }
@@ -241,8 +288,10 @@ mod test {
         let mut bad_key = [1u8; 65];
         bad_key[0] = 0x04;
         let pub_key = BytesN::from_array(&env, &bad_key);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
         assert_eq!(
-            client.try_deploy(&pub_key),
+            client.try_deploy(&pub_key, &rp_id, &origin),
             Err(Ok(FactoryError::InvalidPublicKey))
         );
     }
@@ -263,7 +312,7 @@ mod test {
             bytes
         };
 
-        // Salt computation is deterministic
+        // Salt computation is deterministic (pure function, no env needed)
         let salt1 = sha2_hash(&pub_key_bytes);
         let salt2 = sha2_hash(&pub_key_bytes);
         assert_eq!(salt1, salt2);
@@ -277,11 +326,13 @@ mod test {
         client.init(&wasm_hash);
 
         let pub_key = BytesN::from_array(&env, &pub_key_bytes);
-        let _wallet = client.deploy(&pub_key);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
+        let _wallet = client.deploy(&pub_key, &rp_id, &origin);
 
         // Same key → same salt → same address → AlreadyDeployed
         assert_eq!(
-            client.try_deploy(&pub_key),
+            client.try_deploy(&pub_key, &rp_id, &origin),
             Err(Ok(FactoryError::AlreadyDeployed))
         );
     }
@@ -296,8 +347,11 @@ mod test {
         let wasm_hash = install_mock_wallet(&env);
         client.init(&wasm_hash);
 
-        let addr1 = client.deploy(&valid_pub_key(&env));
-        let addr2 = client.deploy(&second_valid_pub_key(&env));
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
+
+        let addr1 = client.deploy(&valid_pub_key(&env), &rp_id, &origin);
+        let addr2 = client.deploy(&second_valid_pub_key(&env), &rp_id, &origin);
         assert_ne!(addr1, addr2);
     }
 
@@ -314,15 +368,51 @@ mod test {
         client.init(&wasm_hash);
 
         let pub_key = valid_pub_key(&env);
-        let wallet_address = client.deploy(&pub_key);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
+        let wallet_address = client.deploy(&pub_key, &rp_id, &origin);
 
         // The deployed wallet should have the public key registered as a signer.
-        // Call has_signer on the deployed mock wallet contract.
         let has_signer: bool = env.invoke_contract(
             &wallet_address,
             &symbol_short!("is_signer"),
             (pub_key,).into_val(&env),
         );
         assert!(has_signer);
+    }
+
+    // ── 6. Full Integration ───────────────────────────────────────────────
+
+    #[test]
+    fn test_deploy_full_integration() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, Factory);
+        let client = FactoryClient::new(&env, &contract_id);
+
+        let wasm_hash = install_mock_wallet(&env);
+        client.init(&wasm_hash);
+
+        let pub_key = valid_pub_key(&env);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
+        let wallet_address = client.deploy(&pub_key, &rp_id, &origin);
+
+        // Address is distinct from factory
+        assert_ne!(wallet_address, contract_id);
+
+        // Signer registered in the deployed wallet
+        let has_signer: bool = env.invoke_contract(
+            &wallet_address,
+            &symbol_short!("is_signer"),
+            (pub_key.clone(),).into_val(&env),
+        );
+        assert!(has_signer);
+
+        // Salt marked as deployed → duplicate blocked
+        assert_eq!(
+            client.try_deploy(&pub_key, &rp_id, &origin),
+            Err(Ok(FactoryError::AlreadyDeployed))
+        );
     }
 }

@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Env, BytesN};
+use soroban_sdk::{contract, contractimpl, contracttype, Env, Bytes, BytesN};
 
 #[contracttype]
 #[derive(Clone)]
@@ -12,7 +12,9 @@ pub struct MockWallet;
 
 #[contractimpl]
 impl MockWallet {
-    pub fn init(env: Env, public_key: BytesN<65>) {
+    /// Mirrors invisible_wallet::init: accepts public_key, rp_id, and origin
+    /// so the factory contract can deploy and initialise the mock in tests.
+    pub fn init(env: Env, public_key: BytesN<65>, _rp_id: Bytes, _origin: Bytes) {
         env.storage().persistent().set(&DataKey::Signer(public_key), &());
     }
 

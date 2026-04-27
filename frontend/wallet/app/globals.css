@@ -26,6 +26,30 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* ── Light theme overrides ───────────────────────────────────────────── */
+[data-theme="light"] {
+  --near-black: #FFFFFF;
+  --off-white:  #1A1A1A;
+  --surface:    rgba(0,0,0,0.03);
+  --surface-md: rgba(0,0,0,0.06);
+  --border-dim: rgba(0,0,0,0.10);
+  --gold:       #C4A800;
+  --teal:       #007A85;
+  --navy:       #002E5D;
+}
+
+[data-theme="light"] .wallet-nav {
+  background: rgba(255,255,255,0.90);
+  border-bottom-color: rgba(0,0,0,0.10);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-track { background: #f0f0f0; }
+[data-theme="light"] .input-field {
+  background: rgba(0,0,0,0.04);
+  color: var(--off-white);
+}
+[data-theme="light"] .input-field::placeholder { color: rgba(26,26,26,0.35); }
+
 /* ── Reset ───────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
@@ -37,6 +61,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  transition: background 200ms var(--ease), color 200ms var(--ease);
 }
 
 /* ── Scrollbar ───────────────────────────────────────────────────────── */

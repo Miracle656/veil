@@ -2,11 +2,11 @@
 use soroban_sdk::{
     contract, contractimpl, contracterror,
     Env, Address, Bytes, BytesN, Vec, Symbol, Val,
-    auth::Context, FromVal, TryIntoVal, symbol_short, Map};
+    auth::Context, FromVal, TryFromVal, TryIntoVal, symbol_short, Map};
 
 mod auth;
 mod storage;
-use storage::{DataKey, PendingRecovery};
+use storage::{DataKey, AllowanceKey, PendingRecovery};
 
 /// Recovery timelock duration: 3 days in seconds.
 const RECOVERY_DELAY_SECONDS: u64 = 259_200;
@@ -156,10 +156,10 @@ impl InvisibleWallet {
 
                 let token = c.contract;
 
-                let key = storage::DataKey::Allowance {
+                let key = storage::DataKey::Allowance(AllowanceKey {
                     spender: spender.clone(),
                     token: token.clone(),
-                };
+                });
 
                 let mut allowance: storage::Allowance = env
                     .storage()
@@ -280,7 +280,7 @@ impl InvisibleWallet {
             panic!("Amount must be greater than 0");
         }
 
-        let key = storage::DataKey::Allowance { spender, token };
+        let key = storage::DataKey::Allowance(AllowanceKey { spender, token });
         let allowance = storage::Allowance { amount, expiry };
         
         env.storage().persistent().set(&key, &allowance);
@@ -288,7 +288,7 @@ impl InvisibleWallet {
 
     /// Get the current allowance for a spender and token.
     pub fn get_allowance(env: Env, spender: Address, token: Address) -> Option<storage::Allowance> {
-        let key = storage::DataKey::Allowance { spender, token };
+        let key = storage::DataKey::Allowance(AllowanceKey { spender, token });
         env.storage().persistent().get(&key)
     }
 
