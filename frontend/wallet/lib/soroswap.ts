@@ -1,23 +1,33 @@
-/**
- * soroswap.ts
- * Wrapper around @soroswap/sdk for quote fetching and swap transaction building.
- * Used by the swap page (issue #119).
- */
-
 import { Networks } from '@stellar/stellar-sdk'
 import { getNetwork } from '@/lib/network'
+import {
+  SoroswapSDK,
+  SupportedNetworks,
+  SupportedProtocols,
+  TradeType,
+} from '@soroswap/sdk'
 
 const net = getNetwork()
 const IS_TESTNET = net.networkPassphrase === Networks.TESTNET
 
-// Soroswap Router contract address (testnet)
-export const SOROSWAP_ROUTER_TESTNET = 'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2'
+const SOROSWAP_API_KEY = process.env.NEXT_PUBLIC_SOROSWAP_API_KEY?.trim() || ''
+
+function getSoroswapClient(): SoroswapSDK | null {
+  if (!SOROSWAP_API_KEY) {
+    return null
+  }
+  return new SoroswapSDK({
+    apiKey: SOROSWAP_API_KEY,
+    defaultNetwork: IS_TESTNET ? SupportedNetworks.TESTNET : SupportedNetworks.MAINNET,
+  })
+}
 
 export interface SwapQuote {
   amountOut: string
   priceImpact: number
   path: string[]
   protocols: string[]
+  rawQuote: unknown
   ttl: number // unix timestamp when the quote expires
 }
 
@@ -35,23 +45,34 @@ export interface SwapParams {
  */
 export async function getSoroswapQuote(params: SwapParams): Promise<SwapQuote | null> {
   try {
-    // Dynamic import so the page still loads even if the package isn't installed yet
-    const { SoroswapRouter } = await import('@soroswap/sdk')
-    const router = new SoroswapRouter({
-      network: IS_TESTNET ? 'TESTNET' : 'MAINNET',
-    })
-    const result = await router.getExpectedAmount({
-      tokenIn: params.tokenIn,
-      tokenOut: params.tokenOut,
+    const client = getSoroswapClient()
+    if (!client) {
+      console.warn('[soroswap] NEXT_PUBLIC_SOROSWAP_API_KEY is missing; using SDEX fallback')
+      return null
+    }
+
+    const result = await client.quote({
+      assetIn: params.tokenIn,
+      assetOut: params.tokenOut,
       amount: BigInt(params.amountIn),
-      slippage: params.slippageBps / 10000,
+      tradeType: TradeType.EXACT_IN,
+      protocols: [
+        SupportedProtocols.SOROSWAP,
+        SupportedProtocols.PHOENIX,
+        SupportedProtocols.AQUA,
+        SupportedProtocols.SDEX,
+      ],
+      slippageBps: params.slippageBps,
     })
-    if (!result || !result.amountOut) return null
+
+    if (!result?.amountOut) return null
+    const routePlan = result.routePlan ?? []
     return {
       amountOut: result.amountOut.toString(),
-      priceImpact: result.priceImpact ?? 0,
-      path: result.path ?? [],
-      protocols: result.protocols ?? ['Soroswap'],
+      priceImpact: Number(result.priceImpactPct || '0'),
+      path: routePlan.flatMap((r) => r.swapInfo.path),
+      protocols: [...new Set(routePlan.map((r) => r.swapInfo.protocol))],
+      rawQuote: result,
       ttl: Date.now() + 30_000, // 30-second TTL
     }
   } catch (err) {
@@ -66,19 +87,32 @@ export async function getSoroswapQuote(params: SwapParams): Promise<SwapQuote | 
  */
 export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string | null> {
   try {
-    const { SoroswapRouter } = await import('@soroswap/sdk')
-    const router = new SoroswapRouter({
-      network: IS_TESTNET ? 'TESTNET' : 'MAINNET',
-    })
-    const tx = await router.buildSwapTransaction({
-      tokenIn: params.tokenIn,
-      tokenOut: params.tokenOut,
+    const client = getSoroswapClient()
+    if (!client) {
+      return null
+    }
+
+    const quote = await client.quote({
+      assetIn: params.tokenIn,
+      assetOut: params.tokenOut,
       amount: BigInt(params.amountIn),
-      slippage: params.slippageBps / 10000,
-      feePayerAddress: params.feePayerAddress,
-      networkPassphrase: net.networkPassphrase,
+      tradeType: TradeType.EXACT_IN,
+      protocols: [
+        SupportedProtocols.SOROSWAP,
+        SupportedProtocols.PHOENIX,
+        SupportedProtocols.AQUA,
+        SupportedProtocols.SDEX,
+      ],
+      slippageBps: params.slippageBps,
     })
-    return tx.toXDR()
+
+    const build = await client.build({
+      quote,
+      from: params.feePayerAddress,
+      to: params.feePayerAddress,
+    })
+
+    return build.xdr
   } catch (err) {
     console.warn('[soroswap] buildSwapXdr failed:', err)
     return null

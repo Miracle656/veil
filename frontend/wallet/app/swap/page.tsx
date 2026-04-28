@@ -18,6 +18,7 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { signAndSubmitSorobanXdr } from '@/lib/sorobanTx'
 import {
   getSoroswapQuote,
   buildSoroswapSwapXdr,
@@ -291,21 +292,13 @@ export default function SwapPage() {
           throw new Error('Failed to build Soroswap transaction. Falling back to SDEX is required.')
         }
 
-        // Submit assembled Soroban transaction via RPC
-        const rpcUrl = network.sorobanRpcUrl ?? network.horizonUrl
-        const resp = await fetch(rpcUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'sendTransaction',
-            params: { transaction: xdr },
-          }),
+        const hash = await signAndSubmitSorobanXdr({
+          xdr,
+          signerSecret,
+          rpcUrl: network.rpcUrl,
+          networkPassphrase: network.networkPassphrase,
         })
-        const json = await resp.json()
-        if (json.error) throw new Error(json.error.message)
-        setTxHash(json.result?.hash ?? '')
+        setTxHash(hash)
         setStep('done')
         return
       }

@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { Keypair } from '@stellar/stellar-sdk'
 import { VeilLogo } from '@/components/VeilLogo'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { signAndSubmitSorobanXdr } from '@/lib/sorobanTx'
 import {
   loadBlendPools,
   loadBlendPositions,
@@ -25,7 +27,7 @@ export default function EarnPage() {
   useInactivityLock()
 
   const [step, setStep] = useState<EarnStep>('pools')
-  const [contractAddress, setContractAddress] = useState<string | null>(null)
+  const [accountAddress, setAccountAddress] = useState<string | null>(null)
 
   const [pools, setPools] = useState<BlendPool[]>([])
   const [positions, setPositions] = useState<BlendPosition[]>([])
@@ -42,8 +44,23 @@ export default function EarnPage() {
   useEffect(() => {
     const addr = sessionStorage.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
-    setContractAddress(addr)
-    loadData(addr)
+
+    const signerSecret =
+      sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
+    const signerPublic = localStorage.getItem('veil_signer_public_key')
+
+    if (!signerSecret && !signerPublic) {
+      setErrorMsg('Signing key not found. Return to dashboard and set up a fee-payer first.')
+      setStep('error')
+      return
+    }
+
+    const resolvedAddress = signerSecret
+      ? Keypair.fromSecret(signerSecret).publicKey()
+      : signerPublic!
+
+    setAccountAddress(resolvedAddress)
+    loadData(resolvedAddress)
   }, [router])
 
   async function loadData(addr: string) {
@@ -59,12 +76,16 @@ export default function EarnPage() {
 
   // ── Deposit ──
   async function handleDeposit() {
-    if (!selectedPool || !contractAddress || !depositAmount) return
+    if (!selectedPool || !accountAddress || !depositAmount) return
     beginTx()
     setStep('depositing')
     setErrorMsg(null)
     try {
       await requirePasskey()
+
+      const signerSecret =
+        sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
+      if (!signerSecret) throw new Error('Signing key not found. Please unlock wallet again.')
 
       const amountInStroops = BigInt(Math.round(parseFloat(depositAmount) * 1e7))
       // Use XLM native asset contract for XLM pools, or first asset otherwise
@@ -74,28 +95,22 @@ export default function EarnPage() {
         poolId: selectedPool.id,
         assetContract,
         amountInStroops,
-        supplierAddress: contractAddress,
+        supplierAddress: accountAddress,
+        sourceAddress: accountAddress,
       })
 
       if (!xdr) throw new Error('Failed to build deposit transaction.')
 
-      const rpcUrl = network.sorobanRpcUrl ?? network.horizonUrl
-      const resp = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'sendTransaction',
-          params: { transaction: xdr },
-        }),
+      const hash = await signAndSubmitSorobanXdr({
+        xdr,
+        signerSecret,
+        rpcUrl: network.rpcUrl,
+        networkPassphrase: network.networkPassphrase,
       })
-      const json = await resp.json()
-      if (json.error) throw new Error(json.error.message)
-      setTxHash(json.result?.hash ?? '')
+      setTxHash(hash)
       setStep('deposit-done')
       // Refresh positions
-      loadData(contractAddress)
+      loadData(accountAddress)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       if (msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('abort')) {
@@ -113,12 +128,16 @@ export default function EarnPage() {
 
   // ── Withdraw ──
   async function handleWithdraw() {
-    if (!selectedPosition || !contractAddress) return
+    if (!selectedPosition || !accountAddress) return
     beginTx()
     setStep('withdrawing')
     setErrorMsg(null)
     try {
       await requirePasskey()
+
+      const signerSecret =
+        sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
+      if (!signerSecret) throw new Error('Signing key not found. Please unlock wallet again.')
 
       const bTokenAmount = BigInt(selectedPosition.bTokenBalance)
 
@@ -126,27 +145,21 @@ export default function EarnPage() {
         poolId: selectedPosition.poolId,
         assetContract: selectedPosition.asset,
         bTokenAmount,
-        supplierAddress: contractAddress,
+        supplierAddress: accountAddress,
+        sourceAddress: accountAddress,
       })
 
       if (!xdr) throw new Error('Failed to build withdraw transaction.')
 
-      const rpcUrl = network.sorobanRpcUrl ?? network.horizonUrl
-      const resp = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'sendTransaction',
-          params: { transaction: xdr },
-        }),
+      const hash = await signAndSubmitSorobanXdr({
+        xdr,
+        signerSecret,
+        rpcUrl: network.rpcUrl,
+        networkPassphrase: network.networkPassphrase,
       })
-      const json = await resp.json()
-      if (json.error) throw new Error(json.error.message)
-      setTxHash(json.result?.hash ?? '')
+      setTxHash(hash)
       setStep('withdraw-done')
-      loadData(contractAddress)
+      loadData(accountAddress)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       setErrorMsg(msg.toLowerCase().includes('cancel') ? 'Passkey cancelled. Please try again.' : msg)
