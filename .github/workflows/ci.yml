@@ -121,8 +121,11 @@ jobs:
       - name: Install Lighthouse CI
         run: npm install -g @lhci/cli@latest
 
-      - name: Start static server
-        run: npx http-server .next/standalone -p 3000 --gzip &
+      - name: Start standalone server
+        run: node .next/standalone/server.js &
+        env:
+          PORT: 3000
+          HOSTNAME: 0.0.0.0
         shell: bash
 
       - name: Wait for server
