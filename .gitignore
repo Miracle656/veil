@@ -19,3 +19,4 @@ frontend/wallet/.next/
 .DS_Store
 build_error.txt
 TODO.md
+contracts/Cargo.lock
