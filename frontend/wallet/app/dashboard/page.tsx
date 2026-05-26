@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
@@ -41,6 +41,7 @@ let cachedPrices:       Record<string, number | null>        = {}
 // ── Dashboard page ────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   useInactivityLock()
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
@@ -311,6 +312,33 @@ export default function DashboardPage() {
     })
     return () => { cancelled = true }
   }, [assets])
+
+  // ── Service worker registration + background polling ─────────────────────
+  useEffect(() => {
+    if (!walletAddress || typeof window === 'undefined' || !('serviceWorker' in navigator)) return
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      const sw = reg.active ?? reg.installing ?? reg.waiting
+      sw?.postMessage({ type: 'VEIL_REGISTER_ACCOUNT', account: walletAddress, cursor: 'now' })
+    }).catch(() => { /* SW registration failed — non-fatal */ })
+  }, [walletAddress])
+
+  // ── Notification permission — ask once after first successful data load ───
+  useEffect(() => {
+    if (loading || transactions.length === 0) return
+    if (typeof Notification === 'undefined') return
+    if (Notification.permission !== 'default') return
+    if (localStorage.getItem('veil_notif_asked')) return
+    localStorage.setItem('veil_notif_asked', '1')
+    Notification.requestPermission().catch(() => { /* denied — graceful degradation */ })
+  }, [loading, transactions])
+
+  // ── Deep-link: ?tx=<hash> from notification tap ───────────────────────────
+  useEffect(() => {
+    const hash = searchParams?.get('tx')
+    if (!hash || transactions.length === 0) return
+    const tx = transactions.find(t => t.hash === hash)
+    if (tx) setSelectedTx(tx)
+  }, [searchParams, transactions])
 
   const xlmBalance = assets.find(a => a.code === 'XLM')?.balance ?? null
 
