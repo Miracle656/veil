@@ -1,0 +1,43 @@
+---
+import '../styles/global.css';
+import VeilWidget from '../components/VeilWidget.tsx';
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <title>Veil - Astro Integration Demo</title>
+  </head>
+  <body class="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
+    <main class="max-w-4xl w-full space-y-8">
+      <div class="text-center space-y-4">
+        <h1 class="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
+          Veil Astro Integration
+        </h1>
+        <p class="text-lg text-gray-600 max-w-2xl mx-auto">
+          This page demonstrates Veil's passkey wallet running as a React island in Astro's
+          partial hydration architecture. The widget hydrates on click, keeping
+          the static page lightweight.
+        </p>
+      </div>
+
+      <div class="flex justify-center">
+        <VeilWidget client:load />
+      </div>
+
+      <div class="bg-gray-50 p-6 rounded-xl border border-gray-200 max-w-2xl mx-auto">
+        <h3 class="font-semibold text-gray-800 mb-2">About this Island</h3>
+        <p class="text-sm text-gray-600">
+          Astro's island architecture allows interactive components to be hydrated independently.
+          The <code class="bg-gray-200 px-1 rounded">client:load</code> directive hydrates the
+          React widget immediately after page load. Click "Connect with Passkey" to register
+          or login with your passkey credential.
+        </p>
+      </div>
+    </main>
+  </body>
+</html>
