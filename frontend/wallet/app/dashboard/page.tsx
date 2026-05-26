@@ -10,6 +10,7 @@ import {
 const Server = Horizon.Server
 import { ConnectDAppModal } from '@/components/ConnectDAppModal'
 import { WalletConnectApprovalModal } from '@/components/WalletConnectApprovalModal'
+import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { deriveStoredFeePayer } from '@/lib/deriveFeePayer'
@@ -61,6 +62,7 @@ export default function DashboardPage() {
   const [sweepDismissed, setSweepDismissed] = useState(false)
   const [showConnectDapp, setShowConnectDapp] = useState(false)
   const [connectToast, setConnectToast] = useState<string | null>(null)
+  const [sep24Modal, setSep24Modal] = useState<'deposit' | 'withdraw' | null>(null)
 
   useEffect(() => {
     const stored = sessionStorage.getItem('invisible_wallet_address')
@@ -633,6 +635,16 @@ export default function DashboardPage() {
             onClick={() => setShowConnectDapp(true)}
             icon={<path d="M8.5 8.5l7 7M13 5l6 6-4 4-6-6m-4 4l2-2m4 4l-2 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
           />
+          <ActionButton
+            label="Deposit"
+            onClick={() => setSep24Modal('deposit')}
+            icon={<path d="M12 3v12m0 0l-4-4m4 4l4-4M3 17v2a2 2 0 002 2h14a2 2 0 002-2v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
+          />
+          <ActionButton
+            label="Withdraw"
+            onClick={() => setSep24Modal('withdraw')}
+            icon={<path d="M12 21V9m0 0l-4 4m4-4l4 4M3 7V5a2 2 0 012-2h14a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
+          />
         </div>
 
         {/* ── Buy crypto ── */}
@@ -877,6 +889,14 @@ export default function DashboardPage() {
       )}
 
       <WalletConnectApprovalModal />
+
+      {sep24Modal && walletAddress && (
+        <DepositModal
+          mode={sep24Modal}
+          walletAddress={walletAddress}
+          onClose={() => setSep24Modal(null)}
+        />
+      )}
     </div>
   )
 }
