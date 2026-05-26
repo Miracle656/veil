@@ -13,11 +13,11 @@ export default function ContactsPage() {
   const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     try {
-      addContact(name, address)
+      await addContact(name, address)
       setName('')
       setAddress('')
       setShowAddForm(false)

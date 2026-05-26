@@ -20,3 +20,99 @@ export async function trackWalletCreated(
     // Silent — analytics must never break the wallet flow
   }
 }
+
+/** Contact management for Supabase-backed address book */
+
+export interface Contact {
+  id: string
+  owner_contract: string
+  name: string
+  address: string
+  created_at: string
+}
+
+export async function fetchContacts(ownerContract: string): Promise<Contact[]> {
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, owner_contract, name, address, created_at')
+      .eq('owner_contract', ownerContract)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Failed to fetch contacts:', error)
+      return []
+    }
+
+    return data || []
+  } catch (err) {
+    console.error('Unexpected error fetching contacts:', err)
+    return []
+  }
+}
+
+export async function addContact(
+  ownerContract: string,
+  name: string,
+  address: string,
+): Promise<Contact | null> {
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .insert({
+        owner_contract: ownerContract,
+        name: name.trim(),
+        address: address.trim(),
+      })
+      .select('id, owner_contract, name, address, created_at')
+      .single()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    return data
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to add contact'
+    throw new Error(msg)
+  }
+}
+
+export async function removeContact(id: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('contacts')
+      .delete()
+      .eq('id', id)
+
+    if (error) {
+      throw new Error(error.message)
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to remove contact'
+    throw new Error(msg)
+  }
+}
+
+export async function updateContact(
+  id: string,
+  updates: Partial<Omit<Contact, 'id' | 'owner_contract' | 'created_at'>>,
+): Promise<Contact | null> {
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .update(updates)
+      .eq('id', id)
+      .select('id, owner_contract, name, address, created_at')
+      .single()
+
+    if (error) {
+      throw new Error(error.message)
+    }
+
+    return data
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to update contact'
+    throw new Error(msg)
+  }
+}
