@@ -4,6 +4,16 @@
   "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./vanilla": {
+      "types": "./dist/vanilla.d.ts",
+      "default": "./dist/vanilla.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "jest"

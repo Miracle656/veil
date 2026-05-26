@@ -224,6 +224,8 @@ The agent exposes:
 
 ## Usage
 
+### With React
+
 ```tsx
 import { useInvisibleWallet } from 'invisible-wallet-sdk';
 
@@ -252,6 +254,28 @@ function App() {
   await wallet.initiateRecovery(newPublicKey);
   await wallet.completeRecovery(); // after 3-day timelock
 }
+```
+
+### Without a framework
+
+```js
+import { createInvisibleWallet } from 'invisible-wallet-sdk/vanilla';
+
+// Initialize wallet
+const wallet = createInvisibleWallet({
+  factoryAddress: FACTORY_CONTRACT_ID,
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+});
+
+// Register a passkey and deploy a wallet contract
+const { walletAddress } = await wallet.register('alice');
+await wallet.deploy(feePayerKeypair);
+
+// Sign a Soroban authorization entry
+const sig = await wallet.signAuthEntry(signaturePayload);
+
+// All methods return Promises - no React hooks or JSX required
 ```
 
 ## Signature format
