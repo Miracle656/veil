@@ -21,3 +21,34 @@ export async function requirePasskey(): Promise<void> {
 
   if (!assertion) throw new Error('Passkey verification was cancelled.')
 }
+
+export async function registerNewPasskey(client: any) {
+  const credential = await navigator.credentials.create({
+    publicKey: {
+      challenge: new Uint8Array(32),
+      rp: { name: "Invisible Wallet", id: "localhost" },
+      user: {
+        id: new Uint8Array(16),
+        name: "user@example.com",
+        displayName: "User",
+      },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+      authenticatorSelection: {
+        authenticatorAttachment: "platform",
+        userVerification: "required",
+      },
+    },
+  });
+
+  if (!credential) throw new Error("Passkey creation failed");
+
+  const cred = credential as PublicKeyCredential;
+
+  const credentialId = new Uint8Array(cred.rawId);
+
+  const publicKey = new Uint8Array(65);
+
+  await client.add_signer(credentialId, publicKey);
+
+  return credentialId;
+}

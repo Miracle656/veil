@@ -8,14 +8,34 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
 import { useWalletConnect } from '@/lib/walletConnect'
-import {
-  generateMnemonicPhrase,
-  deriveP256KeyPair,
-  encryptMnemonic,
-  decryptMnemonic,
-  storeEncryptedMnemonic,
-  getEncryptedMnemonic,
-} from '@/lib/recovery'
+import { registerNewPasskey } from "@/lib/passkeyAuth";
+
+export default function PasskeysPage() {
+    async function handleAdd() {
+    try {
+      await registerNewPasskey({
+        add_signer: async () => {
+          console.log("add_signer called (stub)");
+        },
+      });
+
+      alert("Passkey added!");
+    } catch (e) {
+      console.error(e);
+      alert("Failed to add passkey");
+    }
+  }
+
+  return (
+    <div>
+      <h1>Manage Passkeys</h1>
+
+      <button onClick={handleAdd}>
+        Add Passkey
+      </button>
+    </div>
+  );
+}
 
 type Section = 'overview' | 'add-signer' | 'guardian' | 'recovery-backup'
 

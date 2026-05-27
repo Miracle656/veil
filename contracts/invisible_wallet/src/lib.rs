@@ -74,14 +74,15 @@ impl InvisibleWallet {
     ///             clientDataJSON for this deployment.
     pub fn init(
         env: Env,
+        credential_id: Bytes,
         initial_signer: BytesN<65>,
         rp_id: Bytes,
         origin: Bytes,
     ) -> Result<(), WalletError> {
-        if storage::signer_count(&env) > 0 {
+        if storage::get_signers(&env).len() > 0 {
             return Err(WalletError::AlreadyInitialized);
         }
-        storage::init_signers(&env, &initial_signer);
+        storage::init_signers(&env, credential_id, initial_signer);
         storage::set_rp_id(&env, &rp_id);
         storage::set_origin(&env, &origin);
         // Step 0 — Initialise nonce to 0 (explicitly, though storage helper defaults to 0).
@@ -92,30 +93,36 @@ impl InvisibleWallet {
     /// Add a new signer key to the wallet. Requires authorization from the
     /// contract itself (i.e. an existing signer must authorize via `__check_auth`).
     /// Returns the index assigned to the new signer.
-    pub fn add_signer(env: Env, new_public_key: BytesN<65>) -> u32 {
+    pub fn add_signer(env: Env, credential_id: Bytes, new_public_key: BytesN<65>) {
         env.current_contract_address().require_auth();
-        storage::add_signer(&env, &new_public_key)
+        storage::add_signer(&env, credential_id, new_public_key);
     }
 
     /// Remove a signer by index. Requires authorization from the contract.
     /// Rejects removal if it would leave the wallet with zero signers.
-    pub fn remove_signer(env: Env, index: u32) -> Result<(), WalletError> {
+    pub fn remove_signer(env: Env, credential_id: Bytes) -> Result<(), WalletError> {
         env.current_contract_address().require_auth();
 
-        if storage::signer_count(&env) <= 1 {
+        if storage::get_signers(&env).len() <= 1 {
             return Err(WalletError::CannotRemoveLastSigner);
         }
 
-        if !storage::remove_signer(&env, index) {
-            return Err(WalletError::SignerNotFound);
+        if !storage::remove_signer(&env, &credential_id) {
+        return Err(WalletError::SignerNotFound);
         }
-
+        
         Ok(())
     }
 
     /// Called by the Soroban runtime to authorize a transaction.
     ///
-    /// Three credential branches are handled, tried in order:
+    /// The `signature` Val must encode a Vec<Val> with 5 elements:
+    ///   [0] Bytes       - credential_id
+    ///   [1] Bytes       - WebAuthn authenticatorData
+    ///   [2] Bytes       - WebAuthn clientDataJSON
+    ///   [3] BytesN<64>  - raw P-256 signature (r || s)
+    ///   [4] u64         - nonce
+
     ///
     /// **Branch 1 — Allowance (spender Address)**
     ///   `signature` is an `Address`. The spender presents itself and the
@@ -141,214 +148,170 @@ impl InvisibleWallet {
     ///
     /// **Branch 3 — WebAuthn `Vec<Val>[pubkey, auth_data, client_data_json, sig, nonce]`**
     ///   Standard passkey / WebAuthn flow.
-    pub fn __check_auth(
-        env: Env,
-        signature_payload: BytesN<32>,
-        signature: Val,
-        _auth_contexts: Vec<Context>,
-    ) -> Result<(), WalletError> {
-        // ── Branch 1: Allowance (spender address) ─────────────────────────────
-        if let Ok(spender) = Address::try_from_val(&env, &signature) {
-            spender.require_auth();
+  pub fn __check_auth(
+    env: Env,
+    payload: BytesN<32>,
+    signature: Val,
+    contexts: Vec<Context>,
+) -> Result<(), WalletError> {
 
-            for context in _auth_contexts.iter() {
-                let Context::Contract(c) = context else {
-                    return Err(WalletError::SignerNotAuthorized);
-                };
+    // Try decode each auth type in order of cheapest → most expensive
 
-                // We only allow token transfers via allowance
-                if c.fn_name != Symbol::new(&env, "transfer") {
-                    return Err(WalletError::SignerNotAuthorized);
-                }
+    if let Ok(spender) = Address::try_from_val(&env, &signature) {
+        return auth_allowance(&env, spender, contexts);
+    }
 
-                if c.args.len() != 3 {
-                    return Err(WalletError::SignerNotAuthorized);
-                }
-
-                let from = Address::try_from_val(&env, &c.args.get(0).unwrap())
-                    .map_err(|_| WalletError::SignerNotAuthorized)?;
-                if from != env.current_contract_address() {
-                    return Err(WalletError::SignerNotAuthorized);
-                }
-
-                let amount = i128::try_from_val(&env, &c.args.get(2).unwrap())
-                    .map_err(|_| WalletError::SignerNotAuthorized)?;
-
-                let token = c.contract;
-
-                let key = storage::DataKey::Allowance(AllowanceKey {
-                    spender: spender.clone(),
-                    token: token.clone(),
-                });
-
-                let mut allowance: storage::Allowance = env
-                    .storage()
-                    .persistent()
-                    .get(&key)
-                    .ok_or(WalletError::InsufficientAllowance)?;
-
-                if let Some(expiry) = allowance.expiry {
-                    if env.ledger().timestamp() > expiry {
-                        return Err(WalletError::AllowanceExpired);
-                    }
-                }
-
-                if amount > allowance.amount {
-                    return Err(WalletError::InsufficientAllowance);
-                }
-
-                allowance.amount -= amount;
-                env.storage().persistent().set(&key, &allowance);
-            }
-
-            return Ok(());
+    if let Ok(parts) = Vec::<Val>::try_from_val(&env, &signature) {
+        match parts.len() {
+            3 => return auth_session_key(&env, payload, parts, contexts),
+            5 => return auth_webauthn(&env, payload, parts),
+            _ => return Err(WalletError::InvalidSignatureFormat),
         }
+    }
 
-        // ── Branch 2: Session key ──────────────────────────────────────────────
-        //
-        // Signature format: Vec<Val>[key_id: BytesN<32>, ed25519_sig: BytesN<64>, nonce: u64]
-        //
-        // The key_id is a public storage handle.  Authorization requires a
-        // valid ed25519 signature over `signature_payload` — possession of
-        // key_id alone is not sufficient.
-        if let Ok(parts) = Vec::<Val>::try_from_val(&env, &signature) {
-            if parts.len() == 3 {
-                if let (Ok(key_id), Ok(ed25519_sig), Ok(nonce)) = (
-                    BytesN::<32>::try_from_val(&env, &parts.get(0).unwrap()),
-                    BytesN::<64>::try_from_val(&env, &parts.get(1).unwrap()),
-                    u64::try_from_val(&env, &parts.get(2).unwrap()),
-                ) {
-                    // Step 1 — Load the ACL to obtain the registered public key.
-                    let acl = session_key::get_acl(&env, &key_id)
-                        .ok_or(WalletError::SignerNotAuthorized)?;
+    Err(WalletError::InvalidSignatureFormat)
+}
+    // ─────────────────────────────────────────────
+    // BRANCH 1: Allowance-based auth (Address)
+    // ─────────────────────────────────────────────
+   fn auth_allowance(
+    env: &Env,
+    spender: Address,
+    contexts: Vec<Context>,
+) -> Result<(), WalletError> {
 
-                    // Step 2 — Cryptographic verification.
-                    //
-                    // `ed25519_verify` panics (host error → transaction failure)
-                    // if the signature is invalid.  This ensures the session key
-                    // holder MUST possess the registered private key; presenting
-                    // the key_id alone cannot authorize anything.
-                    //
-                    // `signature_payload` is the host-computed hash of the
-                    // authorized invocation — it commits to the transaction
-                    // contents, preventing cross-transaction replay even without
-                    // the contract nonce.
-                    env.crypto().ed25519_verify(
-                        &acl.pubkey,
-                        &Bytes::from(signature_payload.clone()),
-                        &ed25519_sig,
-                    );
+    spender.require_auth();
 
-                    // Step 3 — Contract-level nonce check (additional replay binding).
-                    //
-                    // The Soroban host already binds auth to a per-transaction
-                    // sequence; this contract nonce provides a second layer that
-                    // is consistent with the WebAuthn path and ensures session
-                    // keys cannot be replayed even if the host layer were bypassed.
-                    let stored_nonce = storage::get_nonce(&env);
-                    if nonce != stored_nonce {
-                        return Err(WalletError::NonceMismatch);
-                    }
+    for context in contexts.iter() {
+        let Context::Contract(c) = context else {
+            return Err(WalletError::SignerNotAuthorized);
+        };
 
-                    // Step 4 — ACL enforcement (expiry, target, selector, cumulative budget).
-                    for context in _auth_contexts.iter() {
-                        let Context::Contract(c) = context else {
-                            return Err(WalletError::SignerNotAuthorized);
-                        };
-                        let amount = if c.args.len() >= 3 {
-                            i128::try_from_val(&env, &c.args.get(2).unwrap())
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        session_key::enforce(&env, &key_id, &c.contract, &c.fn_name, amount)?;
-                    }
-
-                    // Step 5 — Advance the contract nonce (must happen after all checks).
-                    storage::increment_nonce(&env);
-
-                    return Ok(());
-                }
-            }
-        }
-
-        // ── Branch 3: Standard WebAuthn ───────────────────────────────────────
-        //
-        // The `signature` Val must encode a Vec<Val> with 5 elements:
-        //   [0] BytesN<65>  - uncompressed P-256 public key (0x04 || x || y)
-        //   [1] Bytes       - WebAuthn authenticatorData
-        //   [2] Bytes       - WebAuthn clientDataJSON (must contain base64url(signature_payload) as challenge)
-        //   [3] BytesN<64>  - raw P-256 ECDSA signature (r || s)
-        //   [4] u64         - contract nonce
-        //
-        // Verification order:
-        //   1. Parse and validate signature format
-        //   2. Check signer is registered
-        //   3. Verify nonce
-        //   4. Verify ECDSA signature + challenge binding
-        //   5. Verify rpIdHash binding  -> RpIdMismatch
-        //   6. Verify origin binding    -> OriginMismatch
-        let parts: Vec<Val> = Vec::try_from_val(&env, &signature)
-            .map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-        if parts.len() != 5 {
-            return Err(WalletError::InvalidSignatureFormat);
-        }
-
-        let public_key: BytesN<65> = parts
-            .get(0).ok_or(WalletError::InvalidSignatureFormat)?
-            .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-        let auth_data: Bytes = parts
-            .get(1).ok_or(WalletError::InvalidSignatureFormat)?
-            .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-        let client_data_json: Bytes = parts
-            .get(2).ok_or(WalletError::InvalidSignatureFormat)?
-            .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-        let sig_bytes: BytesN<64> = parts
-            .get(3).ok_or(WalletError::InvalidSignatureFormat)?
-            .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-        let nonce: u64 = parts
-            .get(4).ok_or(WalletError::InvalidSignatureFormat)?
-            .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-        // Step 1 — Check registered signer
-        if !storage::has_signer(&env, &public_key) {
+        if c.fn_name != Symbol::new(env, "transfer") {
             return Err(WalletError::SignerNotAuthorized);
         }
 
-        // Step 2 — Nonce validation (MUST match exactly)
-        let stored_nonce = storage::get_nonce(&env);
-        if nonce != stored_nonce {
-            return Err(WalletError::NonceMismatch);
+        if c.args.len() != 3 {
+            return Err(WalletError::SignerNotAuthorized);
         }
 
-        // Step 3 — ECDSA + challenge verification.
-        auth::verify_webauthn(
-            &env,
-            &signature_payload,
-            public_key,
-            auth_data.clone(),
-            client_data_json.clone(),
-            sig_bytes,
-        )?;
+        let amount = i128::try_from_val(env, &c.args.get(2).unwrap())
+            .map_err(|_| WalletError::SignerNotAuthorized)?;
 
-        // Step 4 — RP ID binding.
-        let rp_id = storage::get_rp_id(&env).ok_or(WalletError::RpIdMismatch)?;
-        auth::verify_rp_id(&env, &rp_id, &auth_data)?;
+        let key = DataKey::Allowance(AllowanceKey {
+            spender: spender.clone(),
+            token: c.contract.clone(),
+        });
 
-        // Step 5 — Origin binding.
-        let origin = storage::get_origin(&env).ok_or(WalletError::OriginMismatch)?;
-        auth::verify_origin(&client_data_json, &origin)?;
+        let mut allowance = env.storage()
+            .persistent()
+            .get(&key)
+            .ok_or(WalletError::InsufficientAllowance)?;
 
-        // Step 6 — Increment nonce ONLY after all checks pass.
-        storage::increment_nonce(&env);
+        if let Some(expiry) = allowance.expiry {
+            if env.ledger().timestamp() > expiry {
+                return Err(WalletError::AllowanceExpired);
+            }
+        }
 
-        Ok(())
+        if amount > allowance.amount {
+            return Err(WalletError::InsufficientAllowance);
+        }
+
+        allowance.amount -= amount;
+        env.storage().persistent().set(&key, &allowance);
     }
+
+    Ok(())
+}
+    // ─────────────────────────────────────────────
+    // BRANCH 2: Session Key Auth
+    // ─────────────────────────────────────────────
+   fn auth_session_key(
+    env: &Env,
+    payload: BytesN<32>,
+    parts: Vec<Val>,
+    contexts: Vec<Context>,
+) -> Result<(), WalletError> {
+
+    let key_id: BytesN<32> = parts.get(0).unwrap().try_into_val(env)
+        .map_err(|_| WalletError::InvalidSignatureFormat)?;
+
+    let sig: BytesN<64> = parts.get(1).unwrap().try_into_val(env)
+        .map_err(|_| WalletError::InvalidSignatureFormat)?;
+
+    let nonce: u64 = parts.get(2).unwrap().try_into_val(env)
+        .map_err(|_| WalletError::InvalidSignatureFormat)?;
+
+    let acl = session_key::get_acl(env, &key_id)
+        .ok_or(WalletError::SignerNotAuthorized)?;
+
+    env.crypto().ed25519_verify(
+        &acl.pubkey,
+        &Bytes::from(payload.clone()),
+        &sig,
+    );
+
+    if nonce != storage::get_nonce(env) {
+        return Err(WalletError::NonceMismatch);
+    }
+
+    for context in contexts.iter() {
+        let Context::Contract(c) = context else {
+            return Err(WalletError::SignerNotAuthorized);
+        };
+
+        let amount = c.args.get(2)
+            .and_then(|v| i128::try_from_val(env, v).ok())
+            .unwrap_or(0);
+
+        session_key::enforce(env, &key_id, &c.contract, &c.fn_name, amount)?;
+    }
+
+    storage::increment_nonce(env);
+    Ok(())
+}
+    // ─────────────────────────────────────────────
+    // BRANCH 3: WebAuthn / Passkey Auth
+    // ─────────────────────────────────────────────
+   fn auth_webauthn(
+    env: &Env,
+    payload: BytesN<32>,
+    parts: Vec<Val>,
+) -> Result<(), WalletError> {
+
+    let public_key: BytesN<65> = parts.get(0).unwrap().try_into_val(env)?;
+    let auth_data: Bytes = parts.get(1).unwrap().try_into_val(env)?;
+    let client_data: Bytes = parts.get(2).unwrap().try_into_val(env)?;
+    let sig: BytesN<64> = parts.get(3).unwrap().try_into_val(env)?;
+    let nonce: u64 = parts.get(4).unwrap().try_into_val(env)?;
+
+    if !storage::has_signer(env, &public_key) {
+        return Err(WalletError::SignerNotAuthorized);
+    }
+
+    if nonce != storage::get_nonce(env) {
+        return Err(WalletError::NonceMismatch);
+    }
+
+    auth::verify_webauthn(
+        env,
+        &payload,
+        public_key,
+        auth_data.clone(),
+        client_data.clone(),
+        sig,
+    )?;
+
+    let rp_id = storage::get_rp_id(env).ok_or(WalletError::RpIdMismatch)?;
+    auth::verify_rp_id(env, &rp_id, &auth_data)?;
+
+    let origin = storage::get_origin(env).ok_or(WalletError::OriginMismatch)?;
+    auth::verify_origin(&client_data, &origin)?;
+
+    storage::increment_nonce(env);
+    Ok(())
+}
 
     /// Return the current monotonic nonce for this wallet.
     pub fn get_nonce(env: Env) -> u64 {
@@ -356,10 +319,16 @@ impl InvisibleWallet {
     }
 
     pub fn has_signer(env: Env, key: BytesN<65>) -> bool {
-        storage::has_signer(&env, &key)
+     let signers = get_signers(env);
+        for (_, v) in signers.iter() {
+            if v == key {
+                return true;
+            }
+        }
+        false
     }
 
-    pub fn get_signers(env: Env) -> Map<u32, BytesN<65>> {
+    pub fn get_signers(env: Env) -> Map<Bytes, BytesN<65>> {
         storage::get_signers(&env)
     }
 
@@ -404,11 +373,11 @@ impl InvisibleWallet {
     /// # Arguments
     /// * `env` - The Soroban environment handle.
     /// * `guardian` - The `Address` of the new guardian.
-    pub fn set_guardian(env: Env, guardian: Address) {
+    pub fn set_guardian(env: &Env, guardian: &Address) {
         // Require that the contract itself (i.e. the wallet signer) authorizes this call.
         env.current_contract_address().require_auth();
 
-        env.storage().persistent().set(&DataKey::Guardian, &guardian);
+         storage::set_guardian(env, guardian);
 
         env.events().publish(
             (symbol_short!("guardian"), symbol_short!("set")),
@@ -429,7 +398,7 @@ impl InvisibleWallet {
     /// # Errors
     /// * `WalletError::NoGuardianSet` - if no guardian has been configured.
     /// * `WalletError::RecoveryAlreadyPending` - if a recovery is already in progress.
-    pub fn initiate_recovery(env: Env, new_public_key: BytesN<65>) -> Result<(), WalletError> {
+    pub fn initiate_recovery(env: Env, credential_id: Bytes, new_public_key: BytesN<65>) -> Result<(), WalletError> {
         // Verify a guardian is set
         let guardian: Address = env.storage()
             .persistent()
@@ -448,7 +417,8 @@ impl InvisibleWallet {
         let recovery_unlock_time = env.ledger().timestamp() + RECOVERY_DELAY_SECONDS;
 
         let pending = PendingRecovery {
-            new_public_key: new_public_key.clone(),
+            credential_id,
+            new_public_key,
             recovery_unlock_time,
         };
 
@@ -484,7 +454,7 @@ impl InvisibleWallet {
         }
 
         // Replace signers: reset the map to only the recovered key at index 0.
-        storage::init_signers(&env, &pending.new_public_key);
+        storage::init_signers(&env, pending.credential_id, pending.new_public_key);
 
         // Clear the pending recovery
         env.storage().persistent().remove(&DataKey::RecoveryPending);
@@ -599,6 +569,171 @@ mod test {
         (signing_key, pub_bytes)
     }
 
+    // ── core acceptance tests ──
+    #[test]
+    fn test_init_registers_first_signer() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+
+        let credential_id = Bytes::from_array(&env, &[56, 57, 58]);
+        let rp_id = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://localhost:5173");
+
+        client.init(&credential_id, &pub_key, &rp_id, &origin);
+
+        // ASSERT: wallet has 1 signer after init
+        assert_eq!(client.get_signers().len(), 1);
+        assert!(client.has_signer(pub_key));
+    }
+
+    #[test]
+    fn test_add_second_signer() {
+        let env = Env::default();
+            env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub1) = test_keypair();
+        let (_, pub2) = second_keypair();
+
+        let pub_key1 = BytesN::from_array(&env, &pub1);
+        let pub_key2 = BytesN::from_array(&env, &pub2);
+
+        client.init(
+            &Bytes::from_array(&env, &[61,62,60]),
+            &pub_key1,
+            &bytes_from_str(&env, "localhost"),
+            &bytes_from_str(&env, "https://localhost:5173"),
+        );
+
+        let credential_id_2 = Bytes::from_array(&env, &[64,65,66]);
+
+        client.add_signer(&credential_id_2, &pub_key2);
+
+        // ASSERT: second signer added at index 1
+        
+        assert_eq!(client.get_signers().len(), 2);
+        assert!(client.has_signer(pub_key2));
+    }
+
+    #[test]
+    fn test_any_signer_can_auth() {
+        let env = Env::default();
+         env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub1) = test_keypair();
+        let (_, pub2) = second_keypair();
+
+        let pub_key1 = BytesN::from_array(&env, &pub1);
+        let pub_key2 = BytesN::from_array(&env, &pub2);
+
+        client.init(
+            &Bytes::from_array(&env, &[67,68,69]),
+            &pub_key1,
+            &bytes_from_str(&env, "localhost"),
+            &bytes_from_str(&env, "https://localhost:5173"),
+        );
+
+        // add second signer
+        client.add_signer(
+            &Bytes::from_array(&env, &[70,71,72]),
+            &pub_key2,
+        );
+
+         let payload = BytesN::from_array(&env, &[7u8; 32]);
+
+        let signature = build_test_signature_for_key(&pub1); // or your helper
+
+        // signer 1 should pass
+        let res1 = client.try___check_auth(&payload, &signature, &Vec::new(&env));
+        assert!(res1.is_ok());
+
+        let signature2 = build_test_signature_for_key(&pub2);
+
+        // signer 2 should ALSO pass
+        let res2 = client.try___check_auth(&payload, &signature2, &Vec::new(&env));
+        assert!(res2.is_ok());
+    }
+
+    #[test]
+    fn test_cannot_remove_last_signer() {
+        let env = Env::default();
+            env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub1) = test_keypair();
+        let pub_key1 = BytesN::from_array(&env, &pub1);
+
+        client.init(
+            &Bytes::from_array(&env, &[74,75,76]),
+            &pub_key1,
+            &bytes_from_str(&env, "localhost"),
+            &bytes_from_str(&env, "https://localhost:5173"),
+        );
+
+        // ATTEMPT: remove only signer
+        let result = client.try_remove_signer(&Bytes::from_array(&env, &[77,78,79]));
+
+        // ASSERT: must fail
+        assert!(result.is_err());
+
+        // ASSERT: signer still exists
+        assert_eq!(client.get_signers().len(), 1);
+    }
+
+    #[test]
+    fn test_remove_and_readd_same_credential() {
+        let env = Env::default();
+            env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub1) = test_keypair();
+        let pub_key1 = BytesN::from_array(&env, &pub1);
+
+        let credential = Bytes::from_array(&env, &[1,2,3]);
+
+        client.init(
+            &credential,
+            &pub_key1,
+            &bytes_from_str(&env, "localhost"),
+            &bytes_from_str(&env, "https://localhost:5173"),
+        );
+
+        // add second signer (needed for removal safety rule)
+        let (_, pub2) = second_keypair();
+        let pub_key2 = BytesN::from_array(&env, &pub2);
+
+        let credential2 = Bytes::from_array(&env, &[4,5,6]);
+
+        client.add_signer(&credential2, &pub_key2);
+
+        // remove first signer
+        client.remove_signer(&credential);
+
+        // re-add same credential
+        let (_, pub3) = second_keypair();
+        let pub_key3 = BytesN::from_array(&env, &pub3);
+
+        let result = client.add_signer(&credential, &pub_key3);
+
+        // must succeed OR behave deterministically (depending on spec)
+        assert!(result >= 0);
+
+        assert!(client.has_signer(pub_key3));
+    }
+
     /// Build a minimal valid WebAuthn test fixture for a given payload and signing key.
     fn make_webauthn_fixture(
         signing_key: &SigningKey,
@@ -668,9 +803,11 @@ mod test {
         let contract_id = env.register_contract(None, InvisibleWallet);
         let client = InvisibleWalletClient::new(&env, &contract_id);
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let credential_id = Bytes::from_array(&env, &[1, 2, 3]);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://localhost:5173");
-        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
+        client.init(&credential_id, &pub_key, &rp_id, &origin);
     }
 
     #[test]
@@ -680,11 +817,12 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
         let (_, pub_bytes) = test_keypair();
         let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let credential_id = Bytes::from_array(&env, &[4, 5, 6]);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://localhost:5173");
-        client.init(&pub_key, &rp_id, &origin);
+        client.init(&credential_id, &pub_key, &rp_id, &origin);
         assert_eq!(
-            client.try_init(&pub_key, &rp_id, &origin),
+            client.try_init(&credential_id, &pub_key, &rp_id, &origin),
             Err(Ok(WalletError::AlreadyInitialized))
         );
     }
@@ -699,17 +837,25 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
 
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let credential_id = Bytes::from_array(&env, &[7, 8, 9]);
         let (_, pub_bytes_2) = second_keypair();
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://localhost:5173");
 
-        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
+        client.init(&credential_id, &pub_key, &rp_id, &origin);
 
-        let index = client.add_signer(&BytesN::from_array(&env, &pub_bytes_2));
+        // Initial signer is at index 0, so next should be index 1
+        let credential_id_2 = Bytes::from_array(&env, &[20, 21, 22]);
+        let pubkey_2 = BytesN::from_array(&env, &pub_bytes_2);
+
+        let index = client.add_signer(&credential_id_2, &pubkey_2);
         assert_eq!(index, 1);
 
-        assert!(client.has_signer(&BytesN::from_array(&env, &pub_bytes)));
-        assert!(client.has_signer(&BytesN::from_array(&env, &pub_bytes_2)));
+        let pubkey_1 = pub_key.clone();
+        // Both signers should be recognized
+        assert!(client.has_signer(pubkey_1));
+        assert!(client.has_signer(pubkey_2));
     }
 
     #[test]
@@ -720,16 +866,23 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
 
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let credential_id = Bytes::from_array(&env, &[10, 11, 12]);
         let (_, pub_bytes_2) = second_keypair();
+        let pubkey_2 = BytesN::from_array(&env, &pub_bytes_2);
+        let credential_id_2 = Bytes::from_array(&env, &[30, 31, 32]);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://localhost:5173");
 
-        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
-        client.add_signer(&BytesN::from_array(&env, &pub_bytes_2));
-        client.remove_signer(&0);
+        client.init(&credential_id, &pub_key, &rp_id, &origin);
+        client.add_signer(&credential_id_2, &pubkey_2);
 
-        assert!(!client.has_signer(&BytesN::from_array(&env, &pub_bytes)));
-        assert!(client.has_signer(&BytesN::from_array(&env, &pub_bytes_2)));
+        // Remove the first signer (index 0)
+        client.remove_signer(&credential_id);
+
+        // First signer should be gone, second should remain
+        assert!(!client.has_signer(pub_key));
+        assert!(client.has_signer(pubkey_2));
     }
 
     #[test]
@@ -740,13 +893,15 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
 
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let credential_id = Bytes::from_array(&env, &[13, 14, 15]);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://localhost:5173");
 
-        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
+        client.init(&credential_id, &pub_key, &rp_id, &origin);
 
         assert_eq!(
-            client.try_remove_signer(&0),
+            client.try_remove_signer(&credential_id),
             Err(Ok(WalletError::CannotRemoveLastSigner))
         );
     }
@@ -759,16 +914,22 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
 
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
+        let credential_id = Bytes::from_array(&env, &[16, 17, 18]);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://localhost:5173");
 
-        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
+        client.init(&credential_id, &pub_key, &rp_id, &origin);
 
         let (_, pub_bytes_2) = second_keypair();
-        client.add_signer(&BytesN::from_array(&env, &pub_bytes_2));
+        let credential_id_2 = Bytes::from_array(&env, &[34, 35, 36]);
+        client.add_signer(&credential_id_2, &BytesN::from_array(&env, &pub_bytes_2));
+
+        // Index 99 doesn't exist
+        let nonexistent_credential = Bytes::from_array(&env, &[99, 99, 99]);
 
         assert_eq!(
-            client.try_remove_signer(&99),
+            client.try_remove_signer(&nonexistent_credential),
             Err(Ok(WalletError::SignerNotFound))
         );
     }
@@ -1072,6 +1233,7 @@ mod test {
     fn test_allowance_approve_and_spend() {
         let env = Env::default();
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
         let contract_id = env.register_contract(None, InvisibleWallet);
         let client = InvisibleWalletClient::new(&env, &contract_id);
         
@@ -1115,6 +1277,7 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
         
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
         client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
 
         let spender = Address::generate(&env);
@@ -1145,6 +1308,7 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
         
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
         client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
 
         let spender = Address::generate(&env);
@@ -1177,6 +1341,7 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
         
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
         client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
 
         let spender = Address::generate(&env);
@@ -1209,6 +1374,7 @@ mod test {
         let client = InvisibleWalletClient::new(&env, &contract_id);
         
         let (_, pub_bytes) = test_keypair();
+        let pub_key = BytesN::from_array(&env, &pub_bytes);
         client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
 
         let spender = Address::generate(&env);

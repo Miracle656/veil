@@ -5,6 +5,7 @@ use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Map};
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PendingRecovery {
+    pub credential_id: Bytes,
     pub new_public_key: BytesN<65>,
     pub recovery_unlock_time: u64,
 }
@@ -46,66 +47,57 @@ pub struct Allowance {
 
 // ── Signers (Map-based) ──────────────────────────────────────────────────────
 
-/// Initialise the signer map with a single key at index 0.
-pub fn init_signers(env: &Env, key: &BytesN<65>) {
-    let mut signers: Map<u32, BytesN<65>> = Map::new(env);
-    signers.set(0, key.clone());
+/// Initialise the signer map with the first credential_id → public_key pair.
+pub fn init_signers(env: &Env, credential_id: Bytes, key: BytesN<65>) {
+    let mut signers: Map<Bytes, BytesN<65>> = Map::new(env);
+    signers.set(credential_id, key);
     env.storage().instance().set(&DataKey::Signers, &signers);
 }
 
-/// Add a new signer and return its index.
-pub fn add_signer(env: &Env, key: &BytesN<65>) -> u32 {
+///  Add a new signer (credential_id → public_key).
+pub fn add_signer(env: &Env, credential_id: Bytes, key: BytesN<65>) {
     let mut signers = get_signers(env);
-    let next_index = signers.len();
-    signers.set(next_index, key.clone());
+    require_existing_signer(env);
+    signers.set(credential_id, key);
     env.storage().instance().set(&DataKey::Signers, &signers);
-    next_index
 }
 
 /// Remove a signer by index. Returns true if the signer existed and was removed.
-pub fn remove_signer(env: &Env, index: u32) -> bool {
+pub fn remove_signer(env: &Env, credential_id: &Bytes) -> Result<bool, WalletError> {
     let mut signers = get_signers(env);
-    if signers.contains_key(index) {
-        signers.remove(index);
+    require_existing_signer(env);
+      if signers.len() == 1 {
+        return Err(WalletError::CannotRemoveLastSigner);
+    }    
+      if signers.contains_key(credential_id) {
+        signers.remove(credential_id);
         env.storage().instance().set(&DataKey::Signers, &signers);
-        true
+        Ok(true)
     } else {
-        false
+        Ok(false)
     }
-}
-
-/// Check if any signer key matches the given public key.
-pub fn has_signer(env: &Env, key: &BytesN<65>) -> bool {
-    let signers = get_signers(env);
-    for (_index, stored_key) in signers.iter() {
-        if stored_key == *key {
-            return true;
-        }
-    }
-    false
-}
-
-/// Get the number of registered signers.
-pub fn signer_count(env: &Env) -> u32 {
-    get_signers(env).len()
 }
 
 /// Get the full signers map.
-pub fn get_signers(env: &Env) -> Map<u32, BytesN<65>> {
+pub fn get_signers(env: &Env) -> Map<Bytes, BytesN<65>> {
     env.storage()
         .instance()
         .get(&DataKey::Signers)
         .unwrap_or_else(|| Map::new(env))
 }
 
-// â”€â”€ Guardian â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-pub fn set_guardian(env: &Env, guardian_key: &BytesN<65>) {
-    env.storage().instance().set(&DataKey::Guardian, guardian_key);
+pub fn get_signer(env: &Env, credential_id: &Bytes) -> Option<BytesN<65>> {
+    get_signers(env).get(credential_id)
 }
 
-pub fn get_guardian(env: &Env) -> Option<BytesN<65>> {
-    env.storage().instance().get(&DataKey::Guardian)
+// â”€â”€ Guardian â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+pub fn set_guardian(env: &Env, guardian_key: &Address) {
+    env.storage().persistent().set(&DataKey::Guardian, guardian_key);
+}
+
+pub fn get_guardian(env: &Env) -> Option<Address> {
+    env.storage().persistent().get(&DataKey::Guardian)
 }
 
 // â”€â”€ RP ID â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

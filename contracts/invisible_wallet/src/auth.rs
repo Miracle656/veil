@@ -3,7 +3,7 @@ use crate::WalletError;
 
 #[contracttype]
 pub struct WebAuthnSignature {
-    pub public_key: BytesN<65>,
+    pub credential_id: Bytes,
     pub auth_data: Bytes,
     pub client_data_json: Bytes,
     pub signature: BytesN<64>,
