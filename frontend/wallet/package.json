@@ -23,7 +23,7 @@
     "framer-motion": "^11.0.0",
     "invisible-wallet-sdk": "file:../../sdk",
     "jsqr": "^1.4.0",
-    "lucide-react": "^1.7.0",
+    "lucide-react": "^1.16.0",
     "next": "^14.2.29",
     "next-pwa": "^5.6.0",
     "qrcode.react": "^4.2.0",
