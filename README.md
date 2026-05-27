@@ -224,8 +224,12 @@ The agent exposes:
 
 ## Usage
 
+### React
+
+The `@veil/invisible-wallet-sdk` package provides a React hook wrapper for the core wallet:
+
 ```tsx
-import { useInvisibleWallet } from 'invisible-wallet-sdk';
+import { useInvisibleWallet } from '@veil/invisible-wallet-sdk';
 
 function App() {
   const wallet = useInvisibleWallet({
@@ -252,6 +256,38 @@ function App() {
   await wallet.initiateRecovery(newPublicKey);
   await wallet.completeRecovery(); // after 3-day timelock
 }
+```
+
+### Svelte / SvelteKit
+
+The `@veil/invisible-wallet-svelte` package provides a reactive Svelte store interface:
+
+```svelte
+<script lang="ts">
+  import { createWallet } from '@veil/invisible-wallet-svelte';
+
+  const wallet = createWallet({
+    factoryAddress: FACTORY_CONTRACT_ID,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+  });
+
+  // Subscribe to the reactive store state
+  $: ({ status, walletAddress, isDeployed, error } = $wallet);
+
+  async function handleRegister() {
+    await wallet.register('alice');
+  }
+
+  async function handleDeploy() {
+    await wallet.deploy(feePayerKeypair);
+  }
+
+  async function handleSend() {
+    // send() constructs, sims, signs with passkey, and submits transaction
+    await wallet.send(recipient, amount, feePayerKeypair);
+  }
+</script>
 ```
 
 ## Signature format

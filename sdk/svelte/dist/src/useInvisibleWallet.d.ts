@@ -1,18 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
 import { Keypair } from '@stellar/stellar-sdk';
-import {
-    InvisibleWalletCore,
-    WalletConfig,
-    RegisterResult,
-    DeployResult,
-    WebAuthnSignature,
-    AddSignerResult,
-    SignerInfo,
-    InitiateRecoveryResult,
-} from './InvisibleWalletCore';
-
+import { WalletConfig, RegisterResult, DeployResult, WebAuthnSignature, AddSignerResult, SignerInfo, InitiateRecoveryResult } from './InvisibleWalletCore';
 export * from './InvisibleWalletCore';
-
 export type InvisibleWallet = {
     /** Soroban contract address of the deployed wallet, or null if not yet registered. */
     address: string | null;
@@ -33,7 +21,9 @@ export type InvisibleWallet = {
     /**
      * Restore an existing wallet session from localStorage.
      */
-    login: () => Promise<{ walletAddress: string } | null>;
+    login: () => Promise<{
+        walletAddress: string;
+    } | null>;
     /**
      * Read the wallet contract's current nonce without submitting a transaction.
      */
@@ -69,40 +59,9 @@ export type InvisibleWallet = {
     /**
      * Get the current allowance for a spender and token.
      */
-    getAllowance: (spender: string, token: string) => Promise<{ amount: number; expiry: number | undefined } | null>;
+    getAllowance: (spender: string, token: string) => Promise<{
+        amount: number;
+        expiry: number | undefined;
+    } | null>;
 };
-
-export function useInvisibleWallet(config: WalletConfig | string): InvisibleWallet {
-    // String configurations are handled inside InvisibleWalletCore.
-    // Memoize the core instance based on the configuration parameters.
-    const configKey = typeof config === 'string'
-        ? config
-        : `${config.factoryAddress}-${config.rpcUrl}-${config.networkPassphrase}-${config.rpId ?? ''}-${config.origin ?? ''}`;
-
-    const core = useMemo(() => new InvisibleWalletCore(config), [configKey]);
-    const [state, setState] = useState(core.getState());
-
-    useEffect(() => {
-        return core.subscribe(setState);
-    }, [core]);
-
-    return useMemo(() => ({
-        address: state.address,
-        isDeployed: state.isDeployed,
-        isPending: state.isPending,
-        error: state.error,
-        register: core.register.bind(core),
-        deploy: core.deploy.bind(core),
-        login: core.login.bind(core),
-        signAuthEntry: core.signAuthEntry.bind(core),
-        getNonce: core.getNonce.bind(core),
-        addSigner: core.addSigner.bind(core),
-        removeSigner: core.removeSigner.bind(core),
-        getSigners: core.getSigners.bind(core),
-        setGuardian: core.setGuardian.bind(core),
-        initiateRecovery: core.initiateRecovery.bind(core),
-        completeRecovery: core.completeRecovery.bind(core),
-        approve: core.approve.bind(core),
-        getAllowance: core.getAllowance.bind(core),
-    }), [state, core]);
-}
+export declare function useInvisibleWallet(config: WalletConfig | string): InvisibleWallet;

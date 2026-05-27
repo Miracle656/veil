@@ -1,0 +1,37 @@
+{
+  "name": "@veil/invisible-wallet-svelte",
+  "version": "0.1.0",
+  "description": "Svelte adapter for Invisible Wallet (Soroban + WebAuthn)",
+  "type": "module",
+  "main": "dist/svelte/src/index.js",
+  "types": "dist/svelte/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/svelte/src/index.d.ts",
+      "default": "./dist/svelte/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "webauthn",
+    "passkeys",
+    "wallet",
+    "svelte"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "svelte": "^4.0.0 || ^5.0.0"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.6.1"
+  },
+  "devDependencies": {
+    "svelte": "^4.2.0",
+    "typescript": "^5.0.0"
+  }
+}
