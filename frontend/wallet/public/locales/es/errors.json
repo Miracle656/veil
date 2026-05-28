@@ -1,0 +1,10 @@
+{
+  "registration_failed": "El registro no devolvió ningún resultado",
+  "passkey_not_found": "Credencial de passkey no encontrada después del registro",
+  "friendbot_failed": "Fondeo de Friendbot falló — intenta de nuevo",
+  "mainnet_funding_required": "El despliegue en mainnet requiere una cuenta de firmante fondeada. Fondea {{address}} con XLM para comisiones, luego toca Crear billetera de nuevo.",
+  "account_load_failed": "No se pudo cargar la cuenta",
+  "deployment_failed": "Despliegue fallido",
+  "network_error": "Error de red. Por favor, verifica tu conexión.",
+  "unknown_error": "Ocurrió un error desconocido"
+}

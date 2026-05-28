@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslation } from 'react-i18next'
 
 import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation,
@@ -29,6 +30,7 @@ interface WalletAsset {
 
 export default function SendPage() {
   const router = useRouter()
+  const { t } = useTranslation(['send', 'common', 'errors'])
   useInactivityLock()
   const [step, setStep]               = useState<Step>('form')
   const [recipient, setRecipient]     = useState('')
@@ -259,7 +261,7 @@ export default function SendPage() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          Back
+          {t('common:back')}
         </button>
         <VeilLogo size={22} />
         <div style={{ width: 40 }} />
@@ -267,7 +269,7 @@ export default function SendPage() {
 
       <main className="wallet-main">
         <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '1.75rem' }}>
-          Send
+          {t('title')}
         </h2>
 
         {step === 'form' && (
@@ -276,7 +278,7 @@ export default function SendPage() {
             {assets.length > 1 && (
               <div>
                 <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  ASSET
+                  {t('asset')}
                 </label>
                 <select
                   value={selectedAsset?.code ?? ''}
@@ -297,13 +299,13 @@ export default function SendPage() {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                 <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  RECIPIENT ADDRESS
+                  {t('recipient_address')}
                 </label>
                 <button
                   onClick={() => setShowPicker(true)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold)', fontSize: '0.75rem' }}
                 >
-                  Choose from contacts
+                  {t('choose_from_contacts')}
                 </button>
               </div>
 
@@ -311,7 +313,7 @@ export default function SendPage() {
                 <input
                   className="input-field mono"
                   type="text"
-                  placeholder="G... or C..."
+                  placeholder={t('recipient_placeholder')}
                   value={recipient}
                   onChange={e => { setRecipient(e.target.value.trim()); setImgError(null) }}
                   autoComplete="off"
@@ -382,12 +384,12 @@ export default function SendPage() {
 
             <div>
               <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                AMOUNT{selectedAsset ? ` (${selectedAsset.code})` : ''}
+                {t('amount_label')}{selectedAsset ? ` (${selectedAsset.code})` : ''}
               </label>
               <input
                 className="input-field"
                 type="number"
-                placeholder="0.00"
+                placeholder={t('amount_placeholder')}
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
                 min="0"
@@ -398,12 +400,12 @@ export default function SendPage() {
 
             <div>
               <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                MEMO (OPTIONAL)
+                {t('memo_label')}
               </label>
               <input
                 className="input-field"
                 type="text"
-                placeholder="Add a note..."
+                placeholder={t('memo_placeholder')}
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
                 maxLength={28}
@@ -416,7 +418,7 @@ export default function SendPage() {
                 onClick={() => setStep('confirm')}
                 disabled={!validateForm()}
               >
-                Review
+                {t('review')}
               </button>
             </div>
           </div>
@@ -435,10 +437,10 @@ export default function SendPage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <button className="btn-gold" onClick={handleSend}>
-                Confirm &amp; sign
+                {t('confirm_and_sign')}
               </button>
               <button className="btn-ghost" onClick={() => setStep('form')}>
-                Edit
+                {t('common:edit')}
               </button>
             </div>
           </div>
@@ -449,9 +451,9 @@ export default function SendPage() {
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
               <div className="spinner spinner-light" />
             </div>
-            <p style={{ fontWeight: 500 }}>Waiting for passkey…</p>
+            <p style={{ fontWeight: 500 }}>{t('common:waiting_for_passkey')}</p>
             <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.5rem' }}>
-              Approve the prompt to authorise the transfer
+              {t('common:approve_prompt')}
             </p>
           </div>
         )}
@@ -485,13 +487,13 @@ export default function SendPage() {
               <path d="M14 14l12 12M26 14l-12 12" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round"/>
             </svg>
             <div>
-              <p style={{ fontWeight: 500 }}>Transaction failed</p>
+              <p style={{ fontWeight: 500 }}>{t('common:transaction_failed')}</p>
               <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.5rem' }}>
                 {errorMsg}
               </p>
             </div>
             <button className="btn-ghost" onClick={() => setStep('form')}>
-              Try again
+              {t('common:try_again')}
             </button>
           </div>
         )}

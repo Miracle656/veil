@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslation } from 'react-i18next'
 import { Horizon, Keypair } from '@stellar/stellar-sdk'
 import { VeilLogo } from '@/components/VeilLogo'
 import { OnboardingTutorial } from '@/components/OnboardingTutorial'
@@ -17,6 +18,7 @@ type Step = 'landing' | 'registering' | 'deploying' | 'done'
 
 export default function OnboardingPage() {
   const router = useRouter()
+  const { t } = useTranslation(['common', 'errors'])
   const [step, setStep] = useState<Step>('landing')
   const [error, setError] = useState<string | null>(null)
   const [address, setAddress] = useState<string | null>(null)

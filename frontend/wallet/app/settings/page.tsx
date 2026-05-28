@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslation } from 'react-i18next'
 import { Keypair } from '@stellar/stellar-sdk'
 import { VeilLogo } from '@/components/VeilLogo'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
 import { useWalletConnect } from '@/lib/walletConnect'
@@ -134,6 +136,7 @@ function ConnectedApps() {
 
 export default function SettingsPage() {
   const router = useRouter()
+  const { t } = useTranslation(['settings', 'common'])
   const [address, setAddress] = useState<string | null>(null)
   const [section, setSection] = useState<Section>('overview')
   const [status, setStatus] = useState<string | null>(null)
@@ -407,6 +410,11 @@ export default function SettingsPage() {
 
               {/* ── Connected Apps ── */}
               <ConnectedApps />
+
+              {/* ── Language Switcher ── */}
+              <div style={{ marginTop: '2rem' }}>
+                <LanguageSwitcher />
+              </div>
             </div>
           </>
         )}

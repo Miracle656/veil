@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { InstallBanner } from './InstallBanner'
+import '@/lib/i18n'
 
 export const metadata: Metadata = {
   title: 'Veil Wallet',

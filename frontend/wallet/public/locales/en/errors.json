@@ -1,0 +1,10 @@
+{
+  "registration_failed": "Registration returned no result",
+  "passkey_not_found": "Passkey credential not found after registration",
+  "friendbot_failed": "Friendbot funding failed — try again",
+  "mainnet_funding_required": "Mainnet deployment requires a funded signer account. Fund {{address}} with XLM for fees, then tap Create wallet again.",
+  "account_load_failed": "Could not load account",
+  "deployment_failed": "Deployment failed",
+  "network_error": "Network error. Please check your connection.",
+  "unknown_error": "An unknown error occurred"
+}

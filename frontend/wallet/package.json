@@ -21,6 +21,8 @@
     "@walletconnect/utils": "^2.23.0",
     "@walletconnect/web3wallet": "^1.16.1",
     "framer-motion": "^12.40.0",
+    "i18next": "^26.3.0",
+    "i18next-browser-languagedetector": "^8.2.1",
     "invisible-wallet-sdk": "file:../../sdk",
     "jsqr": "^1.4.0",
     "lucide-react": "^1.16.0",
@@ -28,7 +30,8 @@
     "next-pwa": "^5.6.0",
     "qrcode.react": "^4.2.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
