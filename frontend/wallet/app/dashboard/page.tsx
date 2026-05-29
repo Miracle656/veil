@@ -1,6 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useCallback, useState } from 'react'
+export const dynamic = 'force-dynamic'
+
+import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import {
@@ -40,7 +42,7 @@ let cachedContractXlm:  number                        | null = null
 let cachedPrices:       Record<string, number | null>        = {}
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
-export default function DashboardPage() {
+function DashboardPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   useInactivityLock()
@@ -942,6 +944,14 @@ export default function DashboardPage() {
         />
       )}
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="wallet-shell"><main className="wallet-main" /></div>}>
+      <DashboardPageContent />
+    </Suspense>
   )
 }
 
