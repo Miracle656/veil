@@ -13,6 +13,11 @@ on:
       - 'frontend/wallet/**'
       - 'sdk/**'
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   e2e-tests:
     name: Run Playwright E2E Tests

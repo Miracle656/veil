@@ -6,7 +6,7 @@
  * physical biometric hardware.
  */
 
-import type { BrowserContext, CDPSession } from '@playwright/test';
+import type { BrowserContext, CDPSession, Page } from '@playwright/test';
 
 export interface VirtualAuthenticator {
   cdpSession: CDPSession;
@@ -24,14 +24,14 @@ export interface WebAuthnCredential {
 }
 
 /**
- * Add a virtual WebAuthn authenticator to a browser context.
+ * Add a virtual WebAuthn authenticator to a page.
  * 
- * @param context - The Playwright browser context
+ * @param page - The Playwright page to attach the authenticator to
  * @param options - Optional authenticator configuration
  * @returns The CDP session and authenticator ID
  */
 export async function addVirtualAuthenticator(
-  context: BrowserContext,
+  page: Page,
   options?: {
     protocol?: 'ctap2' | 'u2f';
     transport?: 'usb' | 'nfc' | 'ble' | 'internal';
@@ -41,8 +41,7 @@ export async function addVirtualAuthenticator(
     automaticPresenceSimulation?: boolean;
   }
 ): Promise<VirtualAuthenticator> {
-  const page = await context.newPage();
-  const cdpSession = await context.newCDPSession(page);
+  const cdpSession = await page.context().newCDPSession(page);
   
   await cdpSession.send('WebAuthn.enable', { enableUI: false });
   
@@ -56,8 +55,6 @@ export async function addVirtualAuthenticator(
       automaticPresenceSimulation: options?.automaticPresenceSimulation ?? true,
     },
   });
-  
-  await page.close();
   
   return { cdpSession, authenticatorId };
 }
