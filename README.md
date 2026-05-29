@@ -207,6 +207,24 @@ npm install
 npm run build
 ```
 
+### SDK bundle size budget
+
+The SDK's public entry points are protected by a [`size-limit`](https://github.com/ai/size-limit) budget so accidental dependency bloat is caught before it ships to integrators. CI runs `npm run size` on every push and pull request and fails the build if any entry point exceeds its limit.
+
+```bash
+cd sdk
+npm run size
+```
+
+Current budgets (brotli-compressed, includes all transitive deps):
+
+| Entry point       | Limit  |
+| ----------------- | ------ |
+| `dist/index.js`   | 230 KB |
+| `dist/vanilla.js` | 225 KB |
+
+If you legitimately need more headroom, raise the relevant `limit` in the `size-limit` block of `sdk/package.json` in the same PR that introduces the growth, and call out the increase in the PR description so reviewers can sanity-check the cause.
+
 ### Run the agent locally
 
 ```bash

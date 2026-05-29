@@ -16,7 +16,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "jest"
+    "test": "jest",
+    "size": "npm run build && size-limit"
   },
   "keywords": [
     "stellar",
@@ -31,6 +32,7 @@
     "@stellar/stellar-sdk": "^14.6.1"
   },
   "devDependencies": {
+    "@size-limit/preset-small-lib": "^12.1.0",
     "@testing-library/react": "^16.0.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.0.0",
@@ -40,13 +42,16 @@
     "jest-environment-jsdom": "^29.7.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "size-limit": "^12.1.0",
     "ts-jest": "^29.2.0",
     "typescript": "^5.0.0"
   },
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "jsdom",
-    "setupFiles": ["./jest.setup.ts"],
+    "setupFiles": [
+      "./jest.setup.ts"
+    ],
     "testMatch": [
       "**/__tests__/**/*.test.ts"
     ],
@@ -62,5 +67,17 @@
         }
       }
     }
-  }
+  },
+  "size-limit": [
+    {
+      "name": "main (React hook + utils)",
+      "path": "dist/index.js",
+      "limit": "230 KB"
+    },
+    {
+      "name": "vanilla",
+      "path": "dist/vanilla.js",
+      "limit": "225 KB"
+    }
+  ]
 }
