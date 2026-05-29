@@ -1,0 +1,53 @@
+{
+  "name": "@veil/invisible-wallet-vue",
+  "version": "0.1.0",
+  "description": "Vue 3 adapter for invisible-wallet-sdk",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "vue": "^3.0.0",
+    "@stellar/stellar-sdk": "^11.0.0",
+    "invisible-wallet-sdk": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0",
+    "vite-plugin-dts": "^3.0.0",
+    "vue": "^3.4.0",
+    "invisible-wallet-sdk": "^0.1.0"
+  },
+  "keywords": [
+    "veil",
+    "invisible-wallet",
+    "vue",
+    "vue3",
+    "composable",
+    "stellar",
+    "soroban",
+    "webauthn"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Miracle656/veil.git",
+    "directory": "sdk/vue"
+  }
+}
