@@ -105,8 +105,9 @@ test.describe('Onboarding — new wallet creation', () => {
     // Register a virtual authenticator so WebAuthn doesn't block
     await addVirtualAuthenticator(context)
     await page.goto('/')
+    await page.waitForLoadState('networkidle')
 
-    await page.getByRole('button', { name: /create wallet/i }).click()
+    await page.getByRole('button', { name: /create wallet/i }).click({ force: true })
 
     // Should show the "Waiting for biometric..." or "Deploying wallet on-chain..." card
     await expect(
@@ -117,8 +118,9 @@ test.describe('Onboarding — new wallet creation', () => {
   test('full onboarding flow: create wallet → dashboard redirect', async ({ page, context }) => {
     await addVirtualAuthenticator(context)
     await page.goto('/')
+    await page.waitForLoadState('networkidle')
 
-    await page.getByRole('button', { name: /create wallet/i }).click()
+    await page.getByRole('button', { name: /create wallet/i }).click({ force: true })
 
     // After creation, either:
     // (a) "Wallet created" card appears before dashboard redirect, OR

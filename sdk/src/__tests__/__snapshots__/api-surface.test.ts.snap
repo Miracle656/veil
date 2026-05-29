@@ -1,0 +1,28 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
+[
+  "NoGuardianSet: function(arity: 0)",
+  "RecoveryNotPending: function(arity: 0)",
+  "RecoveryTimelockActive: function(arity: 1)",
+  "base64UrlEncode: function(arity: 1)",
+  "bufferToHex: function(arity: 1)",
+  "computeWalletAddress: function(arity: 2)",
+  "computeWebAuthnMessageHash: function(arity: 2)",
+  "derToRawSignature: function(arity: 1)",
+  "encodeU64: function(arity: 1)",
+  "extractP256PublicKey: function(arity: 1)",
+  "hexToUint8Array: function(arity: 1)",
+  "parseAuthData: function(arity: 1)",
+  "parseClientDataJSON: function(arity: 1)",
+  "sha256: function(arity: 1)",
+  "useInvisibleWallet: function(arity: 1)",
+]
+`;
+
+exports[`SDK API Surface should match the snapshot for vanilla SDK exports 1`] = `
+[
+  "InvisibleWallet: class(constructor arity: 1)",
+  "createInvisibleWallet: class(constructor arity: 1)",
+]
+`;
