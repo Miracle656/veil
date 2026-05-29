@@ -5,25 +5,37 @@ import {
     Keypair,
     rpc as SorobanRpc,
     Horizon,
-    StrKey,
     TransactionBuilder,
     BASE_FEE,
     xdr,
     nativeToScVal,
     scValToNative,
     Networks,
+    hash as stellarHash,
 } from '@stellar/stellar-sdk';
 
 const HorizonServer = Horizon.Server;
 import {
     bufferToHex,
     hexToUint8Array,
-    derToRawSignature,
-    extractP256PublicKey,
     computeWalletAddress,
 } from './utils';
+import { webAuthnProvider } from './webauthn';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Minimal key–value storage interface compatible with both localStorage (web)
+ * and async stores like AsyncStorage (React Native).
+ *
+ * Pass a custom adapter via WalletConfig.storage to override the default
+ * (localStorage on web, no-op if localStorage is unavailable).
+ */
+export type StorageAdapter = {
+    getItem(key: string): string | null | Promise<string | null>;
+    setItem(key: string, value: string): void | Promise<void>;
+    removeItem?(key: string): void | Promise<void>;
+};
 
 /**
  * Configuration passed when mounting the hook.
@@ -37,10 +49,21 @@ export type WalletConfig = {
     rpcUrl: string;
     /** Stellar network passphrase. Use Networks.TESTNET or Networks.PUBLIC. */
     networkPassphrase: string;
-    /** The WebAuthn relying party ID (e.g. "localhost"). Optional — defaults to window.location.hostname. */
+    /** The WebAuthn relying party ID (e.g. "localhost"). Required for React Native. */
     rpId?: string;
-    /** The WebAuthn origin (e.g. "https://veil.app"). Optional — defaults to window.location.origin. */
+    /** The WebAuthn origin (e.g. "https://veil.app"). Required for React Native. */
     origin?: string;
+    /**
+     * Optional storage adapter for persisting wallet credentials.
+     * Defaults to localStorage on web. Pass AsyncStorage (or a compatible adapter)
+     * when running in React Native.
+     *
+     * @example
+     * // React Native with @react-native-async-storage/async-storage:
+     * import AsyncStorage from '@react-native-async-storage/async-storage';
+     * const config = { ..., storage: AsyncStorage };
+     */
+    storage?: StorageAdapter;
 };
 
 /**
@@ -143,7 +166,7 @@ type InvisibleWallet = {
      *                       fee source. Separate from the passkey — pays fees only,
      *                       does not control the wallet.
      * @param publicKeyBytes Optional override for the P-256 public key. Defaults to
-     *                       the key stored in localStorage by register().
+     *                       the key stored in storage by register().
      * @returns The deployed wallet's contract address and whether it was already live.
      */
     deploy: (signerKeypair: Keypair | string, publicKeyBytes?: Uint8Array) => Promise<DeployResult>;
@@ -154,7 +177,7 @@ type InvisibleWallet = {
      */
     signAuthEntry: (signaturePayload: Uint8Array) => Promise<WebAuthnSignature | null>;
     /**
-     * Restore an existing wallet session from localStorage.
+     * Restore an existing wallet session from storage.
      * Verifies that the wallet contract actually exists on-chain before setting the address.
      */
     login: () => Promise<{ walletAddress: string } | null>;
@@ -219,7 +242,7 @@ type InvisibleWallet = {
     /**
      * Set a spending limit for a specific token and spender.
      * Requires WebAuthn authentication.
-     * 
+     *
      * @param signerKeypair Stellar Keypair used as the transaction fee source.
      * @param spender       Stellar address of the spender.
      * @param token         Stellar address of the token contract.
@@ -229,7 +252,7 @@ type InvisibleWallet = {
     approve: (signerKeypair: Keypair, spender: string, token: string, amount: number, expiry?: number) => Promise<void>;
     /**
      * Get the current allowance for a spender and token.
-     * 
+     *
      * @param spender       Stellar address of the spender.
      * @param token         Stellar address of the token contract.
      * @returns Object with amount and expiry, or null if no allowance exists.
@@ -260,6 +283,19 @@ async function waitForTransaction(
     throw new Error(`Transaction ${hash} not confirmed after ${POLL_MAX_ATTEMPTS} attempts`);
 }
 
+/** Build a storage adapter from the config, defaulting to localStorage on web. */
+function resolveStorage(storage?: StorageAdapter): StorageAdapter {
+    if (storage) return storage;
+    if (typeof localStorage !== 'undefined') {
+        return {
+            getItem:    (k) => localStorage.getItem(k),
+            setItem:    (k, v) => localStorage.setItem(k, v),
+            removeItem: (k) => localStorage.removeItem(k),
+        };
+    }
+    return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
@@ -270,9 +306,19 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     const [isPending, setIsPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const store = useMemo(() => resolveStorage(config.storage), [config.storage]);
+
     useEffect(() => {
-        const stored = localStorage.getItem('invisible_wallet_address');
-        if (stored) setAddress(stored);
+        // Support both synchronous (localStorage) and asynchronous (AsyncStorage) adapters.
+        // The synchronous branch keeps the existing test behaviour unchanged.
+        const maybeStored = store.getItem('invisible_wallet_address');
+        if (maybeStored && typeof (maybeStored as Promise<unknown>).then === 'function') {
+            (maybeStored as Promise<string | null>).then((v) => { if (v) setAddress(v); });
+        } else {
+            const stored = maybeStored as string | null;
+            if (stored) setAddress(stored);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // ── register ──────────────────────────────────────────────────────────────
@@ -282,40 +328,29 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         setError(null);
         try {
             const challenge = crypto.getRandomValues(new Uint8Array(32));
-            const name = username || 'Veil User';
-            const userId = username ? new TextEncoder().encode(username) : crypto.getRandomValues(new Uint8Array(16));
+            const name      = username || 'Veil User';
+            const userId    = username
+                ? new TextEncoder().encode(username)
+                : crypto.getRandomValues(new Uint8Array(16));
 
-            const credential = await navigator.credentials.create({
-                publicKey: {
-                    challenge,
-                    rp: { name: 'Invisible Wallet' },
-                    user: {
-                        id: userId,
-                        name: name,
-                        displayName: name,
-                    },
-                    pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-                    timeout: 60_000,
-                    authenticatorSelection: {
-                        residentKey: 'preferred',
-                        userVerification: 'required',
-                    },
-                },
-            }) as PublicKeyCredential;
+            const resolvedRpId = rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
 
-            if (!credential) throw new Error('Credential creation failed');
+            const { credentialId, publicKeyBytes } = await webAuthnProvider.create({
+                challenge,
+                rpId:     resolvedRpId,
+                rpName:   'Invisible Wallet',
+                userId,
+                userName: name,
+            });
 
-            const response = credential.response as AuthenticatorAttestationResponse;
-            const publicKeyBytes = await extractP256PublicKey(response);
-            const publicKeyHex = bufferToHex(publicKeyBytes);
-
+            const publicKeyHex  = bufferToHex(publicKeyBytes);
             const walletAddress = computeWalletAddress(factoryAddress, publicKeyBytes, networkPassphrase);
 
-            localStorage.setItem('invisible_wallet_address',    walletAddress);
-            localStorage.setItem('invisible_wallet_key_id',     credential.id);
-            localStorage.setItem('invisible_wallet_public_key', publicKeyHex);
+            await store.setItem('invisible_wallet_address',    walletAddress);
+            await store.setItem('invisible_wallet_key_id',     credentialId);
+            await store.setItem('invisible_wallet_public_key', publicKeyHex);
             setAddress(walletAddress);
-            setIsDeployed(false); // New registration, not yet deployed
+            setIsDeployed(false);
 
             return { walletAddress, publicKeyBytes };
 
@@ -326,7 +361,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [factoryAddress, networkPassphrase]);
+    }, [factoryAddress, networkPassphrase, rpId, store]);
 
     // ── deploy ────────────────────────────────────────────────────────────────
 
@@ -334,8 +369,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         signerSecret: string | Keypair,
         publicKeyBytes?: Uint8Array
     ): Promise<DeployResult> => {
-        // Always reconstruct Keypair from the SDK's own stellar-sdk instance to avoid
-        // XDR type mismatches when the caller imports stellar-sdk from a different copy.
         const signerKeypair = typeof signerSecret === 'string'
             ? Keypair.fromSecret(signerSecret)
             : Keypair.fromSecret(signerSecret.secret());
@@ -343,24 +376,19 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         setError(null);
         let walletAddress: string | undefined;
         try {
-            // Resolve the public key — prefer explicit param, fall back to localStorage.
             let pubKeyBytes = publicKeyBytes;
             if (!pubKeyBytes) {
-                const hex = localStorage.getItem('invisible_wallet_public_key');
+                const hex = await store.getItem('invisible_wallet_public_key');
                 if (!hex) throw new Error(
                     'No public key found. Call register() first, or pass publicKeyBytes explicitly.'
                 );
                 pubKeyBytes = hexToUint8Array(hex);
             }
 
-            // Pre-compute the deterministic address — available to the catch block too.
             walletAddress = computeWalletAddress(factoryAddress, pubKeyBytes, networkPassphrase);
 
             const server = new SorobanRpc.Server(rpcUrl);
 
-            // ── Build transaction ─────────────────────────────────────────────
-            // Use Horizon to load the source account — Soroban RPC's getAccount
-            // can return XDR union types that stellar-sdk v11 doesn't recognise.
             const horizonUrl = networkPassphrase === Networks.TESTNET
                 ? 'https://horizon-testnet.stellar.org'
                 : 'https://horizon.stellar.org';
@@ -368,8 +396,11 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             const sourceAccount = await horizon.loadAccount(signerKeypair.publicKey());
             const factory = new Contract(factoryAddress);
 
-            const rpIdBytes  = new TextEncoder().encode(rpId ?? window.location.hostname);
-            const originBytes = new TextEncoder().encode(origin ?? window.location.origin);
+            const resolvedRpId  = rpId    ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
+            const resolvedOrigin = origin ?? (typeof window !== 'undefined' ? window.location.origin  : `https://${resolvedRpId}`);
+
+            const rpIdBytes   = new TextEncoder().encode(resolvedRpId);
+            const originBytes = new TextEncoder().encode(resolvedOrigin);
 
             const tx = new TransactionBuilder(sourceAccount, {
                 fee: BASE_FEE,
@@ -386,20 +417,14 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 .setTimeout(30)
                 .build();
 
-            // ── Simulate → discover footprint + resource fees ─────────────────
-            // Soroban requires simulation before submission. The simulation tells the
-            // network which ledger entries (storage keys) this tx reads and writes.
-            // Without it, the node rejects the transaction outright.
             const sim = await server.simulateTransaction(tx);
             if (SorobanRpc.Api.isSimulationError(sim)) {
                 throw new Error(`Simulation failed: ${sim.error}`);
             }
 
-            // ── Assemble → injects soroban data + accurate fee into the tx ────
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
             assembled.sign(signerKeypair);
 
-            // ── Submit ────────────────────────────────────────────────────────
             const sendResult = await server.sendTransaction(assembled);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
@@ -407,7 +432,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 );
             }
 
-            // ── Poll for confirmation ─────────────────────────────────────────
             const txResult = await waitForTransaction(server, sendResult.hash);
             if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
                 throw new Error(`Transaction failed with status: ${txResult.status}`);
@@ -415,7 +439,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             setAddress(walletAddress);
             setIsDeployed(true);
-            localStorage.setItem('invisible_wallet_address', walletAddress);
+            await store.setItem('invisible_wallet_address', walletAddress);
             return { walletAddress, alreadyDeployed: false };
 
         } catch (err: unknown) {
@@ -425,11 +449,10 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             } else {
                 try { message = JSON.stringify(err); } catch { message = String(err); }
             }
-            // If factory says already deployed, treat as success
             if (message.toLowerCase().includes('alreadydeployed') || message.toLowerCase().includes('already_deployed')) {
                 setAddress(walletAddress!);
                 setIsDeployed(true);
-                localStorage.setItem('invisible_wallet_address', walletAddress!);
+                await store.setItem('invisible_wallet_address', walletAddress!);
                 return { walletAddress: walletAddress!, alreadyDeployed: true };
             }
             setError(message);
@@ -437,7 +460,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [factoryAddress, rpcUrl, networkPassphrase]);
+    }, [factoryAddress, rpcUrl, networkPassphrase, rpId, origin, store]);
 
     // ── login ─────────────────────────────────────────────────────────────────
 
@@ -445,7 +468,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         setIsPending(true);
         setError(null);
         try {
-            const stored = localStorage.getItem('invisible_wallet_address');
+            const stored = await store.getItem('invisible_wallet_address');
             if (!stored) {
                 setError('No wallet found. Please register first.');
                 return null;
@@ -453,14 +476,12 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const server = new SorobanRpc.Server(rpcUrl);
 
-            // Verify the wallet actually exists on-chain before restoring session
             try {
                 await server.getContractData(
                     stored,
                     xdr.ScVal.scvLedgerKeyContractInstance(),
                     SorobanRpc.Durability.Persistent
                 );
-                // Reached here → entry found → already deployed.
                 setAddress(stored);
                 setIsDeployed(true);
                 return { walletAddress: stored };
@@ -472,7 +493,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                     setIsDeployed(false);
                     return null;
                 } else {
-                    throw e; // Real network error
+                    throw e;
                 }
             }
         } catch (err: unknown) {
@@ -481,7 +502,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [rpcUrl]);
+    }, [rpcUrl, store]);
 
     // ── signAuthEntry ─────────────────────────────────────────────────────────
 
@@ -491,8 +512,8 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         setIsPending(true);
         setError(null);
         try {
-            const keyId        = localStorage.getItem('invisible_wallet_key_id');
-            const publicKeyHex = localStorage.getItem('invisible_wallet_public_key');
+            const keyId        = await store.getItem('invisible_wallet_key_id');
+            const publicKeyHex = await store.getItem('invisible_wallet_public_key');
             if (!keyId)        throw new Error('No key ID found. Please register first.');
             if (!publicKeyHex) throw new Error('No public key found. Please register first.');
 
@@ -505,29 +526,15 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 signaturePayload.byteOffset + signaturePayload.byteLength
             ) as ArrayBuffer;
 
-            const credIdBin = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'));
-            const credId = Uint8Array.from(credIdBin, c => c.charCodeAt(0));
+            const { authData, clientDataJSON, signature } = await webAuthnProvider.authenticate({
+                challenge,
+                credentialId: keyId,
+                rpId,
+            });
 
-            const assertion = await navigator.credentials.get({
-                publicKey: {
-                    challenge,
-                    allowCredentials: [{ id: credId, type: 'public-key' }],
-                    userVerification: 'required',
-                },
-            }) as PublicKeyCredential;
-
-            if (!assertion) throw new Error('Signing was cancelled');
-
-            const response = assertion.response as AuthenticatorAssertionResponse;
-            const rawSignature = derToRawSignature(response.signature);
             const publicKeyBytes = hexToUint8Array(publicKeyHex);
 
-            return {
-                publicKey:      publicKeyBytes,
-                authData:       new Uint8Array(response.authenticatorData),
-                clientDataJSON: new Uint8Array(response.clientDataJSON),
-                signature:      rawSignature,
-            };
+            return { publicKey: publicKeyBytes, authData, clientDataJSON, signature };
 
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err));
@@ -535,14 +542,10 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, []);
+    }, [rpId, store]);
 
     // ── getNonce ──────────────────────────────────────────────────────────────
 
-    /**
-     * Read the wallet contract's current nonce via simulation (read-only).
-     * Does NOT submit a transaction.
-     */
     const getNonce = useCallback(async (): Promise<bigint> => {
         setIsPending(true);
         setError(null);
@@ -585,10 +588,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
     // ── addSigner ─────────────────────────────────────────────────────────────
 
-    /**
-     * Register an additional P-256 public key as a valid signer on the wallet.
-     * Follows: simulate → build → sign → submit → poll.
-     */
     const addSigner = useCallback(async (
         signerKeypair: Keypair,
         newPublicKeyBytes: Uint8Array
@@ -660,9 +659,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
     // ── getSigners ────────────────────────────────────────────────────────────
 
-    /**
-     * Read the full list of registered signers via simulation.
-     */
     const getSigners = useCallback(async (): Promise<SignerInfo[]> => {
         setIsPending(true);
         setError(null);
@@ -694,7 +690,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             const signersData = scValToNative(result.retval);
             const infos: SignerInfo[] = [];
 
-            // scValToNative may return a Map or a plain object depending on SDK version
             const entries: Iterable<[unknown, unknown]> =
                 signersData instanceof Map
                     ? signersData.entries()
@@ -720,10 +715,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
     // ── removeSigner ──────────────────────────────────────────────────────────
 
-    /**
-     * Remove a signer from the wallet contract by index.
-     * Follows: simulate → build → sign → submit → poll.
-     */
     const removeSigner = useCallback(async (
         signerKeypair: Keypair,
         signerIndex: number
@@ -781,10 +772,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
     // ── setGuardian ───────────────────────────────────────────────────────────
 
-    /**
-     * Set a guardian on the wallet contract. Requires WebAuthn authentication.
-     * Flow: build tx → simulate → generate auth entry → sign with passkey → submit.
-     */
     const setGuardian = useCallback(async (
         signerKeypair: Keypair,
         guardianAddress: string
@@ -811,7 +798,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 .setTimeout(30)
                 .build();
 
-            // Simulate to discover auth entries that need WebAuthn signing
             const sim = await server.simulateTransaction(tx);
             if (SorobanRpc.Api.isSimulationError(sim)) {
                 throw new Error(`Simulation failed: ${sim.error}`);
@@ -819,14 +805,12 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
 
-            // Sign auth entries that require the wallet's WebAuthn authorization.
-            // Payload = SHA-256(HashIdPreimageSorobanAuthorization XDR) — matches what the
-            // Soroban host passes to __check_auth.
             const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
             const authEntries = successSim.result?.auth;
             if (authEntries) {
+                // stellarHash is a synchronous SHA-256 — avoids crypto.subtle (unavailable on some RN setups)
                 const networkIdBytes = new Uint8Array(
-                    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(networkPassphrase))
+                    (stellarHash as (input: Buffer) => Buffer)(Buffer.from(networkPassphrase))
                 );
 
                 for (const parsed of authEntries) {
@@ -845,17 +829,17 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                         })
                     );
                     const payloadHash = new Uint8Array(
-                        await crypto.subtle.digest('SHA-256', new Uint8Array(preimage.toXDR()))
+                        (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
                     );
 
                     const webAuthnSig = await signAuthEntry(payloadHash);
                     if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
 
                     const sigVec = xdr.ScVal.scvVec([
-                        nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
-                        nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.publicKey,      { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.authData,       { type: 'bytes' }),
                         nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
-                        nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
                     ]);
 
                     parsed.credentials(
@@ -896,10 +880,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
     // ── initiateRecovery ──────────────────────────────────────────────────────
 
-    /**
-     * Initiate guardian-based key recovery. Signed using the guardian's Stellar keypair.
-     * Uses standard Transaction.sign() — no WebAuthn required.
-     */
     const initiateRecovery = useCallback(async (
         guardianKeypair: Keypair,
         newPublicKeyBytes: Uint8Array
@@ -953,7 +933,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 throw new Error(`Transaction failed with status: ${txResult.status}`);
             }
 
-            // Extract unlock timestamp from the return value
             let unlockTime = 0;
             if ('returnValue' in txResult && txResult.returnValue) {
                 try {
@@ -977,10 +956,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
     // ── completeRecovery ──────────────────────────────────────────────────────
 
-    /**
-     * Complete a pending guardian recovery. Permissionless — any keypair can submit.
-     * Fails gracefully if the timelock has not expired or no recovery is pending.
-     */
     const completeRecovery = useCallback(async (payerKeypair: Keypair): Promise<void> => {
         setIsPending(true);
         setError(null);
@@ -1003,7 +978,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             if (SorobanRpc.Api.isSimulationError(sim)) {
                 const errMsg = sim.error ?? '';
                 if (errMsg.includes('TimelockActive') || errMsg.includes('timelock')) {
-                    // Try to extract unlock time from error metadata
                     const match = errMsg.match(/(\d{10,})/);
                     const unlockTime = match ? Number(match[1]) : 0;
                     throw new RecoveryTimelockActive(unlockTime);
@@ -1082,13 +1056,11 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
             if (!result || !result.retval) throw new Error('Simulation returned no result');
 
-            // Optional<Allowance>
             if (result.retval.switch() === xdr.ScValType.scvVoid()) {
                 return null;
             }
 
             const allowanceMap = scValToNative(result.retval);
-            // scValToNative converts a custom type (struct) to an object with properties
             return {
                 amount: Number(allowanceMap.amount),
                 expiry: allowanceMap.expiry !== undefined ? Number(allowanceMap.expiry) : undefined,
@@ -1121,7 +1093,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             const walletContract = new Contract(address);
             const sourceAccount = await server.getAccount(signerKeypair.publicKey());
 
-            // Convert expiry to Option<u64>
             let expiryVal: xdr.ScVal;
             if (expiry !== undefined) {
                 expiryVal = nativeToScVal([nativeToScVal(BigInt(expiry), { type: 'u64' })], { type: 'Vec' });
@@ -1145,7 +1116,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 .setTimeout(30)
                 .build();
 
-            // Simulate to discover auth entries that need WebAuthn signing
             const sim = await server.simulateTransaction(tx);
             if (SorobanRpc.Api.isSimulationError(sim)) {
                 throw new Error(`Simulation failed: ${sim.error}`);
@@ -1153,14 +1123,11 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
 
-            // Sign auth entries that require the wallet's WebAuthn authorization.
-            // Payload = SHA-256(HashIdPreimageSorobanAuthorization XDR) — matches what the
-            // Soroban host passes to __check_auth.
             const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
             const authEntries = successSim.result?.auth;
             if (authEntries) {
                 const networkIdBytes = new Uint8Array(
-                    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(networkPassphrase))
+                    (stellarHash as (input: Buffer) => Buffer)(Buffer.from(networkPassphrase))
                 );
 
                 for (const parsed of authEntries) {
@@ -1179,17 +1146,17 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                         })
                     );
                     const payloadHash = new Uint8Array(
-                        await crypto.subtle.digest('SHA-256', new Uint8Array(preimage.toXDR()))
+                        (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
                     );
 
                     const webAuthnSig = await signAuthEntry(payloadHash);
                     if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
 
                     const sigVec = xdr.ScVal.scvVec([
-                        nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
-                        nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.publicKey,      { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.authData,       { type: 'bytes' }),
                         nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
-                        nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
                     ]);
 
                     parsed.credentials(

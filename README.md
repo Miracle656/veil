@@ -97,6 +97,8 @@ veil/
 ├── sdk/
 │   ├── src/
 │   │   ├── useInvisibleWallet.ts  # React hook — register, deploy, login, signAuthEntry, addSigner, removeSigner, setGuardian, initiateRecovery, completeRecovery
+│   │   ├── webauthn.ts            # WebAuthn provider interface + web/browser implementation
+│   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkey) — Metro auto-resolves
 │   │   ├── utils.ts               # Crypto utilities (DER→raw, pubkey extraction, SHA256, computeWalletAddress)
 │   │   └── index.ts               # Package exports
 │   └── package.json
@@ -224,6 +226,63 @@ Current budgets (brotli-compressed, includes all transitive deps):
 | `dist/vanilla.js` | 225 KB |
 
 If you legitimately need more headroom, raise the relevant `limit` in the `size-limit` block of `sdk/package.json` in the same PR that introduces the growth, and call out the increase in the PR description so reviewers can sanity-check the cause.
+
+### React Native / Expo
+
+The SDK ships a platform-split WebAuthn layer.  Metro automatically resolves
+`webauthn.native.ts` over `webauthn.ts` when bundling for iOS/Android.
+
+**Platform requirements:** iOS 16+, Android 13+ (physical device required).
+
+#### Install peer dependencies
+
+```bash
+npm install react-native-passkey @react-native-async-storage/async-storage
+# iOS only — re-run pod install after adding the native module:
+npx pod-install
+```
+
+#### Usage
+
+```tsx
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useInvisibleWallet } from 'invisible-wallet-sdk';
+
+const wallet = useInvisibleWallet({
+  factoryAddress:    'CABC...',
+  rpcUrl:            'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+  rpId:   'your-domain.com',     // required for React Native (no window.location)
+  origin: 'https://your-domain.com',
+  storage: AsyncStorage,         // replaces localStorage
+});
+```
+
+`rpId` and `origin` must match your app's associated domain
+(`apple-app-site-association` on iOS / `assetlinks.json` on Android).
+
+#### Expo example
+
+```bash
+cd examples/expo
+cp .env.example .env.local   # fill in factory address + RP details
+npm install
+npx expo run:ios              # physical device
+```
+
+See [`examples/expo/README.md`](examples/expo/README.md) for full setup instructions.
+
+#### Metro resolution
+
+The `react-native` field in `sdk/package.json` points to the TypeScript source
+so Metro can apply its `.native.ts` extension resolution:
+
+```json
+"react-native": "src/index.ts"
+```
+
+No extra Babel plugins are needed when using Expo (which handles TypeScript
+via `babel-preset-expo`) or standard `@react-native/metro-config`.
 
 ### Run the agent locally
 

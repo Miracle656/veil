@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "VeilWallet",
+    "slug": "veil-wallet-expo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "veilwallet",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.veil.wallet.demo",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Used to authenticate with your Veil passkey"
+      }
+    },
+    "android": {
+      "package": "app.veil.wallet.demo",
+      "adaptiveIcon": {
+        "backgroundColor": "#0f172a"
+      }
+    },
+    "plugins": [
+      "react-native-passkey"
+    ],
+    "newArchEnabled": true
+  }
+}
