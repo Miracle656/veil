@@ -693,6 +693,22 @@ export default function DashboardPage() {
             </svg>
             Buy crypto
           </button>
+          <button
+            onClick={() => router.push('/pools')}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.625rem',
+              padding: '0.875rem 1.25rem', borderRadius: '12px', cursor: 'pointer',
+              background: 'rgba(253,218,36,0.04)', border: '1px solid rgba(253,218,36,0.16)',
+              color: 'var(--off-white)', fontSize: '0.9375rem', fontWeight: 500,
+              marginTop: '0.75rem',
+              transition: 'background 120ms',
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
+            </svg>
+            View pools
+          </button>
         </div>
 
         {/* ── Assets section ── */}
