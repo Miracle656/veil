@@ -8,14 +8,14 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types":        "./dist/index.d.ts",
+      "types": "./dist/index.d.ts",
       "react-native": "./src/index.ts",
-      "default":      "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./vanilla": {
-      "types":        "./dist/vanilla.d.ts",
+      "types": "./dist/vanilla.d.ts",
       "react-native": "./src/vanilla.ts",
-      "default":      "./dist/vanilla.js"
+      "default": "./dist/vanilla.js"
     }
   },
   "files": [
@@ -24,7 +24,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "jest"
+    "test": "jest",
+    "test:surface": "jest api-surface.test.ts"
   },
   "keywords": [
     "stellar",
@@ -63,6 +64,7 @@
     "@types/node": "^20.0.0",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
+    "fast-check": "^4.8.0",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
     "react": "^18.3.0",
@@ -73,7 +75,9 @@
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "jsdom",
-    "setupFiles": ["./jest.setup.ts"],
+    "setupFiles": [
+      "./jest.setup.ts"
+    ],
     "testMatch": [
       "**/__tests__/**/*.test.ts"
     ],
