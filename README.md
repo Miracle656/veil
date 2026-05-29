@@ -362,10 +362,14 @@ The contract's `__check_auth` expects the signature field to be a `Vec<Val>` wit
 - [x] Agent — Claude AI assistant: balance, prices, swaps, payments — all passkey-gated
 - [x] Marketing website — Products section with individual pages for all 4 products
 
+## Security
+
+See the [Security docs](https://veil-2ap8.vercel.app/security) and the [Threat Model](https://veil-2ap8.vercel.app/threat-model) for the full STRIDE analysis, trust assumptions, and residual risks.
+
 ## License
 
 MIT
 
 <br />
 
-Thank you 
+Thank you

@@ -6,6 +6,8 @@ use soroban_sdk::{
 
 mod auth;
 mod storage;
+#[cfg(test)]
+mod auth_failure_tests;
 use storage::{DataKey, AllowanceKey, PendingRecovery};
 
 /// Recovery timelock duration: 3 days in seconds.
