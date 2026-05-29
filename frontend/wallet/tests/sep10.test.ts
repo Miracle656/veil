@@ -1,4 +1,8 @@
 /**
+ * @jest-environment node
+ */
+
+/**
  * SEP-10 Challenge Verification Tests
  *
  * Tests the pure `signSep10Challenge` function in lib/sep24.ts against known
@@ -99,12 +103,23 @@ function signersFromXdr(xdr: string, networkPassphrase: string): string[] {
 
 // ── Fixture anchors ───────────────────────────────────────────────────────────
 
+const fixtureSecrets = [
+  'SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY',
+  'SABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNE7',
+  'SABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGC45',
+  'SACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINUQ',
+]
+
+function fixtureKeypair(index: number): Keypair {
+  return Keypair.fromSecret(fixtureSecrets[index])
+}
+
 // Deterministic keypairs so tests are fully reproducible.
 // These are synthetic test-only secrets — never use on mainnet.
-const ANCHOR_A_KP  = Keypair.random()   // anchor A
-const ANCHOR_B_KP  = Keypair.random()   // anchor B (mainnet fixture)
-const ANCHOR_C_KP  = Keypair.random()   // anchor C (multi-op fixture)
-const USER_KP      = Keypair.random()   // client / user
+const ANCHOR_A_KP = fixtureKeypair(0) // anchor A
+const ANCHOR_B_KP = fixtureKeypair(1) // anchor B (mainnet fixture)
+const ANCHOR_C_KP = fixtureKeypair(2) // anchor C (multi-op fixture)
+const USER_KP     = fixtureKeypair(3) // client / user
 
 // ── Suite ─────────────────────────────────────────────────────────────────────
 

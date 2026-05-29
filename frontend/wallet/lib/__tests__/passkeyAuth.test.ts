@@ -172,14 +172,14 @@ describe('requirePasskey', () => {
       const notAllowedError = new DOMException('User denied permission (NotAllowedError)', 'NotAllowedError')
       mockCredentialsGet.mockRejectedValue(notAllowedError)
 
-      await expect(requirePasskey()).rejects.toThrow('NotAllowedError')
+      await expect(requirePasskey()).rejects.toMatchObject({ name: 'NotAllowedError' })
     })
 
     it('should reject when credentials.get throws SecurityError', async () => {
       const securityError = new DOMException('Security error (SecurityError)', 'SecurityError')
       mockCredentialsGet.mockRejectedValue(securityError)
 
-      await expect(requirePasskey()).rejects.toThrow('SecurityError')
+      await expect(requirePasskey()).rejects.toMatchObject({ name: 'SecurityError' })
     })
   })
 

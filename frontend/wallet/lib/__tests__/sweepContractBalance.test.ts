@@ -1,4 +1,8 @@
 /**
+ * @jest-environment node
+ */
+
+/**
  * Unit tests for sweepContractBalance.
  *
  * All Soroban RPC interactions and WebAuthn calls are mocked — no real network
@@ -28,8 +32,27 @@ import { Keypair, Account, Networks } from '@stellar/stellar-sdk'
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 jest.mock('@stellar/stellar-sdk', (): any => {
   const actual = jest.requireActual('@stellar/stellar-sdk')
+  const fixtureSecrets = [
+    'SAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC5MY',
+    'SABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNE7',
+    'SABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGC45',
+    'SACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAINUQ',
+    'SACQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQKBIFAUCQLCMS',
+    'SADAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMSEV',
+  ]
+  let seedIndex = 0
+  const nextDeterministicKeypair = () => {
+    const secret = fixtureSecrets[seedIndex % fixtureSecrets.length]
+    seedIndex += 1
+    return actual.Keypair.fromSecret(secret)
+  }
+
   return {
     ...actual,
+    Keypair: {
+      ...actual.Keypair,
+      random: jest.fn(nextDeterministicKeypair),
+    },
     scValToNative: jest.fn().mockImplementation((val: any) => {
       if (val && val._isBalance) return val.balance
       if (val && val._isNonce) return 0n
@@ -38,6 +61,13 @@ jest.mock('@stellar/stellar-sdk', (): any => {
     xdr: {
       ...actual.xdr,
       SorobanAddressCredentials: jest.fn().mockImplementation(() => ({})),
+      HashIdPreimageSorobanAuthorization: jest.fn().mockImplementation((value) => value),
+      HashIdPreimage: {
+        ...actual.xdr.HashIdPreimage,
+        envelopeTypeSorobanAuthorization: jest.fn().mockReturnValue({
+          toXDR: jest.fn().mockReturnValue(new Uint8Array(64)),
+        }),
+      },
       SorobanCredentials: {
         ...actual.xdr.SorobanCredentials,
         sorobanCredentialsAddress: jest.fn().mockReturnValue({}),
@@ -230,6 +260,7 @@ describe('sweepContractBalance', () => {
     mockServer.simulateTransaction
       .mockResolvedValueOnce(makeBalanceSim(5_000_000n))
       .mockResolvedValueOnce(makeTransferSim())
+      .mockResolvedValueOnce(makeTransferSim())
 
     mockServer.sendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'txhash-abc' })
     mockServer.getTransaction.mockResolvedValue({ status: 'SUCCESS' })
@@ -251,6 +282,7 @@ describe('sweepContractBalance', () => {
 
     mockServer.simulateTransaction
       .mockResolvedValueOnce(makeBalanceSim(10_000_000n))
+      .mockResolvedValueOnce(makeTransferSim([authEntry]))
       .mockResolvedValueOnce(makeTransferSim([authEntry]))
 
     mockServer.sendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'tx-signed' })
@@ -274,6 +306,7 @@ describe('sweepContractBalance', () => {
 
     mockServer.simulateTransaction
       .mockResolvedValueOnce(makeBalanceSim(1_000_000n))
+      .mockResolvedValueOnce(makeTransferSim())
       .mockResolvedValueOnce(makeTransferSim())
 
     mockServer.sendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'polled-hash' })
@@ -301,7 +334,13 @@ describe('sweepContractBalance', () => {
 
   it('throws when the transfer simulation returns an error', async () => {
     mockServer.simulateTransaction.mockResolvedValueOnce(makeBalanceSim(2_000_000n))
-    mockServer.simulateTransaction.mockResolvedValueOnce(makeSimError('insufficient reserves'))
+
+    mockIsSimulationError
+      .mockReturnValueOnce(false) // balance check passes
+      .mockReturnValueOnce(false) // nonce probe passes as unsupported
+      .mockReturnValueOnce(true)  // transfer sim fails
+    mockServer.simulateTransaction
+      .mockResolvedValueOnce(makeSimError('insufficient reserves'))
 
     await expect(
       sweepContractBalance(CONTRACT_ADDRESS, FEE_PAYER_KP, mockSignAuthEntry, RPC_URL, NETWORK_PASSPHRASE)
@@ -336,6 +375,7 @@ describe('sweepContractBalance', () => {
     mockServer.simulateTransaction
       .mockResolvedValueOnce(makeBalanceSim(7_000_000n))
       .mockResolvedValueOnce(makeTransferSim())
+      .mockResolvedValueOnce(makeTransferSim())
 
     mockServer.sendTransaction.mockResolvedValue({ status: 'PENDING', hash: 'slow-hash' })
     mockServer.getTransaction.mockResolvedValue({ status: 'NOT_FOUND' })
@@ -343,13 +383,13 @@ describe('sweepContractBalance', () => {
     const promise = sweepContractBalance(
       CONTRACT_ADDRESS, FEE_PAYER_KP, mockSignAuthEntry, RPC_URL, NETWORK_PASSPHRASE
     )
-    promise.catch(() => {})
+    const rejection = expect(promise).rejects.toThrow('Transaction timed out')
 
     for (let i = 0; i < 35; i++) {
       await jest.advanceTimersByTimeAsync(1000)
     }
 
-    await expect(promise).rejects.toThrow('Transaction timed out')
+    await rejection
 
     jest.useRealTimers()
   })

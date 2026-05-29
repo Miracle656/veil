@@ -195,7 +195,7 @@ export async function sweepContractBalance(
 
   const successSim  = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
   const authEntries = successSim.result?.auth
-  if (authEntries) {
+  if (authEntries?.length) {
     const networkIdBytes = new Uint8Array(
       await crypto.subtle.digest('SHA-256', new TextEncoder().encode(networkPassphrase))
     )

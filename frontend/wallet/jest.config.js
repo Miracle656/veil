@@ -5,6 +5,7 @@ const config = {
   roots: ['<rootDir>'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/tests/**/*.test.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+  setupFiles: ['<rootDir>/jest.setup.ts'],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       tsconfig: {
@@ -18,6 +19,7 @@ const config = {
   moduleNameMapper: {
     '^@veil/utils$': '<rootDir>/../../sdk/src/utils',
     '^@veil/sdk$':   '<rootDir>/../../sdk/src/useInvisibleWallet',
+    '^@stellar/stellar-sdk$': '<rootDir>/node_modules/@stellar/stellar-sdk',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [
