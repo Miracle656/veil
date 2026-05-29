@@ -4,8 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { QRCodeCanvas } from 'qrcode.react'
+import { buildSep7PayUri } from '@/lib/sep7'
 
-// ── Shared address card ───────────────────────────────────────────────────────
+// ── Shared address card
 
 interface AddressCardProps {
   label: string
@@ -95,12 +96,14 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
           }}
         >
           <QRCodeCanvas
-            value={address}
+            value={buildSep7PayUri({ destination: address })}
             size={isPrimary ? 200 : 160}
+
             bgColor="#ffffff"
             fgColor="#0F0F0F"
             level="M"
           />
+
         </div>
       </div>
 

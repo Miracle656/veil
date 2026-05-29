@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+
 import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation,
   Contract, rpc as SorobanRpc, nativeToScVal, Horizon,
@@ -11,6 +12,8 @@ import { VeilLogo } from '@/components/VeilLogo'
 import { ContactPicker } from '@/components/ContactPicker'
 import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { parseQrValue } from '@/lib/sep7'
+
 import { getNativeAssetContractId, getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 
@@ -503,16 +506,37 @@ export default function SendPage() {
 
       {showScanner && (
         <QrScanner
-          onScan={addr => { setRecipient(addr); setShowScanner(false) }}
+          onScan={value => {
+            const parsed = parseQrValue(value)
+            if (!parsed) return
+
+            if ('destination' in parsed) {
+              if (parsed.destination) setRecipient(parsed.destination)
+              if ('amount' in parsed && parsed.amount) setAmount(parsed.amount)
+            } else {
+              // Sep7Parsed
+              if (parsed.destination) setRecipient(parsed.destination)
+              if (parsed.amount) setAmount(parsed.amount)
+
+              // If asset info is present, we could later auto-select asset.
+            }
+
+            // If SEP-7 URI provided a memo, we can also fill it.
+            if (typeof parsed !== 'string' && 'memo' in parsed && parsed.memo) setMemo(parsed.memo)
+
+            setShowScanner(false)
+          }}
           onClose={() => setShowScanner(false)}
         />
       )}
+
     </div>
   )
 }
 
 // Shared style for the small icon buttons next to the address field
-const iconBtnStyle: React.CSSProperties = {
+const iconBtnStyle: Record<string, any> = {
+
   background: 'var(--surface-md)',
   border: '1px solid var(--border-dim)',
   borderRadius: '0.5rem',

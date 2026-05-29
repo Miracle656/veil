@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
@@ -10,6 +10,7 @@ import {
 const Server = Horizon.Server
 import { ConnectDAppModal } from '@/components/ConnectDAppModal'
 import { WalletConnectApprovalModal } from '@/components/WalletConnectApprovalModal'
+import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { deriveStoredFeePayer } from '@/lib/deriveFeePayer'
@@ -41,6 +42,7 @@ let cachedPrices:       Record<string, number | null>        = {}
 // ── Dashboard page ────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   useInactivityLock()
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
@@ -61,6 +63,7 @@ export default function DashboardPage() {
   const [sweepDismissed, setSweepDismissed] = useState(false)
   const [showConnectDapp, setShowConnectDapp] = useState(false)
   const [connectToast, setConnectToast] = useState<string | null>(null)
+  const [sep24Modal, setSep24Modal] = useState<'deposit' | 'withdraw' | null>(null)
 
   useEffect(() => {
     const stored = sessionStorage.getItem('invisible_wallet_address')
@@ -311,6 +314,33 @@ export default function DashboardPage() {
     })
     return () => { cancelled = true }
   }, [assets])
+
+  // ── Service worker registration + background polling ─────────────────────
+  useEffect(() => {
+    if (!walletAddress || typeof window === 'undefined' || !('serviceWorker' in navigator)) return
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      const sw = reg.active ?? reg.installing ?? reg.waiting
+      sw?.postMessage({ type: 'VEIL_REGISTER_ACCOUNT', account: walletAddress, cursor: 'now' })
+    }).catch(() => { /* SW registration failed — non-fatal */ })
+  }, [walletAddress])
+
+  // ── Notification permission — ask once after first successful data load ───
+  useEffect(() => {
+    if (loading || transactions.length === 0) return
+    if (typeof Notification === 'undefined') return
+    if (Notification.permission !== 'default') return
+    if (localStorage.getItem('veil_notif_asked')) return
+    localStorage.setItem('veil_notif_asked', '1')
+    Notification.requestPermission().catch(() => { /* denied — graceful degradation */ })
+  }, [loading, transactions])
+
+  // ── Deep-link: ?tx=<hash> from notification tap ───────────────────────────
+  useEffect(() => {
+    const hash = searchParams?.get('tx')
+    if (!hash || transactions.length === 0) return
+    const tx = transactions.find(t => t.hash === hash)
+    if (tx) setSelectedTx(tx)
+  }, [searchParams, transactions])
 
   const xlmBalance = assets.find(a => a.code === 'XLM')?.balance ?? null
 
@@ -633,6 +663,16 @@ export default function DashboardPage() {
             onClick={() => setShowConnectDapp(true)}
             icon={<path d="M8.5 8.5l7 7M13 5l6 6-4 4-6-6m-4 4l2-2m4 4l-2 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
           />
+          <ActionButton
+            label="Deposit"
+            onClick={() => setSep24Modal('deposit')}
+            icon={<path d="M12 3v12m0 0l-4-4m4 4l4-4M3 17v2a2 2 0 002 2h14a2 2 0 002-2v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
+          />
+          <ActionButton
+            label="Withdraw"
+            onClick={() => setSep24Modal('withdraw')}
+            icon={<path d="M12 21V9m0 0l-4 4m4-4l4 4M3 7V5a2 2 0 012-2h14a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
+          />
         </div>
 
         {/* ── Buy crypto ── */}
@@ -877,6 +917,14 @@ export default function DashboardPage() {
       )}
 
       <WalletConnectApprovalModal />
+
+      {sep24Modal && walletAddress && (
+        <DepositModal
+          mode={sep24Modal}
+          walletAddress={walletAddress}
+          onClose={() => setSep24Modal(null)}
+        />
+      )}
     </div>
   )
 }
