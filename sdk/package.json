@@ -108,5 +108,10 @@
       "path": "dist/vanilla.js",
       "limit": "225 KB"
     }
-  ]
+  ],
+  "optionalDependencies": {
+    "@opentelemetry/api": "*",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",
+    "@opentelemetry/sdk-trace-base": "^2.7.1"
+  }
 }

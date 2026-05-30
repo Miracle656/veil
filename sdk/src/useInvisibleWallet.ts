@@ -13,6 +13,7 @@ import {
     Networks,
     hash as stellarHash,
 } from '@stellar/stellar-sdk';
+import { initTracing, withSpan, TracingConfig } from './telemetry/tracing';
 
 const HorizonServer = Horizon.Server;
 import {
@@ -64,6 +65,15 @@ export type WalletConfig = {
      * const config = { ..., storage: AsyncStorage };
      */
     storage?: StorageAdapter;
+    /**
+     * Optional OTLP tracing configuration.
+     * When provided, the SDK emits spans for the full payment lifecycle.
+     * Defaults to no-op — zero performance cost when not configured.
+     *
+     * @example
+     * tracing: { exporter: 'otlp-http', endpoint: 'http://localhost:4318/v1/traces' }
+     */
+    tracing?: TracingConfig;
 };
 
 /**
@@ -300,6 +310,13 @@ function resolveStorage(storage?: StorageAdapter): StorageAdapter {
 
 export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     const { factoryAddress, rpcUrl, networkPassphrase, rpId, origin } = config;
+    // Initialize tracing once if configured — no-op if not provided
+    useEffect(() => {
+        if (config.tracing) {
+            initTracing(config.tracing);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const [address, setAddress] = useState<string | null>(null);
     const [isDeployed, setIsDeployed] = useState(false);
@@ -322,46 +339,49 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     }, []);
 
     // ── register ──────────────────────────────────────────────────────────────
+const register = useCallback(async (username?: string): Promise<RegisterResult> => {
+        return withSpan('veil.register', { 'wallet.username': username ?? 'anonymous' }, async (span) => {
+            setIsPending(true);
+            setError(null);
+            try {
+                const challenge = crypto.getRandomValues(new Uint8Array(32));
+                const name      = username || 'Veil User';
+                const userId    = username
+                    ? new TextEncoder().encode(username)
+                    : crypto.getRandomValues(new Uint8Array(16));
 
-    const register = useCallback(async (username?: string): Promise<RegisterResult> => {
-        setIsPending(true);
-        setError(null);
-        try {
-            const challenge = crypto.getRandomValues(new Uint8Array(32));
-            const name      = username || 'Veil User';
-            const userId    = username
-                ? new TextEncoder().encode(username)
-                : crypto.getRandomValues(new Uint8Array(16));
+                const resolvedRpId = rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
 
-            const resolvedRpId = rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
+                const { credentialId, publicKeyBytes } = await webAuthnProvider.create({
+                    challenge,
+                    rpId:     resolvedRpId,
+                    rpName:   'Invisible Wallet',
+                    userId,
+                    userName: name,
+                });
 
-            const { credentialId, publicKeyBytes } = await webAuthnProvider.create({
-                challenge,
-                rpId:     resolvedRpId,
-                rpName:   'Invisible Wallet',
-                userId,
-                userName: name,
-            });
+                const publicKeyHex  = bufferToHex(publicKeyBytes);
+                const walletAddress = computeWalletAddress(factoryAddress, publicKeyBytes, networkPassphrase);
 
-            const publicKeyHex  = bufferToHex(publicKeyBytes);
-            const walletAddress = computeWalletAddress(factoryAddress, publicKeyBytes, networkPassphrase);
+                await store.setItem('invisible_wallet_address',    walletAddress);
+                await store.setItem('invisible_wallet_key_id',     credentialId);
+                await store.setItem('invisible_wallet_public_key', publicKeyHex);
+                setAddress(walletAddress);
+                setIsDeployed(false);
 
-            await store.setItem('invisible_wallet_address',    walletAddress);
-            await store.setItem('invisible_wallet_key_id',     credentialId);
-            await store.setItem('invisible_wallet_public_key', publicKeyHex);
-            setAddress(walletAddress);
-            setIsDeployed(false);
+                span.setAttribute('wallet.address', walletAddress);
+                return { walletAddress, publicKeyBytes };
 
-            return { walletAddress, publicKeyBytes };
-
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            setError(message);
-            throw err;
-        } finally {
-            setIsPending(false);
-        }
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : String(err);
+                setError(message);
+                throw err;
+            } finally {
+                setIsPending(false);
+            }
+        }); // end withSpan
     }, [factoryAddress, networkPassphrase, rpId, store]);
+    
 
     // ── deploy ────────────────────────────────────────────────────────────────
 
@@ -369,97 +389,103 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         signerSecret: string | Keypair,
         publicKeyBytes?: Uint8Array
     ): Promise<DeployResult> => {
-        const signerKeypair = typeof signerSecret === 'string'
-            ? Keypair.fromSecret(signerSecret)
-            : Keypair.fromSecret(signerSecret.secret());
-        setIsPending(true);
-        setError(null);
-        let walletAddress: string | undefined;
-        try {
-            let pubKeyBytes = publicKeyBytes;
-            if (!pubKeyBytes) {
-                const hex = await store.getItem('invisible_wallet_public_key');
-                if (!hex) throw new Error(
-                    'No public key found. Call register() first, or pass publicKeyBytes explicitly.'
-                );
-                pubKeyBytes = hexToUint8Array(hex);
-            }
+        return withSpan('veil.deploy', { 'wallet.factory': factoryAddress }, async (span) => {
+            const signerKeypair = typeof signerSecret === 'string'
+                ? Keypair.fromSecret(signerSecret)
+                : Keypair.fromSecret(signerSecret.secret());
+            setIsPending(true);
+            setError(null);
+            let walletAddress: string | undefined;
+            try {
+                let pubKeyBytes = publicKeyBytes;
+                if (!pubKeyBytes) {
+                    const hex = await store.getItem('invisible_wallet_public_key');
+                    if (!hex) throw new Error(
+                        'No public key found. Call register() first, or pass publicKeyBytes explicitly.'
+                    );
+                    pubKeyBytes = hexToUint8Array(hex);
+                }
 
-            walletAddress = computeWalletAddress(factoryAddress, pubKeyBytes, networkPassphrase);
+                walletAddress = computeWalletAddress(factoryAddress, pubKeyBytes, networkPassphrase);
+                span.setAttribute('wallet.address', walletAddress);
 
-            const server = new SorobanRpc.Server(rpcUrl);
+                const server = new SorobanRpc.Server(rpcUrl);
 
-            const horizonUrl = networkPassphrase === Networks.TESTNET
-                ? 'https://horizon-testnet.stellar.org'
-                : 'https://horizon.stellar.org';
-            const horizon = new HorizonServer(horizonUrl);
-            const sourceAccount = await horizon.loadAccount(signerKeypair.publicKey());
-            const factory = new Contract(factoryAddress);
+                const horizonUrl = networkPassphrase === Networks.TESTNET
+                    ? 'https://horizon-testnet.stellar.org'
+                    : 'https://horizon.stellar.org';
+                const horizon = new HorizonServer(horizonUrl);
+                const sourceAccount = await horizon.loadAccount(signerKeypair.publicKey());
+                const factory = new Contract(factoryAddress);
 
-            const resolvedRpId  = rpId    ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
-            const resolvedOrigin = origin ?? (typeof window !== 'undefined' ? window.location.origin  : `https://${resolvedRpId}`);
+                const resolvedRpId  = rpId    ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
+                const resolvedOrigin = origin ?? (typeof window !== 'undefined' ? window.location.origin  : `https://${resolvedRpId}`);
 
-            const rpIdBytes   = new TextEncoder().encode(resolvedRpId);
-            const originBytes = new TextEncoder().encode(resolvedOrigin);
+                const rpIdBytes   = new TextEncoder().encode(resolvedRpId);
+                const originBytes = new TextEncoder().encode(resolvedOrigin);
 
-            const tx = new TransactionBuilder(sourceAccount, {
-                fee: BASE_FEE,
-                networkPassphrase,
-            })
-                .addOperation(
-                    factory.call(
-                        'deploy',
-                        nativeToScVal(pubKeyBytes,  { type: 'bytes' }),
-                        nativeToScVal(rpIdBytes,    { type: 'bytes' }),
-                        nativeToScVal(originBytes,  { type: 'bytes' }),
+                const tx = new TransactionBuilder(sourceAccount, {
+                    fee: BASE_FEE,
+                    networkPassphrase,
+                })
+                    .addOperation(
+                        factory.call(
+                            'deploy',
+                            nativeToScVal(pubKeyBytes,  { type: 'bytes' }),
+                            nativeToScVal(rpIdBytes,    { type: 'bytes' }),
+                            nativeToScVal(originBytes,  { type: 'bytes' }),
+                        )
                     )
-                )
-                .setTimeout(30)
-                .build();
+                    .setTimeout(30)
+                    .build();
 
-            const sim = await server.simulateTransaction(tx);
-            if (SorobanRpc.Api.isSimulationError(sim)) {
-                throw new Error(`Simulation failed: ${sim.error}`);
-            }
+                const sim = await server.simulateTransaction(tx);
+                if (SorobanRpc.Api.isSimulationError(sim)) {
+                    throw new Error(`Simulation failed: ${sim.error}`);
+                }
 
-            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            assembled.sign(signerKeypair);
+                const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+                assembled.sign(signerKeypair);
 
-            const sendResult = await server.sendTransaction(assembled);
-            if (sendResult.status === 'ERROR') {
-                throw new Error(
-                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
-                );
-            }
+                const sendResult = await server.sendTransaction(assembled);
+                if (sendResult.status === 'ERROR') {
+                    throw new Error(
+                        `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                    );
+                }
 
-            const txResult = await waitForTransaction(server, sendResult.hash);
-            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
-                throw new Error(`Transaction failed with status: ${txResult.status}`);
-            }
+                const txResult = await waitForTransaction(server, sendResult.hash);
+                if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                    throw new Error(`Transaction failed with status: ${txResult.status}`);
+                }
 
-            setAddress(walletAddress);
-            setIsDeployed(true);
-            await store.setItem('invisible_wallet_address', walletAddress);
-            return { walletAddress, alreadyDeployed: false };
-
-        } catch (err: unknown) {
-            let message: string;
-            if (err instanceof Error) {
-                message = err.message;
-            } else {
-                try { message = JSON.stringify(err); } catch { message = String(err); }
-            }
-            if (message.toLowerCase().includes('alreadydeployed') || message.toLowerCase().includes('already_deployed')) {
-                setAddress(walletAddress!);
+                span.setAttribute('wallet.tx_hash', sendResult.hash);
+                span.setAttribute('wallet.already_deployed', false);
+                setAddress(walletAddress);
                 setIsDeployed(true);
-                await store.setItem('invisible_wallet_address', walletAddress!);
-                return { walletAddress: walletAddress!, alreadyDeployed: true };
+                await store.setItem('invisible_wallet_address', walletAddress);
+                return { walletAddress, alreadyDeployed: false };
+
+            } catch (err: unknown) {
+                let message: string;
+                if (err instanceof Error) {
+                    message = err.message;
+                } else {
+                    try { message = JSON.stringify(err); } catch { message = String(err); }
+                }
+                if (message.toLowerCase().includes('alreadydeployed') || message.toLowerCase().includes('already_deployed')) {
+                    span.setAttribute('wallet.already_deployed', true);
+                    setAddress(walletAddress!);
+                    setIsDeployed(true);
+                    await store.setItem('invisible_wallet_address', walletAddress!);
+                    return { walletAddress: walletAddress!, alreadyDeployed: true };
+                }
+                setError(message);
+                throw new Error(message);
+            } finally {
+                setIsPending(false);
             }
-            setError(message);
-            throw new Error(message);
-        } finally {
-            setIsPending(false);
-        }
+        }); // end withSpan
     }, [factoryAddress, rpcUrl, networkPassphrase, rpId, origin, store]);
 
     // ── login ─────────────────────────────────────────────────────────────────
@@ -509,39 +535,42 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     const signAuthEntry = useCallback(async (
         signaturePayload: Uint8Array
     ): Promise<WebAuthnSignature | null> => {
-        setIsPending(true);
-        setError(null);
-        try {
-            const keyId        = await store.getItem('invisible_wallet_key_id');
-            const publicKeyHex = await store.getItem('invisible_wallet_public_key');
-            if (!keyId)        throw new Error('No key ID found. Please register first.');
-            if (!publicKeyHex) throw new Error('No public key found. Please register first.');
+        return withSpan('veil.signAuthEntry', { 'wallet.payload_size': signaturePayload.length }, async (span) => {
+            setIsPending(true);
+            setError(null);
+            try {
+                const keyId        = await store.getItem('invisible_wallet_key_id');
+                const publicKeyHex = await store.getItem('invisible_wallet_public_key');
+                if (!keyId)        throw new Error('No key ID found. Please register first.');
+                if (!publicKeyHex) throw new Error('No public key found. Please register first.');
 
-            if (signaturePayload.length !== 32) {
-                throw new Error('signaturePayload must be exactly 32 bytes');
+                if (signaturePayload.length !== 32) {
+                    throw new Error('signaturePayload must be exactly 32 bytes');
+                }
+
+                const challenge = signaturePayload.buffer.slice(
+                    signaturePayload.byteOffset,
+                    signaturePayload.byteOffset + signaturePayload.byteLength
+                ) as ArrayBuffer;
+
+                const { authData, clientDataJSON, signature } = await webAuthnProvider.authenticate({
+                    challenge,
+                    credentialId: keyId,
+                    rpId,
+                });
+
+                const publicKeyBytes = hexToUint8Array(publicKeyHex);
+
+                span.setAttribute('wallet.key_id', keyId);
+                return { publicKey: publicKeyBytes, authData, clientDataJSON, signature };
+
+            } catch (err: unknown) {
+                setError(err instanceof Error ? err.message : String(err));
+                throw err;
+            } finally {
+                setIsPending(false);
             }
-
-            const challenge = signaturePayload.buffer.slice(
-                signaturePayload.byteOffset,
-                signaturePayload.byteOffset + signaturePayload.byteLength
-            ) as ArrayBuffer;
-
-            const { authData, clientDataJSON, signature } = await webAuthnProvider.authenticate({
-                challenge,
-                credentialId: keyId,
-                rpId,
-            });
-
-            const publicKeyBytes = hexToUint8Array(publicKeyHex);
-
-            return { publicKey: publicKeyBytes, authData, clientDataJSON, signature };
-
-        } catch (err: unknown) {
-            setError(err instanceof Error ? err.message : String(err));
-            throw err;
-        } finally {
-            setIsPending(false);
-        }
+        }); // end withSpan
     }, [rpId, store]);
 
     // ── getNonce ──────────────────────────────────────────────────────────────
