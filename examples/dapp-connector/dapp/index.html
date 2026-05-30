@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Veil dApp — Reference</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 4rem auto; padding: 0 1rem; }
+    pre  { background: #f4f4f4; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+    button { padding: .5rem 1.2rem; cursor: pointer; margin-right: .5rem; }
+    #status { color: #666; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <h1>Veil dApp — Reference</h1>
+  <p>This page demonstrates <code>window.veil.request()</code> without ever
+     handling private key material.</p>
+
+  <button id="btn-connect">Connect</button>
+  <button id="btn-sign" disabled>Sign sample TX</button>
+
+  <p id="status">Not connected.</p>
+  <pre id="output"></pre>
+
+  <script src="app.js"></script>
+</body>
+</html>
