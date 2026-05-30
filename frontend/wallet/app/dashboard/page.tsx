@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useCallback, useState } from 'react'
+import { useEffect, useRef, useCallback, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import {
@@ -40,7 +40,17 @@ let cachedContractXlm:  number                        | null = null
 let cachedPrices:       Record<string, number | null>        = {}
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
+// useSearchParams() forces client-side rendering, so the content must sit inside
+// a Suspense boundary or `next build` fails the static export for this route.
 export default function DashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <DashboardContent />
+    </Suspense>
+  )
+}
+
+function DashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   useInactivityLock()
@@ -670,7 +680,7 @@ export default function DashboardPage() {
           />
           <ActionButton
             label="Withdraw"
-            onClick={() => setSep24Modal('withdraw')}
+            onClick={() => router.push('/withdraw')}
             icon={<path d="M12 21V9m0 0l-4 4m4-4l4 4M3 7V5a2 2 0 012-2h14a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
           />
         </div>

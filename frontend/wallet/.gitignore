@@ -3,3 +3,16 @@ node_modules/
 .env.local
 .env*.local
 out/
+
+# next-pwa / workbox generated service worker output
+# NOTE: public/sw.js is intentionally NOT ignored here — it is a tracked,
+# hand-written service worker (push notifications + Horizon polling, see #189).
+# That file and next-pwa both want to own public/sw.js; resolving that conflict
+# is out of scope for this PR. The generated siblings below are safe to ignore.
+public/sw.js.map
+public/workbox-*.js
+public/workbox-*.js.map
+public/fallback-*.js
+
+# TypeScript incremental build cache
+*.tsbuildinfo
