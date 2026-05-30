@@ -7,4 +7,5 @@ export default {
   troubleshooting: 'Troubleshooting',
   'agent-integration': 'Agent Integration',
   security: 'Security',
+  'threat-model': 'Threat Model',
 }

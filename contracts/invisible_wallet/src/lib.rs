@@ -6,6 +6,8 @@ use soroban_sdk::{
 
 mod auth;
 mod storage;
+#[cfg(test)]
+mod auth_failure_tests;
 use storage::{DataKey, AllowanceKey, PendingRecovery};
 
 /// Recovery timelock duration: 3 days in seconds.
@@ -425,7 +427,8 @@ impl InvisibleWallet {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{Env, Bytes, BytesN, symbol_short, Map};
+    use soroban_sdk::{Env, Bytes, BytesN, symbol_short, Map, IntoVal};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
     use sha2::{Sha256, Digest};
     use p256::ecdsa::{SigningKey, Signature as P256Sig, signature::hazmat::PrehashSigner};
 

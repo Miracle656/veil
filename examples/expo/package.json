@@ -1,0 +1,28 @@
+{
+  "name": "veil-wallet-expo",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "^2.1.2",
+    "@stellar/stellar-sdk": "^14.6.1",
+    "expo": "~53.0.0",
+    "expo-router": "~4.0.0",
+    "expo-status-bar": "~2.0.0",
+    "invisible-wallet-sdk": "*",
+    "react": "18.3.1",
+    "react-native": "0.79.2",
+    "react-native-passkey": "^3.0.0",
+    "react-native-safe-area-context": "^5.0.0",
+    "react-native-screens": "^4.0.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.20.0",
+    "@types/react": "~18.3.0",
+    "typescript": "^5.3.0"
+  }
+}

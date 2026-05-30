@@ -1,5 +1,6 @@
 import { DocsThemeConfig } from 'nextra-theme-docs'
 import React from 'react'
+import { DocSearch } from './components/DocSearch'
 
 const Logo = () => (
   <span
@@ -32,6 +33,10 @@ const config: DocsThemeConfig = {
         © {new Date().getFullYear()} Veil — Powered by Stellar Soroban · WebAuthn / FIDO2 · MIT
       </span>
     ),
+  },
+
+  navbar: {
+    extraContent: <DocSearch />,
   },
 
   head: (
