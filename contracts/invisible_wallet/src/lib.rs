@@ -6,6 +6,7 @@ use soroban_sdk::{
 
 mod auth;
 mod storage;
+pub mod session_key;
 #[cfg(test)]
 mod auth_failure_tests;
 use storage::{DataKey, AllowanceKey, PendingRecovery};
@@ -49,6 +50,10 @@ pub enum WalletError {
     InsufficientAllowance       = 17,
     /// The allowance has expired.
     AllowanceExpired            = 18,
+    /// The session key's expiry timestamp has passed.
+    SessionKeyExpired           = 19,
+    /// A session key call violates its ACL (wrong target, selector, or amount cap).
+    SessionKeyAclViolation      = 20,
 }
 
 #[contract]
@@ -186,6 +191,25 @@ impl InvisibleWallet {
             return Ok(());
         }
 
+        // Session key path — signature is a BytesN<32> key ID
+        if let Ok(key_id) = BytesN::<32>::try_from_val(&env, &signature) {
+            for context in _auth_contexts.iter() {
+                let Context::Contract(c) = context else {
+                    return Err(WalletError::SignerNotAuthorized);
+                };
+                if c.fn_name != Symbol::new(&env, "transfer") {
+                    return Err(WalletError::SignerNotAuthorized);
+                }
+                if c.args.len() != 3 {
+                    return Err(WalletError::SignerNotAuthorized);
+                }
+                let amount = i128::try_from_val(&env, &c.args.get(2).unwrap())
+                    .map_err(|_| WalletError::SignerNotAuthorized)?;
+                session_key::enforce(&env, &key_id, &c.contract, &c.fn_name, amount)?;
+            }
+            return Ok(());
+        }
+
         // Standard WebAuthn flow
         let parts: Vec<Val> = Vec::try_from_val(&env, &signature)
             .map_err(|_| WalletError::InvalidSignatureFormat)?;
@@ -246,6 +270,32 @@ impl InvisibleWallet {
         storage::increment_nonce(&env);
 
         Ok(())
+    }
+
+    /// Register a scoped session key with an ACL.
+    /// Requires the wallet owner to authorize (via existing signer or passkey).
+    pub fn register_session_key(
+        env: Env,
+        key_id: BytesN<32>,
+        target_contract: Address,
+        selector: Symbol,
+        amount_cap: i128,
+        expiry: u64,
+    ) {
+        env.current_contract_address().require_auth();
+        session_key::register(&env, key_id, session_key::SessionKeyAcl {
+            target_contract,
+            selector,
+            amount_cap,
+            expiry,
+        });
+    }
+
+    /// Immediately revoke a session key.
+    /// Requires the wallet owner to authorize.
+    pub fn revoke_session_key(env: Env, key_id: BytesN<32>) {
+        env.current_contract_address().require_auth();
+        session_key::revoke(&env, &key_id);
     }
 
     /// Return the current monotonic nonce for this wallet.
