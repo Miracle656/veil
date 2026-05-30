@@ -1,0 +1,24 @@
+[package]
+name = "invisible-wallet-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[[bin]]
+name = "fuzz_check_auth"
+path = "fuzz_targets/fuzz_check_auth.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_webauthn"
+path = "fuzz_targets/fuzz_webauthn.rs"
+test = false
+doc = false
