@@ -1,4 +1,5 @@
 #![no_std]
+extern crate alloc;
 use soroban_sdk::{
     contract, contractimpl, contracterror,
     Env, Address, Bytes, BytesN, Vec, Symbol, Val,
@@ -189,6 +190,36 @@ impl InvisibleWallet {
         // Standard WebAuthn flow
         let parts: Vec<Val> = Vec::try_from_val(&env, &signature)
             .map_err(|_| WalletError::InvalidSignatureFormat)?;
+
+        if parts.len() == 3 {
+            let public_key: BytesN<65> = parts
+                .get(0).ok_or(WalletError::InvalidSignatureFormat)?
+                .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
+
+            let sig_bytes: BytesN<64> = parts
+                .get(1).ok_or(WalletError::InvalidSignatureFormat)?
+                .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
+
+            let nonce: u64 = parts
+                .get(2).ok_or(WalletError::InvalidSignatureFormat)?
+                .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
+
+            if !storage::has_signer(&env, &public_key) {
+                return Err(WalletError::SignerNotAuthorized);
+            }
+
+            let stored_nonce = storage::get_nonce(&env);
+            if nonce != stored_nonce {
+                return Err(WalletError::NonceMismatch);
+            }
+
+            let payload_hash: soroban_sdk::crypto::Hash<32> = unsafe { core::mem::transmute(signature_payload) };
+            env.crypto().secp256r1_verify(&public_key, &payload_hash, &sig_bytes);
+            storage::increment_nonce(&env);
+
+            return Ok(());
+        }
+
         if parts.len() != 5 {
             return Err(WalletError::InvalidSignatureFormat);
         }
@@ -427,8 +458,24 @@ impl InvisibleWallet {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{Env, Bytes, BytesN, symbol_short, Map, IntoVal};
+    use soroban_sdk::{Env, Bytes, BytesN, symbol_short, Map, IntoVal, Val};
+    use soroban_sdk::auth::{CustomAccountInterface, Context};
     use soroban_sdk::testutils::{Address as _, Ledger as _};
+
+    trait CheckAuthTestHelper {
+        fn __check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>);
+        fn try___check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) -> Result<(), Result<WalletError, soroban_sdk::InvokeError>>;
+    }
+
+    impl<'a> CheckAuthTestHelper for InvisibleWalletClient<'a> {
+        fn __check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) {
+            self.env.try_invoke_contract_check_auth::<WalletError>(&self.address, payload, *signature, contexts).unwrap();
+        }
+
+        fn try___check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) -> Result<(), Result<WalletError, soroban_sdk::InvokeError>> {
+            self.env.try_invoke_contract_check_auth::<WalletError>(&self.address, payload, *signature, contexts)
+        }
+    }
     use sha2::{Sha256, Digest};
     use p256::ecdsa::{SigningKey, Signature as P256Sig, signature::hazmat::PrehashSigner};
 
@@ -478,15 +525,16 @@ mod test {
         };
 
         let sig: P256Sig = signing_key.sign_prehash(&message_hash).unwrap();
+        let sig = sig.normalize_s().unwrap_or(sig);
         let sig_bytes: [u8; 64] = sig.to_bytes().into();
 
         (auth_data, challenge_b64, sig_bytes)
     }
 
-    fn build_client_data_json_raw(challenge_b64: &[u8; 43]) -> Vec<u8> {
+    fn build_client_data_json_raw(challenge_b64: &[u8; 43]) -> alloc::vec::Vec<u8> {
         let prefix = b"{\"type\":\"webauthn.get\",\"challenge\":\"";
         let suffix = b"\",\"origin\":\"https://test.example\",\"crossOrigin\":false}";
-        let mut out = Vec::new();
+        let mut out = alloc::vec::Vec::new();
         out.extend_from_slice(prefix);
         out.extend_from_slice(challenge_b64);
         out.extend_from_slice(suffix);
@@ -848,7 +896,7 @@ mod test {
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
 
         // First auth with nonce 0 should succeed
-        let signature = Vec::from_array(&env, [
+        let signature = Vec::<Val>::from_array(&env, [
             BytesN::from_array(&env, &pub_bytes).into_val(&env),
             Bytes::from_array(&env, &auth_data_raw).into_val(&env),
             build_client_data_json(&env, &challenge_b64).into_val(&env),
@@ -879,7 +927,7 @@ mod test {
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
 
-        let signature = Vec::from_array(&env, [
+        let signature = Vec::<Val>::from_array(&env, [
             BytesN::from_array(&env, &pub_bytes).into_val(&env),
             Bytes::from_array(&env, &auth_data_raw).into_val(&env),
             build_client_data_json(&env, &challenge_b64).into_val(&env),
@@ -911,7 +959,7 @@ mod test {
         // 1. Success with nonce 0
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
-        let signature_0 = Vec::from_array(&env, [
+        let signature_0 = Vec::<Val>::from_array(&env, [
             BytesN::from_array(&env, &pub_bytes).into_val(&env),
             Bytes::from_array(&env, &auth_data_raw).into_val(&env),
             build_client_data_json(&env, &challenge_b64).into_val(&env),
@@ -925,7 +973,7 @@ mod test {
         let payload_2 = [8u8; 32];
         let (auth_data_raw_2, challenge_b64_2, sig_bytes_2) =
             make_webauthn_fixture(&signing_key, &payload_2, b"localhost");
-        let signature_1 = Vec::from_array(&env, [
+        let signature_1 = Vec::<Val>::from_array(&env, [
             BytesN::from_array(&env, &pub_bytes).into_val(&env),
             Bytes::from_array(&env, &auth_data_raw_2).into_val(&env),
             build_client_data_json(&env, &challenge_b64_2).into_val(&env),
@@ -934,6 +982,34 @@ mod test {
         ]).into_val(&env);
         client.__check_auth(&BytesN::from_array(&env, &payload_2), &signature_1, &Vec::new(&env));
         assert_eq!(client.get_nonce(), 2);
+    }
+
+    #[test]
+    fn test_direct_ecdsa_signature_valid() {
+        let env = Env::default();
+        let (signing_key, pub_bytes) = test_keypair();
+        let payload = [7u8; 32];
+
+        // Init wallet
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://test.example");
+        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
+
+        // Sign the payload directly (standard P-256 ECDSA signature)
+        let sig: P256Sig = signing_key.sign_prehash(&payload).unwrap();
+        let sig_bytes: [u8; 64] = sig.to_bytes().into();
+
+        // Direct signature parts: [public_key, sig_bytes, nonce]
+        let signature = Vec::<Val>::from_array(&env, [
+            BytesN::from_array(&env, &pub_bytes).into_val(&env),
+            BytesN::from_array(&env, &sig_bytes).into_val(&env),
+            0u64.into_val(&env),
+        ]).into_val(&env);
+
+        client.__check_auth(&BytesN::from_array(&env, &payload), &signature, &Vec::new(&env));
+        assert_eq!(client.get_nonce(), 1);
     }
 
     // ── Allowance tests ──────────────────────────────────────────────────────

@@ -6,6 +6,25 @@
   "auth": [
     [],
     [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "function_name": "add_signer",
+              "args": [
+                {
+                  "bytes": "042ed2192f0f9275200acd34fbd8c6ce5a91a459488411320b4c6de3e6a22d7fa06f2374f60534a9009629714d063402a3c3ed60db057ef7999a7a31a78aebc0c7"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     []
   ],
   "ledger": {
@@ -62,7 +81,7 @@
                           ]
                         },
                         "val": {
-                          "bytes": "68747470733a2f2f6c6f63616c686f73743a35313733"
+                          "bytes": "68747470733a2f2f746573742e6578616d706c65"
                         }
                       },
                       {
@@ -94,6 +113,14 @@
                               "val": {
                                 "bytes": "040c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e"
                               }
+                            },
+                            {
+                              "key": {
+                                "u32": 1
+                              },
+                              "val": {
+                                "bytes": "042ed2192f0f9275200acd34fbd8c6ce5a91a459488411320b4c6de3e6a22d7fa06f2374f60534a9009629714d063402a3c3ed60db057ef7999a7a31a78aebc0c7"
+                              }
                             }
                           ]
                         }
@@ -106,6 +133,39 @@
             "ext": "v0"
           },
           4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 801925984706572462
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 801925984706572462
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
         ]
       ],
       [

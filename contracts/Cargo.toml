@@ -2,6 +2,7 @@
 members = [
     "invisible_wallet",
     "factory",
+    "mock-wallet",
 ]
 resolver = "2"
 

@@ -8,8 +8,16 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
 import { useWalletConnect } from '@/lib/walletConnect'
+import {
+  generateMnemonicPhrase,
+  deriveP256KeyPair,
+  encryptMnemonic,
+  decryptMnemonic,
+  storeEncryptedMnemonic,
+  getEncryptedMnemonic,
+} from '@/lib/recovery'
 
-type Section = 'overview' | 'add-signer' | 'guardian'
+type Section = 'overview' | 'add-signer' | 'guardian' | 'recovery-backup'
 
 // ── Globe fallback icon ───────────────────────────────────────────────────────
 function GlobeIcon() {
@@ -145,7 +153,109 @@ export default function SettingsPage() {
   // Guardian form
   const [guardianAddress, setGuardianAddress] = useState('')
 
+  // Paper Backup state
+  const [hasBackup, setHasBackup] = useState(false)
+  const [backupMnemonic, setBackupMnemonic] = useState('')
+  const [backupPassphrase, setBackupPassphrase] = useState('')
+  const [revealPassphrase, setRevealPassphrase] = useState('')
+  const [backupStep, setBackupStep] = useState<'initial' | 'generated' | 'configured'>('initial')
+
   const wallet = useInvisibleWallet(walletConfig)
+
+  const checkBackup = useCallback(async () => {
+    try {
+      const enc = await getEncryptedMnemonic()
+      if (enc) {
+        setHasBackup(true)
+        setBackupStep('configured')
+      } else {
+        setHasBackup(false)
+        setBackupStep('initial')
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }, [])
+
+  useEffect(() => {
+    checkBackup()
+  }, [checkBackup])
+
+  async function handleGenerateBackup() {
+    const mnemonic = generateMnemonicPhrase()
+    setBackupMnemonic(mnemonic)
+    setBackupStep('generated')
+    setStatus(null)
+  }
+
+  async function handleSaveBackup() {
+    if (!backupPassphrase) {
+      setStatus('Please enter a passphrase to encrypt your recovery phrase.')
+      return
+    }
+    setLoading(true)
+    setStatus(null)
+    try {
+      // 1. Derive key pair
+      const { publicKey } = deriveP256KeyPair(backupMnemonic)
+      
+      // 2. Register derived key as a signer on-chain
+      const signerKeypair = getSignerKeypair()
+      const res = await wallet.addSigner(signerKeypair, publicKey)
+      
+      // 3. Encrypt and store in IndexedDB
+      const encrypted = await encryptMnemonic(backupMnemonic, backupPassphrase)
+      await storeEncryptedMnemonic(encrypted)
+      
+      setHasBackup(true)
+      setBackupStep('configured')
+      setBackupMnemonic('')
+      setBackupPassphrase('')
+      setStatus(`Paper backup configured successfully! Signer added at index ${res.signerIndex}`)
+      await fetchSigners()
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleRevealBackup() {
+    if (!revealPassphrase) {
+      setStatus('Please enter your passphrase to reveal.')
+      return
+    }
+    setLoading(true)
+    setStatus(null)
+    try {
+      const encrypted = await getEncryptedMnemonic()
+      if (!encrypted) throw new Error('No backup found')
+      const mnemonic = await decryptMnemonic(encrypted, revealPassphrase)
+      setBackupMnemonic(mnemonic)
+      setRevealPassphrase('')
+      setStatus('Decryption successful!')
+    } catch (err: unknown) {
+      setStatus('Invalid passphrase. Could not decrypt.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleDisableBackup() {
+    setLoading(true)
+    setStatus(null)
+    try {
+      await storeEncryptedMnemonic('')
+      setHasBackup(false)
+      setBackupStep('initial')
+      setBackupMnemonic('')
+      setStatus('Paper backup removed from this device storage.')
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     const addr = sessionStorage.getItem('invisible_wallet_address')
@@ -300,6 +410,25 @@ export default function SettingsPage() {
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Guardian recovery</p>
                     <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
                       Set a trusted account to recover access if you lose your device
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Paper Backup card */}
+              <button
+                className="card"
+                onClick={() => { setSection('recovery-backup'); setStatus(null); checkBackup() }}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Paper Backup (Recovery Phrase)</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Generate an offline 12-word recovery phrase for emergencies
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
@@ -473,6 +602,156 @@ export default function SettingsPage() {
               <button className="btn-gold" onClick={handleSetGuardian} disabled={loading}>
                 {loading ? <span className="spinner" /> : 'Set guardian'}
               </button>
+            </div>
+          </>
+        )}
+
+        {/* Paper Backup */}
+        {section === 'recovery-backup' && (
+          <>
+            <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '0.75rem' }}>
+              Paper Backup (Recovery Phrase)
+            </h2>
+            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '2rem', lineHeight: 1.6 }}>
+              Configure a paper backup using a standard BIP-39 12-word recovery phrase.
+              This provides a secondary signer to recover your wallet if you lose your device.
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {status && (
+                <div className="card-md">
+                  <p style={{ fontSize: '0.875rem', color: status.includes('success') || status.includes('successful') ? 'var(--teal)' : 'rgba(246,247,248,0.6)' }}>
+                    {status}
+                  </p>
+                </div>
+              )}
+
+              {backupStep === 'initial' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div className="card-md" style={{ borderLeft: '3px solid var(--gold)', paddingLeft: '1rem' }}>
+                    <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--gold)', marginBottom: '0.5rem' }}>
+                      Threat Model & Security Info
+                    </p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
+                      Anyone who has access to your 12-word phrase and your wallet contract address can sign transactions and drain funds.
+                      Store the phrase securely offline (e.g., written on paper in a safe).
+                    </p>
+                  </div>
+                  <button className="btn-gold" onClick={handleGenerateBackup} disabled={loading}>
+                    Generate Recovery Phrase
+                  </button>
+                </div>
+              )}
+
+              {backupStep === 'generated' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                      YOUR 12-WORD RECOVERY PHRASE
+                    </label>
+                    <div className="card-md" style={{ background: 'rgba(246,247,248,0.03)', border: '1px dashed var(--gold)', padding: '1rem', textAlign: 'center' }}>
+                      <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '1.05rem', wordSpacing: '0.5em', letterSpacing: '0.03em', color: 'var(--off-white)', lineHeight: 1.8 }}>
+                        {backupMnemonic}
+                      </p>
+                    </div>
+                    <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.5rem', fontStyle: 'italic' }}>
+                      Write down these 12 words in order and keep them offline.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                      ENCRYPTION PASSPHRASE
+                    </label>
+                    <input
+                      className="input-field"
+                      type="password"
+                      placeholder="Enter a secure password to encrypt phrase"
+                      value={backupPassphrase}
+                      onChange={e => setBackupPassphrase(e.target.value)}
+                    />
+                    <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.5rem' }}>
+                      Used to encrypt and store the mnemonic in IndexedDB for easy access on this device.
+                    </p>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.75rem' }}>
+                    <button className="btn-gold" style={{ flex: 1 }} onClick={handleSaveBackup} disabled={loading || !backupPassphrase}>
+                      {loading ? <span className="spinner" /> : 'Confirm & Register Signer'}
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ border: '1px solid var(--border-dim)', color: 'rgba(246,247,248,0.6)' }}
+                      onClick={() => { setBackupStep('initial'); setBackupMnemonic(''); setBackupPassphrase('') }}
+                      disabled={loading}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {backupStep === 'configured' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  <div className="card-md" style={{ borderLeft: '3px solid var(--teal)' }}>
+                    <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--teal)', marginBottom: '0.25rem' }}>
+                      Backup Configured
+                    </p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)' }}>
+                      An encrypted backup is stored in IndexedDB, and the derived key is registered as a signer.
+                    </p>
+                  </div>
+
+                  {backupMnemonic ? (
+                    <div>
+                      <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                        YOUR RECOVERY PHRASE
+                      </label>
+                      <div className="card-md" style={{ background: 'rgba(246,247,248,0.03)', border: '1px dashed var(--teal)', padding: '1rem', textAlign: 'center' }}>
+                        <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '1.05rem', wordSpacing: '0.5em', letterSpacing: '0.03em', color: 'var(--off-white)', lineHeight: 1.8 }}>
+                          {backupMnemonic}
+                        </p>
+                      </div>
+                      <button
+                        className="btn"
+                        style={{ marginTop: '0.75rem', border: '1px solid var(--border-dim)' }}
+                        onClick={() => setBackupMnemonic('')}
+                      >
+                        Hide Phrase
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                        REVEAL RECOVERY PHRASE
+                      </label>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <input
+                          className="input-field"
+                          type="password"
+                          placeholder="Enter your encryption passphrase"
+                          value={revealPassphrase}
+                          onChange={e => setRevealPassphrase(e.target.value)}
+                        />
+                        <button className="btn-gold" onClick={handleRevealBackup} disabled={loading || !revealPassphrase}>
+                          Reveal
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <hr style={{ border: 'none', borderTop: '1px solid var(--border-dim)', margin: '1rem 0' }} />
+
+                  <button
+                    className="btn"
+                    style={{ border: '1px solid rgba(220, 38, 38, 0.3)', color: 'rgba(220, 38, 38, 0.8)' }}
+                    onClick={handleDisableBackup}
+                    disabled={loading}
+                  >
+                    Delete Local Backup
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}
