@@ -2,6 +2,7 @@
 members = [
     "invisible_wallet",
     "factory",
+    "multisig-wallet",
 ]
 resolver = "2"
 
