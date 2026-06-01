@@ -7,6 +7,7 @@ Cargo.lock
 node_modules/
 sdk/node_modules/
 sdk/dist/
+sdk/vue/dist/
 
 # Frontend
 frontend/website/node_modules/
