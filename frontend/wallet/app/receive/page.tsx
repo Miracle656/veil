@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslation } from 'react-i18next'
 import { Keypair } from '@stellar/stellar-sdk'
 import { QRCodeCanvas } from 'qrcode.react'
 import { buildSep7PayUri } from '@/lib/sep7'
@@ -18,6 +19,7 @@ interface AddressCardProps {
 function AddressCard({ label, description, address, isPrimary }: AddressCardProps) {
   const [copied, setCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const { t } = useTranslation('receive')
   const qrRef = useRef<HTMLDivElement>(null)
 
   const handleCopy = async () => {
@@ -140,7 +142,7 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
                 <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="2"/>
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" strokeWidth="2"/>
               </svg>
-              Copy
+              {t('copy')}
             </>
           )}
         </button>
@@ -159,7 +161,7 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          {downloading ? 'Saving…' : 'QR'}
+          {downloading ? t('saving') : t('qr')}
         </button>
 
         <button
@@ -174,7 +176,7 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
             <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          {canShare ? 'Share' : 'Copy'}
+          {canShare ? t('share') : t('copy')}
         </button>
       </div>
     </div>
@@ -185,6 +187,7 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
 
 export default function ReceivePage() {
   const router = useRouter()
+  const { t } = useTranslation(['receive', 'common'])
   const [contractAddress, setContractAddress] = useState<string | null>(null)
   const [feePayerAddress, setFeePayerAddress] = useState<string | null>(null)
 
@@ -218,7 +221,7 @@ export default function ReceivePage() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
             <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          Back
+          {t('common:back')}
         </button>
         <span style={{
           fontFamily: 'Anton, Impact, sans-serif',
@@ -236,10 +239,10 @@ export default function ReceivePage() {
             fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic',
             fontSize: '1.75rem', color: 'var(--off-white)', marginBottom: '0.375rem',
           }}>
-            Receive
+            {t('title')}
           </h1>
           <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.5)' }}>
-            Share the right address for where the sender is sending from.
+            {t('subtitle')}
           </p>
         </div>
 
@@ -250,8 +253,8 @@ export default function ReceivePage() {
             {/* G... fee-payer address — primary, works with all senders */}
             {feePayerAddress ? (
               <AddressCard
-                label="SPENDING ADDRESS (G…) — USE FOR MOST SENDERS"
-                description="Use this address to receive XLM from exchanges, classic wallets, and most apps. Works with Coinbase, Lobstr, and any Stellar wallet."
+                label={t('spending_address')}
+                description={t('spending_address_desc')}
                 address={feePayerAddress}
                 isPrimary
               />
@@ -262,7 +265,7 @@ export default function ReceivePage() {
                 borderRadius: '12px',
               }}>
                 <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', lineHeight: 1.5 }}>
-                  Your spending address (G…) will appear here after you tap <strong style={{ color: 'var(--off-white)' }}>Fund wallet</strong> on the dashboard.
+                  {t('spending_address_notice')}
                 </p>
               </div>
             )}
@@ -270,8 +273,8 @@ export default function ReceivePage() {
             {/* C... contract address — secondary, for Soroban-native senders */}
             {contractAddress && (
               <AddressCard
-                label="CONTRACT ADDRESS (C…) — SOROBAN / VEIL WALLETS ONLY"
-                description="Use this address only when sending from another Veil wallet or a Soroban-compatible app. Classic wallets cannot send to C… addresses."
+                label={t('contract_address')}
+                description={t('contract_address_desc')}
                 address={contractAddress}
               />
             )}
