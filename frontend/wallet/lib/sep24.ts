@@ -15,6 +15,7 @@ import {
   Transaction,
   Networks,
   Keypair,
+  Operation,
 } from '@stellar/stellar-sdk'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 
@@ -62,6 +63,102 @@ export async function discoverAnchorInfo(anchorDomain: string): Promise<AnchorIn
 export async function discoverTransferServer(anchorDomain: string): Promise<string> {
   const info = await discoverAnchorInfo(anchorDomain)
   return info.transferServerUrl
+}
+
+// ── SEP-10 challenge signing (pure / testable) ───────────────────────────────
+
+/** Error codes for typed SEP-10 validation failures. */
+export type Sep10ErrorCode =
+  | 'MISSING_MANAGE_DATA'
+  | 'INVALID_HOME_DOMAIN'
+  | 'EXPIRED'
+  | 'MALFORMED'
+
+/**
+ * Typed error thrown by {@link signSep10Challenge} when a challenge is invalid.
+ * Consumers can narrow on `error.code` for programmatic handling.
+ */
+export class Sep10ChallengeError extends Error {
+  readonly code: Sep10ErrorCode
+  constructor(message: string, code: Sep10ErrorCode) {
+    super(message)
+    this.name = 'Sep10ChallengeError'
+    this.code = code
+  }
+}
+
+/**
+ * Validate and sign a SEP-10 challenge transaction.
+ *
+ * SEP-10 rules enforced:
+ *  - The transaction MUST contain at least one `manage_data` operation.
+ *  - The `manage_data` key MUST end with " auth" (the standard anchor suffix).
+ *  - The transaction MUST have `timeBounds` set (minTime / maxTime).
+ *  - `maxTime` MUST be in the future (challenge not expired).
+ *
+ * @param challengeXdr     Base64-encoded XDR of the challenge transaction.
+ * @param networkPassphrase Stellar network passphrase used to parse & hash the tx.
+ * @param signerKeypair    Keypair of the user account that signs the challenge.
+ * @returns Signed transaction XDR ready to POST back to the anchor.
+ * @throws {Sep10ChallengeError} if any SEP-10 validation rule is violated.
+ */
+export function signSep10Challenge(
+  challengeXdr: string,
+  networkPassphrase: string,
+  signerKeypair: Keypair,
+): string {
+  let tx: Transaction
+  try {
+    tx = new Transaction(challengeXdr, networkPassphrase)
+  } catch (err) {
+    throw new Sep10ChallengeError(
+      `Failed to parse challenge XDR: ${(err as Error).message}`,
+      'MALFORMED',
+    )
+  }
+
+  // ── 1. Must have at least one manage_data op ────────────────────────────────
+  const manageDataOps = tx.operations.filter(
+    (op): op is Operation.ManageData => op.type === 'manageData',
+  )
+  if (manageDataOps.length === 0) {
+    throw new Sep10ChallengeError(
+      'SEP-10 challenge must contain at least one manage_data operation',
+      'MISSING_MANAGE_DATA',
+    )
+  }
+
+  // ── 2. First manage_data key must follow "<home_domain> auth" convention ────
+  const firstKey = manageDataOps[0].name
+  if (!firstKey.endsWith(' auth')) {
+    throw new Sep10ChallengeError(
+      `manage_data key "${firstKey}" does not follow the "<home_domain> auth" SEP-10 convention`,
+      'INVALID_HOME_DOMAIN',
+    )
+  }
+
+  // ── 3. Must have time bounds ────────────────────────────────────────────────
+  if (!tx.timeBounds) {
+    throw new Sep10ChallengeError(
+      'SEP-10 challenge must have timeBounds set',
+      'MALFORMED',
+    )
+  }
+
+  // ── 4. Challenge must not have expired ─────────────────────────────────────
+  const nowSec = Math.floor(Date.now() / 1000)
+  const maxTime = Number(tx.timeBounds.maxTime)
+  if (maxTime > 0 && nowSec > maxTime) {
+    throw new Sep10ChallengeError(
+      `SEP-10 challenge has expired (maxTime=${maxTime}, now=${nowSec})`,
+      'EXPIRED',
+    )
+  }
+
+  // ── Sign and return ─────────────────────────────────────────────────────────
+  const rebuilt = TransactionBuilder.cloneFrom(tx).build()
+  rebuilt.sign(signerKeypair)
+  return rebuilt.toXDR()
 }
 
 // ── SEP-10 Web Auth ───────────────────────────────────────────────────────────
