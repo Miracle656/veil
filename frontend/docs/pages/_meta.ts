@@ -7,6 +7,7 @@ export default {
   'sdk-reference': 'SDK Reference',
   'sdk-errors': 'SDK Error Reference',
   troubleshooting: 'Troubleshooting',
+  guides: 'Guides',
   'agent-integration': 'Agent Integration',
   security: 'Security',
   'threat-model': 'Threat Model',

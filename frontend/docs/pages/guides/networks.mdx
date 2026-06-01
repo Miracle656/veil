@@ -1,0 +1,349 @@
+---
+title: Choosing a Network
+description: Guide to selecting the right Stellar network (Futurenet, Testnet, or Mainnet) for your Veil wallet development.
+---
+
+import { Callout } from "nextra/components";
+
+# Choosing a Network
+
+Stellar offers three networks for development and production. This guide helps you choose the right one for your needs.
+
+## Network Comparison Table
+
+| Aspect | Futurenet | Testnet | Mainnet |
+|--------|-----------|---------|---------|
+| **Purpose** | Latest features | Development/Testing | Production |
+| **Reset Policy** | Monthly | Monthly | Never |
+| **Uptime** | ~95% | ~99% | 99.95%+ |
+| **Real XLM** | No (free) | No (free) | Yes (real money) |
+| **Use Case** | Experimental features | App development & QA | Production dApps |
+| **Friendbot** | Yes | Yes | No (must buy XLM) |
+| **RPC Endpoint** | soroban-futurenet.stellar.org | soroban-testnet.stellar.org | soroban-mainnet.stellar.org |
+| **Horizon API** | horizon-futurenet.stellar.org | horizon-testnet.stellar.org | horizon.stellar.org |
+| **Network ID** | `StellarFuturenetNetwork` | `Test SDF Network` | `Public Global Stellar` |
+| **Fee Rate** | ~100 stroops/tx | ~100 stroops/tx | ~100 stroops/tx |
+
+## Futurenet
+
+**For:** Testing new Soroban features, experimenting with upcoming protocol changes
+
+### When to Use Futurenet
+
+- ✅ Testing cutting-edge Soroban features not yet on Testnet
+- ✅ Experimenting with protocol changes before they reach Testnet
+- ✅ Rapid iteration on contracts
+- ❌ NOT for production
+- ❌ NOT for user-facing features (data resets monthly)
+
+### Futurenet Setup
+
+```bash
+# Environment variables for Futurenet
+export STELLAR_NETWORK="futurenet"
+export SOROBAN_RPC_HOST="https://soroban-futurenet.stellar.org"
+export SOROBAN_RPC_PORT="443"
+export HORIZON_URL="https://horizon-futurenet.stellar.org"
+export FRIENDBOT_URL="https://friendbot-futurenet.stellar.org"
+export NETWORK_PASSPHRASE="StellarFuturenetNetwork"
+```
+
+### Get Free Futurenet XLM
+
+```bash
+# Get XLM via Friendbot
+curl "https://friendbot-futurenet.stellar.org/?addr=GBBD47XCZVNQWMFE2IWHHT4AFYK6QKM3ZDMK5GVLL5IXacelași5QNTUVA"
+```
+
+### Veil Futurenet Deployment
+
+```bash
+# Deploy Veil contract to Futurenet
+soroban contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/veil_wallet.wasm \
+  --rpc-url https://soroban-futurenet.stellar.org \
+  --network-passphrase "StellarFuturenetNetwork"
+```
+
+<Callout type="warning">
+Futurenet data resets monthly. Never store production data or user funds here. All accounts and contracts are wiped.
+</Callout>
+
+## Testnet
+
+**For:** Active development, integration testing, QA before production
+
+### When to Use Testnet
+
+- ✅ Normal app development
+- ✅ Testing wallet features
+- ✅ Integration testing
+- ✅ User acceptance testing (before mainnet)
+- ❌ NOT for production
+- ❌ NOT for long-term data storage (data resets monthly)
+
+### Testnet Setup
+
+```bash
+# Environment variables for Testnet
+export STELLAR_NETWORK="testnet"
+export SOROBAN_RPC_HOST="https://soroban-testnet.stellar.org"
+export SOROBAN_RPC_PORT="443"
+export HORIZON_URL="https://horizon-testnet.stellar.org"
+export FRIENDBOT_URL="https://friendbot-testnet.stellar.org"
+export NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+```
+
+### Get Free Testnet XLM
+
+```bash
+# Get XLM via Friendbot
+curl "https://friendbot-testnet.stellar.org/?addr=GBBD47XCZVNQWMFE2IWHHT4AFYK6QKM3ZDMK5GVLL5IXSAMQ5QNTUVA"
+
+# Or use the Stellar Laboratory
+# https://laboratory.stellar.org/#account-creator
+```
+
+### Testnet Explorer
+
+- **StellarChain:** https://testnet.steexp.com
+- **Stellar Laboratory:** https://laboratory.stellar.org
+- **View Contracts:** https://testnet.steexp.com/contracts
+
+### Veil Testnet Deployment
+
+```bash
+# Deploy Veil contract to Testnet
+soroban contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/veil_wallet.wasm \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+
+# Initialize wallet
+soroban contract invoke \
+  --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABUFC \
+  --function init \
+  --arg-xdr-base64 "AAAAQQAAAAACc4fQYlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXl=" \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+```
+
+<Callout type="info">
+Most Veil development happens on Testnet. It has stable features and monthly resets are acceptable.
+</Callout>
+
+## Mainnet
+
+**For:** Production deployments, real user wallets, actual XLM transactions
+
+### When to Use Mainnet
+
+- ✅ Production dApps
+- ✅ Real user wallets
+- ✅ Live payments
+- ✅ Real XLM settlement
+- ❌ NOT for testing (uses real money)
+- ❌ NOT for unaudited code
+
+### Mainnet Setup
+
+```bash
+# Environment variables for Mainnet
+export STELLAR_NETWORK="mainnet"
+export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+export SOROBAN_RPC_PORT="443"
+export HORIZON_URL="https://horizon.stellar.org"
+export NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+```
+
+### Get Mainnet XLM
+
+Mainnet has no Friendbot. You must buy XLM from an exchange:
+
+1. **Kraken** — https://www.kraken.com
+2. **Binance** — https://www.binance.com
+3. **Coinbase** — https://www.coinbase.com
+4. **CoinMarketCap** — https://coinmarketcap.com/currencies/stellar/
+
+### Mainnet Explorer
+
+- **StellarChain:** https://steexp.com
+- **Stellar Laboratory:** https://laboratory.stellar.org
+- **View Contracts:** https://steexp.com/contracts
+
+### Veil Mainnet Deployment
+
+```bash
+# Deploy Veil contract to Mainnet (REAL XLM WILL BE CHARGED)
+soroban contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/veil_wallet.wasm \
+  --rpc-url https://soroban-mainnet.stellar.org \
+  --network-passphrase "Public Global Stellar Network ; September 2015"
+
+# Initialize wallet on Mainnet
+soroban contract invoke \
+  --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABUFC \
+  --function init \
+  --arg-xdr-base64 "AAAAQQAAAAACc4fQYlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXl=" \
+  --rpc-url https://soroban-mainnet.stellar.org \
+  --network-passphrase "Public Global Stellar Network ; September 2015"
+```
+
+<Callout type="warning">
+**BE CAREFUL ON MAINNET.** Every transaction costs real XLM. Test thoroughly on Testnet first. Never deploy unaudited code to Mainnet.
+</Callout>
+
+## Recommended Development Workflow
+
+### Stage 1: Local Development
+```bash
+# Start local Soroban simulator
+soroban network start local
+
+# Test contracts locally
+soroban contract test --network local
+```
+
+### Stage 2: Futurenet (Optional)
+```bash
+# Test experimental features
+export STELLAR_NETWORK="futurenet"
+export SOROBAN_RPC_HOST="https://soroban-futurenet.stellar.org"
+
+# Deploy and test
+soroban contract deploy --network-passphrase "StellarFuturenetNetwork"
+```
+
+### Stage 3: Testnet (Required)
+```bash
+# Full integration testing
+export STELLAR_NETWORK="testnet"
+export SOROBAN_RPC_HOST="https://soroban-testnet.stellar.org"
+
+# Test with realistic conditions
+soroban contract deploy --network-passphrase "Test SDF Network ; September 2015"
+
+# Load test with multiple transactions
+npm run test:integration
+```
+
+### Stage 4: Mainnet (Production)
+```bash
+# Only after:
+# - Security audit ✓
+# - Testnet validation ✓
+# - Mainnet simulation ✓
+
+export STELLAR_NETWORK="mainnet"
+export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+
+# Deploy with caution
+soroban contract deploy --network-passphrase "Public Global Stellar Network ; September 2015"
+```
+
+## Network Passphrase Reference
+
+Keep these handy:
+
+```bash
+# Futurenet
+StellarFuturenetNetwork
+
+# Testnet
+Test SDF Network ; September 2015
+
+# Mainnet
+Public Global Stellar Network ; September 2015
+```
+
+## Quick Network Switcher
+
+Create a shell script to switch networks quickly:
+
+```bash
+#!/bin/bash
+
+# ~/.stellar-network
+
+case "$1" in
+  futurenet)
+    export STELLAR_NETWORK="futurenet"
+    export SOROBAN_RPC_HOST="https://soroban-futurenet.stellar.org"
+    export NETWORK_PASSPHRASE="StellarFuturenetNetwork"
+    ;;
+  testnet)
+    export STELLAR_NETWORK="testnet"
+    export SOROBAN_RPC_HOST="https://soroban-testnet.stellar.org"
+    export NETWORK_PASSPHRASE="Test SDF Network ; September 2015"
+    ;;
+  mainnet)
+    export STELLAR_NETWORK="mainnet"
+    export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+    export NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
+    ;;
+  *)
+    echo "Usage: source ~/.stellar-network {futurenet|testnet|mainnet}"
+    exit 1
+    ;;
+esac
+
+echo "✓ Network set to: $STELLAR_NETWORK"
+echo "✓ RPC: $SOROBAN_RPC_HOST"
+```
+
+Usage:
+```bash
+source ~/.stellar-network testnet
+# ✓ Network set to: testnet
+# ✓ RPC: https://soroban-testnet.stellar.org
+
+source ~/.stellar-network mainnet
+# ✓ Network set to: mainnet
+# ✓ RPC: https://soroban-mainnet.stellar.org
+```
+
+## Network Status & Monitoring
+
+- **Stellar Status:** https://status.stellar.org
+- **Futurenet Uptime:** Check #soroban-status on Stellar Discord
+- **Testnet Issues:** Refer to #soroban-testnet Discord channel
+- **Mainnet Health:** https://status.stellar.org/pages/production
+
+## Troubleshooting Network Issues
+
+### "Cannot connect to RPC"
+```bash
+# Check network connectivity
+curl https://soroban-testnet.stellar.org
+
+# Verify firewall isn't blocking port 443
+telnet soroban-testnet.stellar.org 443
+```
+
+### "Invalid network passphrase"
+```bash
+# Double-check your passphrase (exact spelling matters)
+# Testnet: "Test SDF Network ; September 2015"  ← note the semicolon
+# Mainnet: "Public Global Stellar Network ; September 2015"
+```
+
+### "Insufficient balance"
+```bash
+# Check your account balance
+soroban contract invoke \
+  --contract-id native \
+  --function balance \
+  --account YOUR_ACCOUNT
+```
+
+### "Contract not found"
+```bash
+# Verify contract is deployed on the right network
+# Use the network's block explorer
+# Testnet: https://testnet.steexp.com
+# Mainnet: https://steexp.com
+```
+
+<Callout type="info">
+Still stuck? Ask in the [Stellar Discord](https://discord.gg/stellar) #soroban-support channel. The community is very helpful!
+</Callout>
