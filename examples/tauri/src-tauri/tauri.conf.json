@@ -1,0 +1,43 @@
+{
+  "build": {
+    "beforeBuildCommand": "npm install && npm run build",
+    "beforeDevCommand": "npm install && npm run dev",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "Veil Tauri Wallet",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "bundle": {
+      "identifier": "com.veil.desktopwallet",
+      "icon": [],
+      "resources": []
+    },
+    "security": {
+      "csp": null
+    },
+    "allowlist": {
+      "all": false,
+      "fs": {
+        "all": false
+      },
+      "shell": {
+        "all": false
+      },
+      "http": {
+        "all": false
+      },
+      "all-api": false
+    },
+    "plugins": {
+      "biometric": {}
+    },
+    "windows": [
+      {
+        "title": "Veil Tauri Wallet"
+      }
+    ]
+  }
+}
