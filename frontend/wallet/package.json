@@ -17,7 +17,7 @@
     "@blend-capital/blend-sdk": "^3.2.2",
     "@soroswap/sdk": "^0.4.0",
     "@stellar/stellar-sdk": "^14.6.1",
-    "@supabase/supabase-js": "^2.103.3",
+    "@supabase/supabase-js": "^2.106.2",
     "@walletconnect/utils": "^2.23.0",
     "@walletconnect/web3wallet": "^1.16.1",
     "framer-motion": "^12.40.0",
