@@ -94,7 +94,12 @@ const wallet = useInvisibleWallet(config)
 Creates a new passkey credential and computes the deterministic wallet address.
 
 ```typescript
+// Signature
+register(username?: string): Promise<RegisterResult>
+
+// Example (3 lines)
 const { walletAddress, publicKeyBytes } = await wallet.register('alice')
+console.log(walletAddress)
 ```
 
 **Parameters**
@@ -103,7 +108,7 @@ const { walletAddress, publicKeyBytes } = await wallet.register('alice')
 |---|---|---|
 | `username` | `string` (optional) | Display name for the passkey credential |
 
-**Returns** `RegisterResult`
+**Returns** `Promise<RegisterResult>`
 
 | Field | Type | Description |
 |---|---|---|
@@ -127,7 +132,12 @@ The challenge used during registration is a random 32-byte nonce — it is **not
 Deploys the wallet contract on-chain via the factory. If already deployed, returns the existing address.
 
 ```typescript
-const { walletAddress, alreadyDeployed } = await wallet.deploy(keypair)
+// Signature
+deploy(signerKeypair: Keypair | string, publicKeyBytes?: Uint8Array): Promise<DeployResult>
+
+// Example (3 lines)
+const signer = Keypair.fromSecret('S...')
+const { walletAddress, alreadyDeployed } = await wallet.deploy(signer, publicKeyBytes)
 ```
 
 **Parameters**
@@ -137,7 +147,7 @@ const { walletAddress, alreadyDeployed } = await wallet.deploy(keypair)
 | `signerKeypair` | `Keypair \| string` | Fee-payer keypair (pays transaction fees only) |
 | `publicKeyBytes` | `Uint8Array` (optional) | P-256 public key override. Defaults to localStorage value |
 
-**Returns** `DeployResult`
+**Returns** `Promise<DeployResult>`
 
 | Field | Type | Description |
 |---|---|---|
@@ -151,13 +161,15 @@ const { walletAddress, alreadyDeployed } = await wallet.deploy(keypair)
 Restores a wallet session from `localStorage`. Verifies the contract exists on-chain.
 
 ```typescript
+// Signature
+login(): Promise<{ walletAddress: string } | null>
+
+// Example (3 lines)
 const result = await wallet.login()
-if (result) {
-  console.log('Restored:', result.walletAddress)
-}
+if (result) console.log('Restored:', result.walletAddress)
 ```
 
-**Returns** `{ walletAddress: string } | null`
+**Returns** `Promise<{ walletAddress: string } | null>`
 
 ---
 
@@ -166,16 +178,21 @@ if (result) {
 Signs a Soroban authorization entry using the device biometric.
 
 ```typescript
+// Signature
+signAuthEntry(signaturePayload: Uint8Array): Promise<WebAuthnSignature | null>
+
+// Example (3 lines)
 const sig = await wallet.signAuthEntry(payload)
+if (sig) console.log('Got auth signature, publicKey len:', sig.publicKey.length)
 ```
 
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
-| `signaturePayload` | `Uint8Array` | 32-byte Soroban `HashIdPreimage` |
+| `signaturePayload` | `Uint8Array` | 32-byte Soroban `HashIdPreimage` (payload passed to WebAuthn challenge) |
 
-**Returns** `WebAuthnSignature | null` — null if the user cancels.
+**Returns** `Promise<WebAuthnSignature | null>` — null if the user cancels.
 
 **Encoding for `__check_auth`:**
 ```typescript
@@ -194,7 +211,12 @@ const sigVec = [
 Read the wallet's current nonce via simulation (no transaction submitted).
 
 ```typescript
+// Signature
+getNonce(): Promise<bigint>
+
+// Example (2 lines)
 const nonce: bigint = await wallet.getNonce()
+console.log('nonce:', nonce)
 ```
 
 ---
@@ -204,7 +226,12 @@ const nonce: bigint = await wallet.getNonce()
 Register an additional P-256 public key as a valid signer.
 
 ```typescript
+// Signature
+addSigner(signerKeypair: Keypair, newPublicKeyBytes: Uint8Array): Promise<AddSignerResult>
+
+// Example (3 lines)
 const { signerIndex } = await wallet.addSigner(keypair, newPubKeyBytes)
+console.log('added signer index', signerIndex)
 ```
 
 **Parameters**
@@ -214,7 +241,7 @@ const { signerIndex } = await wallet.addSigner(keypair, newPubKeyBytes)
 | `signerKeypair` | `Keypair` | Fee-payer keypair |
 | `newPublicKeyBytes` | `Uint8Array` | 65-byte uncompressed P-256 public key |
 
-**Returns** `AddSignerResult` with `signerIndex`.
+**Returns** `Promise<AddSignerResult>` with `signerIndex`.
 
 ---
 
@@ -223,6 +250,10 @@ const { signerIndex } = await wallet.addSigner(keypair, newPubKeyBytes)
 Remove a signer by index.
 
 ```typescript
+// Signature
+removeSigner(signerKeypair: Keypair, signerIndex: number): Promise<void>
+
+// Example (2 lines)
 await wallet.removeSigner(keypair, 1)
 ```
 
@@ -237,11 +268,15 @@ Do not remove the last signer — this will lock the contract permanently unless
 Fetch all registered signers from the wallet contract.
 
 ```typescript
+// Signature
+getSigners(): Promise<SignerInfo[]>
+
+// Example (3 lines)
 const signers: SignerInfo[] = await wallet.getSigners()
 signers.forEach(s => console.log(`#${s.index}: ${s.publicKey}`))
 ```
 
-**Returns** `SignerInfo[]`
+**Returns** `Promise<SignerInfo[]>`
 
 | Field | Type | Description |
 |---|---|---|
@@ -255,8 +290,21 @@ signers.forEach(s => console.log(`#${s.index}: ${s.publicKey}`))
 Set a guardian address for account recovery. Requires WebAuthn authentication.
 
 ```typescript
+// Signature
+setGuardian(signerKeypair: Keypair, guardianAddress: string): Promise<void>
+
+// Example (2 lines)
 await wallet.setGuardian(keypair, 'G...')
 ```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `signerKeypair` | `Keypair` | Fee-payer keypair used to submit the transaction |
+| `guardianAddress` | `string` | Stellar address (G...) of the guardian account |
+
+**Returns** `Promise<void>`
 
 ---
 
@@ -265,9 +313,22 @@ await wallet.setGuardian(keypair, 'G...')
 Start guardian-based key recovery. Initiates a timelock after which the new key replaces the existing signer.
 
 ```typescript
+// Signature
+initiateRecovery(guardianKeypair: Keypair, newPublicKeyBytes: Uint8Array): Promise<InitiateRecoveryResult>
+
+// Example (3 lines)
 const { unlockTime } = await wallet.initiateRecovery(guardianKp, newPubKey)
-// unlockTime is a Unix timestamp — recovery completes after this time
+console.log('unlock after (unix):', unlockTime)
 ```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `guardianKeypair` | `Keypair` | Guardian's Stellar Keypair used to sign the initiation |
+| `newPublicKeyBytes` | `Uint8Array` | 65-byte uncompressed P-256 public key for the new signer |
+
+**Returns** `Promise<InitiateRecoveryResult>` — object with `unlockTime` (unix seconds)
 
 **Throws:**
 - `NoGuardianSet` — no guardian configured on the wallet
@@ -279,6 +340,10 @@ const { unlockTime } = await wallet.initiateRecovery(guardianKp, newPubKey)
 Complete a pending recovery after the timelock expires.
 
 ```typescript
+// Signature
+completeRecovery(payerKeypair: Keypair): Promise<void>
+
+// Example (2 lines)
 await wallet.completeRecovery(payerKeypair)
 ```
 

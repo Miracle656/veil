@@ -1,0 +1,192 @@
+name: Testnet Smoke Test (Nightly)
+
+# Runs at 03:00 UTC every day
+# Skips on dependabot branches (automated dependency update PRs)
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}   # allow manual trigger for debugging
+
+jobs:
+  testnet-smoke:
+    name: Stellar testnet — deploy wallet, fund, send, verify
+    runs-on: ubuntu-latest
+    # Skip on dependabot branches so dependency PRs don't trigger a burner-key spend
+    if: ${{ !startsWith(github.head_ref, 'dependabot/') }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # ── Install the Stellar CLI (used for friendbot funding) ───────────────
+      - name: Install Stellar CLI
+        run: |
+          curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
+          echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
+
+      # ── Install Node dependencies (stellar-sdk for smoke script) ──────────
+      - name: Install stellar-sdk
+        run: npm install @stellar/stellar-sdk
+
+      # ── Generate a fresh burner keypair ───────────────────────────────────
+      - name: Generate burner keypair
+        id: keygen
+        run: |
+          node -e "
+            const { Keypair } = require('@stellar/stellar-sdk');
+            const kp = Keypair.random();
+            console.log('public=' + kp.publicKey());
+            console.log('secret=' + kp.secret());
+          " >> \$GITHUB_OUTPUT
+
+      # ── Fund with Friendbot ───────────────────────────────────────────────
+      - name: Fund burner account via Friendbot
+        run: |
+          curl -sf "https://friendbot.stellar.org?addr=${{ steps.keygen.outputs.public }}" \
+            -o friendbot_response.json
+          cat friendbot_response.json
+
+      # ── Create a second burner account (recipient) ────────────────────────
+      - name: Generate recipient keypair
+        id: recipient
+        run: |
+          node -e "
+            const { Keypair } = require('@stellar/stellar-sdk');
+            const kp = Keypair.random();
+            console.log('public=' + kp.publicKey());
+            console.log('secret=' + kp.secret());
+          " >> \$GITHUB_OUTPUT
+
+      - name: Fund recipient via Friendbot
+        run: |
+          curl -sf "https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}" \
+            -o friendbot_recipient.json
+
+      # ── Send a 1 XLM payment and verify it landed on Horizon ─────────────
+      - name: Send payment and verify via Horizon
+        env:
+          SENDER_SECRET: ${{ steps.keygen.outputs.secret }}
+          SENDER_PUBLIC: ${{ steps.keygen.outputs.public }}
+          RECIPIENT_PUBLIC: ${{ steps.recipient.outputs.public }}
+          HORIZON_URL: https://horizon-testnet.stellar.org
+          NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+        run: |
+          node -e "
+            const {
+              Keypair,
+              Server,
+              TransactionBuilder,
+              Networks,
+              Operation,
+              Asset,
+              BASE_FEE,
+            } = require('@stellar/stellar-sdk');
+
+            const horizonUrl = process.env.HORIZON_URL;
+            const server = new Server(horizonUrl);
+
+            const senderKp = Keypair.fromSecret(process.env.SENDER_SECRET);
+            const recipientPublic = process.env.RECIPIENT_PUBLIC;
+
+            async function main() {
+              const account = await server.loadAccount(senderKp.publicKey());
+
+              const tx = new TransactionBuilder(account, {
+                fee: BASE_FEE,
+                networkPassphrase: process.env.NETWORK_PASSPHRASE,
+              })
+                .addOperation(
+                  Operation.payment({
+                    destination: recipientPublic,
+                    asset: Asset.native(),
+                    amount: '1',
+                  })
+                )
+                .setTimeout(30)
+                .build();
+
+              tx.sign(senderKp);
+              const result = await server.submitTransaction(tx);
+              console.log('Transaction hash:', result.hash);
+              console.log('Ledger:', result.ledger);
+
+              // Verify via Horizon that the recipient received funds.
+              const recipientAccount = await server.loadAccount(recipientPublic);
+              const xlmBalance = recipientAccount.balances.find(
+                (b) => b.asset_type === 'native'
+              );
+              if (!xlmBalance) throw new Error('No XLM balance found on recipient');
+
+              const balance = parseFloat(xlmBalance.balance);
+              console.log('Recipient XLM balance:', balance);
+              if (balance < 1) {
+                throw new Error('Expected recipient balance >= 1 XLM, got ' + balance);
+              }
+              console.log('SMOKE TEST PASSED');
+            }
+
+            main().catch((err) => {
+              console.error('SMOKE TEST FAILED:', err.message || err);
+              process.exit(1);
+            });
+          "
+
+      #notify on failure
+      # Option A — Slack webhook (set SMOKE_SLACK_WEBHOOK secret in repository settings).
+      - name: Notify Slack on failure
+        if: failure() && env.SMOKE_SLACK_WEBHOOK != ''
+        env:
+          SMOKE_SLACK_WEBHOOK: ${{ secrets.SMOKE_SLACK_WEBHOOK }}
+        run: |
+          curl -sf -X POST "$SMOKE_SLACK_WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            -d '{
+              "text": ":red_circle: *Veil testnet smoke test FAILED* — <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
+            }'
+
+      # Option B — Open a GitHub issue on failure (always available, no extra secret).
+      - name: Open GitHub issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `Nightly testnet smoke test failed — ${new Date().toISOString().slice(0, 10)}`;
+            const body = [
+              '## Nightly testnet smoke test failure',
+              '',
+              `**Run:** https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'The nightly Stellar testnet smoke test failed.',
+              'Steps: fund burner wallet via Friendbot → send 1 XLM → verify Horizon balance.',
+              '',
+              '**Triage checklist:**',
+              '- [ ] Is Friendbot healthy? <https://friendbot.stellar.org>',
+              '- [ ] Is Horizon testnet healthy? <https://horizon-testnet.stellar.org>',
+              '- [ ] Is the Soroban RPC healthy? <https://soroban-testnet.stellar.org>',
+              '- [ ] Any recent changes to stellar-sdk version?',
+            ].join('\n');
+
+            // Avoid duplicate issues for the same day.
+            const today = new Date().toISOString().slice(0, 10);
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'testnet-smoke-failure',
+            });
+            const alreadyOpen = existing.data.some((i) => i.title.includes(today));
+            if (alreadyOpen) {
+              console.log('Issue for today already exists — skipping.');
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['testnet-smoke-failure', 'ci'],
+            });

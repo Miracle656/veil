@@ -1,0 +1,137 @@
+---
+title: Threat Model
+description: STRIDE threat model for Veil — attacker model, trust assumptions, and mitigations.
+---
+
+import { Callout } from 'nextra/components'
+
+# Threat Model
+
+This document describes the threat boundary, attacker model, trust assumptions, and residual risks for Veil in STRIDE format.
+It is intended for security reviewers, auditors, and operators evaluating Veil for production use.
+
+<Callout type="warning">
+  Veil has **not** undergone a formal third-party security audit. The mitigations below represent
+  the design intent and current implementation; some are marked *planned* and are not yet
+  enforced on-chain.
+</Callout>
+
+---
+
+## Attacker Model
+
+| Actor | Capability | Goal |
+|---|---|---|
+| **Remote attacker** | Network access, phishing sites, malicious JavaScript | Steal funds or authorise a transaction without the user's biometric |
+| **Malicious anchor / service** | Control over anchor-issued assets, forged off-chain data | Issue fraudulent tokens or manipulate swap pricing |
+| **Compromised cloud / passkey sync** | Read access to iCloud Keychain or Google Password Manager backup | Recover the passkey credential and sign on the user's behalf |
+| **Malicious co-signer** | An `add_signer` transaction the user was tricked into approving | Exfiltrate funds after gaining on-chain signer status |
+| **Malicious smart contract** | Invoke Veil wallet via cross-contract call | Trigger an authorised action without the user's knowledge |
+| **Insider / supply-chain** | Compromise of an npm package or GitHub Actions runner | Inject malicious SDK code or steal CI secrets |
+| **Quantum adversary** *(future)* | Break P-256 ECDSA offline | Recover signing key from on-chain public key |
+
+---
+
+## STRIDE Threat Table
+
+### Spoofing
+
+| # | Threat | Component | Mitigation | Status |
+|---|---|---|---|---|
+| S-1 | Attacker forges a WebAuthn assertion with an arbitrary P-256 key | `__check_auth` | Contract rejects keys not in `has_signer()` registry | ✅ Implemented |
+| S-2 | Phishing site harvests a passkey assertion for the real origin | WebAuthn / browser | WebAuthn origin binding — `clientDataJSON.origin` is set by the authenticator and cannot be spoofed by a relying party | ✅ By spec |
+| S-3 | Cloud-passkey sync compromise — attacker restores credential on a new device | Passkey sync provider | Passkey private key is stored in the secure enclave; cloud sync stores an encrypted blob that requires re-authentication on the new device | ⚠️ Trust in sync provider |
+| S-4 | Malicious anchor impersonates a legitimate issuer | Asset trust line | Veil does not auto-establish trust lines; user must approve `change_trust` via biometric | ✅ Implemented |
+
+### Tampering
+
+| # | Threat | Component | Mitigation | Status |
+|---|---|---|---|---|
+| T-1 | Attacker modifies the transaction after the user signs | XDR envelope | Soroban `signature_payload` is a deterministic hash of the auth entry; any modification changes the payload and breaks the challenge binding | ✅ Implemented |
+| T-2 | Attacker tampers with `clientDataJSON` or `authData` in transit | WebAuthn pipeline | Both fields are included in the ECDSA message hash (`SHA256(authData ‖ SHA256(clientDataJSON))`); tampering invalidates the signature | ✅ Implemented |
+| T-3 | SDK is tampered in a supply-chain attack | npm package | `package-lock.json` pins exact versions; Dependabot keeps dependencies updated; GitGuardian scans for secret leaks | ⚠️ No sub-resource integrity yet |
+| T-4 | Wraith indexer serves tampered transfer history | Horizon data | UI uses Horizon as a secondary source; discrepancies can be surfaced; full Horizon verification is planned | ⚠️ Partial |
+
+### Repudiation
+
+| # | Threat | Component | Mitigation | Status |
+|---|---|---|---|---|
+| R-1 | User denies authorising a transaction | Smart contract | Every authorised action requires a valid WebAuthn assertion; `clientDataJSON` contains the exact `signature_payload` hash, creating a non-repudiable audit trail on-chain | ✅ By design |
+| R-2 | Operator denies a Lens price query was served | Lens oracle | x402 payment receipts provide a timestamped record of each API call | ✅ Implemented |
+
+### Information Disclosure
+
+| # | Threat | Component | Mitigation | Status |
+|---|---|---|---|---|
+| I-1 | Private key exfiltration via JavaScript | Secure enclave | WebAuthn `create()` returns only the public key; the private key never leaves the hardware enclave | ✅ By spec |
+| I-2 | `localStorage` credential ID exposure (same-origin XSS) | SDK | `credential_id` in `localStorage` reveals which passkey is registered; does not expose the private key | ⚠️ Switch to IndexedDB + encryption in production |
+| I-3 | Stellar public key linkage (address reuse) | Blockchain | Stellar public keys are permanently visible on-chain; multi-account rotation is not yet supported | ⚠️ Residual risk |
+| I-4 | Agent conversation history in memory | Agent server | Chat history is held in-process memory only; no persistence layer for conversations | ✅ No DB persistence |
+
+### Denial of Service
+
+| # | Threat | Component | Mitigation | Status |
+|---|---|---|---|---|
+| D-1 | Flood Soroban RPC with junk transactions | Soroban RPC | Protocol-level fee market; attackers pay per operation | ✅ By protocol |
+| D-2 | Drain fee-payer `G…` account (HKDF-derived) | Fee-payer account | Fee-payer is only used for fee bump; wallet funds are held separately in the `C…` contract account | ✅ By design |
+| D-3 | Remove the last signer, locking the wallet | `remove_signer` | Phase 5 guardian recovery allows a pre-registered guardian to restore access; UI warns when removing the last signer | ✅ Guardian recovery |
+| D-4 | DoS Lens price oracle | Lens service | x402 micropayment gate rate-limits free callers; Render horizontal scaling available | ⚠️ Basic rate limiting only |
+
+### Elevation of Privilege
+
+| # | Threat | Component | Mitigation | Status |
+|---|---|---|---|---|
+| E-1 | Rogue signer added without user consent | `add_signer` | `add_signer` requires a valid WebAuthn signature from an existing registered signer | ✅ Implemented |
+| E-2 | Cross-contract re-entrancy (malicious contract calls Veil) | `__check_auth` | Soroban's `require_auth` model prevents re-entrancy; each auth entry is bound to a specific invocation | ✅ By Soroban design |
+| E-3 | Replay of an old valid WebAuthn assertion | `__check_auth` | `signature_payload` is derived from the Soroban auth entry hash, which is unique per ledger sequence; Soroban ledger sequences prevent replay at the network level | ✅ Implemented |
+| E-4 | CI runner compromise exposes `NEXT_PUBLIC_*` env vars | GitHub Actions | `NEXT_PUBLIC_*` values are public testnet addresses (browser-exposed by design); no mainnet secrets in CI | ✅ Testnet only |
+| E-5 | Guardians recover to a key they control | Guardian recovery | 3-day timelock on `complete_recovery`; user can cancel during the window; guardian's own key must authorise | ⚠️ Timelock relies on user monitoring |
+
+---
+
+## Trust Assumptions
+
+| Assumption | Justification | Risk if violated |
+|---|---|---|
+| **Stellar consensus is BFT-honest** | Stellar SCP tolerates up to ⅓ Byzantine validators in the quorum slice | Double-spend or transaction censorship |
+| **WebAuthn implementation is correct** | Browser/OS vendor (Apple, Google, Microsoft) implements the FIDO2 spec faithfully | Passkey bypass |
+| **Hardware secure enclave is tamper-resistant** | Certified by FIDO Alliance; assumed not to have hardware backdoors | Private key exfiltration |
+| **Cloud passkey sync provider (iCloud/Google) is honest** | Operator trusts Apple / Google with the encrypted passkey blob | Credential recovery by a compromised cloud provider |
+| **`p256` and `sha2` Rust crates are correct** | Widely used, audited crates; Rust memory safety eliminates most implementation bugs | Signature forgery or hash collision |
+| **Soroban VM is deterministic and isolated** | Soroban design guarantee; each contract execution is sandboxed | Arbitrary code execution inside the VM |
+| **Vercel and Render supply-chain integrity** | Build artefacts served from Vercel CDN; Render container images | Malicious injection at deploy time |
+
+---
+
+## Residual Risks
+
+| Risk | Likelihood | Impact | Accepted Until |
+|---|---|---|---|
+| No formal security audit | Medium | High | Pre-mainnet audit scheduled |
+| `localStorage` credential ID (same-origin XSS readable) | Low | Low | Production SDK hardening |
+| No RP ID / origin verification in contract (Phase 4 planned) | Low | High | Phase 4 — store `rpIdHash` at `init()` |
+| No per-signer nonce (sequence replay across forks) | Very Low | Medium | Phase 5 — on-chain nonce |
+| Quantum adversary breaking P-256 | Very Low (10+ yr) | Critical | Post-quantum: replace P-256 with ML-DSA when Soroban supports it |
+| Passkey sync provider compromise | Very Low | High | Hardware key option (FIDO2 security key) as alternative authenticator |
+| Malicious anchor issuing fraudulent assets | Low | Medium | UI shows asset issuer; user must approve trust lines explicitly |
+
+---
+
+## Scope
+
+This threat model covers:
+
+- **In scope:** Soroban smart contract (`invisible_wallet`, `factory`), browser SDK (`invisible-wallet-sdk`), wallet PWA (`frontend/wallet`), AI agent (`packages/agent`), Lens price oracle, Wraith transfer indexer, docs site (`frontend/docs`), CI/CD pipeline.
+- **Out of scope:** Stellar network consensus layer, browser/OS vendor implementations of WebAuthn, Render/Vercel hosting infrastructure internals.
+
+---
+
+## References
+
+- [STRIDE methodology — Microsoft Threat Modeling](https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats)
+- [WebAuthn Level 3 specification](https://www.w3.org/TR/webauthn-3/)
+- [Stellar Soroban auth model](https://developers.stellar.org/docs/learn/smart-contract-internals/authorization)
+- [FIDO Alliance Security Reference](https://fidoalliance.org/fido-security-reference/)
+- [Veil Security page](/security)
+- [ADR-0001: Two-account model](https://github.com/Miracle656/veil/blob/main/docs/adr/0001-two-account-model.md)
+- [ADR-0002: WebAuthn signature verification](https://github.com/Miracle656/veil/blob/main/docs/adr/0002-webauthn-signature-verification.md)

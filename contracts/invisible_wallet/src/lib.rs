@@ -6,6 +6,9 @@ use soroban_sdk::{
 
 mod auth;
 mod storage;
+pub mod session_key;
+#[cfg(test)]
+mod auth_failure_tests;
 use storage::{DataKey, AllowanceKey, PendingRecovery};
 
 /// Recovery timelock duration: 3 days in seconds.
@@ -47,6 +50,10 @@ pub enum WalletError {
     InsufficientAllowance       = 17,
     /// The allowance has expired.
     AllowanceExpired            = 18,
+    /// The session key's expiry timestamp has passed.
+    SessionKeyExpired           = 19,
+    /// A session key call violates its ACL (wrong target, selector, or cumulative budget exceeded).
+    SessionKeyAclViolation      = 20,
 }
 
 #[contract]
@@ -106,28 +113,39 @@ impl InvisibleWallet {
 
     /// Called by the Soroban runtime to authorize a transaction.
     ///
-    /// The `signature` Val must encode a Vec<Val> with 4 elements:
-    ///   [0] BytesN<65>  - uncompressed P-256 public key (0x04 || x || y)
-    ///   [1] Bytes       - WebAuthn authenticatorData
-    ///   [2] Bytes       - WebAuthn clientDataJSON (must contain base64url(signature_payload) as challenge)
-    ///   [3] BytesN<64>  - raw P-256 ECDSA signature (r || s)
+    /// Three credential branches are handled, tried in order:
     ///
-    /// Verification order:
-    ///   1. Parse and validate signature format
-    ///   2. Check signer is registered (iterates all signers, short-circuits on first match)
-    ///   3. Verify ECDSA signature + challenge binding  (`verify_webauthn`)
-    ///   4. Verify rpIdHash binding                    (`verify_rp_id`)    -> RpIdMismatch
-    ///   5. Verify origin binding                      (`verify_origin`)   -> OriginMismatch
+    /// **Branch 1 — Allowance (spender Address)**
+    ///   `signature` is an `Address`. The spender presents itself and the
+    ///   on-chain allowance record is debited. No cryptographic work needed
+    ///   because `spender.require_auth()` already verified the spender's sig.
     ///
-    /// Steps 4 and 5 run after step 3 so that a bad domain does not produce
-    /// a faster failure path than a bad signature (timing side-channel).
+    /// **Branch 2 — Session key `Vec<Val>[key_id, ed25519_sig, nonce]`**
+    ///   `signature` is a `Vec<Val>` with exactly 3 elements:
+    ///     [0] `BytesN<32>` — key_id (storage lookup handle, NOT a secret)
+    ///     [1] `BytesN<64>` — ed25519 signature of `signature_payload`
+    ///     [2] `u64`        — current contract nonce (replay binding)
+    ///
+    ///   Authorization requires:
+    ///   1. An ed25519 signature over `signature_payload` that verifies against
+    ///      the public key registered in the ACL for `key_id`.  The key_id is
+    ///      public; possession of it is NOT sufficient — the holder must produce
+    ///      a fresh signature on the host-provided payload for every call.
+    ///   2. The submitted nonce matches the on-chain nonce (contract-level replay
+    ///      protection, in addition to the host-level auth nonce).
+    ///   3. All ACL constraints pass: expiry, target contract, selector, and
+    ///      cumulative spend within `amount_cap`.
+    ///   4. On success the contract nonce is incremented.
+    ///
+    /// **Branch 3 — WebAuthn `Vec<Val>[pubkey, auth_data, client_data_json, sig, nonce]`**
+    ///   Standard passkey / WebAuthn flow.
     pub fn __check_auth(
         env: Env,
         signature_payload: BytesN<32>,
         signature: Val,
         _auth_contexts: Vec<Context>,
     ) -> Result<(), WalletError> {
-        // Check if the signature is actually a Spender Address claiming an allowance
+        // ── Branch 1: Allowance (spender address) ─────────────────────────────
         if let Ok(spender) = Address::try_from_val(&env, &signature) {
             spender.require_auth();
 
@@ -184,7 +202,90 @@ impl InvisibleWallet {
             return Ok(());
         }
 
-        // Standard WebAuthn flow
+        // ── Branch 2: Session key ──────────────────────────────────────────────
+        //
+        // Signature format: Vec<Val>[key_id: BytesN<32>, ed25519_sig: BytesN<64>, nonce: u64]
+        //
+        // The key_id is a public storage handle.  Authorization requires a
+        // valid ed25519 signature over `signature_payload` — possession of
+        // key_id alone is not sufficient.
+        if let Ok(parts) = Vec::<Val>::try_from_val(&env, &signature) {
+            if parts.len() == 3 {
+                if let (Ok(key_id), Ok(ed25519_sig), Ok(nonce)) = (
+                    BytesN::<32>::try_from_val(&env, &parts.get(0).unwrap()),
+                    BytesN::<64>::try_from_val(&env, &parts.get(1).unwrap()),
+                    u64::try_from_val(&env, &parts.get(2).unwrap()),
+                ) {
+                    // Step 1 — Load the ACL to obtain the registered public key.
+                    let acl = session_key::get_acl(&env, &key_id)
+                        .ok_or(WalletError::SignerNotAuthorized)?;
+
+                    // Step 2 — Cryptographic verification.
+                    //
+                    // `ed25519_verify` panics (host error → transaction failure)
+                    // if the signature is invalid.  This ensures the session key
+                    // holder MUST possess the registered private key; presenting
+                    // the key_id alone cannot authorize anything.
+                    //
+                    // `signature_payload` is the host-computed hash of the
+                    // authorized invocation — it commits to the transaction
+                    // contents, preventing cross-transaction replay even without
+                    // the contract nonce.
+                    env.crypto().ed25519_verify(
+                        &acl.pubkey,
+                        &Bytes::from(signature_payload.clone()),
+                        &ed25519_sig,
+                    );
+
+                    // Step 3 — Contract-level nonce check (additional replay binding).
+                    //
+                    // The Soroban host already binds auth to a per-transaction
+                    // sequence; this contract nonce provides a second layer that
+                    // is consistent with the WebAuthn path and ensures session
+                    // keys cannot be replayed even if the host layer were bypassed.
+                    let stored_nonce = storage::get_nonce(&env);
+                    if nonce != stored_nonce {
+                        return Err(WalletError::NonceMismatch);
+                    }
+
+                    // Step 4 — ACL enforcement (expiry, target, selector, cumulative budget).
+                    for context in _auth_contexts.iter() {
+                        let Context::Contract(c) = context else {
+                            return Err(WalletError::SignerNotAuthorized);
+                        };
+                        let amount = if c.args.len() >= 3 {
+                            i128::try_from_val(&env, &c.args.get(2).unwrap())
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        session_key::enforce(&env, &key_id, &c.contract, &c.fn_name, amount)?;
+                    }
+
+                    // Step 5 — Advance the contract nonce (must happen after all checks).
+                    storage::increment_nonce(&env);
+
+                    return Ok(());
+                }
+            }
+        }
+
+        // ── Branch 3: Standard WebAuthn ───────────────────────────────────────
+        //
+        // The `signature` Val must encode a Vec<Val> with 5 elements:
+        //   [0] BytesN<65>  - uncompressed P-256 public key (0x04 || x || y)
+        //   [1] Bytes       - WebAuthn authenticatorData
+        //   [2] Bytes       - WebAuthn clientDataJSON (must contain base64url(signature_payload) as challenge)
+        //   [3] BytesN<64>  - raw P-256 ECDSA signature (r || s)
+        //   [4] u64         - contract nonce
+        //
+        // Verification order:
+        //   1. Parse and validate signature format
+        //   2. Check signer is registered
+        //   3. Verify nonce
+        //   4. Verify ECDSA signature + challenge binding
+        //   5. Verify rpIdHash binding  -> RpIdMismatch
+        //   6. Verify origin binding    -> OriginMismatch
         let parts: Vec<Val> = Vec::try_from_val(&env, &signature)
             .map_err(|_| WalletError::InvalidSignatureFormat)?;
         if parts.len() != 5 {
@@ -420,12 +521,48 @@ impl InvisibleWallet {
 
         Ok(())
     }
+
+    /// Register a scoped session key with an ACL.
+    ///
+    /// The caller must supply the ed25519 public key (`pubkey`) of the session
+    /// key holder in addition to the `key_id` storage handle.  Every future
+    /// `__check_auth` call using this key must carry an ed25519 signature of
+    /// `signature_payload` produced by the corresponding private key.
+    ///
+    /// Requires wallet owner authorization (existing signer via `__check_auth`).
+    pub fn register_session_key(
+        env: Env,
+        pubkey: BytesN<32>,
+        key_id: BytesN<32>,
+        target_contract: Address,
+        selector: Symbol,
+        amount_cap: i128,
+        expiry: u64,
+    ) {
+        env.current_contract_address().require_auth();
+        session_key::register(&env, key_id, session_key::SessionKeyAcl {
+            pubkey,
+            target_contract,
+            selector,
+            amount_cap,
+            spent: 0,
+            expiry,
+        });
+    }
+
+    /// Immediately revoke a session key.
+    /// Requires the wallet owner to authorize.
+    pub fn revoke_session_key(env: Env, key_id: BytesN<32>) {
+        env.current_contract_address().require_auth();
+        session_key::revoke(&env, &key_id);
+    }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{Env, Bytes, BytesN, symbol_short, Map};
+    use soroban_sdk::{Env, Bytes, BytesN, symbol_short, Map, IntoVal};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
     use sha2::{Sha256, Digest};
     use p256::ecdsa::{SigningKey, Signature as P256Sig, signature::hazmat::PrehashSigner};
 
@@ -548,11 +685,9 @@ mod test {
 
         client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
 
-        // Initial signer is at index 0, so next should be index 1
         let index = client.add_signer(&BytesN::from_array(&env, &pub_bytes_2));
         assert_eq!(index, 1);
 
-        // Both signers should be recognized
         assert!(client.has_signer(&BytesN::from_array(&env, &pub_bytes)));
         assert!(client.has_signer(&BytesN::from_array(&env, &pub_bytes_2)));
     }
@@ -571,11 +706,8 @@ mod test {
 
         client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
         client.add_signer(&BytesN::from_array(&env, &pub_bytes_2));
-
-        // Remove the first signer (index 0)
         client.remove_signer(&0);
 
-        // First signer should be gone, second should remain
         assert!(!client.has_signer(&BytesN::from_array(&env, &pub_bytes)));
         assert!(client.has_signer(&BytesN::from_array(&env, &pub_bytes_2)));
     }
@@ -593,7 +725,6 @@ mod test {
 
         client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
 
-        // Attempting to remove the only signer should fail
         assert_eq!(
             client.try_remove_signer(&0),
             Err(Ok(WalletError::CannotRemoveLastSigner))
@@ -613,11 +744,9 @@ mod test {
 
         client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
 
-        // Add a second signer so we have 2 (can attempt removal)
         let (_, pub_bytes_2) = second_keypair();
         client.add_signer(&BytesN::from_array(&env, &pub_bytes_2));
 
-        // Index 99 doesn't exist
         assert_eq!(
             client.try_remove_signer(&99),
             Err(Ok(WalletError::SignerNotFound))
@@ -676,7 +805,6 @@ mod test {
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
 
-        // Pass a different payload — challenge won't match
         let wrong_payload = [8u8; 32];
 
         let result = auth::verify_webauthn(
@@ -726,7 +854,6 @@ mod test {
         let mut auth_data = [0u8; 37];
         auth_data[..32].copy_from_slice(&rp_id_hash);
 
-        // But stored rp_id is "veil.app" — different domain
         let stored_rp_id = bytes_from_str(&env, "veil.app");
 
         let auth_data_bytes = {
@@ -782,7 +909,6 @@ mod test {
         let challenge_b64 = *b"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
         let client_data_json = build_client_data_json(&env, &challenge_b64);
 
-        // clientDataJSON has origin "https://test.example" — store the same
         let stored_origin = bytes_from_str(&env, "https://test.example");
 
         let result = auth::verify_origin(&client_data_json, &stored_origin);
@@ -797,7 +923,6 @@ mod test {
         let (_, pub_bytes_1) = test_keypair();
         let (signing_key_2, pub_bytes_2) = second_keypair();
 
-        // Init with first signer, add second
         env.mock_all_auths();
         let contract_id = env.register_contract(None, InvisibleWallet);
         let client = InvisibleWalletClient::new(&env, &contract_id);
@@ -806,7 +931,6 @@ mod test {
         client.init(&BytesN::from_array(&env, &pub_bytes_1), &rp_id, &origin);
         client.add_signer(&BytesN::from_array(&env, &pub_bytes_2));
 
-        // Verify second signer can produce a valid WebAuthn signature
         let payload = [7u8; 32];
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key_2, &payload, b"localhost");
@@ -821,7 +945,6 @@ mod test {
         );
         assert!(result.is_ok());
 
-        // And second signer is recognized
         assert!(client.has_signer(&BytesN::from_array(&env, &pub_bytes_2)));
     }
 
@@ -833,18 +956,15 @@ mod test {
         let (signing_key, pub_bytes) = test_keypair();
         let payload = [7u8; 32];
 
-        // Init wallet
         let contract_id = env.register_contract(None, InvisibleWallet);
         let client = InvisibleWalletClient::new(&env, &contract_id);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://test.example");
         client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
 
-        // Prep WebAuthn signature WITH nonce 0
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
 
-        // First auth with nonce 0 should succeed
         let signature = Vec::from_array(&env, [
             BytesN::from_array(&env, &pub_bytes).into_val(&env),
             Bytes::from_array(&env, &auth_data_raw).into_val(&env),
@@ -853,9 +973,8 @@ mod test {
             0u64.into_val(&env),
         ]).into_val(&env);
 
-        client.__check_auth(&BytesN::from_array(&env, &payload), &signature, &Vec::new(&env));
+        client.__check_auth(&BytesN::from_array(&env, &payload), &signature, &soroban_sdk::Vec::new(&env));
 
-        // Nonce should now be 1
         assert_eq!(client.get_nonce(), 1);
     }
 
@@ -865,14 +984,12 @@ mod test {
         let (signing_key, pub_bytes) = test_keypair();
         let payload = [7u8; 32];
 
-        // Init wallet
         let contract_id = env.register_contract(None, InvisibleWallet);
         let client = InvisibleWalletClient::new(&env, &contract_id);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://test.example");
         client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
 
-        // Prep WebAuthn signature WITH nonce 0
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
 
@@ -884,11 +1001,9 @@ mod test {
             0u64.into_val(&env),
         ]).into_val(&env);
 
-        // First auth succeeds
-        client.__check_auth(&BytesN::from_array(&env, &payload), &signature, &Vec::new(&env));
+        client.__check_auth(&BytesN::from_array(&env, &payload), &signature, &soroban_sdk::Vec::new(&env));
 
-        // Second auth with SAME signature + SAME nonce 0 should FAIL (replay)
-        let result = client.try___check_auth(&BytesN::from_array(&env, &payload), &signature, &Vec::new(&env));
+        let result = client.try___check_auth(&BytesN::from_array(&env, &payload), &signature, &soroban_sdk::Vec::new(&env));
         assert_eq!(result, Err(Ok(WalletError::NonceMismatch)));
     }
 
@@ -898,14 +1013,12 @@ mod test {
         let (signing_key, pub_bytes) = test_keypair();
         let payload = [7u8; 32];
 
-        // Init wallet
         let contract_id = env.register_contract(None, InvisibleWallet);
         let client = InvisibleWalletClient::new(&env, &contract_id);
         let rp_id  = bytes_from_str(&env, "localhost");
         let origin = bytes_from_str(&env, "https://test.example");
         client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
 
-        // 1. Success with nonce 0
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
         let signature_0 = Vec::from_array(&env, [
@@ -915,10 +1028,9 @@ mod test {
             BytesN::from_array(&env, &sig_bytes).into_val(&env),
             0u64.into_val(&env),
         ]).into_val(&env);
-        client.__check_auth(&BytesN::from_array(&env, &payload), &signature_0, &Vec::new(&env));
+        client.__check_auth(&BytesN::from_array(&env, &payload), &signature_0, &soroban_sdk::Vec::new(&env));
         assert_eq!(client.get_nonce(), 1);
 
-        // 2. Success with nonce 1 (new operation)
         let payload_2 = [8u8; 32];
         let (auth_data_raw_2, challenge_b64_2, sig_bytes_2) =
             make_webauthn_fixture(&signing_key, &payload_2, b"localhost");
@@ -929,7 +1041,7 @@ mod test {
             BytesN::from_array(&env, &sig_bytes_2).into_val(&env),
             1u64.into_val(&env),
         ]).into_val(&env);
-        client.__check_auth(&BytesN::from_array(&env, &payload_2), &signature_1, &Vec::new(&env));
+        client.__check_auth(&BytesN::from_array(&env, &payload_2), &signature_1, &soroban_sdk::Vec::new(&env));
         assert_eq!(client.get_nonce(), 2);
     }
 
@@ -949,7 +1061,6 @@ mod test {
         let spender = Address::generate(&env);
         let token = Address::generate(&env);
 
-        // 1. Approve 500
         env.mock_all_auths();
         client.approve(&spender, &token, &500, &None);
 
@@ -957,7 +1068,6 @@ mod test {
         assert_eq!(allowance.amount, 500);
         assert_eq!(allowance.expiry, None);
 
-        // 2. Spend 200
         let context = Context::Contract(soroban_sdk::auth::ContractContext {
             contract: token.clone(),
             fn_name: Symbol::new(&env, "transfer"),
@@ -971,10 +1081,8 @@ mod test {
         let contexts = Vec::from_array(&env, [context]);
         let signature = spender.to_val();
 
-        // Calling __check_auth as if the spender initiated the transfer
         client.__check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &contexts);
 
-        // Check remaining allowance
         let remaining = client.get_allowance(&spender, &token).unwrap();
         assert_eq!(remaining.amount, 300);
     }
@@ -1024,7 +1132,6 @@ mod test {
         env.mock_all_auths();
         env.ledger().set_timestamp(1000);
         
-        // Approve with expiry in the past
         client.approve(&spender, &token, &500, &Some(500));
 
         let context = Context::Contract(soroban_sdk::auth::ContractContext {

@@ -1,6 +1,8 @@
 'use client'
 
-import { useEffect, useRef, useCallback, useState } from 'react'
+export const dynamic = 'force-dynamic'
+
+import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import {
@@ -19,6 +21,7 @@ import { buildFriendbotUrl, getNativeAssetContractId, getNetwork } from '@/lib/n
 import { sweepContractBalance } from '@/lib/sweepContractBalance'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import type { WebAuthnSignature } from '@veil/sdk'
+import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
 
 const network = getNetwork()
 
@@ -40,7 +43,7 @@ let cachedContractXlm:  number                        | null = null
 let cachedPrices:       Record<string, number | null>        = {}
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
-export default function DashboardPage() {
+function DashboardPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   useInactivityLock()
@@ -670,7 +673,7 @@ export default function DashboardPage() {
           />
           <ActionButton
             label="Withdraw"
-            onClick={() => setSep24Modal('withdraw')}
+            onClick={() => router.push('/withdraw')}
             icon={<path d="M12 21V9m0 0l-4 4m4-4l4 4M3 7V5a2 2 0 012-2h14a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
           />
         </div>
@@ -692,6 +695,22 @@ export default function DashboardPage() {
               <path d="M2 10h20" stroke="currentColor" strokeWidth="1.75"/>
             </svg>
             Buy crypto
+          </button>
+          <button
+            onClick={() => router.push('/pools')}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.625rem',
+              padding: '0.875rem 1.25rem', borderRadius: '12px', cursor: 'pointer',
+              background: 'rgba(253,218,36,0.04)', border: '1px solid rgba(253,218,36,0.16)',
+              color: 'var(--off-white)', fontSize: '0.9375rem', fontWeight: 500,
+              marginTop: '0.75rem',
+              transition: 'background 120ms',
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
+            </svg>
+            View pools
           </button>
         </div>
 
@@ -926,6 +945,14 @@ export default function DashboardPage() {
         />
       )}
     </div>
+  )
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={<div className="wallet-shell"><main className="wallet-main" /></div>}>
+      <DashboardPageContent />
+    </Suspense>
   )
 }
 

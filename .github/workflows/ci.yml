@@ -39,7 +39,7 @@ jobs:
       # pulls a broken `arbitrary` feature on fresh CI builds. See issue #79.
 
   sdk:
-    name: SDK — typecheck & test
+    name: SDK — typecheck, test & size budget
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -54,6 +54,8 @@ jobs:
       - run: npm ci || npm install
       - run: npx tsc --noEmit
       - run: npm test --if-present
+      - name: Bundle size budget (size-limit)
+        run: npm run size
 
   wallet:
     name: Wallet frontend — typecheck & build

@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Veil Wallet",
+  "version": "0.1.0",
+  "description": "Invisible smart wallet for Stellar — sign transactions without exposing private material",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["connector.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Veil Wallet"
+  }
+}

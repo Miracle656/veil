@@ -3,6 +3,7 @@
 All notable changes to Veil are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+New sections are generated automatically by `conventional-changelog-cli` — run `npm run release-notes` from the repo root after tagging a release. See [CONTRIBUTING.md](CONTRIBUTING.md#generating-release-notes) for details.
 
 ## [Unreleased]
 
