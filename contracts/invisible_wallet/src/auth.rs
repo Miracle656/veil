@@ -15,7 +15,7 @@ const BASE64URL: &[u8] =
 
 /// Base64url-encode exactly 32 bytes without padding.
 /// 32 bytes → always 43 output chars: 10 full groups of 3 + 1 group of 2.
-fn base64url_encode_32(input: &[u8; 32]) -> [u8; 43] {
+pub fn base64url_encode_32(input: &[u8; 32]) -> [u8; 43] {
     let mut out = [0u8; 43];
     let mut o = 0usize;
     let mut i = 0usize;

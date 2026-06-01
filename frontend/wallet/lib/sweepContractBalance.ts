@@ -222,23 +222,14 @@ export async function sweepContractBalance(
       const webAuthnSig = (await signAuthEntry(payloadHash)) as any
       if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled')
 
-      let sigElements
-      if (webAuthnSig.isRecovery) {
-        sigElements = [
-          nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
-          nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
-          nativeToScVal(currentNonce !== null ? currentNonce : 0n, { type: 'u64' }),
-        ]
-      } else {
-        sigElements = [
-          nativeToScVal(webAuthnSig.publicKey,      { type: 'bytes' }),
-          nativeToScVal(webAuthnSig.authData,       { type: 'bytes' }),
-          nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
-          nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
-        ]
-        if (currentNonce !== null) {
-          sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }))
-        }
+      const sigElements = [
+        nativeToScVal(webAuthnSig.publicKey,      { type: 'bytes' }),
+        nativeToScVal(webAuthnSig.authData,       { type: 'bytes' }),
+        nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
+        nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
+      ]
+      if (currentNonce !== null) {
+        sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }))
       }
       const sigVec = xdr.ScVal.scvVec(sigElements)
 

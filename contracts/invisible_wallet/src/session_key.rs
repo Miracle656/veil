@@ -151,10 +151,11 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::{Address as _, Ledger}, Env, symbol_short};
 
-    fn setup() -> (Env, Address) {
+    fn setup() -> (Env, Address, Address) {
         let env = Env::default();
-        let contract = Address::generate(&env);
-        (env, contract)
+        let contract_id = env.register_contract(None, crate::InvisibleWallet);
+        let target = Address::generate(&env);
+        (env, contract_id, target)
     }
 
     fn mock_key_id(env: &Env, seed: u8) -> BytesN<32> {
@@ -172,7 +173,7 @@ mod tests {
             selector: sel,
             amount_cap: 1_000_000,
             spent: 0,
-            expiry: 9_999_999_999,
+            expiry: env.ledger().timestamp() + 10_000,
         }
     }
 
@@ -180,189 +181,201 @@ mod tests {
 
     #[test]
     fn acl_fields_enforced_target() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let other = Address::generate(&env);
         let key_id = mock_key_id(&env, 0x01);
         let sel = symbol_short!("transfer");
 
-        register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
-        assert_eq!(
-            enforce(&env, &key_id, &other, &sel, 100),
-            Err(WalletError::SessionKeyAclViolation)
-        );
-        assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+            assert_eq!(
+                enforce(&env, &key_id, &other, &sel, 100),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+        });
     }
 
     // ── Selector enforcement ──────────────────────────────────────────────────
 
     #[test]
     fn acl_fields_enforced_selector() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let key_id = mock_key_id(&env, 0x02);
         let sel = symbol_short!("transfer");
         let other_sel = symbol_short!("approve");
 
-        register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
-        assert_eq!(
-            enforce(&env, &key_id, &target, &other_sel, 100),
-            Err(WalletError::SessionKeyAclViolation)
-        );
-        assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+            assert_eq!(
+                enforce(&env, &key_id, &target, &other_sel, 100),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+        });
     }
 
     // ── Amount cap — per-call boundary ───────────────────────────────────────
 
     #[test]
     fn acl_fields_enforced_amount_cap_per_call() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let key_id = mock_key_id(&env, 0x03);
         let sel = symbol_short!("transfer");
 
-        register(&env, key_id.clone(), SessionKeyAcl {
-            pubkey: mock_pubkey(&env, 0xBB),
-            target_contract: target.clone(),
-            selector: sel.clone(),
-            amount_cap: 500,
-            spent: 0,
-            expiry: 9_999_999_999,
-        });
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), SessionKeyAcl {
+                pubkey: mock_pubkey(&env, 0xBB),
+                target_contract: target.clone(),
+                selector: sel.clone(),
+                amount_cap: 500,
+                spent: 0,
+                expiry: env.ledger().timestamp() + 10_000,
+            });
 
-        assert_eq!(
-            enforce(&env, &key_id, &target, &sel, 501),
-            Err(WalletError::SessionKeyAclViolation)
-        );
-        assert!(enforce(&env, &key_id, &target, &sel, 500).is_ok());
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 501),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            assert!(enforce(&env, &key_id, &target, &sel, 500).is_ok());
+        });
     }
 
     // ── Cumulative budget enforcement ─────────────────────────────────────────
-    //
-    // This test verifies the key fix: amount_cap is a *total* budget, not a
-    // per-call limit.  After spending 600 of a 1_000 cap, a subsequent call
-    // for 401 must be rejected even though 401 < 1_000.
 
     #[test]
     fn cumulative_budget_enforced() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let key_id = mock_key_id(&env, 0x06);
         let sel = symbol_short!("transfer");
 
-        register(&env, key_id.clone(), SessionKeyAcl {
-            pubkey: mock_pubkey(&env, 0xCC),
-            target_contract: target.clone(),
-            selector: sel.clone(),
-            amount_cap: 1_000,
-            spent: 0,
-            expiry: 9_999_999_999,
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), SessionKeyAcl {
+                pubkey: mock_pubkey(&env, 0xCC),
+                target_contract: target.clone(),
+                selector: sel.clone(),
+                amount_cap: 1_000,
+                spent: 0,
+                expiry: env.ledger().timestamp() + 10_000,
+            });
+
+            // First call: spend 600
+            assert!(enforce(&env, &key_id, &target, &sel, 600).is_ok());
+            // spent is now 600; cap is 1_000 → 400 remaining
+
+            // Second call: 401 exceeds remaining budget even though 401 < cap
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 401),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+
+            // Second call: exactly 400 is still allowed
+            assert!(enforce(&env, &key_id, &target, &sel, 400).is_ok());
+            // spent is now 1_000 = cap
+
+            // Third call: budget exhausted, even amount=1 is rejected
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 1),
+                Err(WalletError::SessionKeyAclViolation)
+            );
         });
-
-        // First call: spend 600
-        assert!(enforce(&env, &key_id, &target, &sel, 600).is_ok());
-        // spent is now 600; cap is 1_000 → 400 remaining
-
-        // Second call: 401 exceeds remaining budget even though 401 < cap
-        assert_eq!(
-            enforce(&env, &key_id, &target, &sel, 401),
-            Err(WalletError::SessionKeyAclViolation)
-        );
-
-        // Second call: exactly 400 is still allowed
-        assert!(enforce(&env, &key_id, &target, &sel, 400).is_ok());
-        // spent is now 1_000 = cap
-
-        // Third call: budget exhausted, even amount=1 is rejected
-        assert_eq!(
-            enforce(&env, &key_id, &target, &sel, 1),
-            Err(WalletError::SessionKeyAclViolation)
-        );
     }
 
     #[test]
     fn spent_persists_across_calls() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let key_id = mock_key_id(&env, 0x07);
         let sel = symbol_short!("transfer");
 
-        register(&env, key_id.clone(), SessionKeyAcl {
-            pubkey: mock_pubkey(&env, 0xDD),
-            target_contract: target.clone(),
-            selector: sel.clone(),
-            amount_cap: 300,
-            spent: 0,
-            expiry: 9_999_999_999,
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), SessionKeyAcl {
+                pubkey: mock_pubkey(&env, 0xDD),
+                target_contract: target.clone(),
+                selector: sel.clone(),
+                amount_cap: 300,
+                spent: 0,
+                expiry: env.ledger().timestamp() + 10_000,
+            });
+
+            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 100
+            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 200
+            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 300
+
+            // Now fully exhausted
+            let acl = get_acl(&env, &key_id).unwrap();
+            assert_eq!(acl.spent, 300);
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 1),
+                Err(WalletError::SessionKeyAclViolation)
+            );
         });
-
-        enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 100
-        enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 200
-        enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 300
-
-        // Now fully exhausted
-        let acl = get_acl(&env, &key_id).unwrap();
-        assert_eq!(acl.spent, 300);
-        assert_eq!(
-            enforce(&env, &key_id, &target, &sel, 1),
-            Err(WalletError::SessionKeyAclViolation)
-        );
     }
 
     // ── Expiry enforcement ────────────────────────────────────────────────────
 
     #[test]
     fn expired_key_rejected() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let key_id = mock_key_id(&env, 0x04);
         let sel = symbol_short!("transfer");
 
-        register(&env, key_id.clone(), SessionKeyAcl {
-            pubkey: mock_pubkey(&env, 0xEE),
-            target_contract: target.clone(),
-            selector: sel.clone(),
-            amount_cap: 1_000_000,
-            spent: 0,
-            expiry: 1_000,
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), SessionKeyAcl {
+                pubkey: mock_pubkey(&env, 0xEE),
+                target_contract: target.clone(),
+                selector: sel.clone(),
+                amount_cap: 1_000_000,
+                spent: 0,
+                expiry: 1_000,
+            });
+
+            let mut info = env.ledger().get();
+            info.timestamp = 2_000;
+            env.ledger().set(info);
+
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 100),
+                Err(WalletError::SessionKeyExpired)
+            );
         });
-
-        let mut info = env.ledger().get();
-        info.timestamp = 2_000;
-        env.ledger().set(info);
-
-        assert_eq!(
-            enforce(&env, &key_id, &target, &sel, 100),
-            Err(WalletError::SessionKeyExpired)
-        );
     }
 
     // ── Unregistered key ──────────────────────────────────────────────────────
 
     #[test]
     fn unregistered_key_rejected() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let key_id = mock_key_id(&env, 0x05);
         let sel = symbol_short!("transfer");
 
-        assert_eq!(
-            enforce(&env, &key_id, &target, &sel, 100),
-            Err(WalletError::SignerNotAuthorized)
-        );
+        env.as_contract(&contract_id, || {
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 100),
+                Err(WalletError::SignerNotAuthorized)
+            );
+        });
     }
 
     // ── Revocation ────────────────────────────────────────────────────────────
 
     #[test]
     fn revoked_key_rejected() {
-        let (env, target) = setup();
+        let (env, contract_id, target) = setup();
         let key_id = mock_key_id(&env, 0x08);
         let sel = symbol_short!("transfer");
 
-        register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
-        assert!(enforce(&env, &key_id, &target, &sel, 1).is_ok());
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
+            assert!(enforce(&env, &key_id, &target, &sel, 1).is_ok());
 
-        revoke(&env, &key_id);
+            revoke(&env, &key_id);
 
-        assert_eq!(
-            enforce(&env, &key_id, &target, &sel, 1),
-            Err(WalletError::SignerNotAuthorized)
-        );
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 1),
+                Err(WalletError::SignerNotAuthorized)
+            );
+        });
     }
 }

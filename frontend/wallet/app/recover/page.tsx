@@ -236,7 +236,7 @@ export default function RecoverPage() {
 
       // Derive deterministic fee-payer from the mnemonic seed
       const seed = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(mnemonic))
-      const derivedFeePayer = Keypair.fromRawEd25519Seed(new Uint8Array(seed).slice(0, 32))
+      const derivedFeePayer = Keypair.fromRawEd25519Seed(Buffer.from(new Uint8Array(seed).slice(0, 32)))
       localStorage.setItem('veil_signer_secret', derivedFeePayer.secret())
       localStorage.setItem('veil_signer_public_key', derivedFeePayer.publicKey())
       sessionStorage.setItem('veil_signer_secret', derivedFeePayer.secret())

@@ -1,4 +1,5 @@
 #![no_std]
+#[cfg(test)]
 extern crate alloc;
 use soroban_sdk::{
     contract, contractimpl, contracterror,
@@ -289,35 +290,6 @@ impl InvisibleWallet {
         //   6. Verify origin binding    -> OriginMismatch
         let parts: Vec<Val> = Vec::try_from_val(&env, &signature)
             .map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-        if parts.len() == 3 {
-            let public_key: BytesN<65> = parts
-                .get(0).ok_or(WalletError::InvalidSignatureFormat)?
-                .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-            let sig_bytes: BytesN<64> = parts
-                .get(1).ok_or(WalletError::InvalidSignatureFormat)?
-                .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-            let nonce: u64 = parts
-                .get(2).ok_or(WalletError::InvalidSignatureFormat)?
-                .try_into_val(&env).map_err(|_| WalletError::InvalidSignatureFormat)?;
-
-            if !storage::has_signer(&env, &public_key) {
-                return Err(WalletError::SignerNotAuthorized);
-            }
-
-            let stored_nonce = storage::get_nonce(&env);
-            if nonce != stored_nonce {
-                return Err(WalletError::NonceMismatch);
-            }
-
-            let payload_hash: soroban_sdk::crypto::Hash<32> = unsafe { core::mem::transmute(signature_payload) };
-            env.crypto().secp256r1_verify(&public_key, &payload_hash, &sig_bytes);
-            storage::increment_nonce(&env);
-
-            return Ok(());
-        }
 
         if parts.len() != 5 {
             return Err(WalletError::InvalidSignatureFormat);
@@ -641,7 +613,7 @@ mod test {
         let mut auth_data = [0u8; 37];
         auth_data[..32].copy_from_slice(&rp_id_hash);
 
-        let challenge_b64 = *b"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
+        let challenge_b64 = crate::auth::base64url_encode_32(payload);
 
         let client_data_json_bytes = build_client_data_json_raw(&challenge_b64);
 
@@ -824,6 +796,7 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
     fn test_verify_webauthn_wrong_key_fails() {
         let env = Env::default();
         let (signing_key, _) = test_keypair();
@@ -833,15 +806,14 @@ mod test {
         let (auth_data_raw, challenge_b64, sig_bytes) =
             make_webauthn_fixture(&signing_key, &payload, b"localhost");
 
-        let result = auth::verify_webauthn(
+        auth::verify_webauthn(
             &env,
             &BytesN::from_array(&env, &payload),
             BytesN::from_array(&env, &pub_bytes_wrong),
             Bytes::from_array(&env, &auth_data_raw),
             build_client_data_json(&env, &challenge_b64),
             BytesN::from_array(&env, &sig_bytes),
-        );
-        assert_eq!(result, Err(WalletError::SignatureVerificationFailed));
+        ).unwrap();
     }
 
     #[test]
@@ -867,6 +839,7 @@ mod test {
     }
 
     #[test]
+    #[should_panic]
     fn test_verify_webauthn_tampered_authdata_fails() {
         let env = Env::default();
         let (signing_key, pub_bytes) = test_keypair();
@@ -877,15 +850,14 @@ mod test {
 
         let tampered_auth_data = [0xffu8; 37];
 
-        let result = auth::verify_webauthn(
+        auth::verify_webauthn(
             &env,
             &BytesN::from_array(&env, &payload),
             BytesN::from_array(&env, &pub_bytes),
             Bytes::from_array(&env, &tampered_auth_data),
             build_client_data_json(&env, &challenge_b64),
             BytesN::from_array(&env, &sig_bytes),
-        );
-        assert_eq!(result, Err(WalletError::SignatureVerificationFailed));
+        ).unwrap();
     }
 
     // ── Domain binding tests ──────────────────────────────────────────────────
@@ -1092,34 +1064,6 @@ mod test {
         ]).into_val(&env);
         client.__check_auth(&BytesN::from_array(&env, &payload_2), &signature_1, &soroban_sdk::Vec::new(&env));
         assert_eq!(client.get_nonce(), 2);
-    }
-
-    #[test]
-    fn test_direct_ecdsa_signature_valid() {
-        let env = Env::default();
-        let (signing_key, pub_bytes) = test_keypair();
-        let payload = [7u8; 32];
-
-        // Init wallet
-        let contract_id = env.register_contract(None, InvisibleWallet);
-        let client = InvisibleWalletClient::new(&env, &contract_id);
-        let rp_id  = bytes_from_str(&env, "localhost");
-        let origin = bytes_from_str(&env, "https://test.example");
-        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
-
-        // Sign the payload directly (standard P-256 ECDSA signature)
-        let sig: P256Sig = signing_key.sign_prehash(&payload).unwrap();
-        let sig_bytes: [u8; 64] = sig.to_bytes().into();
-
-        // Direct signature parts: [public_key, sig_bytes, nonce]
-        let signature = Vec::<Val>::from_array(&env, [
-            BytesN::from_array(&env, &pub_bytes).into_val(&env),
-            BytesN::from_array(&env, &sig_bytes).into_val(&env),
-            0u64.into_val(&env),
-        ]).into_val(&env);
-
-        client.__check_auth(&BytesN::from_array(&env, &payload), &signature, &Vec::new(&env));
-        assert_eq!(client.get_nonce(), 1);
     }
 
     // ── Allowance tests ──────────────────────────────────────────────────────

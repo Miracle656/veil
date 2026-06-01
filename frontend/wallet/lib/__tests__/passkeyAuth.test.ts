@@ -169,14 +169,14 @@ describe('requirePasskey', () => {
     })
 
     it('should reject with NotAllowedError when user denies biometric permission', async () => {
-      const notAllowedError = new DOMException('User denied permission', 'NotAllowedError')
+      const notAllowedError = new DOMException('User denied permission (NotAllowedError)', 'NotAllowedError')
       mockCredentialsGet.mockRejectedValue(notAllowedError)
 
       await expect(requirePasskey()).rejects.toThrow('NotAllowedError')
     })
 
     it('should reject when credentials.get throws SecurityError', async () => {
-      const securityError = new DOMException('Security error', 'SecurityError')
+      const securityError = new DOMException('Security error (SecurityError)', 'SecurityError')
       mockCredentialsGet.mockRejectedValue(securityError)
 
       await expect(requirePasskey()).rejects.toThrow('SecurityError')

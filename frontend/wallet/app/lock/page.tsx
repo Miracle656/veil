@@ -31,20 +31,22 @@ export default function LockPage() {
         return
       }
 
-      // Decode base64url key ID → ArrayBuffer
-      const b64 = keyId.replace(/-/g, '+').replace(/_/g, '/')
-      const binary = atob(b64)
-      const idBuffer = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) idBuffer[i] = binary.charCodeAt(i)
+      if (keyId !== 'recovery') {
+        // Decode base64url key ID → ArrayBuffer
+        const b64 = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const binary = atob(b64)
+        const idBuffer = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) idBuffer[i] = binary.charCodeAt(i)
 
-      const challenge = crypto.getRandomValues(new Uint8Array(32))
-      await navigator.credentials.get({
-        publicKey: {
-          challenge,
-          allowCredentials: [{ id: idBuffer, type: 'public-key' }],
-          userVerification: 'required',
-        },
-      })
+        const challenge = crypto.getRandomValues(new Uint8Array(32))
+        await navigator.credentials.get({
+          publicKey: {
+            challenge,
+            allowCredentials: [{ id: idBuffer, type: 'public-key' }],
+            userVerification: 'required',
+          },
+        })
+      }
 
       // Step 2 — Biometric confirmed; verify wallet exists on-chain and restore session.
       const result = await wallet.login()

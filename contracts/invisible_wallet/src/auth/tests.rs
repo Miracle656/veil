@@ -13,9 +13,25 @@ extern crate alloc;
 
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature as P256Sig, SigningKey};
 use sha2::{Digest, Sha256};
-use soroban_sdk::{Bytes, BytesN, Env, IntoVal, Vec};
+use soroban_sdk::{Bytes, BytesN, Env, IntoVal, Vec, Val};
+use soroban_sdk::auth::Context;
 
-use crate::{InvisibleWallet, InvisibleWalletClient};
+use crate::{InvisibleWallet, InvisibleWalletClient, WalletError};
+
+trait CheckAuthTestHelper {
+    fn __check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>);
+    fn try___check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) -> Result<(), Result<WalletError, soroban_sdk::InvokeError>>;
+}
+
+impl<'a> CheckAuthTestHelper for InvisibleWalletClient<'a> {
+    fn __check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) {
+        self.env.try_invoke_contract_check_auth::<WalletError>(&self.address, payload, *signature, contexts).unwrap();
+    }
+
+    fn try___check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) -> Result<(), Result<WalletError, soroban_sdk::InvokeError>> {
+        self.env.try_invoke_contract_check_auth::<WalletError>(&self.address, payload, *signature, contexts)
+    }
+}
 
 // ── Fixture helpers ───────────────────────────────────────────────────────────
 
@@ -83,6 +99,7 @@ fn make_fixture(
     };
 
     let sig: P256Sig = signing_key.sign_prehash(&msg_hash).unwrap();
+    let sig = sig.normalize_s().unwrap_or(sig);
     (auth_data, sig.to_bytes().into())
 }
 
@@ -110,7 +127,7 @@ fn run_happy_path(auth_data_size: usize) {
         auth_data_bytes.push_back(b);
     }
 
-    let signature = Vec::from_array(
+    let signature = Vec::<Val>::from_array(
         &env,
         [
             BytesN::from_array(&env, &pub_bytes).into_val(&env),

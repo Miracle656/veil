@@ -5,6 +5,19 @@
  * calls are made.
  */
 
+if (typeof TextEncoder === 'undefined') {
+  const { TextEncoder: TE, TextDecoder: TD } = require('util')
+  global.TextEncoder = TE
+  global.TextDecoder = TD
+}
+
+const { webcrypto } = require('crypto')
+Object.defineProperty(global, 'crypto', {
+  value: webcrypto,
+  writable: true,
+  configurable: true,
+})
+
 import { sweepContractBalance } from '../sweepContractBalance'
 import { Keypair, Account, Networks } from '@stellar/stellar-sdk'
 
@@ -17,7 +30,11 @@ jest.mock('@stellar/stellar-sdk', (): any => {
   const actual = jest.requireActual('@stellar/stellar-sdk')
   return {
     ...actual,
-    scValToNative: jest.fn(),
+    scValToNative: jest.fn().mockImplementation((val: any) => {
+      if (val && val._isBalance) return val.balance
+      if (val && val._isNonce) return 0n
+      return 0n
+    }),
     xdr: {
       ...actual.xdr,
       SorobanAddressCredentials: jest.fn().mockImplementation(() => ({})),
@@ -32,7 +49,7 @@ jest.mock('@stellar/stellar-sdk', (): any => {
       assembleTransaction: jest.fn(),
       Api: {
         ...actual.rpc.Api,
-        isSimulationError: jest.fn(),
+        isSimulationError: jest.fn().mockImplementation((sim: any) => !!(sim && sim.error)),
       },
     },
   }
@@ -50,8 +67,7 @@ const mockIsSimulationError: jest.Mock = sdk.rpc.Api.isSimulationError
 // ── Response builders ─────────────────────────────────────────────────────────
 
 function makeBalanceSim(balance: bigint) {
-  mockScValToNative.mockReturnValueOnce(balance)
-  return { latestLedger: 100, result: { retval: {}, auth: [] } }
+  return { latestLedger: 100, result: { retval: { _isBalance: true, balance }, auth: [] } }
 }
 
 function makeTransferSim(auth: unknown[] = []) {
@@ -64,11 +80,20 @@ function makeSimError(message = 'contract error') {
 
 // Mock auth entry with the structure sweepContractBalance reads
 function makeMockAuthEntry() {
+  const contractFn = new sdk.xdr.InvokeContractArgs({
+    contractAddress: sdk.Address.fromString(CONTRACT_ADDRESS).toScAddress(),
+    functionName: 'get_nonce',
+    args: [],
+  })
+  const function_ = sdk.xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(contractFn)
+  const invocation = new sdk.xdr.SorobanAuthorizedInvocation({
+    function: function_,
+    subInvocations: [],
+  })
+
   const entry = {
     credentials: jest.fn(),
-    rootInvocation: jest.fn().mockReturnValue({
-      toXDR: jest.fn().mockReturnValue(new Uint8Array(64)),
-    }),
+    rootInvocation: jest.fn().mockReturnValue(invocation),
   }
   entry.credentials.mockImplementation((newCred?: unknown) => {
     if (newCred === undefined) {
@@ -110,16 +135,60 @@ describe('sweepContractBalance', () => {
     sendTransaction:     jest.Mock
     getTransaction:      jest.Mock
     getAccount:          jest.Mock
+    getLatestLedger:     jest.Mock
   }
   let mockSignAuthEntry: jest.Mock
+  let delegateSimulate: jest.Mock
 
   beforeEach(() => {
     jest.clearAllMocks()
 
+    delegateSimulate = jest.fn()
+    const mockSimulate = jest.fn().mockImplementation(async (tx: any, ...args: any[]) => {
+      let isProbe = false
+      try {
+        if (tx && tx.operations && tx.operations[0]) {
+          const op = tx.operations[0]
+          // Log details of the operation to see its structure
+          console.log('[mockSimulate] op type:', op.type, 'func:', op.func?.invokeContract?.()?.functionName?.()?.toString())
+          const fnName = op.func?.invokeContract?.()?.functionName?.()?.toString()
+          isProbe = (fnName === 'get_nonce')
+        }
+      } catch (err) {
+        console.log('[mockSimulate] error parsing op:', err)
+      }
+
+      if (isProbe) {
+        return {
+          latestLedger: 100,
+          result: {
+            retval: { _isNonce: true },
+            auth: []
+          }
+        }
+      }
+      return delegateSimulate(tx, ...args)
+    })
+
+    // Forward mock methods to delegateSimulate so mockResolvedValueOnce works
+    mockSimulate.mockResolvedValueOnce = (val: any) => {
+      delegateSimulate.mockResolvedValueOnce(val)
+      return mockSimulate as any
+    }
+    mockSimulate.mockResolvedValue = (val: any) => {
+      delegateSimulate.mockResolvedValue(val)
+      return mockSimulate as any
+    }
+    mockSimulate.mockImplementationOnce = (fn: any) => {
+      delegateSimulate.mockImplementationOnce(fn)
+      return mockSimulate as any
+    }
+
     mockServer = {
-      simulateTransaction: jest.fn(),
+      simulateTransaction: mockSimulate,
       sendTransaction:     jest.fn(),
       getTransaction:      jest.fn(),
+      getLatestLedger:     jest.fn().mockResolvedValue({ sequence: 100 }),
       getAccount:          jest.fn().mockResolvedValue(
         new Account(FEE_PAYER_KP.publicKey(), '100')
       ),
@@ -131,7 +200,13 @@ describe('sweepContractBalance', () => {
     })
     mockAssembled.sign.mockClear()
 
-    mockIsSimulationError.mockReturnValue(false)
+    if (!global.crypto.subtle) {
+      const { webcrypto } = require('crypto')
+      Object.defineProperty(global.crypto, 'subtle', {
+        value: webcrypto.subtle,
+        configurable: true,
+      })
+    }
 
     mockSignAuthEntry = jest.fn().mockResolvedValue(FAKE_WEBAUTHN_SIG)
   })
@@ -163,7 +238,7 @@ describe('sweepContractBalance', () => {
       CONTRACT_ADDRESS, FEE_PAYER_KP, mockSignAuthEntry, RPC_URL, NETWORK_PASSPHRASE
     )
 
-    expect(mockServer.simulateTransaction).toHaveBeenCalledTimes(2)
+    expect(mockServer.simulateTransaction).toHaveBeenCalledTimes(4)
     expect(mockServer.sendTransaction).toHaveBeenCalledTimes(1)
     expect(hash).toBe('txhash-abc')
     expect(mockAssembled.sign).toHaveBeenCalledWith(FEE_PAYER_KP)
@@ -211,7 +286,9 @@ describe('sweepContractBalance', () => {
       CONTRACT_ADDRESS, FEE_PAYER_KP, mockSignAuthEntry, RPC_URL, NETWORK_PASSPHRASE
     )
 
-    await jest.advanceTimersByTimeAsync(3_000)
+    for (let i = 0; i < 3; i++) {
+      await jest.advanceTimersByTimeAsync(1000)
+    }
 
     const hash = await promise
     expect(hash).toBe('polled-hash')
@@ -224,10 +301,6 @@ describe('sweepContractBalance', () => {
 
   it('throws when the transfer simulation returns an error', async () => {
     mockServer.simulateTransaction.mockResolvedValueOnce(makeBalanceSim(2_000_000n))
-
-    mockIsSimulationError
-      .mockReturnValueOnce(false) // balance check passes
-      .mockReturnValueOnce(true)  // transfer sim fails
     mockServer.simulateTransaction.mockResolvedValueOnce(makeSimError('insufficient reserves'))
 
     await expect(
@@ -270,8 +343,11 @@ describe('sweepContractBalance', () => {
     const promise = sweepContractBalance(
       CONTRACT_ADDRESS, FEE_PAYER_KP, mockSignAuthEntry, RPC_URL, NETWORK_PASSPHRASE
     )
+    promise.catch(() => {})
 
-    await jest.advanceTimersByTimeAsync(35_000) // past 30 × 1 s poll intervals
+    for (let i = 0; i < 35; i++) {
+      await jest.advanceTimersByTimeAsync(1000)
+    }
 
     await expect(promise).rejects.toThrow('Transaction timed out')
 
