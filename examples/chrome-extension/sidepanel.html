@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Veil Wallet - Side Panel</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="url(#brand-gradient)" />
+        <path d="M2 17L12 22L22 17" stroke="url(#brand-gradient)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        <path d="M2 12L12 17L22 12" stroke="url(#brand-gradient)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        <defs>
+          <linearGradient id="brand-gradient" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#6366f1" />
+            <stop offset="1" stop-color="#a855f7" />
+          </linearGradient>
+        </defs>
+      </svg>
+      <span class="brand-name">veil</span>
+    </div>
+    <div class="network-badge">
+      <span class="badge-dot"></span>
+      <span id="network-name">Soroban Testnet</span>
+    </div>
+  </header>
+
+  <main class="main-content">
+    
+    <!-- Active Tab Status Section -->
+    <section class="card tab-section">
+      <div class="card-header">
+        <div class="title-with-icon">
+          <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+          </svg>
+          <h3>Active Tab Context</h3>
+        </div>
+        <span class="connection-status disconnected" id="connection-indicator">Not Connected</span>
+      </div>
+      
+      <div class="tab-details">
+        <div class="detail-row">
+          <span class="label">Title:</span>
+          <span class="value" id="tab-title">Loading...</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Domain:</span>
+          <span class="value" id="tab-domain">Loading...</span>
+        </div>
+      </div>
+
+      <div class="tab-actions">
+        <button id="btn-connect" class="btn btn-primary btn-sm">Connect to Site</button>
+        <button id="btn-ping" class="btn btn-secondary btn-sm" disabled>Ping Page</button>
+      </div>
+    </section>
+
+    <!-- Content Script Message Passing -->
+    <section class="card msg-passing-section">
+      <div class="card-header">
+        <div class="title-with-icon">
+          <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+          </svg>
+          <h3>Message Passing Demo</h3>
+        </div>
+      </div>
+      
+      <p class="section-description">Demonstrate interaction with the page by calling content script functions.</p>
+
+      <div class="input-group">
+        <input type="text" id="toast-message" placeholder="Type a message to show on page..." class="input-text">
+        <button id="btn-send-toast" class="btn btn-primary" disabled>Send Toast</button>
+      </div>
+
+      <button id="btn-highlight" class="btn btn-secondary btn-full" disabled>
+        Highlight Active Page Elements
+      </button>
+    </section>
+
+    <!-- Wallet State Card -->
+    <section class="card wallet-card" id="wallet-card-container">
+      <div class="card-header">
+        <div class="title-with-icon">
+          <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+          </svg>
+          <h3>Veil Wallet Address</h3>
+        </div>
+      </div>
+
+      <!-- No Wallet state -->
+      <div id="wallet-state-empty" class="wallet-state">
+        <div class="empty-illustration">🔑</div>
+        <p class="empty-text">No Veil wallet initialized on this browser instance.</p>
+        <div class="wallet-actions-grid">
+          <input type="text" id="wallet-username" placeholder="Username (e.g. alice)" class="input-text text-center">
+          <button id="btn-register" class="btn btn-primary btn-full">Register with Passkey</button>
+          <button id="btn-login" class="btn btn-secondary btn-full">Login Existing</button>
+        </div>
+      </div>
+
+      <!-- Wallet Connected state -->
+      <div id="wallet-state-connected" class="wallet-state hidden">
+        <div class="balance-container">
+          <span class="balance-label">Available Balance</span>
+          <span class="balance-amount">125.45 <span class="balance-currency">XLM</span></span>
+          <span class="balance-secondary">~ $25.00 USD</span>
+        </div>
+
+        <div class="address-box">
+          <div class="address-row">
+            <span class="address-val" id="wallet-address-str">CDLZ...6W2R</span>
+            <button id="btn-copy-address" class="btn-icon-only" title="Copy Address">
+              <svg class="icon-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+              </svg>
+            </button>
+          </div>
+          <div class="contract-status badge-success" id="contract-deploy-status">Deployed</div>
+        </div>
+
+        <div class="credential-info">
+          <span class="label">Username:</span>
+          <span class="value" id="wallet-user-display">alice</span>
+        </div>
+
+        <div class="wallet-controls">
+          <button id="btn-deploy" class="btn btn-secondary btn-sm" disabled>Deploy Contract</button>
+          <button id="btn-sign-payload" class="btn btn-secondary btn-sm">Sign Payload</button>
+          <button id="btn-reset" class="btn btn-outline-danger btn-sm">Disconnect</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Operation Output Logs -->
+    <section class="card logs-card">
+      <div class="card-header">
+        <div class="title-with-icon">
+          <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <h3>Console & Messages Log</h3>
+        </div>
+        <button id="btn-clear-logs" class="btn-clear">Clear</button>
+      </div>
+      <div class="logs-container" id="logs-list">
+        <div class="log-entry log-info">[info] Extension side panel opened. Ready.</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <p>Veil extension-less technology demo. Developed for Stellar Wave.</p>
+  </footer>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>

@@ -113,6 +113,43 @@ CI will run these on every PR — see `.github/workflows/ci.yml`.
 3. Open a draft PR early so we can give feedback as you go
 4. Mark ready for review when CI is green
 
+## Generating release notes
+
+`CHANGELOG.md` is updated automatically from commit messages via [`conventional-changelog-cli`](https://github.com/conventional-changelog/conventional-changelog).
+
+### Setup
+
+Install the root dev dependencies if you haven't already:
+
+```bash
+npm install
+```
+
+### Running the script
+
+After tagging a release (e.g. `git tag v0.2.0`), run from the repo root:
+
+```bash
+npm run release-notes
+```
+
+This prepends a new versioned section to `CHANGELOG.md` using the `angular` preset, which maps conventional-commit types to changelog categories:
+
+| Commit type | Changelog section |
+|---|---|
+| `feat` | Features |
+| `fix` | Bug Fixes |
+| `perf` | Performance Improvements |
+| `revert` | Reverts |
+| `docs`, `style`, `chore`, `test` | omitted by default |
+
+The script is defined in root `package.json` as:
+```json
+"release-notes": "conventional-changelog -p angular -i CHANGELOG.md -s"
+```
+
+Commit all changes to `CHANGELOG.md` as part of the release commit before pushing the tag.
+
 ## Questions
 
 Open a [discussion](https://github.com/Miracle656/veil/discussions) or comment on an existing issue. We're friendly.

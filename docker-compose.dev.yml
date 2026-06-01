@@ -1,0 +1,35 @@
+version: "3.8"
+
+# Local Stellar development network — Stellar Core + Horizon + Soroban RPC bundled
+# via the official stellar/quickstart image.
+#
+# Usage:
+#   docker compose -f docker-compose.dev.yml up
+#
+# Horizon API:   http://localhost:8000
+# Soroban RPC:   http://localhost:8000/soroban/rpc
+# Friendbot:     http://localhost:8000/friendbot?addr=<G-address>
+
+services:
+  stellar:
+    image: stellar/quickstart:latest
+    platform: linux/amd64
+    ports:
+      - "8000:8000"
+    environment:
+      # Run as a standalone local network with a deterministic genesis ledger
+      - NETWORK=local
+    command: --local --enable-soroban-rpc
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--silent",
+          "--fail",
+          "http://localhost:8000/health"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s

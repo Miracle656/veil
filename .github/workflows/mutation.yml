@@ -1,0 +1,77 @@
+name: Mutation Tests
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # weekly, Monday 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to post mutation score comment to (leave blank to skip)'
+        required: false
+        type: string
+
+jobs:
+  stryker:
+    name: Stryker — SDK signing primitives
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+
+      - run: npm ci || npm install
+
+      - name: Run Stryker mutation tests
+        run: npx stryker run
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: sdk/reports/mutation/mutation.json
+          if-no-files-found: warn
+
+      - name: Post mutation score to PR
+        if: ${{ inputs.pr_number != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'sdk/reports/mutation/mutation.json';
+            if (!fs.existsSync(reportPath)) {
+              core.warning('Mutation report not found — skipping comment');
+              return;
+            }
+            const report = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
+            const files = report.files ?? {};
+            const entry = files['src/utils.ts'] ?? Object.values(files)[0] ?? {};
+            const totals = entry.totals ?? {};
+            const killed   = totals.killed   ?? 0;
+            const survived = totals.survived  ?? 0;
+            const total    = killed + survived + (totals.noCoverage ?? 0);
+            const score    = total > 0 ? ((killed / total) * 100).toFixed(1) : 'n/a';
+            await github.rest.issues.createComment({
+              issue_number: parseInt('${{ inputs.pr_number }}'),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: [
+                '🧬 **Stryker mutation report — `sdk/src/utils.ts`**',
+                '',
+                `| Metric | Value |`,
+                `|--------|-------|`,
+                `| Mutation score | **${score}%** |`,
+                `| Killed | ${killed} |`,
+                `| Survived | ${survived} |`,
+                `| Total mutants | ${total} |`,
+                '',
+                `> Thresholds: high ≥ 80 · low ≥ 60 · break = 0`,
+              ].join('\n'),
+            });

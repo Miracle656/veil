@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Veil Wallet Extension",
+  "version": "1.0.0",
+  "description": "Cross-tab side panel UI for Veil, showcasing message-passing with content scripts.",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open Veil Wallet"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ]
+}

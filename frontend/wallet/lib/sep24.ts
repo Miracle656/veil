@@ -185,6 +185,12 @@ export interface Sep24TransactionStatus {
   amount_in_asset?: string
   amount_out?: string
   amount_out_asset?: string
+  /** Withdraw-only: Stellar address the wallet must pay to settle the withdrawal. */
+  withdraw_anchor_account?: string
+  /** Withdraw-only: memo the anchor uses to route the incoming payment to this txn. */
+  withdraw_memo?: string
+  /** Withdraw-only: 'text' | 'id' | 'hash'. */
+  withdraw_memo_type?: 'text' | 'id' | 'hash'
 }
 
 // ── Deposit ───────────────────────────────────────────────────────────────────
@@ -224,13 +230,14 @@ export async function initiateDeposit(
 
 export async function initiateWithdraw(
   transferServerUrl: string,
-  params: { assetCode: string; account: string; lang?: string },
+  params: { assetCode: string; account: string; amount?: string; lang?: string },
   jwt?: string,
 ): Promise<Sep24InteractiveResult> {
   const body = new URLSearchParams({
     asset_code: params.assetCode,
     account:    params.account,
     lang:       params.lang ?? 'en',
+    ...(params.amount ? { amount: params.amount } : {}),
   })
 
   const res = await fetch(`${transferServerUrl}/transactions/withdraw/interactive`, {
