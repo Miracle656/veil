@@ -1,0 +1,130 @@
+---
+title: SDK Error Reference
+description: Every error class and contract error code thrown by the Veil SDK, with causes and recovery guidance.
+---
+
+import { Callout } from 'nextra/components'
+
+# SDK Error Reference
+
+The Veil SDK and the underlying Soroban wallet contract produce typed errors. This page enumerates every error class and contract error code, when each is thrown, and how to recover.
+
+---
+
+## TypeScript SDK errors
+
+These classes are thrown by methods in `invisible-wallet-sdk`. They extend the native `Error` class, so you can catch them with a standard `try/catch` and narrow by `instanceof` or by the `.name` property.
+
+### `NoGuardianSet`
+
+| Property | Value |
+|---|---|
+| `name` | `"NoGuardianSet"` |
+| Message | `"No guardian has been set for this wallet"` |
+
+**When thrown:** You called `initiateRecovery()` or `completeRecovery()` on a wallet that was never configured with a guardian key via `setGuardian()`.
+
+**Recovery:** Register a guardian before initiating recovery. If you are already locked out and no guardian was ever set, there is no programmatic recovery path — the wallet contract is inaccessible.
+
+```typescript
+import { NoGuardianSet } from 'invisible-wallet-sdk'
+
+try {
+  await wallet.initiateRecovery(guardianKeypair)
+} catch (err) {
+  if (err instanceof NoGuardianSet) {
+    // prompt user to set a guardian before this flow is reachable
+  }
+}
+```
+
+---
+
+### `RecoveryTimelockActive`
+
+| Property | Value |
+|---|---|
+| `name` | `"RecoveryTimelockActive"` |
+| Constructor | `new RecoveryTimelockActive(expiresAt: number)` |
+| Message | `"Recovery timelock is active until <ISO 8601 date>"` |
+
+**When thrown:** You called `completeRecovery()` before the on-chain timelock has expired. The `expiresAt` Unix timestamp (seconds) is the earliest time the recovery can be completed.
+
+**Recovery:** Wait until `expiresAt` and retry. Display the expiry time to the user so they know when to return.
+
+```typescript
+import { RecoveryTimelockActive } from 'invisible-wallet-sdk'
+
+try {
+  await wallet.completeRecovery(newPublicKey, guardianKeypair)
+} catch (err) {
+  if (err instanceof RecoveryTimelockActive) {
+    const unlockDate = new Date(err.message.split('until ')[1])
+    console.log(`Try again after ${unlockDate.toLocaleString()}`)
+  }
+}
+```
+
+---
+
+### `RecoveryNotPending`
+
+| Property | Value |
+|---|---|
+| `name` | `"RecoveryNotPending"` |
+| Message | `"No recovery is currently pending"` |
+
+**When thrown:** You called `completeRecovery()` but no recovery was ever initiated for this wallet, or a previous recovery was already completed or cancelled.
+
+**Recovery:** Call `initiateRecovery()` first to start a new recovery window, then wait for the timelock to expire before calling `completeRecovery()`.
+
+---
+
+## Contract error codes (`WalletError`)
+
+The `WalletError` enum is defined in `contracts/invisible_wallet/src/lib.rs`. When a Soroban invocation fails with one of these codes the SDK wraps it in a standard `Error` whose message contains the numeric code returned by the RPC node.
+
+| Code | Name | When thrown | Recovery |
+|------|------|-------------|----------|
+| 1 | `AlreadyInitialized` | `init()` called on a wallet that already has a registered signer | Do not call `init()` more than once per contract instance |
+| 2 | `InvalidSignatureFormat` | The WebAuthn signature bytes could not be parsed as DER-encoded ECDSA | Ensure `derToRawSignature` in `utils.ts` ran without error before submitting |
+| 3 | `SignerNotAuthorized` | The supplied public key is not in the registered-signers list | Register the key via `add_signer()` using an already-authorized signer |
+| 4 | `InvalidPublicKey` | The supplied public key bytes are not a valid uncompressed P-256 point (must be 65 bytes, prefix `0x04`) | Re-extract the key with `extractP256PublicKey` |
+| 5 | `InvalidSignature` | The signature bytes are not valid (wrong length, malformed `r`/`s`) | Re-run `derToRawSignature`; check the raw byte length is 64 |
+| 6 | `SignatureVerificationFailed` | P-256 ECDSA verification failed — signature does not match the payload under the supplied key | The WebAuthn assertion was for a different transaction; re-request a fresh assertion |
+| 7 | `InvalidChallenge` | `challenge` is absent from `clientDataJSON` or does not match `base64url(signature_payload)` | Ensure the challenge passed to `navigator.credentials.get()` is `base64url(signature_payload)` with no padding |
+| 8 | `RpIdMismatch` | `rpIdHash` in `authData` does not match `SHA-256(expected_rp_id)` stored in the contract | The credential was registered for a different domain; register a new credential on the correct origin |
+| 9 | `OriginMismatch` | `origin` in `clientDataJSON` does not match the expected origin | The assertion came from the wrong website; ensure your app URL matches the registered RP ID |
+| 10 | `CannotRemoveLastSigner` | `remove_signer()` would leave the wallet with zero signers | Add a replacement signer before removing the last one |
+| 11 | `SignerNotFound` | The signer index supplied to `remove_signer()` does not exist | Query the current signer list before removing |
+| 12 | `NoGuardianSet` | `initiate_recovery()` called but no guardian was registered via `set_guardian()` | Register a guardian first |
+| 13 | `RecoveryAlreadyPending` | `initiate_recovery()` called while a recovery is already in progress | Cancel the existing recovery or wait for it to complete |
+| 14 | `RecoveryNotPending` | `complete_recovery()` called with no active recovery | Call `initiate_recovery()` first |
+| 15 | `RecoveryTimelockActive` | `complete_recovery()` called before the timelock has expired | Wait for the on-chain ledger timestamp to exceed the stored expiry |
+| 16 | `NonceMismatch` | The transaction nonce is out of sequence (replay or ordering protection) | Fetch the current on-chain nonce and retry with the correct value |
+| 17 | `InsufficientAllowance` | A session-key transfer exceeds its approved spending limit | Request a new session key with a higher allowance, or use the primary passkey signer |
+| 18 | `AllowanceExpired` | The session-key allowance period has ended | Issue a new session key |
+| 19 | `SessionKeyExpired` | The session key's validity window has passed | Issue a new session key |
+| 20 | `SessionKeyAclViolation` | The session key attempted an operation not permitted by its ACL | Use a session key with broader permissions, or use the primary passkey signer |
+
+---
+
+## Mapping contract codes to SDK errors
+
+When the Soroban RPC returns a simulation or transaction failure the error object contains a `diagnosticEvents` array. The contract code is embedded as a `u32` in the event data. The SDK does not currently re-wrap these into typed classes; callers must inspect the raw RPC error. A future SDK release will expose a helper:
+
+```typescript
+// Planned (not yet released)
+import { parseContractError } from 'invisible-wallet-sdk'
+
+try {
+  await wallet.send(destination, amount, signerKeypair)
+} catch (err) {
+  const code = parseContractError(err) // returns WalletError code or null
+  if (code === 6) { /* SignatureVerificationFailed — re-request assertion */ }
+}
+```
+
+<Callout type="info">
+  Until `parseContractError` ships, inspect `err.message` for the string `"Error(Contract, #N)"` where `N` is the numeric code from the table above.
+</Callout>

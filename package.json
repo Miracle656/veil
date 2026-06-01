@@ -2,13 +2,15 @@
   "private": true,
   "description": "Root scripts — smoke tests and tooling for Veil",
   "scripts": {
-    "smoke": "npx ts-node scripts/smoke_test.ts"
+    "smoke": "npx ts-node scripts/smoke_test.ts",
+    "release-notes": "conventional-changelog -p angular -i CHANGELOG.md -s"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.6.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "conventional-changelog-cli": "^4.1.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.0"
   }
