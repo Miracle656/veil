@@ -26,7 +26,8 @@
     "build": "tsc",
     "test": "jest",
     "size": "npm run build && size-limit",
-    "test:surface": "jest api-surface.test.ts"
+    "test:surface": "jest api-surface.test.ts",
+    "stryker": "stryker run"
   },
   "keywords": [
     "stellar",
@@ -61,6 +62,9 @@
   },
   "devDependencies": {
     "@size-limit/preset-small-lib": "^12.1.0",
+    "@stryker-mutator/core": "^8.7.0",
+    "@stryker-mutator/jest-runner": "^8.7.0",
+    "@stryker-mutator/typescript-checker": "^8.7.0",
     "@testing-library/react": "^16.0.0",
     "@types/jest": "^29.0.0",
     "@types/node": "^20.0.0",

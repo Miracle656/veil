@@ -205,3 +205,6 @@ pub fn verify_webauthn(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
