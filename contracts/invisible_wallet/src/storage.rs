@@ -142,3 +142,6 @@ pub fn increment_nonce(env: &Env) {
     let current = get_nonce(env);
     env.storage().instance().set(&DataKey::Nonce, &(current + 1));
 }
+
+#[cfg(test)]
+mod tests;
