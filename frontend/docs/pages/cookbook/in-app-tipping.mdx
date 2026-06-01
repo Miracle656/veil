@@ -1,0 +1,68 @@
+---
+title: In-app tipping
+description: Use Veil to sign one-time tip payments with a passkey.
+---
+
+import { Callout } from 'nextra/components'
+
+# In-app tipping
+
+Create a fast one-tap tipping flow by gating the payment with native biometric approval.
+
+<Callout type="info">
+  Live demo: run the repository demo app and open <a href="http://localhost:3000">http://localhost:3000</a>.
+</Callout>
+
+![In-app tipping screenshot](/cookbook/tipping.svg)
+
+## Copy-paste runnable code
+
+```tsx
+import { useInvisibleWallet } from 'invisible-wallet-sdk'
+import { hash as stellarHash, Networks } from '@stellar/stellar-sdk'
+
+export default function InAppTipping() {
+  const { address, signAuthEntry } = useInvisibleWallet({
+    factoryAddress: 'FACTORY_CONTRACT_ADDRESS',
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: Networks.TESTNET,
+  })
+
+  async function tipCreator() {
+    if (!address) {
+      throw new Error('Register and deploy your wallet first.')
+    }
+
+    const tipPayload = {
+      flow: 'tip',
+      amount: '1.50',
+      currency: 'USD',
+      recipient: 'GDFP...CREATOR_ADDRESS',
+      note: 'Thanks for the great content!',
+      wallet: address,
+      createdAt: new Date().toISOString(),
+    }
+
+    const signaturePayload = stellarHash(
+      new TextEncoder().encode(JSON.stringify(tipPayload)),
+    )
+
+    const authSignature = await signAuthEntry(signaturePayload)
+
+    if (!authSignature) {
+      throw new Error('Tip approval was cancelled.')
+    }
+
+    console.log('Tip authorized with passkey:', authSignature)
+    return authSignature
+  }
+
+  return <button onClick={tipCreator}>Send tip</button>
+}
+```
+
+## How it works
+
+- The tip metadata is hashed into a 32-byte Soroban challenge.
+- `signAuthEntry()` opens the passkey prompt and binds the approval to that exact tip.
+- The returned WebAuthn signature is then sent with the payment transaction.

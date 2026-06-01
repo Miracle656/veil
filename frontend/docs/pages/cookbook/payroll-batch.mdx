@@ -1,0 +1,72 @@
+---
+title: Payroll batch
+description: Approve a payroll payout cycle with a single passkey authorization.
+---
+
+import { Callout } from 'nextra/components'
+
+# Payroll batch
+
+Authorize a batch payroll cycle once and attach the passkey approval to your payroll settlement transaction.
+
+<Callout type="info">
+  Live demo: run the repository demo app and open <a href="http://localhost:3000">http://localhost:3000</a>.
+</Callout>
+
+![Payroll batch screenshot](/cookbook/payroll.svg)
+
+## Copy-paste runnable code
+
+```tsx
+import { useInvisibleWallet } from 'invisible-wallet-sdk'
+import { hash as stellarHash, Networks } from '@stellar/stellar-sdk'
+
+export default function PayrollBatch() {
+  const { address, signAuthEntry } = useInvisibleWallet({
+    factoryAddress: 'FACTORY_CONTRACT_ADDRESS',
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: Networks.TESTNET,
+  })
+
+  async function approvePayrollBatch() {
+    if (!address) {
+      throw new Error('Register and deploy your wallet first.')
+    }
+
+    const payrollBatch = {
+      flow: 'payroll',
+      cycle: '2026-06',
+      totalAmount: '4200.00',
+      currency: 'USD',
+      recipients: [
+        'GDX1...EMPLOYEE1',
+        'GDY2...EMPLOYEE2',
+        'GDZ3...EMPLOYEE3',
+      ],
+      wallet: address,
+      memo: 'June payroll batch',
+    }
+
+    const signaturePayload = stellarHash(
+      new TextEncoder().encode(JSON.stringify(payrollBatch)),
+    )
+
+    const authSignature = await signAuthEntry(signaturePayload)
+
+    if (!authSignature) {
+      throw new Error('Payroll approval cancelled.')
+    }
+
+    console.log('Payroll batch approved:', authSignature)
+    return authSignature
+  }
+
+  return <button onClick={approvePayrollBatch}>Approve payroll batch</button>
+}
+```
+
+## How it works
+
+- The batch payroll metadata becomes the contract authorization challenge.
+- One passkey prompt approves the entire payout cycle.
+- The WebAuthn signature is then attached to the payroll settlement transaction.

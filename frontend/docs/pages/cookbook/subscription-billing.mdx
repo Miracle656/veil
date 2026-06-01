@@ -1,0 +1,74 @@
+---
+title: Subscription billing
+description: Build a recurring billing authorization flow with Veil and Soroban.
+---
+
+import { Callout } from 'nextra/components'
+
+# Subscription billing
+
+Authorize a recurring billing agreement once, then use the signed authorization for future Soroban billing transactions.
+
+<Callout type="info">
+  Live demo: run the repository demo app and open <a href="http://localhost:3000">http://localhost:3000</a>.
+</Callout>
+
+![Subscription billing screenshot](/cookbook/subscription.svg)
+
+## Copy-paste runnable code
+
+```tsx
+import { useInvisibleWallet } from 'invisible-wallet-sdk'
+import { hash as stellarHash, Networks } from '@stellar/stellar-sdk'
+
+export default function SubscriptionBilling() {
+  const { address, signAuthEntry } = useInvisibleWallet({
+    factoryAddress: 'FACTORY_CONTRACT_ADDRESS',
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: Networks.TESTNET,
+  })
+
+  async function authorizeMonthlySubscription() {
+    if (!address) {
+      throw new Error('Register and deploy your wallet first.')
+    }
+
+    const billingRequest = {
+      flow: 'subscription',
+      planId: 'pro-monthly',
+      amount: '10.00',
+      currency: 'USD',
+      recipient: 'GDT6...MERCHANT_ADDRESS',
+      schedule: '30 days',
+      wallet: address,
+      timestamp: new Date().toISOString(),
+    }
+
+    const signaturePayload = stellarHash(
+      new TextEncoder().encode(JSON.stringify(billingRequest)),
+    )
+
+    const authSignature = await signAuthEntry(signaturePayload)
+
+    if (!authSignature) {
+      throw new Error('Passkey authorization was cancelled.')
+    }
+
+    console.log('Passkey-approved billing auth:', authSignature)
+
+    return authSignature
+  }
+
+  return (
+    <button onClick={authorizeMonthlySubscription}>
+      Authorize monthly subscription
+    </button>
+  )
+}
+```
+
+## How it works
+
+1. Build a 32-byte Soroban auth payload from the subscription metadata.
+2. Call `signAuthEntry()` to prompt the user for biometric approval.
+3. Attach the returned WebAuthn signature to your Soroban authorization entry when you submit the billing transaction.

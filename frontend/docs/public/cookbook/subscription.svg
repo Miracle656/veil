@@ -1,0 +1,24 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#27272a" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="720" fill="url(#bg)" />
+  <rect x="60" y="60" width="1080" height="600" rx="32" fill="#0f172a" />
+  <rect x="84" y="84" width="1032" height="120" rx="24" fill="#111827" />
+  <text x="120" y="150" fill="#fcd34d" font-family="Inter, sans-serif" font-size="52" font-weight="700">Subscription Billing</text>
+  <rect x="120" y="220" width="420" height="44" rx="16" fill="#111827" />
+  <text x="140" y="252" fill="#d1d5db" font-family="Inter, sans-serif" font-size="18">Monthly charge authorization</text>
+  <rect x="120" y="290" width="300" height="40" rx="14" fill="#262f45" />
+  <text x="140" y="318" fill="#93c5fd" font-family="Inter, sans-serif" font-size="16">Amount: 10 USD</text>
+  <rect x="120" y="350" width="760" height="32" rx="12" fill="#111827" />
+  <rect x="120" y="400" width="760" height="196" rx="20" fill="#111827" />
+  <text x="140" y="430" fill="#9ca3af" font-family="Menlo, monospace" font-size="20">const billingRequest = {'{'}</text>
+  <text x="180" y="460" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">flow: 'subscription',</text>
+  <text x="180" y="490" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">planId: 'pro-monthly',</text>
+  <text x="180" y="520" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">amount: '10.00',</text>
+  <text x="180" y="550" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">wallet: 'CABC...'</text>
+  <text x="140" y="580" fill="#9ca3af" font-family="Menlo, monospace" font-size="20">{'}'}</text>
+</svg>

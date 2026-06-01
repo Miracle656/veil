@@ -1,0 +1,21 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="720" fill="url(#bg)" />
+  <rect x="60" y="60" width="1080" height="600" rx="32" fill="#111827" />
+  <text x="120" y="150" fill="#f9a8d4" font-family="Inter, sans-serif" font-size="52" font-weight="700">In-app tipping</text>
+  <rect x="120" y="220" width="460" height="44" rx="16" fill="#111827" />
+  <text x="140" y="252" fill="#d1d5db" font-family="Inter, sans-serif" font-size="18">One-tap tip approval flow</text>
+  <circle cx="300" cy="330" r="72" fill="#111827" />
+  <text x="256" y="352" fill="#fcd34d" font-family="Inter, sans-serif" font-size="44" font-weight="700">★</text>
+  <rect x="120" y="420" width="760" height="196" rx="20" fill="#111827" />
+  <text x="140" y="460" fill="#9ca3af" font-family="Menlo, monospace" font-size="20">const tipPayload = {'{'}</text>
+  <text x="180" y="490" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">flow: 'tip',</text>
+  <text x="180" y="520" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">amount: '1.50',</text>
+  <text x="180" y="550" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">recipient: 'GDFP...'</text>
+  <text x="140" y="580" fill="#9ca3af" font-family="Menlo, monospace" font-size="20">{'}'}</text>
+</svg>

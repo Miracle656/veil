@@ -1,0 +1,22 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1f2937" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="720" fill="url(#bg)" />
+  <rect x="60" y="60" width="1080" height="600" rx="32" fill="#111827" />
+  <text x="120" y="150" fill="#93c5fd" font-family="Inter, sans-serif" font-size="52" font-weight="700">Payroll batch</text>
+  <rect x="120" y="220" width="520" height="44" rx="16" fill="#111827" />
+  <text x="140" y="252" fill="#d1d5db" font-family="Inter, sans-serif" font-size="18">Approve a payroll run with one passkey approval</text>
+  <rect x="120" y="310" width="320" height="36" rx="14" fill="#0f172a" />
+  <text x="140" y="334" fill="#a5b4fc" font-family="Inter, sans-serif" font-size="18">Total: 4,200 USD</text>
+  <rect x="120" y="380" width="760" height="230" rx="20" fill="#111827" />
+  <text x="140" y="420" fill="#9ca3af" font-family="Menlo, monospace" font-size="20">const payrollBatch = {'{'}</text>
+  <text x="180" y="450" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">flow: 'payroll',</text>
+  <text x="180" y="480" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">cycle: '2026-06',</text>
+  <text x="180" y="510" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">totalAmount: '4200.00',</text>
+  <text x="180" y="540" fill="#d1d5db" font-family="Menlo, monospace" font-size="18">recipients: ['GDX1...', 'GDY2...']</text>
+  <text x="140" y="570" fill="#9ca3af" font-family="Menlo, monospace" font-size="20">{'}'}</text>
+</svg>
