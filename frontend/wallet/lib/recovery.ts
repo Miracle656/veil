@@ -3,6 +3,14 @@ import { wordlist } from '@scure/bip39/wordlists/english';
 import { p256 } from '@noble/curves/nist';
 import { sha256 } from '@noble/hashes/sha256';
 import { hexToUint8Array } from '@veil/utils';
+import {
+  Sep30Client,
+  collectRecoverySignatures,
+  type Sep30Identity,
+  type Sep30Account,
+  type RecoveryServer,
+  type CollectedSignature,
+} from '@veil/recovery';
 
 export function generateMnemonicPhrase(): string {
   return bip39.generateMnemonic(wordlist);
@@ -282,5 +290,106 @@ export function initRecoveryInterceptor() {
   };
   (patchedGet as any).__patched = true;
   navigator.credentials.get = patchedGet;
+}
+
+// ── SEP-30 server-assisted recovery ─────────────────────────────────────────────
+//
+// The mnemonic-backup path above is fully self-custodial. SEP-30 complements it
+// with *server-assisted* recovery: the user registers identities with one or
+// more recovery servers, and after device loss those servers co-sign a
+// transaction that installs a fresh signer — no single party holds the key.
+//
+// The transport-level SEP-30 client lives in the SDK (`@veil/recovery`); the
+// helpers below wire it to the wallet's storage and the configured servers.
+
+export interface RecoveryServerConfig {
+  /** Base URL of the recovery server. */
+  baseUrl: string;
+  /** Optional SEP-10 JWT (or use getAuthToken for rotating tokens). */
+  authToken?: string;
+  /** Lazily resolve the current SEP-10 JWT before each request. */
+  getAuthToken?: () => string | null | undefined | Promise<string | null | undefined>;
+}
+
+const RECOVERY_SERVERS_KEY = 'invisible_wallet_recovery_servers';
+
+/** Build a SEP-30 client for each configured recovery server. */
+export function buildRecoveryClients(configs: RecoveryServerConfig[]): Sep30Client[] {
+  return configs.map((c) => new Sep30Client(c));
+}
+
+/**
+ * Persist the list of recovery-server base URLs so they can be rediscovered
+ * after device loss (the URLs are not secret; tokens are never stored here).
+ */
+export function rememberRecoveryServers(configs: RecoveryServerConfig[]): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(RECOVERY_SERVERS_KEY, JSON.stringify(configs.map((c) => c.baseUrl)));
+}
+
+/** Read back the previously remembered recovery-server base URLs. */
+export function getRememberedRecoveryServers(): string[] {
+  if (typeof localStorage === 'undefined') return [];
+  const raw = localStorage.getItem(RECOVERY_SERVERS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Register the wallet account with every configured recovery server and persist
+ * the server URLs for later recovery. Returns each server's account view
+ * (including the signer it contributes, which must then be added on-chain).
+ */
+export async function registerWithRecoveryServers(
+  address: string,
+  identities: Sep30Identity[],
+  configs: RecoveryServerConfig[],
+): Promise<Sep30Account[]> {
+  const clients = buildRecoveryClients(configs);
+  const accounts = await Promise.all(clients.map((c) => c.registerAccount(address, identities)));
+  rememberRecoveryServers(configs);
+  return accounts;
+}
+
+/**
+ * Resolve each configured server into a {@link RecoveryServer} (client + the
+ * server's signer key on the account), ready for {@link recoverSignatures}.
+ * Servers that don't have the account registered are skipped.
+ */
+export async function resolveRecoveryServers(
+  address: string,
+  configs: RecoveryServerConfig[],
+): Promise<RecoveryServer[]> {
+  const clients = buildRecoveryClients(configs);
+  const resolved = await Promise.all(
+    clients.map(async (client): Promise<RecoveryServer | null> => {
+      try {
+        const account = await client.getAccount(address);
+        const signerKey = account.signers[0]?.key;
+        return signerKey ? { client, signerKey } : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  return resolved.filter((r): r is RecoveryServer => r !== null);
+}
+
+/**
+ * Collect recovery-server signatures for a transaction that re-establishes a
+ * signer after device loss. Pass `requireAll: false` for an M-of-N threshold.
+ */
+export async function recoverSignatures(
+  servers: RecoveryServer[],
+  address: string,
+  transactionXdr: string,
+  opts: { requireAll?: boolean } = {},
+): Promise<CollectedSignature[]> {
+  return collectRecoverySignatures(servers, address, transactionXdr, opts);
 }
 
