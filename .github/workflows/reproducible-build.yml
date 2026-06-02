@@ -1,0 +1,44 @@
+name: Reproducible build
+
+# Verifies that the Soroban contract WASM is built deterministically and that
+# its SHA-256 matches the committed contracts/expected-hashes.json. This lets a
+# third party confirm a deployed contract hash was produced from this source.
+#
+# The build runs inside the pinned rust:1.85.0-bookworm image with the repo
+# mounted at a fixed path (/work), exactly as scripts/reproducible-build.sh does
+# locally — so hashes produced here match hashes produced on any other machine.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  reproducible-build:
+    name: Reproducible WASM build & hash verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Acceptance: CI fails if the build drifts from the committed hash.
+      - name: Build & verify against committed hashes
+        run: scripts/reproducible-build.sh
+
+      # Acceptance: deterministic build — the same source yields the same hash
+      # across two independent builds. We regenerate the hash document twice and
+      # assert the two are byte-identical.
+      - name: Determinism — build twice and compare
+        run: |
+          set -euo pipefail
+          cp contracts/expected-hashes.json /tmp/run-1.json
+          rm -f contracts/expected-hashes.json
+          scripts/reproducible-build.sh --update
+          cp contracts/expected-hashes.json /tmp/run-2.json
+          # Restore the committed file so the working tree stays clean.
+          git checkout -- contracts/expected-hashes.json
+          if ! diff -u /tmp/run-1.json /tmp/run-2.json; then
+            echo "::error::Non-deterministic build — two runs produced different hashes." >&2
+            exit 1
+          fi
+          echo "Build is deterministic: both runs produced identical hashes."

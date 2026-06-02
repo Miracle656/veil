@@ -384,6 +384,13 @@ The contract's `__check_auth` expects the signature field to be a `Vec<Val>` wit
 
 See the [Security docs](https://veil-2ap8.vercel.app/security) and the [Threat Model](https://veil-2ap8.vercel.app/threat-model) for the full STRIDE analysis, trust assumptions, and residual risks.
 
+### Verifying contract builds
+
+The Soroban contracts build reproducibly, so you can confirm a deployed contract
+hash was produced from this source. With Docker installed, run
+`scripts/reproducible-build.sh` to rebuild and compare against the committed
+`contracts/expected-hashes.json`. See [docs/reproducible-build.md](docs/reproducible-build.md).
+
 ## License
 
 MIT
