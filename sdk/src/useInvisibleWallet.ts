@@ -21,6 +21,8 @@ import {
     computeWalletAddress,
 } from './utils';
 import { webAuthnProvider } from './webauthn';
+import { TransactionOutbox, type ReplayOptions, type ReplayResult } from './outbox';
+import { verifyAttestation, AttestationError, type AttestationPolicy } from './webauthn/attestation';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -64,6 +66,31 @@ export type WalletConfig = {
      * const config = { ..., storage: AsyncStorage };
      */
     storage?: StorageAdapter;
+    /**
+     * When true (default), the hook replays any transactions persisted in the
+     * offline outbox automatically whenever the browser fires an `online`
+     * event. Set to false to drive replay manually via {@link replayOutbox}.
+     * Has no effect outside a DOM environment (e.g. React Native).
+     */
+    autoReplayOnReconnect?: boolean;
+    /**
+     * Optional WebAuthn attestation policy, run during register(). When set, the
+     * attestation statement returned by the authenticator is parsed and verified,
+     * and this hook decides whether to accept the credential (e.g. require a
+     * verified hardware authenticator, or gate on AAGUID). Returning false — or
+     * throwing — from the policy aborts registration.
+     *
+     * @example
+     * const config = { ..., attestationPolicy: (info) =>
+     *   info.verified && ALLOWED_AAGUIDS.has(info.aaguid) };
+     */
+    attestationPolicy?: AttestationPolicy;
+    /**
+     * When an attestationPolicy is set but the platform did not surface the raw
+     * attestationObject (so it cannot be verified), abort registration if this is
+     * true (default false — proceed without verification).
+     */
+    requireAttestation?: boolean;
 };
 
 /**
@@ -258,6 +285,22 @@ type InvisibleWallet = {
      * @returns Object with amount and expiry, or null if no allowance exists.
      */
     getAllowance: (spender: string, token: string) => Promise<{ amount: number; expiry: number | undefined } | null>;
+    /**
+     * The durable offline transaction outbox. Record a signed transaction here
+     * (via {@link TransactionOutbox.enqueue}) before submitting it so it can be
+     * replayed if the network call is lost. Persists through the configured
+     * StorageAdapter, so queued transactions survive a reload.
+     */
+    outbox: TransactionOutbox;
+    /**
+     * Replay any transactions still queued in the offline outbox against the
+     * network. Safe to call repeatedly — already-confirmed transactions are
+     * deduped by hash and never resubmitted (at-most-once).
+     *
+     * @returns A summary of which queued transactions confirmed, failed, were
+     *          already on-chain, or remain pending.
+     */
+    replayOutbox: (opts?: ReplayOptions) => Promise<ReplayResult>;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -307,6 +350,24 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     const [error, setError] = useState<string | null>(null);
 
     const store = useMemo(() => resolveStorage(config.storage), [config.storage]);
+    const outbox = useMemo(() => new TransactionOutbox(store), [store]);
+
+    // ── replayOutbox ────────────────────────────────────────────────────────
+    // Resubmit any transactions persisted in the offline outbox. Deduped by
+    // hash so repeated calls (and the reconnect listener below) are safe.
+    const replayOutbox = useCallback(async (opts?: ReplayOptions): Promise<ReplayResult> => {
+        const server = new SorobanRpc.Server(rpcUrl);
+        return outbox.replay(server, opts);
+    }, [rpcUrl, outbox]);
+
+    // Auto-replay when connectivity returns. No-op outside the browser.
+    useEffect(() => {
+        if (config.autoReplayOnReconnect === false) return;
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+        const onOnline = () => { void replayOutbox().catch(() => { /* surfaced via per-entry status */ }); };
+        window.addEventListener('online', onOnline);
+        return () => window.removeEventListener('online', onOnline);
+    }, [config.autoReplayOnReconnect, replayOutbox]);
 
     useEffect(() => {
         // Support both synchronous (localStorage) and asynchronous (AsyncStorage) adapters.
@@ -335,13 +396,28 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const resolvedRpId = rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
 
-            const { credentialId, publicKeyBytes } = await webAuthnProvider.create({
+            const { credentialId, publicKeyBytes, attestationObject, clientDataJSON } = await webAuthnProvider.create({
                 challenge,
                 rpId:     resolvedRpId,
                 rpName:   'Invisible Wallet',
                 userId,
                 userName: name,
             });
+
+            // Optional attestation verification — enforce authenticator policy.
+            if (config.attestationPolicy) {
+                if (attestationObject && clientDataJSON) {
+                    await verifyAttestation({
+                        attestationObject,
+                        clientDataJSON,
+                        policy: config.attestationPolicy,
+                    });
+                } else if (config.requireAttestation) {
+                    throw new AttestationError(
+                        'Attestation required but the platform did not expose an attestationObject.'
+                    );
+                }
+            }
 
             const publicKeyHex  = bufferToHex(publicKeyBytes);
             const walletAddress = computeWalletAddress(factoryAddress, publicKeyBytes, networkPassphrase);
@@ -361,7 +437,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [factoryAddress, networkPassphrase, rpId, store]);
+    }, [factoryAddress, networkPassphrase, rpId, store, config.attestationPolicy, config.requireAttestation]);
 
     // ── deploy ────────────────────────────────────────────────────────────────
 
@@ -1196,6 +1272,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     }, [address, rpcUrl, networkPassphrase, signAuthEntry]);
 
     return useMemo(() => (
-        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance }
-    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance]);
+        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, outbox, replayOutbox }
+    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, outbox, replayOutbox]);
 }
