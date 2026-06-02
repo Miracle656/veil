@@ -91,7 +91,17 @@ export const webAuthnProvider: WebAuthnProvider = {
         const spkiBytes = b64urlToUint8Array(publicKeyB64);
         const publicKeyBytes = spkiToP256Uncompressed(spkiBytes);
 
-        return { credentialId: result.id, publicKeyBytes };
+        // react-native-passkey may expose the raw attestation when configured to;
+        // pass it through when present so callers can verify it at registration.
+        const rawAttestation: string | undefined = result.response.attestationObject;
+        const rawClientData:  string | undefined = result.response.clientDataJSON;
+
+        return {
+            credentialId: result.id,
+            publicKeyBytes,
+            attestationObject: rawAttestation ? b64urlToUint8Array(rawAttestation) : undefined,
+            clientDataJSON:    rawClientData  ? b64urlToUint8Array(rawClientData)  : undefined,
+        };
     },
 
     async authenticate({ challenge, credentialId, rpId }): Promise<WebAuthnAssertResult> {

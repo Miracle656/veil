@@ -14,6 +14,14 @@ export interface WebAuthnCreateResult {
     credentialId: string;
     /** Uncompressed P-256 public key: 0x04 ‖ x ‖ y (65 bytes). */
     publicKeyBytes: Uint8Array;
+    /**
+     * Raw CBOR attestationObject bytes, when the platform exposes them. Required
+     * to verify the attestation statement at registration; may be undefined on
+     * platforms that do not surface it.
+     */
+    attestationObject?: Uint8Array;
+    /** Raw clientDataJSON bytes from the registration response, when available. */
+    clientDataJSON?: Uint8Array;
 }
 
 export interface WebAuthnAssertResult {
@@ -72,7 +80,12 @@ export const webAuthnProvider: WebAuthnProvider = {
         const response = credential.response as AuthenticatorAttestationResponse;
         const publicKeyBytes = await extractP256PublicKey(response);
 
-        return { credentialId: credential.id, publicKeyBytes };
+        return {
+            credentialId: credential.id,
+            publicKeyBytes,
+            attestationObject: new Uint8Array(response.attestationObject),
+            clientDataJSON:    new Uint8Array(response.clientDataJSON),
+        };
     },
 
     async authenticate({ challenge, credentialId, rpId }) {
