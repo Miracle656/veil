@@ -48,7 +48,21 @@ impl MultisigContract {
     }
 
     /// Propose a transaction; returns a proposal id.
-    pub fn propose_transaction(env: Env, to: Address, amount: i128) -> u64 {
+    pub fn propose_transaction(env: Env, caller: Address, to: Address, amount: i128) -> u64 {
+        caller.require_auth();
+
+        let owners: Vec<Address> = env.storage().instance().get(&DataKey::Owners).expect("not initialized");
+        let mut is_owner = false;
+        for owner in owners.iter() {
+            if owner == caller {
+                is_owner = true;
+                break;
+            }
+        }
+        if !is_owner {
+            panic!("caller is not an owner");
+        }
+
         let mut count: u64 = env.storage().instance().get(&DataKey::ProposalCount).unwrap_or(0);
         count += 1;
         env.storage().instance().set(&DataKey::ProposalCount, &count);
@@ -167,7 +181,7 @@ mod tests {
         assert_eq!(client.get_owners().len(), 3);
 
         let to = Address::generate(&env);
-        let prop_id = client.propose_transaction(&to, &100);
+        let prop_id = client.propose_transaction(&owner1, &to, &100);
         assert_eq!(prop_id, 1);
 
         let proposal = client.get_proposal(&1);
