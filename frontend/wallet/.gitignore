@@ -3,3 +3,7 @@ node_modules/
 .env.local
 .env*.local
 out/
+public/sw.js
+public/workbox-*.js
+public/fallback-*.js
+tsconfig.tsbuildinfo
