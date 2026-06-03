@@ -15,7 +15,23 @@
 
 #[allow(unused_imports)]
 use super::*;
-use soroban_sdk::{Bytes, BytesN, Env, Vec, IntoVal};
+use soroban_sdk::{Bytes, BytesN, Env, Vec, IntoVal, Val};
+use soroban_sdk::auth::{CustomAccountInterface, Context};
+
+trait CheckAuthTestHelper {
+    fn __check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>);
+    fn try___check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) -> Result<(), Result<WalletError, soroban_sdk::InvokeError>>;
+}
+
+impl<'a> CheckAuthTestHelper for InvisibleWalletClient<'a> {
+    fn __check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) {
+        self.env.try_invoke_contract_check_auth::<WalletError>(&self.address, payload, *signature, contexts).unwrap();
+    }
+
+    fn try___check_auth(&self, payload: &BytesN<32>, signature: &Val, contexts: &Vec<Context>) -> Result<(), Result<WalletError, soroban_sdk::InvokeError>> {
+        self.env.try_invoke_contract_check_auth::<WalletError>(&self.address, payload, *signature, contexts)
+    }
+}
 use sha2::{Sha256, Digest};
 use p256::ecdsa::{SigningKey, Signature as P256Sig, signature::hazmat::PrehashSigner};
 
@@ -123,13 +139,14 @@ fn sign_webauthn(sk: &SigningKey, payload: &[u8; 32], ad: &Bytes) -> [u8; 64] {
     };
 
     let sig: P256Sig = sk.sign_prehash(&msg_hash).unwrap();
+    let sig = sig.normalize_s().unwrap_or(sig);
     sig.to_bytes().into()
 }
 
 /// Build the 5-element Val expected by `__check_auth`:
 /// `[pubkey(65), auth_data, client_data_json, sig(64), nonce]`
 fn sig_vec(env: &Env, pub_bytes: &[u8; 65], ad: &Bytes, cdj: &Bytes, sig: &[u8; 64], nonce: u64) -> Val {
-    Vec::from_array(env, [
+    Vec::<Val>::from_array(env, [
         BytesN::from_array(env, pub_bytes).into_val(env),
         ad.clone().into_val(env),
         cdj.clone().into_val(env),
@@ -305,7 +322,7 @@ fn invalid_sig_format_returns_format_error() {
     let payload = [0x60u8; 32];
 
     // Only 3 elements — missing sig_bytes and nonce.
-    let short: Val = Vec::from_array(&env, [
+    let short: Val = Vec::<Val>::from_array(&env, [
         BytesN::from_array(&env, &pub_a).into_val(&env),
         make_auth_data(&env, "test.veil").into_val(&env),
         make_cdj(&env, &payload).into_val(&env),

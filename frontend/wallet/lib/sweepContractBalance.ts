@@ -219,7 +219,7 @@ export async function sweepContractBalance(
         await crypto.subtle.digest('SHA-256', new Uint8Array(preimage.toXDR()))
       )
 
-      const webAuthnSig = await signAuthEntry(payloadHash)
+      const webAuthnSig = (await signAuthEntry(payloadHash)) as any
       if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled')
 
       const sigElements = [

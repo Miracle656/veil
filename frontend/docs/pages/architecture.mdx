@@ -9,6 +9,81 @@ import { Callout } from 'nextra/components'
 
 Veil combines two standards — **WebAuthn (FIDO2)** and **Stellar Soroban custom account contracts** — to create a fully self-custodied wallet that requires no seed phrases.
 
+## Sequence Diagram: Register → Fund → Send → SEP-24 Deposit
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Wallet as Veil Wallet<br/>(Web/Mobile)
+    participant SDK as Veil SDK
+    participant Soroban as Soroban Contract
+    participant Anchor as Anchor<br/>(SEP-24)
+    participant Horizon as Horizon API
+
+    User->>Wallet: 1. Register Passkey
+    Wallet->>SDK: Create credential
+    SDK->>Soroban: init(pubkey)
+    Soroban->>Soroban: Store public key
+    
+    User->>Wallet: 2. Fund Wallet
+    Wallet->>Horizon: Submit funding TX
+    Horizon->>Soroban: Credit account
+    
+    User->>Wallet: 3. Send Payment
+    Wallet->>SDK: signTransaction()
+    SDK->>User: Biometric prompt
+    User->>SDK: Authenticate
+    SDK->>Soroban: __check_auth(signature)
+    Soroban->>Soroban: Verify WebAuthn signature
+    Soroban->>Horizon: Submit TX
+    Horizon->>Wallet: Tx confirmed
+    
+    User->>Wallet: 4. Initiate SEP-24 Deposit
+    Wallet->>Anchor: GET /transactions?kind=deposit
+    Anchor->>Wallet: Interactive flow URL
+    Wallet->>Anchor: User completes KYC
+    Anchor->>Horizon: Submit deposit TX
+    Horizon->>Soroban: Credit tokens
+```
+
+## Component Diagram: Architecture Boundary
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        direction LR
+        Web["Web App<br/>(React/Next.js)"]
+        Mobile["Mobile App<br/>(React Native/Expo)"]
+        SDK["Veil SDK<br/>(@veil-js)"]
+    end
+    
+    subgraph "Stellar Blockchain"
+        direction LR
+        Soroban["Soroban Contract<br/>(Rust/WASM)"]
+        Anchor["Anchor Server<br/>(SEP-24)"]
+    end
+    
+    subgraph "Infrastructure"
+        direction LR
+        Horizon["Horizon API<br/>(Transactions)"]
+        RPC["Soroban RPC<br/>(Auth/Invoke)"]
+    end
+    
+    Web -->|Uses| SDK
+    Mobile -->|Uses| SDK
+    
+    SDK -->|Sign & Submit| RPC
+    SDK -->|Query Balances| Horizon
+    
+    RPC -->|Execute| Soroban
+    Soroban -->|Verify Auth| RPC
+    
+    Anchor -->|Query| Horizon
+    Horizon -->|Ledger State| Soroban
+    
+    Web -->|SEP-24 Flow| Anchor
+```
+
 ## High-Level Overview
 
 ```

@@ -3,7 +3,7 @@ const config = {
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
   roots: ['<rootDir>'],
-  testMatch: ['**/__tests__/**/*.test.ts'],
+  testMatch: ['**/__tests__/**/*.test.ts', '**/tests/**/*.test.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
@@ -13,6 +13,11 @@ const config = {
         allowSyntheticDefaultImports: true,
       },
     }],
+  },
+  // Replicate tsconfig paths so Jest resolves workspace aliases
+  moduleNameMapper: {
+    '^@veil/utils$': '<rootDir>/../../sdk/src/utils',
+    '^@veil/sdk$':   '<rootDir>/../../sdk/src/useInvisibleWallet',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [

@@ -21,6 +21,7 @@ import { buildFriendbotUrl, getNativeAssetContractId, getNetwork } from '@/lib/n
 import { sweepContractBalance } from '@/lib/sweepContractBalance'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import type { WebAuthnSignature } from '@veil/sdk'
+import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
 
 const network = getNetwork()
 
@@ -672,7 +673,7 @@ function DashboardPageContent() {
           />
           <ActionButton
             label="Withdraw"
-            onClick={() => setSep24Modal('withdraw')}
+            onClick={() => router.push('/withdraw')}
             icon={<path d="M12 21V9m0 0l-4 4m4-4l4 4M3 7V5a2 2 0 012-2h14a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
           />
         </div>

@@ -1,0 +1,182 @@
+---
+title: Local Dev Emulator
+description: Run a local Stellar network with Soroban RPC, deploy the wallet contract, and run a smoke test — all in one command.
+---
+
+import { Callout, Steps } from 'nextra/components'
+
+# Local Dev Emulator
+
+This guide sets up a self-contained local Stellar network so you can build and test Veil without touching Testnet. Everything runs in Docker: Stellar Core, Horizon, and the Soroban RPC server are bundled in the official `stellar/quickstart` image.
+
+<Callout type="info">
+  The local network resets every time the container restarts. All deployed contracts and funded accounts are lost. Use Testnet for persistence across sessions.
+</Callout>
+
+---
+
+## Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 24+ (or Docker Engine + Compose plugin)
+- [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/stellar-cli) (`stellar`) v21+
+- Rust with the `wasm32-unknown-unknown` target
+- Node.js 20+
+
+---
+
+## Start the local network
+
+<Steps>
+
+### Bring up the stack
+
+From the repo root:
+
+```bash
+docker compose -f docker-compose.dev.yml up
+```
+
+The container exposes:
+
+| Endpoint | URL |
+|---|---|
+| Horizon API | `http://localhost:8000` |
+| Soroban RPC | `http://localhost:8000/soroban/rpc` |
+| Friendbot | `http://localhost:8000/friendbot?addr=<G-address>` |
+
+### Wait for the healthcheck
+
+The container is ready when `docker compose -f docker-compose.dev.yml ps` shows `healthy`. You can also poll directly:
+
+```bash
+curl --silent http://localhost:8000/health
+# expected: {"status":"healthy"}
+```
+
+It typically takes 20–40 seconds for Stellar Core to reach consensus on the first ledger.
+
+</Steps>
+
+---
+
+## Configure the Stellar CLI
+
+Point the CLI at your local node:
+
+```bash
+stellar network add local \
+  --rpc-url http://localhost:8000/soroban/rpc \
+  --network-passphrase "Standalone Network ; February 2017"
+```
+
+Generate a funded test keypair using Friendbot:
+
+```bash
+# Generate a key
+stellar keys generate alice --network local
+
+# Fund it via Friendbot
+ALICE_ADDRESS=$(stellar keys address alice)
+curl "http://localhost:8000/friendbot?addr=${ALICE_ADDRESS}"
+
+# Verify balance
+stellar query account "${ALICE_ADDRESS}" --network local
+```
+
+---
+
+## Build and deploy the wallet contract
+
+```bash
+# Build WASM
+cd contracts/invisible_wallet
+cargo build --target wasm32-unknown-unknown --release
+
+# Deploy the factory contract
+stellar contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/factory.wasm \
+  --source alice \
+  --network local
+```
+
+The deploy command prints the factory contract address (`C...`). Save it — you will need it in the SDK config.
+
+---
+
+## First contract smoke test
+
+The repo includes a smoke test script that registers a simulated passkey, deploys a wallet via the factory, and submits a self-transfer:
+
+```bash
+# From repo root
+FACTORY_ADDRESS=<address from deploy step above> \
+  RPC_URL=http://localhost:8000/soroban/rpc \
+  NETWORK_PASSPHRASE="Standalone Network ; February 2017" \
+  npm run smoke
+```
+
+A successful run prints:
+
+```
+[smoke] wallet deployed at C...
+[smoke] transfer submitted — tx hash: a1b2c3...
+[smoke] all checks passed
+```
+
+If the smoke test fails, check `docker compose -f docker-compose.dev.yml logs stellar` for Soroban diagnostic events.
+
+---
+
+## Stopping the network
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+Add `-v` to also remove the volume and get a clean slate on next start:
+
+```bash
+docker compose -f docker-compose.dev.yml down -v
+```
+
+---
+
+## Connecting the wallet front-end
+
+Once the local network is running, set the following environment variables before starting the Next.js dev server:
+
+```bash
+# frontend/wallet/.env.local
+NEXT_PUBLIC_RPC_URL=http://localhost:8000/soroban/rpc
+NEXT_PUBLIC_NETWORK_PASSPHRASE="Standalone Network ; February 2017"
+NEXT_PUBLIC_FACTORY_ADDRESS=<your deployed factory address>
+```
+
+Then:
+
+```bash
+cd frontend/wallet
+npm run dev
+```
+
+Open `http://localhost:3000`. WebAuthn works on `localhost` without HTTPS.
+
+---
+
+## Troubleshooting
+
+### `curl: (7) Failed to connect to localhost port 8000`
+
+The container is still starting. Wait for the healthcheck to pass — it can take up to 60 seconds on the first run while the image downloads.
+
+### `Error: stellar-core is not yet synced`
+
+Stellar Core needs a few ledgers to initialize on a fresh start. Wait 30 seconds and retry.
+
+### Soroban RPC returns `{"error":{"code":-32600}}`
+
+Your request body is malformed or using the wrong JSON-RPC envelope. Verify `RPC_URL` ends with `/soroban/rpc` (not `/`).
+
+### Friendbot returns `{"detail":"createAccountAlreadyExist"}`
+
+The account is already funded. This is not an error — the account exists and has a balance.

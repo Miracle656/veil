@@ -4,6 +4,12 @@ import { createContext, useContext, useState, useCallback, ReactNode } from 'rea
 import { useInvisibleWallet } from '@veil/sdk'
 import { Keypair } from '@stellar/stellar-sdk'
 import { walletConfig } from '@/lib/network'
+import { initRecoveryInterceptor } from '@/lib/recovery'
+
+if (typeof window !== 'undefined') {
+  initRecoveryInterceptor()
+}
+
 
 interface WalletSession {
   address: string

@@ -1,0 +1,253 @@
+---
+title: Passkey Errors
+description: Troubleshooting guide for WebAuthn and passkey authentication errors in Veil Wallet.
+---
+
+import { Callout } from "nextra/components";
+
+# Passkey Troubleshooting Guide
+
+This guide explains common passkey errors, their causes, and user-facing solutions.
+
+## Error Reference
+
+### NotAllowedError
+
+**Error Code:** `NotAllowedError`
+
+**Cause:**
+- User cancelled the biometric/Windows Hello prompt
+- The authenticator was not available or the operation was cancelled
+- No matching credential found on the device
+- Cross-origin request without proper iframe setup
+
+**User-Facing Fix:**
+1. Make sure you are using the same browser and device where you registered your passkey
+2. Unlock your device and ensure biometric authentication is enabled
+3. Try again and tap "Confirm" when prompted for authentication
+4. If the prompt doesn't appear, refresh the page and try again
+
+<Callout type="warning">
+If you receive "NotAllowedError" repeatedly, your passkey may not be registered on this device. Try registering a new passkey or use a different authentication method.
+</Callout>
+
+### InvalidStateError
+
+**Error Code:** `InvalidStateError`
+
+**Cause:**
+- Attempting to register a passkey that already exists on the device
+- Session state was lost or corrupted
+- The credential ID is already registered in the wallet
+
+**User-Facing Fix:**
+1. This typically occurs during registration. You may already have a passkey registered
+2. Try unlocking your wallet instead of registering a new one
+3. If you want to register a new passkey, first remove the old one from your device settings
+4. Clear your browser cache (Settings → Privacy → Clear browsing data) and try again
+
+<Callout type="info">
+Each device can have multiple passkeys, but only one per relying party (domain). If you see this error, you likely already have a Veil passkey on this device.
+</Callout>
+
+### SecurityError
+
+**Error Code:** `SecurityError`
+
+**Cause:**
+- The request was made over HTTP (not HTTPS)
+- Cross-origin issues with the webpage origin
+- Mixed content detected (HTTP resources on an HTTPS page)
+- Authenticator detected a potential security threat
+
+**User-Facing Fix:**
+1. Ensure you are accessing Veil over HTTPS (check the URL bar for a lock icon)
+2. Make sure the website domain matches where you registered your passkey
+3. Disable any browser extensions that might interfere with WebAuthn
+4. Try a private/incognito window if the error persists
+
+### NetworkError
+
+**Error Code:** `NetworkError`
+
+**Cause:**
+- Internet connection was lost during the operation
+- Request timeout while communicating with the authenticator
+- Browser-OS communication error
+- Firewall or proxy blocking the request
+
+**User-Facing Fix:**
+1. Check your internet connection
+2. Make sure your Wi-Fi or mobile network is stable
+3. Try again - the operation may succeed on retry
+4. If on a corporate network, check if WebAuthn is blocked by your firewall
+
+### TimeoutError
+
+**Error Code:** `TimeoutError` or `UnknownError` (on some browsers)
+
+**Cause:**
+- Biometric prompt waited too long without user interaction
+- Device authenticator did not respond within 60 seconds
+- System was locked or went to sleep during authentication
+- Device resources were exhausted
+
+**User-Facing Fix:**
+1. Try again and respond to the biometric prompt more quickly
+2. Make sure your device is unlocked
+3. Close other applications to free up device resources
+4. Restart your device if the error persists
+
+### AbortError
+
+**Error Code:** `AbortError`
+
+**Cause:**
+- Operation was manually cancelled
+- User navigated away from the page during authentication
+- The page unloaded before authentication completed
+- Another WebAuthn operation was already in progress
+
+**User-Facing Fix:**
+1. Stay on the page and wait for the authentication to complete
+2. Don't click the browser back button during the biometric prompt
+3. Close any other login attempts in different tabs
+4. Try again and keep the page open until authentication finishes
+
+### UnknownError / NotSupportedError
+
+**Error Code:** `UnknownError` or `NotSupportedError`
+
+**Cause:**
+- Your browser or device doesn't support WebAuthn
+- Platform authenticator is not available or disabled
+- Outdated browser without WebAuthn support
+- Conflicting browser extensions or privacy tools
+
+**User-Facing Fix:**
+1. Use a modern browser: Chrome, Firefox, Safari, or Edge (version 67+)
+2. Disable privacy extensions that might block WebAuthn
+3. Update your browser to the latest version
+4. Ensure your operating system supports biometric authentication
+
+### InvalidCertificate / AttestationConveyanceNotSupported
+
+**Error Code:** `SecurityError` or similar
+
+**Cause:**
+- Device certificate validation failed
+- Authenticator attestation is not properly configured
+- Self-signed certificates on enterprise devices
+- FIPS mode restrictions on Windows
+
+**User-Facing Fix:**
+1. Update your device firmware and security settings
+2. If on a company device, contact your IT department
+3. Try on a personal device to rule out enterprise restrictions
+4. Disable any security software that might interfere with passkeys
+
+## iOS Safari Specific Issues
+
+iOS Safari has unique passkey behavior. Here are common issues and fixes:
+
+### Issue: Passkey prompt doesn't appear on iPhone/iPad
+
+**Cause:**
+- iCloud Keychain is disabled
+- Safari privacy settings are blocking WebAuthn
+- The webpage is not recognized as a trusted domain
+
+**Fix:**
+1. Go to **Settings → Passwords & Accounts** and enable iCloud Keychain
+2. Go to **Settings → Safari → Privacy** and ensure "Allow privacy-preserving ad measurement" is not interfering
+3. Enable iCloud Keychain sync across devices (Settings → [Your Name] → iCloud)
+4. Make sure you're on the latest iOS version
+
+### Issue: Passkey works on Mac but not on iPhone
+
+**Cause:**
+- iCloud Keychain sync is not enabled between devices
+- Different iCloud accounts on different devices
+- Older iOS version without full WebAuthn support
+
+**Fix:**
+1. Ensure you're signed in with the same iCloud account on all devices
+2. Enable iCloud Keychain: Settings → [Your Name] → iCloud → Keychain
+3. Update to iOS 16.0 or later (recommend iOS 17+)
+4. Wait 24 hours for iCloud Keychain to sync new passkeys
+
+### Issue: Cross-device registration (scanning QR code) fails
+
+**Cause:**
+- The QR code registration isn't supported in your browser version
+- Cross-device communication is blocked
+- Camera permissions not granted
+
+**Fix:**
+1. Grant camera permission to Safari when prompted
+2. Ensure you're on iOS 16+ with the latest Safari
+3. Try single-device registration instead (if available)
+4. Restart Safari and try again
+
+### Issue: Passkey unlock freezes on iPad
+
+**Cause:**
+- Browser cache corruption
+- Multi-user device conflict
+- WebAuthn session timeout
+
+**Fix:**
+1. Force close Safari: Swipe up from home and close Safari
+2. Clear Safari cache: Settings → Safari → Clear History and Website Data
+3. Restart your iPad
+4. Try again - the passkey should now work
+
+<Callout type="info">
+iOS 17+ provides significantly improved WebAuthn support. If you're on iOS 16, consider upgrading for better passkey stability.
+</Callout>
+
+## General Troubleshooting Steps
+
+If you encounter a passkey error not listed above, try these steps:
+
+1. **Verify WebAuthn Support**
+   - Visit [webauthn.me](https://webauthn.me) to test if your browser supports WebAuthn
+   - If the test fails, your browser doesn't support passkeys yet
+
+2. **Check Browser Version**
+   - Chrome 67+, Firefox 60+, Safari 13+, Edge 18+ support WebAuthn
+   - Update your browser to the latest version
+
+3. **Disable Browser Extensions**
+   - Extensions can interfere with WebAuthn
+   - Try disabling password managers, VPNs, and privacy tools
+
+4. **Use Incognito/Private Mode**
+   - Some errors are caused by cached data
+   - Try in a private window to rule out cookie/storage issues
+
+5. **Try a Different Device or Browser**
+   - This helps determine if the issue is device-specific
+   - If it works elsewhere, the problem is environmental
+
+6. **Clear Browser Cache**
+   ```bash
+   Chrome: Settings → Privacy → Clear browsing data
+   Firefox: Settings → Privacy → Clear Recent History
+   Safari: Settings → Safari → Clear History and Website Data
+   ```
+
+7. **Restart Your Device**
+   - Some authenticator issues require a device restart
+   - This refreshes OS-level resources
+
+## When to Contact Support
+
+If you've tried all troubleshooting steps and still have errors, note down:
+- The exact error message and error code
+- Your browser name and version (check About in settings)
+- Your device type (desktop, iPhone, Android, etc.)
+- When the error occurred (registration, unlock, transaction)
+- Steps you took before the error
+
+Contact support with this information for faster assistance.

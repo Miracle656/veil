@@ -1,0 +1,350 @@
+---
+title: Fee & Gas Budget Model
+description: Understanding Soroban resource fees, base fees, refundable fees, and how Veil handles fee calculation and budgeting.
+---
+
+import { Callout } from "nextra/components";
+
+# Fee & Gas Budget Model
+
+Soroban uses a sophisticated fee model based on resource consumption rather than simple per-transaction charges. This guide explains how fees work and how Veil handles them.
+
+## Overview
+
+Soroban fees consist of three components:
+
+1. **Base Fee** — Fixed cost per transaction (network inflation protection)
+2. **Resource Fee** — Computed from CPU/memory/network usage
+3. **Refundable Fee** — Reserved but returned if actual usage is lower
+
+```
+Total Fee = Base Fee + Resource Fee
+Charged Amount = Base Fee + (Resource Fee + Refundable Fee Buffer)
+Refund = Refundable Fee - (Actual Usage - Estimated Usage)
+```
+
+## Fee Components Explained
+
+### Base Fee
+
+The base fee is a fixed amount charged per transaction regardless of complexity.
+
+- **Current:** ~100 stroops per transaction (on Testnet/Futurenet)
+- **Purpose:** Prevents spam and funds network infrastructure
+- **Deducted:** From the fee-payer account immediately
+- **Not refundable:** Always charged and never returned
+
+### Resource Fee
+
+Based on actual resource consumption:
+
+- **CPU Instructions** — Number of WASM instructions executed
+- **Memory Bytes** — Peak memory allocation during execution
+- **Network I/O** — Bytes transmitted to/from validators
+- **Ledger I/O** — Storage operations (read, write, modify)
+- **Events** — Size of emitted contract events
+
+Each resource has a pricing schedule set by validators. Veil estimates resource usage and includes a safety margin.
+
+**Pricing Formula:**
+```
+Resource Fee = 
+  (cpu_instructions / cpu_scaling_factor) +
+  (memory_bytes / memory_scaling_factor) +
+  (network_bytes / network_scaling_factor) +
+  (ledger_operations * operation_cost) +
+  (event_bytes / event_scaling_factor)
+```
+
+### Refundable Fee
+
+A buffer reserved during transaction submission that exceeds the estimated resource fee.
+
+- **Purpose:** Accounts for estimation inaccuracy
+- **Amount:** Usually 50-200% of estimated resource fee
+- **When Used:** Only if actual usage exceeds estimate
+- **When Refunded:** If actual usage is below estimate
+
+**Example:**
+```
+Estimated Resource Fee: 1000 stroops
+Refundable Fee Buffer: 500 stroops (50% safety margin)
+
+Submitted Fee: 1000 + 500 = 1500 stroops
+
+After Execution:
+- Actual Resource Fee Used: 800 stroops
+- Refund: 500 + (1000 - 800) = 700 stroops
+- Net Cost: 800 stroops
+```
+
+## Worked Example: Deploy → Invoke → Measure → Derive Fee
+
+This example shows how fees are calculated in practice using real numbers.
+
+### Step 1: Deploy Contract
+
+**Scenario:** Deploy Veil wallet contract to Testnet
+
+**Transaction Details:**
+```
+Operation: ContractDeploy (WASM upload)
+WASM Size: 45 KB
+CPU Instructions: 2,500,000
+Memory Peak: 512 KB
+Network Bytes: 46,000 (45 KB WASM + overhead)
+```
+
+**Fee Estimation:**
+```
+Base Fee:                    100 stroops
+CPU Fee:      2,500,000 / 20,000 =  125 stroops
+Memory Fee:   512,000 / 8,000 =     64 stroops
+Network Fee:  46,000 / 100 =       460 stroops
+Ledger Fee:   1 write × 200 =      200 stroops
+Event Fee:    0 stroops
+────────────────────────────────────
+Estimated Resource Fee:             849 stroops
+Refundable Buffer (100%):          849 stroops
+────────────────────────────────────
+Total Submitted:                  1,798 stroops
+```
+
+**Actual Execution:**
+```
+Base Fee (charged):           100 stroops
+Actual CPU Used:     2,400,000 / 20,000 =  120 stroops
+Actual Memory:       400,000 / 8,000 =      50 stroops
+Actual Network:      45,800 / 100 =        458 stroops
+Actual Ledger:       1 write × 200 =       200 stroops
+────────────────────────────────────
+Total Actual Cost:                 928 stroops
+
+Refund Calculation:
+- Estimated Resource: 849 stroops
+- Actual Resource: 828 stroops
+- Refundable Buffer: 849 stroops
+- Unused Estimate Portion: 849 - 828 = 21 stroops
+- Refund: 21 + 849 (buffer) = 870 stroops
+
+Final Cost: 1,798 - 870 = 928 stroops ✓
+```
+
+### Step 2: Initialize Wallet (Invoke)
+
+**Scenario:** Call `init(pubkey)` to register a new wallet
+
+**Transaction Details:**
+```
+Operation: InvokeHostFunction
+Function: init
+Arguments: 1 (65-byte public key)
+CPU Instructions: 150,000
+Memory Peak: 64 KB
+Ledger Writes: 1 (store signer pubkey)
+Events: 1 (WalletInitialized event, 128 bytes)
+```
+
+**Fee Estimation:**
+```
+Base Fee:                    100 stroops
+CPU Fee:      150,000 / 20,000 =   7.5 stroops → 8
+Memory Fee:   64,000 / 8,000 =      8 stroops
+Ledger Fee:   1 write × 200 =     200 stroops
+Event Fee:    128 / 100 =          1.3 stroops → 2
+────────────────────────────────────
+Estimated Resource Fee:             219 stroops
+Refundable Buffer (75%):           164 stroops
+────────────────────────────────────
+Total Submitted:                    483 stroops
+```
+
+**Actual Execution:**
+```
+Base Fee (charged):            100 stroops
+Actual Cost:                   210 stroops (slightly less than estimated)
+────────────────────────────────────
+Total Actual Cost:             310 stroops
+
+Refund: 483 - 310 = 173 stroops ✓
+```
+
+### Step 3: Execute Payment (Sign & Send)
+
+**Scenario:** Send 100 XLM using WebAuthn signature
+
+**Transaction Details:**
+```
+Operation: InvokeHostFunction
+Function: send
+Arguments: 3 (destination, amount, WebAuthn sig)
+CPU Instructions: 450,000
+Memory Peak: 256 KB
+Ledger Reads: 1 (check signer)
+Ledger Writes: 1 (update nonce)
+Events: 1 (PaymentSent event, 256 bytes)
+Native Operations: 1 (payment)
+```
+
+**Fee Estimation:**
+```
+Base Fee:                    100 stroops
+
+Soroban Component:
+CPU Fee:      450,000 / 20,000 =    22.5 stroops → 23
+Memory Fee:   256,000 / 8,000 =     32 stroops
+Ledger Read:  1 read × 100 =       100 stroops
+Ledger Write: 1 write × 200 =      200 stroops
+Event Fee:    256 / 100 =            2.6 stroops → 3
+  ──────────────────────────────────
+  Soroban Resource: 360 stroops
+
+Native Operation (payment):
+  Standard payment TX: 100 stroops
+  ──────────────────────────────────
+  Native Fee: 100 stroops
+
+Refundable Buffer (80%): 360 × 0.80 = 288 stroops
+────────────────────────────────────
+Total Submitted: 100 + 360 + 100 + 288 = 848 stroops
+```
+
+**Actual Execution:**
+```
+Base Fee (charged):           100 stroops
+Soroban Actual: 355 stroops (slightly less due to cache hits)
+Native Fee:     100 stroops
+────────────────────────────────────
+Total Actual Cost: 555 stroops
+
+Refund: 848 - 555 = 293 stroops ✓
+```
+
+## How Veil Handles Fees
+
+### Fee Estimation Strategy
+
+Veil uses a conservative estimation approach:
+
+1. **Query current fee rates** from Soroban RPC (`getNetworkParams`)
+2. **Estimate resource usage** based on operation type:
+   - Known CPU/memory for standard operations
+   - Historical data from similar transactions
+   - Conservative multipliers for safety
+
+3. **Add safety margins**:
+   - Resource Fee margin: 50-100% (accounts for state variance)
+   - Refundable buffer: 75-100% (accounts for estimation error)
+
+4. **Calculate total**:
+   ```typescript
+   totalFee = baseFee + estimatedResourceFee + refundableBuffer
+   ```
+
+### Fee Reduction for Users
+
+Veil optimizes fees where possible:
+
+- **Batch operations** to amortize base fee
+- **Reuse contract state** to reduce ledger reads
+- **Cache public keys** to reduce repeated lookups
+- **Use deterministic nonces** instead of atomic counters
+
+### Fee-Payer Derivation
+
+Veil uses a separate **fee-payer account** from the user's wallet contract:
+
+```
+Wallet Contract: Stores passkey, executes payments
+Fee-Payer Account: Standard Stellar account that pays for Soroban fees
+
+Workflow:
+1. User signs transaction with passkey → Soroban validates
+2. Fee-payer account pays the fee
+3. Funds never leave user's wallet (only fees paid by fee-payer)
+4. Fee-payer can be refunded or topped up programmatically
+```
+
+**Benefit:** Users can operate wallets without worrying about fee balances.
+
+## Refundable Fee Mechanics
+
+### When Refunds Apply
+
+Refunds occur when:
+- Actual resource usage < estimated usage
+- Contract state is cached (fewer reads)
+- Event emissions are optimized
+- CPU execution is faster than estimated
+
+### When Refunds Don't Apply
+
+- Base fee is never refundable
+- Overages (actual > estimated) are charged in full
+- Network capacity issues may increase fees retroactively
+- Spam filters or priority fees may be added by validators
+
+### Checking Refunds
+
+After transaction submission, check the result:
+
+```typescript
+const result = await soroban.submitTransaction(tx)
+console.log(`Submitted Fee: ${result.fees.submitted}`)
+console.log(`Actual Fee: ${result.fees.actual}`)
+console.log(`Refund: ${result.fees.submitted - result.fees.actual}`)
+```
+
+<Callout type="info">
+Refunds are automatic but not immediate. They appear in your account balance once the transaction is finalized (typically 5-30 seconds).
+</Callout>
+
+## Fee Comparison: Soroban vs Traditional Payments
+
+| Aspect | Soroban Contract | Native Payment |
+|--------|------------------|----------------|
+| Base Fee | 100 stroops | 100 stroops |
+| Resource Fee | Yes (usage-based) | No |
+| Refundable Fee | Yes | No |
+| Typical Cost | 500-2000 stroops | 100-300 stroops |
+| Why Higher | Complex WASM execution | Simple ledger update |
+| When Worth It | Smart wallet features | Simple transfers |
+
+## Monitoring Fees
+
+Use these tools to monitor and optimize fees:
+
+### 1. RPC Network Parameters
+```typescript
+const params = await soroban.getNetworkParams()
+console.log(`Base Fee: ${params.baseFee}`)
+console.log(`Fee Rate: ${params.feeRatePerKb}`)
+```
+
+### 2. Transaction Simulation
+```typescript
+const simulation = await soroban.simulateTransaction(tx)
+console.log(`Estimated Fee: ${simulation.fee}`)
+console.log(`Resources Used: ${simulation.results[0].resources}`)
+```
+
+### 3. Ledger History
+```bash
+soroban contract invoke \
+  --contract-id CAxxxx \
+  --function send \
+  --fee-budget 10000
+```
+
+## Best Practices
+
+1. **Estimate before submitting** — Use simulation to get accurate fee predictions
+2. **Use conservative multipliers** — 1.5-2x estimates prevent failures
+3. **Monitor network load** — Fees spike during congestion; wait if possible
+4. **Batch operations** — Combine multiple calls to amortize base fee
+5. **Cache state** — Reuse data across transactions to reduce ledger I/O
+6. **Keep fee-payer funded** — Maintain 10+ XLM buffer in fee-payer account
+
+<Callout type="warning">
+If a transaction runs out of budget mid-execution, it will fail and you'll be charged for partial execution. Always include adequate refundable fee buffer.
+</Callout>

@@ -1,0 +1,8 @@
+{
+  "appId": "app.veil.capacitor",
+  "appName": "Veil Wallet",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

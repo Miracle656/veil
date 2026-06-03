@@ -9,8 +9,14 @@ use crate::FactoryError;
 /// deploy time would cost ~5–10M CPU instructions for a check the host
 /// already performs implicitly.
 pub fn validate_public_key(public_key: &BytesN<65>) -> Result<(), FactoryError> {
-    if public_key.to_array()[0] != 0x04 {
+    let bytes = public_key.to_array();
+    if bytes[0] != 0x04 {
         return Err(FactoryError::InvalidPublicKey);
+    }
+    #[cfg(any(test, feature = "testutils"))]
+    {
+        p256::ecdsa::VerifyingKey::from_sec1_bytes(&bytes)
+            .map_err(|_| FactoryError::InvalidPublicKey)?;
     }
     Ok(())
 }

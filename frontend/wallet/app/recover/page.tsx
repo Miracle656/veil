@@ -3,13 +3,14 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { VeilLogo } from '@/components/VeilLogo'
-import { derToRawSignature, bufferToHex } from '@veil/utils'
+import { derToRawSignature, bufferToHex, hexToUint8Array } from '@veil/utils'
 import { deriveFeePayerKeypair } from '@/lib/deriveFeePayer'
 import { getNetwork } from '@/lib/network'
 import {
   rpc as SorobanRpc, Contract, TransactionBuilder, BASE_FEE,
   Account, Keypair, scValToNative,
 } from '@stellar/stellar-sdk'
+import { deriveP256KeyPair } from '@/lib/recovery'
 
 const network = getNetwork()
 
@@ -20,6 +21,8 @@ export default function RecoverPage() {
   const [step, setStep]               = useState<Step>('idle')
   const [error, setError]             = useState<string | null>(null)
   const [walletInput, setWalletInput] = useState('')
+  const [tab, setTab]                 = useState<'passkey' | 'paper'>('passkey')
+  const [mnemonicInput, setMnemonicInput] = useState('')
 
   async function handleRecover() {
     const walletAddress = walletInput.trim()
@@ -162,6 +165,90 @@ export default function RecoverPage() {
     }
   }
 
+  async function handlePaperRecover() {
+    const walletAddress = walletInput.trim()
+    if (!walletAddress.startsWith('C') || walletAddress.length !== 56) {
+      setError('Enter a valid C... wallet address.')
+      return
+    }
+    const mnemonic = mnemonicInput.trim()
+    if (mnemonic.split(/\s+/).length !== 12) {
+      setError('Enter a valid 12-word recovery phrase.')
+      return
+    }
+
+    setError(null)
+    setStep('authenticating')
+
+    try {
+      const server = new SorobanRpc.Server(network.rpcUrl)
+      const dummyKp      = Keypair.random()
+      const sourceAcct   = new Account(dummyKp.publicKey(), '0')
+      const walletContract = new Contract(walletAddress)
+
+      const tx = new TransactionBuilder(sourceAcct, {
+        fee: BASE_FEE,
+        networkPassphrase: network.networkPassphrase,
+      })
+        .addOperation(walletContract.call('get_signers'))
+        .setTimeout(30)
+        .build()
+
+      const sim = await server.simulateTransaction(tx)
+      if (SorobanRpc.Api.isSimulationError(sim)) {
+        throw new Error('Could not read wallet on-chain. Check the address and try again.')
+      }
+
+      const simResult  = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
+      if (!simResult) throw new Error('No result from contract simulation.')
+
+      let publicKeys: Uint8Array[] = []
+      try {
+        const entries = simResult.retval.map() as Array<{ val: () => { bytes: () => Buffer } }>
+        publicKeys = entries.map(e => new Uint8Array(e.val().bytes()))
+      } catch {
+        const raw = scValToNative(simResult.retval)
+        if (Array.isArray(raw)) {
+          publicKeys = raw as Uint8Array[]
+        } else if (raw instanceof Map) {
+          publicKeys = Array.from((raw as Map<number, Uint8Array>).values())
+        } else {
+          publicKeys = Object.values(raw as Record<string, Uint8Array>)
+        }
+      }
+      if (publicKeys.length === 0) throw new Error('No signers found on this wallet.')
+
+      // Derive keypair from paper phrase
+      const { publicKey, privateKey } = deriveP256KeyPair(mnemonic)
+      const matchedHex = bufferToHex(publicKey)
+
+      const isMatched = publicKeys.some(pubKeyBytes => bufferToHex(pubKeyBytes) === matchedHex)
+      if (!isMatched) {
+        throw new Error('This recovery phrase public key does not match any registered signer on this wallet.')
+      }
+
+      // Store in storage
+      localStorage.setItem('invisible_wallet_address',    walletAddress)
+      localStorage.setItem('invisible_wallet_key_id',     'recovery')
+      localStorage.setItem('invisible_wallet_public_key', matchedHex)
+      sessionStorage.setItem('invisible_wallet_address', walletAddress)
+      sessionStorage.setItem('invisible_wallet_recovery_private_key', bufferToHex(privateKey))
+
+      // Derive deterministic fee-payer from the mnemonic seed
+      const seed = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(mnemonic))
+      const derivedFeePayer = Keypair.fromRawEd25519Seed(Buffer.from(new Uint8Array(seed).slice(0, 32)))
+      localStorage.setItem('veil_signer_secret', derivedFeePayer.secret())
+      localStorage.setItem('veil_signer_public_key', derivedFeePayer.publicKey())
+      sessionStorage.setItem('veil_signer_secret', derivedFeePayer.secret())
+
+      setStep('done')
+      setTimeout(() => router.push('/dashboard'), 800)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err))
+      setStep('error')
+    }
+  }
+
   return (
     <div className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
       <div style={{ maxWidth: 400, width: '100%' }}>
@@ -180,6 +267,42 @@ export default function RecoverPage() {
 
         {(step === 'idle' || step === 'error') && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border-dim)', marginBottom: '1rem' }}>
+              <button
+                onClick={() => setTab('passkey')}
+                style={{
+                  flex: 1,
+                  padding: '0.75rem',
+                  background: 'none',
+                  border: 'none',
+                  color: tab === 'passkey' ? 'var(--teal)' : 'rgba(246,247,248,0.4)',
+                  borderBottom: tab === 'passkey' ? '2px solid var(--teal)' : 'none',
+                  fontWeight: 600,
+                  fontSize: '0.875rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Passkey
+              </button>
+              <button
+                onClick={() => setTab('paper')}
+                style={{
+                  flex: 1,
+                  padding: '0.75rem',
+                  background: 'none',
+                  border: 'none',
+                  color: tab === 'paper' ? 'var(--teal)' : 'rgba(246,247,248,0.4)',
+                  borderBottom: tab === 'paper' ? '2px solid var(--teal)' : 'none',
+                  fontWeight: 600,
+                  fontSize: '0.875rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Paper Backup
+              </button>
+            </div>
+
             <div>
               <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                 WALLET ADDRESS
@@ -198,19 +321,45 @@ export default function RecoverPage() {
               </p>
             </div>
 
+            {tab === 'paper' && (
+              <div>
+                <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                  12-WORD RECOVERY PHRASE
+                </label>
+                <textarea
+                  className="input-field mono"
+                  placeholder="word1 word2 ..."
+                  value={mnemonicInput}
+                  onChange={e => { setMnemonicInput(e.target.value); setError(null) }}
+                  rows={3}
+                  style={{ resize: 'none', width: '100%' }}
+                />
+              </div>
+            )}
+
             {error && (
               <div style={{ borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', padding: '0.75rem 1rem' }}>
                 <p style={{ fontSize: '0.8125rem', color: 'rgba(252,165,165,1)', lineHeight: 1.5 }}>{error}</p>
               </div>
             )}
 
-            <button
-              className="btn-gold"
-              onClick={handleRecover}
-              disabled={walletInput.length < 10}
-            >
-              Verify with passkey
-            </button>
+            {tab === 'passkey' ? (
+              <button
+                className="btn-gold"
+                onClick={handleRecover}
+                disabled={walletInput.length < 10}
+              >
+                Verify with passkey
+              </button>
+            ) : (
+              <button
+                className="btn-gold"
+                onClick={handlePaperRecover}
+                disabled={walletInput.length < 10 || mnemonicInput.trim().length === 0}
+              >
+                Recover with phrase
+              </button>
+            )}
             <button className="btn-ghost" onClick={() => router.push('/')}>
               Back
             </button>
