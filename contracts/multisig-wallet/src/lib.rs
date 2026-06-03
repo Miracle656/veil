@@ -1,7 +1,7 @@
 //! Multisig wallet contract
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, Vec
+    contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec
 };
 
 #[contracttype]
@@ -69,13 +69,19 @@ impl MultisigContract {
 
         let proposal = Proposal {
             id: count,
-            to,
+            to: to.clone(),
             amount,
             approvals: Vec::new(&env),
             executed: false,
         };
 
         env.storage().instance().set(&DataKey::Proposal(count), &proposal);
+
+        env.events().publish(
+            (Symbol::new(&env, "propose"), count),
+            (caller, to, amount),
+        );
+
         count
     }
 
@@ -111,7 +117,12 @@ impl MultisigContract {
             }
         }
         if !already_approved {
-            proposal.approvals.push_back(signer);
+            proposal.approvals.push_back(signer.clone());
+
+            env.events().publish(
+                (Symbol::new(&env, "approve"), proposal_id),
+                (signer.clone(), proposal.approvals.len()),
+            );
         }
 
         // If threshold met, execute proposal
@@ -121,6 +132,11 @@ impl MultisigContract {
             let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
             let token_client = token::Client::new(&env, &token_address);
             token_client.transfer(&env.current_contract_address(), &proposal.to, &proposal.amount);
+
+            env.events().publish(
+                (Symbol::new(&env, "execute"), proposal_id),
+                (proposal.to.clone(), proposal.amount),
+            );
         }
 
         env.storage().instance().set(&DataKey::Proposal(proposal_id), &proposal);
