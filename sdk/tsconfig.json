@@ -13,6 +13,8 @@
         "src/**/*"
     ],
     "exclude": [
+        "*.native.ts",
+        "*.test.ts",
         "src/examples"
     ]
 }
