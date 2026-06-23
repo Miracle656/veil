@@ -7,13 +7,16 @@
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "outDir": "./dist",
-        "declaration": true
+        "declaration": true,
+        "jsx": "react-jsx",
+        "lib": ["es2020", "dom", "dom.iterable"]
     },
     "include": [
         "src/**/*"
     ],
     "exclude": [
         "src/**/*.native.ts",
-        "src/**/*.test.ts"
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx"
     ]
 }
