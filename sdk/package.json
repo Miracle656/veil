@@ -16,6 +16,10 @@
       "types": "./dist/vanilla.d.ts",
       "react-native": "./src/vanilla.ts",
       "default": "./dist/vanilla.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
     }
   },
   "files": [
@@ -47,7 +51,8 @@
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0",
     "react-native": ">=0.72.0",
-    "react-native-passkey": ">=3.0.0"
+    "react-native-passkey": ">=3.0.0",
+    "@tanstack/react-query": "^5.0.0"
   },
   "peerDependenciesMeta": {
     "react-dom": {

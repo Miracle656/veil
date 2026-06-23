@@ -1,4 +1,5 @@
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
+import { useVeilContext } from '../context';
 
 /**
  * Response data from useBalance hook
@@ -13,25 +14,22 @@ export interface BalanceData {
 }
 
 /**
- * Hook to fetch the balance of an account
- * @param address - The account address to fetch balance for
- * @param fetchFn - Function to fetch the balance from the wallet
+ * Hook to fetch the balance of the current wallet
  * @returns Query result with data, error, and isLoading state
  */
-export function useBalance(
-  address: string | null | undefined,
-  fetchFn: (address: string) => Promise<BalanceData>,
-): UseQueryResult<BalanceData, Error> {
+export function useBalance(): UseQueryResult<BalanceData, Error> {
+  const { wallet } = useVeilContext();
+
   return useQuery({
-    queryKey: ['balance', address],
+    queryKey: ['balance', wallet.address],
     queryFn: async () => {
-      if (!address) {
+      if (!wallet.address) {
         throw new Error('Address is required to fetch balance');
       }
-      return fetchFn(address);
+      return wallet.getBalance();
     },
-    enabled: !!address,
-    staleTime: 10 * 1000, // 10 seconds
-    gcTime: 5 * 60 * 1000, // 5 minutes
+    enabled: !!wallet.address,
+    staleTime: 10 * 1000,
+    gcTime: 5 * 60 * 1000,
   });
 }
