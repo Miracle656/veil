@@ -105,8 +105,9 @@ export class InvisibleWallet {
 
     async register(username?: string): Promise<RegisterResult> {
         const challenge = crypto.getRandomValues(new Uint8Array(32));
-        const name = username || 'Veil User';
-        const userId = username ? new TextEncoder().encode(username) : crypto.getRandomValues(new Uint8Array(16));
+        const normalizedUsername = username ? username.normalize('NFC') : undefined;
+        const name = normalizedUsername || 'Veil User';
+        const userId = normalizedUsername ? new TextEncoder().encode(normalizedUsername) : crypto.getRandomValues(new Uint8Array(16));
 
         const credential = await navigator.credentials.create({
             publicKey: {

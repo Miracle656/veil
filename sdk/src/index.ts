@@ -24,3 +24,4 @@ export type {
 } from './backup';
 export * from './webauthn/attestation';
 export * from './recovery/sep30';
+export * from './crypto/prf';
