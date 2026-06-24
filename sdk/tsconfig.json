@@ -8,13 +8,19 @@
         "forceConsistentCasingInFileNames": true,
         "rootDir": "./src",
         "outDir": "./dist",
-        "declaration": true
+        "declaration": true,
+        "jsx": "react-jsx",
+        "lib": ["es2020", "dom", "dom.iterable"]
     },
     "include": [
-        "src/**/*"
+        "src/**/*",
+        "react/**/*"
     ],
     "exclude": [
         "src/**/*.native.ts",
-        "src/**/*.test.ts"
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "react/src/**/*.test.ts",
+        "react/src/**/*.test.tsx"
     ]
 }

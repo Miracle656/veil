@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     Account,
+    Asset,
     Contract,
     Keypair,
     rpc as SorobanRpc,
@@ -173,7 +174,7 @@ export class RecoveryNotPending extends Error {
 }
 
 
-type InvisibleWallet = {
+export type InvisibleWallet = {
     /** Soroban contract address of the deployed wallet, or null if not yet registered. */
     address: string | null;
     /** True if the wallet contract has been confirmed to exist on-chain. */
@@ -277,6 +278,26 @@ type InvisibleWallet = {
      * @param expiry        Optional Unix timestamp (seconds) when the allowance expires.
      */
     approve: (signerKeypair: Keypair, spender: string, token: string, amount: number, expiry?: number) => Promise<void>;
+    /**
+     * Get the current on-chain balance of this wallet from a token contract.
+     * @param token Optional token contract address. Defaults to native XLM.
+     */
+    getBalance: (token?: string) => Promise<{ address: string; amount: bigint; assetCode: string }>;
+    /**
+     * Send a payment from this wallet contract using a fee payer.
+     * @param signerKeypair Stellar Keypair or secret used to pay transaction fees.
+     * @param to Recipient address.
+     * @param amount Amount in contract units (stroops for native XLM).
+     * @param token Optional token contract address. Defaults to native XLM.
+     * @param memo Optional transaction memo.
+     */
+    sendPayment: (
+        signerKeypair: Keypair | string,
+        to: string,
+        amount: number | bigint,
+        token?: string,
+        memo?: string,
+    ) => Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }>;
     /**
      * Get the current allowance for a spender and token.
      *
@@ -1098,6 +1119,178 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         }
     }, [address, rpcUrl, networkPassphrase]);
 
+    // ── getBalance ──────────────────────────────────────────────────────────
+
+    const getBalance = useCallback(async (token?: string): Promise<{ address: string; amount: bigint; assetCode: string }> => {
+        setIsPending(true);
+        setError(null);
+        try {
+            if (!address) throw new Error('No wallet address. Call register() or login() first.');
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const contractAddress = token ?? Asset.native().contractId(networkPassphrase);
+            const tokenContract = new Contract(contractAddress);
+
+            const dummyKeypair = Keypair.random();
+            const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(tokenContract.call(
+                    'balance',
+                    nativeToScVal(address, { type: 'address' })
+                ))
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+            if (!result || result.retval === undefined) throw new Error('Simulation returned no result');
+
+            const amount = scValToNative(result.retval) as bigint;
+            return {
+                address,
+                amount,
+                assetCode: token ? token : 'XLM',
+            };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            throw err;
+        } finally {
+            setIsPending(false);
+        }
+    }, [address, networkPassphrase, rpcUrl]);
+
+    // ── sendPayment ──────────────────────────────────────────────────────────
+
+    const sendPayment = useCallback(async (
+        signerKeypair: Keypair | string,
+        to: string,
+        amount: number | bigint,
+        token?: string,
+        memo?: string,
+    ): Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }> => {
+        setIsPending(true);
+        setError(null);
+        try {
+            if (!address) throw new Error('No wallet address. Call register() or login() first.');
+
+            const payerKeypair = typeof signerKeypair === 'string'
+                ? Keypair.fromSecret(signerKeypair)
+                : signerKeypair;
+
+            const contractAddress = token ?? Asset.native().contractId(networkPassphrase);
+            const tokenContract = new Contract(contractAddress);
+            const amountValue = typeof amount === 'bigint'
+                ? amount
+                : BigInt(Math.round(amount));
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const sourceAccount = await server.getAccount(payerKeypair.publicKey());
+            const txBuilder = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(tokenContract.call(
+                    'transfer',
+                    nativeToScVal(address, { type: 'address' }),
+                    nativeToScVal(to, { type: 'address' }),
+                    nativeToScVal(amountValue, { type: 'i128' }),
+                ));
+
+            if (memo !== undefined) {
+                txBuilder.addMemo({ type: 'text', value: String(memo) } as any);
+            }
+
+            const tx = txBuilder.setTimeout(30).build();
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+            const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+            const authEntries = successSim.result?.auth;
+
+            if (authEntries) {
+                const networkIdBytes = new Uint8Array(
+                    (stellarHash as (input: Buffer) => Buffer)(Buffer.from(networkPassphrase))
+                );
+
+                for (const parsed of authEntries) {
+                    const cred = parsed.credentials();
+                    if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+                        continue;
+                    }
+
+                    const addrCred = cred.address();
+                    const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+                        new xdr.HashIdPreimageSorobanAuthorization({
+                            networkId: Buffer.from(networkIdBytes),
+                            nonce: addrCred.nonce(),
+                            invocation: parsed.rootInvocation(),
+                            signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                        })
+                    );
+                    const payloadHash = new Uint8Array(
+                        (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
+                    );
+
+                    const webAuthnSig = await signAuthEntry(payloadHash);
+                    if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
+
+                    const sigVec = xdr.ScVal.scvVec([
+                        nativeToScVal(webAuthnSig.publicKey,      { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.authData,       { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
+                    ]);
+
+                    parsed.credentials(
+                        xdr.SorobanCredentials.sorobanCredentialsAddress(
+                            new xdr.SorobanAddressCredentials({
+                                address: addrCred.address(),
+                                nonce: addrCred.nonce(),
+                                signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                                signature: sigVec,
+                            })
+                        )
+                    );
+                }
+            }
+
+            assembled.sign(payerKeypair);
+            const sendResult = await server.sendTransaction(assembled);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+            return { transactionHash: sendResult.hash, status: 'SUCCESS' };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            throw err;
+        } finally {
+            setIsPending(false);
+        }
+    }, [address, networkPassphrase, rpcUrl, signAuthEntry]);
+
     // ── getAllowance ──────────────────────────────────────────────────────────
 
     const getAllowance = useCallback(async (spender: string, token: string): Promise<{ amount: number; expiry: number | undefined } | null> => {
@@ -1272,6 +1465,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     }, [address, rpcUrl, networkPassphrase, signAuthEntry]);
 
     return useMemo(() => (
-        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, outbox, replayOutbox }
-    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, outbox, replayOutbox]);
+        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox }
+    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox]);
 }
