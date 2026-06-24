@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
     Account,
     Asset,
@@ -24,6 +24,7 @@ import {
 import { webAuthnProvider } from './webauthn';
 import { TransactionOutbox, type ReplayOptions, type ReplayResult } from './outbox';
 import { verifyAttestation, AttestationError, type AttestationPolicy } from './webauthn/attestation';
+import { createLocalCipher, type LocalCipher } from './crypto/prf';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -322,6 +323,32 @@ export type InvisibleWallet = {
      *          already on-chain, or remain pending.
      */
     replayOutbox: (opts?: ReplayOptions) => Promise<ReplayResult>;
+    /**
+     * Encrypt local app data (cached metadata, backup blobs, …) with a symmetric
+     * key derived from the user's passkey via the WebAuthn PRF extension.
+     *
+     * The first call runs an interactive PRF assertion (the same passkey gesture
+     * as signing) and caches the derived key for the session. The key is stable
+     * across sessions for the same credential, so ciphertext written in one
+     * session decrypts in the next. When PRF is unsupported, falls back to a
+     * random key persisted in the configured storage adapter — see
+     * {@link encryptionMode}.
+     *
+     * @param plaintext UTF-8 string or raw bytes to encrypt.
+     * @returns Base64 ciphertext (iv ‖ ciphertext), unreadable without the passkey.
+     */
+    encryptLocal: (plaintext: string | Uint8Array) => Promise<string>;
+    /**
+     * Decrypt a payload previously produced by {@link encryptLocal}.
+     * @returns The decoded UTF-8 plaintext.
+     */
+    decryptLocal: (payload: string) => Promise<string>;
+    /**
+     * Resolve which key-derivation path local encryption uses for the current
+     * credential: 'prf' (passkey-bound) or 'fallback' (local random key, not
+     * bound to the passkey). Useful to warn users on the weaker fallback path.
+     */
+    encryptionMode: () => Promise<'prf' | 'fallback'>;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -372,6 +399,11 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
     const store = useMemo(() => resolveStorage(config.storage), [config.storage]);
     const outbox = useMemo(() => new TransactionOutbox(store), [store]);
+
+    // Cache the PRF-derived cipher so the interactive assertion runs at most once
+    // per session. Reset whenever the storage adapter changes (i.e. a new wallet).
+    const cipherRef = useRef<LocalCipher | null>(null);
+    useEffect(() => { cipherRef.current = null; }, [store]);
 
     // ── replayOutbox ────────────────────────────────────────────────────────
     // Resubmit any transactions persisted in the offline outbox. Deduped by
@@ -1464,7 +1496,35 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         }
     }, [address, rpcUrl, networkPassphrase, signAuthEntry]);
 
+    // ── Local PRF-derived encryption ──────────────────────────────────────────
+    // Lazily derive (and cache) a passkey-bound cipher for the registered
+    // credential, falling back to a stored random key when PRF is unsupported.
+
+    const getCipher = useCallback(async (): Promise<LocalCipher> => {
+        if (cipherRef.current) return cipherRef.current;
+        const credentialId = await store.getItem('invisible_wallet_key_id');
+        if (!credentialId) throw new Error('No passkey credential found. Please register first.');
+        const cipher = await createLocalCipher({ credentialId, rpId, storage: store });
+        cipherRef.current = cipher;
+        return cipher;
+    }, [rpId, store]);
+
+    const encryptLocal = useCallback(async (plaintext: string | Uint8Array): Promise<string> => {
+        const cipher = await getCipher();
+        return cipher.encrypt(plaintext);
+    }, [getCipher]);
+
+    const decryptLocal = useCallback(async (payload: string): Promise<string> => {
+        const cipher = await getCipher();
+        return cipher.decryptString(payload);
+    }, [getCipher]);
+
+    const encryptionMode = useCallback(async (): Promise<'prf' | 'fallback'> => {
+        const cipher = await getCipher();
+        return cipher.mode;
+    }, [getCipher]);
+
     return useMemo(() => (
-        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox }
-    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox]);
+        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode }
+    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode]);
 }
