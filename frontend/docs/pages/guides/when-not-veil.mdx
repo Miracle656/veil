@@ -1,0 +1,102 @@
+---
+title: When Not to Use Veil
+description: Scenarios where a hardware wallet, multisig, or custodial flow is the better choice than Veil.
+---
+
+import { Callout, Cards } from 'nextra/components'
+
+# When Not to Use Veil
+
+Veil is designed for fast, biometric-first self-custody on Stellar Soroban. That trade-off — convenience over hardware isolation — makes it the wrong tool for certain threat models. Below are the cases where you should reach for a different approach instead.
+
+---
+
+## 1. Holding More Than You Can Afford to Lose
+
+<Callout type="warning">
+  Veil keys live in a device secure enclave. If the device is compromised, lost, or the recovery flow is socially engineered, funds are gone.
+</Callout>
+
+**Use a hardware wallet instead** (e.g. Ledger, Trezor, GridPlus).
+
+A hardware wallet keeps private keys air-gapped — they never touch a general-purpose OS. For long-term storage of significant value (retirement savings, treasury reserves, grant endowments), the extra friction of plugging in a USB device is worth the isolation guarantee.
+
+**Signs you need this:**
+- You hold more than ~5 % of your net worth in crypto.
+- You are managing funds on behalf of an organization or family.
+- You plan to hold for years without frequent transfers.
+
+---
+
+## 2. Multi-Person Treasury or Organizational Funds
+
+Veil is a single-user wallet — one passkey, one person. When spending requires the approval of multiple humans, you need **multisig with distinct signers**, not a biometric shortcut.
+
+**Use a multisig setup instead** (e.g. Stellar multisig, Squarespace Multisig, Safe).
+
+A 2-of-3 or 3-of-5 multisig ensures no single person — and no single compromised device — can unilaterally move funds. Each signer can be a separate hardware wallet held by a separate individual in a separate location.
+
+**Signs you need this:**
+- Funds are controlled by a DAO, board, or committee.
+- You need separation of duties (e.g. finance + legal + CEO must all approve).
+- Regulatory or audit requirements demand multi-party authorization.
+
+---
+
+## 3. Custodial Compliance Requirements
+
+Some regulated entities — exchanges, payment processors,托管 platforms — are legally required to hold keys on behalf of customers. Veil is fully self-custodial by design; there is no admin key, no backdoor, no way to freeze or recover funds from the protocol level.
+
+**Use a custodial or qualified-custodian flow instead** (e.g. BitGo, Fireblocks, Coinbase Custody).
+
+Custodians provide insurance, regulatory compliance (SOC 2, BitLicense), cold storage policies, and institutional-grade key management — none of which Veil offers or should offer.
+
+**Signs you need this:**
+- You are a licensed financial institution handling customer deposits.
+- You need insurance coverage on held assets.
+- You must comply with regulatory frameworks that mandate custodial controls.
+
+---
+
+## 4. High-Frequency or Programmatic Trading
+
+Veil authorizes transactions via biometric prompt — a human must physically confirm each action. For market-making bots, arbitrage scripts, or high-frequency rebalancing, the latency and human-in-the-loop requirement is a dealbreaker.
+
+**Use a hot wallet with a programmatic signer instead** (e.g. a server-side key pair managed by an HSM or a signing service).
+
+These setups sacrifice biometric UX for throughput — exactly the right trade-off for machine-driven flows.
+
+**Signs you need this:**
+- You need sub-second transaction signing.
+- Transactions are initiated by software, not humans.
+- You are running bots or automated strategies on-chain.
+
+---
+
+## 5. Cross-Device or Platform-Portability Needs
+
+Veil keys are bound to a single device's secure enclave. If you need to sign transactions from a laptop, phone, and hardware security module interchangeably — or if you need key portability across different devices — passkey-based wallets are not the right abstraction.
+
+**Use a traditional key-based wallet or a key-management service** instead.
+
+These give you exportable (or sharded) keys that can be loaded onto any device, at the cost of more attack surface.
+
+---
+
+## Summary
+
+| Scenario | Better Tool |
+|---|---|
+| Large long-term holdings | Hardware wallet |
+| Multi-person treasury | Multisig (2-of-N) |
+| Regulated custodial services | Qualified custodian |
+| High-frequency automated trading | HSM / programmatic signer |
+| Cross-device key portability | Traditional key wallet |
+
+Veil is not trying to be everything. It is optimized for **fast, self-custodied, human-initiated transactions** — the everyday spending and dApp authorization that benefits most from biometric UX. For everything else, the tools above are purpose-built and battle-tested.
+
+---
+
+<Callout type="info">
+  Not sure which approach fits your use case? Start with the [Security](/security) and [Architecture](/architecture) docs to understand Veil's trust model, then decide.
+</Callout>
