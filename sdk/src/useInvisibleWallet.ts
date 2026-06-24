@@ -6,7 +6,6 @@ import {
     Keypair,
     rpc as SorobanRpc,
     Horizon,
-    Operation,
     TransactionBuilder,
     BASE_FEE,
     xdr,
@@ -101,12 +100,6 @@ export type WalletConfig = {
     sponsorSecret?: string;
     /** Base fee used by the outer fee-bump transaction. Defaults to BASE_FEE. */
     feeBumpBaseFee?: string;
-    /**
-     * Wrap the first deploy in begin/end sponsoring future reserves operations
-     * so contract data reserves are sponsored during onboarding. Defaults true
-     * when sponsorSecret is configured.
-     */
-    sponsorReservesOnDeploy?: boolean;
 };
 
 /**
@@ -575,20 +568,11 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const rpIdBytes   = new TextEncoder().encode(resolvedRpId);
             const originBytes = new TextEncoder().encode(resolvedOrigin);
-            const sponsorKeypair = resolveSponsorKeypair(config);
-            const sponsorDeployReserves = !!sponsorKeypair && config.sponsorReservesOnDeploy !== false;
 
             const txBuilder = new TransactionBuilder(sourceAccount, {
                 fee: BASE_FEE,
                 networkPassphrase,
             });
-
-            if (sponsorDeployReserves) {
-                txBuilder.addOperation(Operation.beginSponsoringFutureReserves({
-                    sponsoredId: signerKeypair.publicKey(),
-                    source: sponsorKeypair.publicKey(),
-                }));
-            }
 
             txBuilder.addOperation(
                 factory.call(
@@ -599,12 +583,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 )
             );
 
-            if (sponsorDeployReserves) {
-                txBuilder.addOperation(Operation.endSponsoringFutureReserves({
-                    source: signerKeypair.publicKey(),
-                }));
-            }
-
             const tx = txBuilder.setTimeout(30).build();
 
             const sim = await server.simulateTransaction(tx);
@@ -613,12 +591,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            const submissionTx = signForSubmission(
-                assembled,
-                signerKeypair,
-                config,
-                sponsorDeployReserves && sponsorKeypair ? [sponsorKeypair] : []
-            );
+            const submissionTx = signForSubmission(assembled, signerKeypair, config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {

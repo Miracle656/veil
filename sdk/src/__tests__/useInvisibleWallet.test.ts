@@ -8,7 +8,7 @@
 
 import { renderHook, act } from '@testing-library/react'
 import { useInvisibleWallet } from '../useInvisibleWallet'
-import { rpc as SorobanRpc } from '@stellar/stellar-sdk'
+import { rpc as SorobanRpc, TransactionBuilder } from '@stellar/stellar-sdk'
 
 // ── @stellar/stellar-sdk mock ─────────────────────────────────────────────────
 
@@ -67,11 +67,19 @@ jest.mock('@stellar/stellar-sdk', () => ({
     random:     jest.fn().mockReturnValue({ publicKey: () => 'GPUBKEY', secret: () => 'SSECRET' }),
     fromSecret: jest.fn().mockReturnValue({ publicKey: () => 'GPUBKEY', secret: () => 'SSECRET' }),
   },
-  TransactionBuilder: jest.fn().mockImplementation(() => ({
-    addOperation: jest.fn().mockReturnThis(),
-    setTimeout:   jest.fn().mockReturnThis(),
-    build:        jest.fn().mockReturnValue({ sign: jest.fn(), toXDR: jest.fn() }),
-  })),
+  TransactionBuilder: Object.assign(
+    jest.fn().mockImplementation(() => ({
+      addOperation: jest.fn().mockReturnThis(),
+      setTimeout:   jest.fn().mockReturnThis(),
+      build:        jest.fn().mockReturnValue({ sign: jest.fn(), toXDR: jest.fn() }),
+    })),
+    {
+      buildFeeBumpTransaction: jest.fn().mockReturnValue({
+        sign:  jest.fn(),
+        toXDR: jest.fn(),
+      }),
+    },
+  ),
   StrKey: { isValidContract: jest.fn(() => true), isValidEd25519PublicKey: jest.fn(() => true) },
   xdr: {
     ScVal: { scvLedgerKeyContractInstance: jest.fn().mockReturnValue({}) },
@@ -309,6 +317,29 @@ describe('useInvisibleWallet', () => {
       expect(loginResult).toBeNull()
       expect(result.current.isDeployed).toBe(false)
       expect(result.current.error).toContain('not yet deployed')
+    })
+  })
+
+  // ── deploy() ───────────────────────────────────────────────────────────────
+
+  describe('deploy()', () => {
+    it('builds a single-operation Soroban deploy transaction when sponsored', async () => {
+      const { result } = renderHook(() => useInvisibleWallet({
+        ...CONFIG,
+        sponsorSecret: 'SSPONSOR',
+      }))
+
+      let deployResult!: Awaited<ReturnType<typeof result.current.deploy>>
+      await act(async () => {
+        deployResult = await result.current.deploy('SUSER', new Uint8Array(65).fill(4))
+      })
+
+      const txBuilderMock = TransactionBuilder as unknown as jest.Mock
+      const deployBuilder = txBuilderMock.mock.results[0].value as any
+      expect(deployBuilder.addOperation).toHaveBeenCalledTimes(1)
+      expect(TransactionBuilder.buildFeeBumpTransaction).toHaveBeenCalledTimes(1)
+      expect(deployResult.walletAddress).toBe('CWALLET_ADDRESS_MOCK')
+      expect(deployResult.alreadyDeployed).toBe(false)
     })
   })
 

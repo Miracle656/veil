@@ -1,8 +1,5 @@
-import {
-  buildSponsoredFeeBumpTransaction,
-  withSponsoredFutureReserves,
-} from '../feeBump'
-import { Keypair, Operation, TransactionBuilder } from '@stellar/stellar-sdk'
+import { buildSponsoredFeeBumpTransaction } from '../feeBump'
+import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
 
 jest.mock('@stellar/stellar-sdk', () => {
   const sponsorKeypair = {
@@ -17,16 +14,6 @@ jest.mock('@stellar/stellar-sdk', () => {
     BASE_FEE: '100',
     Keypair: {
       fromSecret: jest.fn(() => sponsorKeypair),
-    },
-    Operation: {
-      beginSponsoringFutureReserves: jest.fn((params) => ({
-        kind: 'beginSponsoringFutureReserves',
-        params,
-      })),
-      endSponsoringFutureReserves: jest.fn((params) => ({
-        kind: 'endSponsoringFutureReserves',
-        params,
-      })),
     },
     TransactionBuilder: {
       buildFeeBumpTransaction: jest.fn(() => feeBump),
@@ -65,32 +52,4 @@ describe('fee-bump helpers', () => {
     expect(innerTransaction.signatures).toEqual(['passkey-signature'])
   })
 
-  it('wraps deploy operations with begin/end sponsoring future reserves', () => {
-    const deployOperation = { kind: 'deploy' }
-
-    const operations = withSponsoredFutureReserves({
-      sponsorPublicKey: 'GSPONSOR',
-      sponsoredAccountId: 'GUSER',
-      operations: [deployOperation as any],
-    }) as any[]
-
-    expect(operations).toEqual([
-      {
-        kind: 'beginSponsoringFutureReserves',
-        params: { sponsoredId: 'GUSER', source: 'GSPONSOR' },
-      },
-      deployOperation,
-      {
-        kind: 'endSponsoringFutureReserves',
-        params: { source: 'GUSER' },
-      },
-    ])
-    expect(Operation.beginSponsoringFutureReserves).toHaveBeenCalledWith({
-      sponsoredId: 'GUSER',
-      source: 'GSPONSOR',
-    })
-    expect(Operation.endSponsoringFutureReserves).toHaveBeenCalledWith({
-      source: 'GUSER',
-    })
-  })
 })
