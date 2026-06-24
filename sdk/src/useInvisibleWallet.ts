@@ -6,6 +6,7 @@ import {
     Keypair,
     rpc as SorobanRpc,
     Horizon,
+    Operation,
     TransactionBuilder,
     BASE_FEE,
     xdr,
@@ -93,6 +94,19 @@ export type WalletConfig = {
      * true (default false — proceed without verification).
      */
     requireAttestation?: boolean;
+    /**
+     * Optional Stellar secret used to sponsor network fees. When set, mutating
+     * transactions are submitted as fee-bump envelopes paid by this account.
+     */
+    sponsorSecret?: string;
+    /** Base fee used by the outer fee-bump transaction. Defaults to BASE_FEE. */
+    feeBumpBaseFee?: string;
+    /**
+     * Wrap the first deploy in begin/end sponsoring future reserves operations
+     * so contract data reserves are sponsored during onboarding. Defaults true
+     * when sponsorSecret is configured.
+     */
+    sponsorReservesOnDeploy?: boolean;
 };
 
 /**
@@ -374,6 +388,36 @@ async function waitForTransaction(
     throw new Error(`Transaction ${hash} not confirmed after ${POLL_MAX_ATTEMPTS} attempts`);
 }
 
+function resolveSponsorKeypair(config: WalletConfig): Keypair | null {
+    return config.sponsorSecret ? Keypair.fromSecret(config.sponsorSecret) : null;
+}
+
+function signForSubmission(
+    tx: any,
+    signerKeypair: Keypair,
+    config: WalletConfig,
+    extraInnerSigners: Keypair[] = []
+) {
+    tx.sign(signerKeypair);
+    for (const extraSigner of extraInnerSigners) {
+        if (extraSigner.publicKey() !== signerKeypair.publicKey()) {
+            tx.sign(extraSigner);
+        }
+    }
+
+    const sponsor = resolveSponsorKeypair(config);
+    if (!sponsor) return tx;
+
+    const feeBump = TransactionBuilder.buildFeeBumpTransaction(
+        sponsor.publicKey(),
+        config.feeBumpBaseFee ?? BASE_FEE,
+        tx,
+        config.networkPassphrase
+    );
+    feeBump.sign(sponsor);
+    return feeBump;
+}
+
 /** Build a storage adapter from the config, defaulting to localStorage on web. */
 function resolveStorage(storage?: StorageAdapter): StorageAdapter {
     if (storage) return storage;
@@ -531,21 +575,37 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
 
             const rpIdBytes   = new TextEncoder().encode(resolvedRpId);
             const originBytes = new TextEncoder().encode(resolvedOrigin);
+            const sponsorKeypair = resolveSponsorKeypair(config);
+            const sponsorDeployReserves = !!sponsorKeypair && config.sponsorReservesOnDeploy !== false;
 
-            const tx = new TransactionBuilder(sourceAccount, {
+            const txBuilder = new TransactionBuilder(sourceAccount, {
                 fee: BASE_FEE,
                 networkPassphrase,
-            })
-                .addOperation(
-                    factory.call(
-                        'deploy',
-                        nativeToScVal(pubKeyBytes,  { type: 'bytes' }),
-                        nativeToScVal(rpIdBytes,    { type: 'bytes' }),
-                        nativeToScVal(originBytes,  { type: 'bytes' }),
-                    )
+            });
+
+            if (sponsorDeployReserves) {
+                txBuilder.addOperation(Operation.beginSponsoringFutureReserves({
+                    sponsoredId: signerKeypair.publicKey(),
+                    source: sponsorKeypair.publicKey(),
+                }));
+            }
+
+            txBuilder.addOperation(
+                factory.call(
+                    'deploy',
+                    nativeToScVal(pubKeyBytes,  { type: 'bytes' }),
+                    nativeToScVal(rpIdBytes,    { type: 'bytes' }),
+                    nativeToScVal(originBytes,  { type: 'bytes' }),
                 )
-                .setTimeout(30)
-                .build();
+            );
+
+            if (sponsorDeployReserves) {
+                txBuilder.addOperation(Operation.endSponsoringFutureReserves({
+                    source: signerKeypair.publicKey(),
+                }));
+            }
+
+            const tx = txBuilder.setTimeout(30).build();
 
             const sim = await server.simulateTransaction(tx);
             if (SorobanRpc.Api.isSimulationError(sim)) {
@@ -553,9 +613,14 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            assembled.sign(signerKeypair);
+            const submissionTx = signForSubmission(
+                assembled,
+                signerKeypair,
+                config,
+                sponsorDeployReserves && sponsorKeypair ? [sponsorKeypair] : []
+            );
 
-            const sendResult = await server.sendTransaction(assembled);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -590,7 +655,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [factoryAddress, rpcUrl, networkPassphrase, rpId, origin, store]);
+    }, [factoryAddress, rpcUrl, networkPassphrase, rpId, origin, store, config]);
 
     // ── login ─────────────────────────────────────────────────────────────────
 
@@ -753,9 +818,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            assembled.sign(signerKeypair);
+            const submissionTx = signForSubmission(assembled, signerKeypair, config);
 
-            const sendResult = await server.sendTransaction(assembled);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -785,7 +850,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [address, rpcUrl, networkPassphrase]);
+    }, [address, rpcUrl, networkPassphrase, config]);
 
     // ── getSigners ────────────────────────────────────────────────────────────
 
@@ -877,9 +942,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            assembled.sign(signerKeypair);
+            const submissionTx = signForSubmission(assembled, signerKeypair, config);
 
-            const sendResult = await server.sendTransaction(assembled);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -898,7 +963,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [address, rpcUrl, networkPassphrase]);
+    }, [address, rpcUrl, networkPassphrase, config]);
 
     // ── setGuardian ───────────────────────────────────────────────────────────
 
@@ -985,9 +1050,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 }
             }
 
-            assembled.sign(signerKeypair);
+            const submissionTx = signForSubmission(assembled, signerKeypair, config);
 
-            const sendResult = await server.sendTransaction(assembled);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -1006,7 +1071,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [address, rpcUrl, networkPassphrase, signAuthEntry]);
+    }, [address, rpcUrl, networkPassphrase, signAuthEntry, config]);
 
     // ── initiateRecovery ──────────────────────────────────────────────────────
 
@@ -1049,9 +1114,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            assembled.sign(guardianKeypair);
+            const submissionTx = signForSubmission(assembled, guardianKeypair, config);
 
-            const sendResult = await server.sendTransaction(assembled);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -1082,7 +1147,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [address, rpcUrl, networkPassphrase]);
+    }, [address, rpcUrl, networkPassphrase, config]);
 
     // ── completeRecovery ──────────────────────────────────────────────────────
 
@@ -1122,9 +1187,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            assembled.sign(payerKeypair);
+            const submissionTx = signForSubmission(assembled, payerKeypair, config);
 
-            const sendResult = await server.sendTransaction(assembled);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -1300,8 +1365,8 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 }
             }
 
-            assembled.sign(payerKeypair);
-            const sendResult = await server.sendTransaction(assembled);
+            const submissionTx = signForSubmission(assembled, payerKeypair, config);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -1322,7 +1387,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [address, networkPassphrase, rpcUrl, signAuthEntry]);
+    }, [address, networkPassphrase, rpcUrl, signAuthEntry, config]);
 
     // ── getAllowance ──────────────────────────────────────────────────────────
 
@@ -1474,9 +1539,9 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
                 }
             }
 
-            assembled.sign(signerKeypair);
+            const submissionTx = signForSubmission(assembled, signerKeypair, config);
 
-            const sendResult = await server.sendTransaction(assembled);
+            const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
                     `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
@@ -1495,7 +1560,7 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         } finally {
             setIsPending(false);
         }
-    }, [address, rpcUrl, networkPassphrase, signAuthEntry]);
+    }, [address, rpcUrl, networkPassphrase, signAuthEntry, config]);
 
     // ── Local PRF-derived encryption ──────────────────────────────────────────
     // Lazily derive (and cache) a passkey-bound cipher for the registered
