@@ -22,6 +22,7 @@ import { sweepContractBalance } from '@/lib/sweepContractBalance'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import type { WebAuthnSignature } from '@veil/sdk'
 import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
+import { useActivityFeed, initActivityFeed, hydrateActivityFeed } from '@/lib/activityFeed'
 
 const network = getNetwork()
 
@@ -37,10 +38,9 @@ export interface WalletAsset {
 // Survives component unmount/remount within the SPA so navigating away and
 // back doesn't flash the skeleton state. Cleared on hard refresh (intentional).
 // Refetch still happens in the background to keep data fresh.
-let cachedAssets:       WalletAsset[]                 | null = null
-let cachedTransactions: TxRecord[]                    | null = null
-let cachedContractXlm:  number                        | null = null
-let cachedPrices:       Record<string, number | null>        = {}
+let cachedAssets:      WalletAsset[]                 | null = null
+let cachedContractXlm: number                        | null = null
+let cachedPrices:      Record<string, number | null>        = {}
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
 function DashboardPageContent() {
@@ -50,7 +50,7 @@ function DashboardPageContent() {
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
-  const [transactions, setTransactions]   = useState<TxRecord[]>(() => cachedTransactions ?? [])
+  const transactions                      = useActivityFeed()
   const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
   const [loading, setLoading]             = useState(cachedAssets === null)
@@ -83,8 +83,6 @@ function DashboardPageContent() {
 
   const fetchData = useCallback(async () => {
     if (!walletAddress) return   // keep loading=true until address is ready
-    // Only show skeleton if we have NO cached data — otherwise refetch silently
-    // in the background and update once the new data arrives.
     if (cachedAssets === null) setLoading(true)
 
     const horizonServer = new Server(network.horizonUrl)
@@ -279,10 +277,15 @@ function DashboardPageContent() {
       { code: 'XLM', issuer: null, balance: totalXlm },
       ...otherAssets,
     ]
-    cachedAssets       = finalAssets
-    cachedTransactions = txRecords
+    cachedAssets = finalAssets
     setAssets(finalAssets)
-    setTransactions(txRecords)
+
+    // Seed the live feed with history and start streaming from now.
+    // hydrateActivityFeed notifies all subscribers (including useActivityFeed),
+    // so no separate setTransactions call is needed.
+    hydrateActivityFeed(txRecords)
+    if (signerPublicKey) initActivityFeed(signerPublicKey)
+
     setLoading(false)
   }, [walletAddress])
 
