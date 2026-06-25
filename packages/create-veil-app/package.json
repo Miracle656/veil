@@ -1,0 +1,41 @@
+{
+  "name": "create-veil-app",
+  "version": "0.1.0",
+  "description": "Scaffold a new Veil passkey-wallet app from a template (Next.js, Vite, or vanilla JS)",
+  "type": "module",
+  "bin": {
+    "create-veil-app": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/index.js",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "webauthn",
+    "passkeys",
+    "wallet",
+    "scaffolder",
+    "cli",
+    "create-app"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "degit": "^3.4.7",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/prompts": "^2.4.9",
+    "tsx": "^4.22.3",
+    "typescript": "^5.6.2"
+  }
+}
