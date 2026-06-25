@@ -27,7 +27,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/flatten-dist.js",
     "test": "jest",
     "size": "npm run build && size-limit",
     "test:surface": "jest api-surface.test.ts",
