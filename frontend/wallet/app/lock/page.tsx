@@ -117,7 +117,7 @@ export default function LockPage() {
               Wallet locked
             </h1>
             <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.45)', lineHeight: 1.6 }}>
-              Your session ended after 5 minutes of inactivity.
+              Your session was locked after a period of inactivity.
               <br />
               Verify your identity to continue.
             </p>
