@@ -531,6 +531,24 @@ export default function SettingsPage() {
                 </div>
               </button>
 
+              <button
+                className="card"
+                onClick={() => router.push('/settings/danger')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid rgba(220, 38, 38, 0.3)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'rgba(220, 38, 38, 0.9)' }}>Danger Zone</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Irreversible actions: account merge and permanent wallet deletion
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(220, 38, 38, 0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
               {/* Signers list */}
               <div style={{ marginTop: '2rem' }}>
                 <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.625rem' }}>
