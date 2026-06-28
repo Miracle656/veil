@@ -1,0 +1,40 @@
+name: Documentation
+description: Report missing, incorrect, or unclear documentation
+title: "[Docs]: "
+labels: ["documentation"]
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type of change
+      options:
+        - New documentation needed
+        - Update existing documentation
+        - Fix typo / formatting
+        - Remove outdated documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs to be documented?
+      description: Describe what is missing or incorrect
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Relevant files or pages
+      description: Link to the file, page, or section that needs work
+    validations:
+      required: false
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested content
+      description: Draft text, outline, or reference links
+    validations:
+      required: false
