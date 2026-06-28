@@ -1,0 +1,157 @@
+:root {
+  --bg: #0b1220;
+  --card: #121a2b;
+  --border: #233149;
+  --text: #f6f7f8;
+  --muted: #8a97ad;
+  --accent: #d4a13a;
+  --good: #2bbf7a;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.pos {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2rem 1rem 3rem;
+}
+
+.pos__brand {
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 1.5rem;
+}
+
+.pos__card {
+  width: 100%;
+  max-width: 460px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  padding: 2rem;
+}
+
+.pos__card--center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.pos__title {
+  font-size: 1.6rem;
+  margin: 0 0 1.25rem;
+}
+
+.pos__label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.75rem 0 0.375rem;
+}
+
+.pos__input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  padding: 0.85rem 1rem;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.pos__input--amount {
+  font-size: 2rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.pos__row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.pos__button {
+  width: 100%;
+  margin-top: 1.5rem;
+  background: var(--accent);
+  color: #1a1205;
+  border: none;
+  border-radius: 0.6rem;
+  padding: 1rem;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pos__button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pos__button--ghost {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.pos__amount {
+  font-size: 2.4rem;
+  font-weight: 800;
+  margin: 0.25rem 0 1.25rem;
+}
+
+.pos__qr {
+  background: #fff;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  line-height: 0;
+}
+
+.pos__hint {
+  color: var(--muted);
+  margin: 1.25rem 0 0.25rem;
+}
+
+.pos__waiting {
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0.25rem 0 0;
+}
+
+.pos__check {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: rgba(43, 191, 122, 0.15);
+  color: var(--good);
+  font-size: 3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
+.pos__link {
+  color: var(--accent);
+  margin-bottom: 1.5rem;
+}
+
+.pos__error {
+  color: #ff6b6b;
+  font-size: 0.9rem;
+  margin: 0.75rem 0 0;
+}
