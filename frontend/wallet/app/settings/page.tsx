@@ -380,17 +380,17 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              {/* Add signer card */}
+              {/* Passkeys card */}
               <button
                 className="card"
-                onClick={() => { setSection('add-signer'); setStatus(null) }}
+                onClick={() => router.push('/settings/passkeys')}
                 style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Add signer</p>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Passkeys</p>
                     <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
-                      Register a second device with a new passkey
+                      View and manage passkeys registered on this wallet
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>

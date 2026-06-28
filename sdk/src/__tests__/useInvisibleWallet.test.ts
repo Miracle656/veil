@@ -8,7 +8,7 @@
 
 import { renderHook, act } from '@testing-library/react'
 import { useInvisibleWallet } from '../useInvisibleWallet'
-import { rpc as SorobanRpc, TransactionBuilder } from '@stellar/stellar-sdk'
+import { rpc as SorobanRpc, TransactionBuilder, Keypair } from '@stellar/stellar-sdk'
 
 // ── @stellar/stellar-sdk mock ─────────────────────────────────────────────────
 
@@ -30,6 +30,11 @@ jest.mock('@stellar/stellar-sdk', () => ({
       }),
       sendTransaction: jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'mock-hash' }),
       getTransaction:  jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
+      getAccount:      jest.fn().mockResolvedValue({
+        accountId: () => 'GPUBKEY',
+        sequenceNumber: () => '0',
+        incrementSequenceNumber: jest.fn(),
+      }),
     })),
     Api: {
       GetTransactionStatus: { SUCCESS: 'SUCCESS', NOT_FOUND: 'NOT_FOUND', FAILED: 'FAILED' },
@@ -405,6 +410,130 @@ describe('useInvisibleWallet', () => {
       const { result } = renderHook(() => useInvisibleWallet(CONFIG))
       expect(result.current.isPending).toBe(false)
       expect(result.current.error).toBeNull()
+    })
+  })
+
+  describe('addSigner()', () => {
+    it('submits add_signer and returns signerIndex decoded from tx returnValue', async () => {
+      localStorage.setItem('invisible_wallet_address', 'CWALLET')
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      // Make scValToNative return index 2 for this call
+      ;(SorobanRpc.Server as jest.Mock).mockImplementationOnce(() => ({
+        getAccount:      jest.fn().mockResolvedValue({ accountId: () => 'G', sequenceNumber: () => '0', incrementSequenceNumber: jest.fn() }),
+        simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: {} }, minResourceFee: '0', transactionData: {}, events: [], latestLedger: 1 }),
+        sendTransaction: jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'add-hash' }),
+        getTransaction:  jest.fn().mockResolvedValue({ status: 'SUCCESS', returnValue: { _type: 'u32', _value: 2 } }),
+      }))
+
+      const { scValToNative } = jest.requireMock('@stellar/stellar-sdk') as typeof import('@stellar/stellar-sdk')
+      ;(scValToNative as jest.Mock).mockReturnValueOnce(2)
+
+      const fakeKeypair = Keypair.fromSecret('SSECRET')
+      const newKey = new Uint8Array(65).fill(4)
+
+      let res!: Awaited<ReturnType<typeof result.current.addSigner>>
+      await act(async () => {
+        res = await result.current.addSigner(fakeKeypair, newKey)
+      })
+
+      expect(res.signerIndex).toBe(2)
+    })
+
+    it('throws when newPublicKeyBytes is not 65 bytes', async () => {
+      localStorage.setItem('invisible_wallet_address', 'CWALLET')
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      await act(async () => {
+        await expect(
+          result.current.addSigner(Keypair.fromSecret('SSECRET'), new Uint8Array(32))
+        ).rejects.toThrow('newPublicKeyBytes must be exactly 65 bytes')
+      })
+    })
+
+    it('throws when no wallet address is set', async () => {
+      localStorage.removeItem('invisible_wallet_address')
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      await act(async () => {
+        await expect(
+          result.current.addSigner(Keypair.fromSecret('SSECRET'), new Uint8Array(65))
+        ).rejects.toThrow('No wallet address')
+      })
+    })
+  })
+
+  describe('removeSigner()', () => {
+    it('submits remove_signer and resolves on success', async () => {
+      localStorage.setItem('invisible_wallet_address', 'CWALLET')
+
+      ;(SorobanRpc.Server as jest.Mock).mockImplementationOnce(() => ({
+        getAccount:          jest.fn().mockResolvedValue({ accountId: () => 'G', sequenceNumber: () => '0', incrementSequenceNumber: jest.fn() }),
+        simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: {} }, minResourceFee: '0', transactionData: {}, events: [], latestLedger: 1 }),
+        sendTransaction:     jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'rm-hash' }),
+        getTransaction:      jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
+      }))
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      await act(async () => {
+        await expect(
+          result.current.removeSigner(Keypair.fromSecret('SSECRET'), 1)
+        ).resolves.toBeUndefined()
+      })
+    })
+
+    it('throws when no wallet address is set', async () => {
+      localStorage.removeItem('invisible_wallet_address')
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      await act(async () => {
+        await expect(
+          result.current.removeSigner(Keypair.fromSecret('SSECRET'), 0)
+        ).rejects.toThrow('No wallet address')
+      })
+    })
+  })
+
+  describe('getSigners()', () => {
+    it('returns SignerInfo array sorted by index', async () => {
+      localStorage.setItem('invisible_wallet_address', 'CWALLET')
+
+      // Simulate a Map returned by scValToNative via the object-entries fallback path
+      const fakeSignersObj: Record<string, Uint8Array> = {
+        '1': new Uint8Array(65).fill(9),
+        '0': new Uint8Array(65).fill(4),
+      }
+
+      ;(SorobanRpc.Server as jest.Mock).mockImplementationOnce(() => ({
+        getAccount:          jest.fn().mockResolvedValue({ accountId: () => 'G', sequenceNumber: () => '0', incrementSequenceNumber: jest.fn() }),
+        simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: { _fake: true } }, minResourceFee: '0', transactionData: {}, events: [], latestLedger: 1 }),
+        sendTransaction:     jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'sig-hash' }),
+        getTransaction:      jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
+      }))
+
+      const { scValToNative } = jest.requireMock('@stellar/stellar-sdk') as typeof import('@stellar/stellar-sdk')
+      ;(scValToNative as jest.Mock).mockReturnValueOnce(fakeSignersObj)
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      let signers!: Awaited<ReturnType<typeof result.current.getSigners>>
+      await act(async () => {
+        signers = await result.current.getSigners()
+      })
+
+      expect(signers).toHaveLength(2)
+      expect(signers[0].index).toBe(0)
+      expect(signers[1].index).toBe(1)
+    })
+
+    it('throws when no wallet address is set', async () => {
+      localStorage.removeItem('invisible_wallet_address')
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      await act(async () => {
+        await expect(result.current.getSigners()).rejects.toThrow('No wallet address')
+      })
     })
   })
 })
