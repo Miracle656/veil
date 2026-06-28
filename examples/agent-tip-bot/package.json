@@ -1,0 +1,22 @@
+{
+  "name": "veil-agent-tip-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI tipping agent — scores creator posts and tips above a threshold using @veil/agent and a session key",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.81.0",
+    "@stellar/stellar-sdk": "^14.6.1",
+    "@veil/agent": "file:../../packages/agent",
+    "dotenv": "^17.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.22.3",
+    "typescript": "^5.0.0"
+  }
+}
