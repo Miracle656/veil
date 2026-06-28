@@ -1,0 +1,28 @@
+{
+  "name": "@veil/invisible-wallet-solid",
+  "version": "0.1.0",
+  "description": "Solid.js adapter for Invisible Wallet SDK",
+  "main": "dist/solid/src/index.js",
+  "module": "dist/solid/src/index.js",
+  "types": "dist/solid/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/solid/src/index.d.ts",
+      "default": "./dist/solid/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "invisible-wallet-sdk": "file:.."
+  },
+  "peerDependencies": {
+    "solid-js": "^1.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "solid-js": "^1.8.0",
+    "typescript": "^5.0.0"
+  }
+}

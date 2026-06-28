@@ -35,6 +35,7 @@ export type {
     Sep7PayParams,
 } from './sep7';
 export * from './webauthn/attestation';
+export { webAuthnProvider } from './webauthn';
 export * from './recovery/sep30';
 export * from './crypto/prf';
 export * from './signMessage';

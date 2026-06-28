@@ -1,0 +1,222 @@
+import { StrKey, xdr, hash as stellarHash } from '@stellar/stellar-sdk';
+// ── Buffer helpers ────────────────────────────────────────────────────────────
+export function bufferToHex(input) {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    return Array.from(bytes)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+export function hexToUint8Array(hex) {
+    if (hex.length % 2 !== 0)
+        throw new Error('Invalid hex string');
+    const array = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+        array[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    }
+    return array;
+}
+// ── Crypto helpers ────────────────────────────────────────────────────────────
+/** Compute SHA-256 using the Web Crypto API. */
+export async function sha256(data) {
+    // .slice() on ArrayBufferLike returns a plain ArrayBuffer, satisfying SubtleCrypto's types
+    const buf = await crypto.subtle.digest('SHA-256', data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+    return new Uint8Array(buf);
+}
+// SECP256R1 (P-256) curve order n. Soroban's secp256r1_verify host function
+// rejects signatures where s > n/2 ("non-low-S form") to prevent malleability.
+// WebAuthn authenticators don't always return low-S, so we must normalise.
+const SECP256R1_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+const SECP256R1_HALF_N = SECP256R1_N >> 1n;
+/** If s > n/2, replace with (n - s). Returns 32-byte big-endian. */
+function normalizeLowS(sBytes) {
+    let s = 0n;
+    for (const b of sBytes)
+        s = (s << 8n) | BigInt(b);
+    if (s > SECP256R1_HALF_N)
+        s = SECP256R1_N - s;
+    const out = new Uint8Array(32);
+    for (let i = 31; i >= 0; i--) {
+        out[i] = Number(s & 0xffn);
+        s >>= 8n;
+    }
+    return out;
+}
+/**
+ * Convert an ASN.1 DER-encoded P-256 ECDSA signature to raw 64-byte (r ‖ s) format,
+ * normalising s to low form so Soroban's secp256r1_verify host function accepts it.
+ *
+ * WebAuthn returns DER; the contract expects raw r ‖ s (32 bytes each).
+ *
+ * DER structure:  30 <totalLen>  02 <rLen> <r>  02 <sLen> <s>
+ */
+export function derToRawSignature(derSig) {
+    const der = new Uint8Array(derSig);
+    if (der[0] !== 0x30)
+        throw new Error('DER: expected SEQUENCE (0x30)');
+    // der[1] is total length — skip it
+    let offset = 2;
+    if (der[offset] !== 0x02)
+        throw new Error('DER: expected INTEGER tag for r');
+    offset++;
+    const rLen = der[offset++];
+    const rRaw = der.slice(offset, offset + rLen);
+    offset += rLen;
+    if (der[offset] !== 0x02)
+        throw new Error('DER: expected INTEGER tag for s');
+    offset++;
+    const sLen = der[offset++];
+    const sRaw = der.slice(offset, offset + sLen);
+    const raw = new Uint8Array(64);
+    raw.set(padOrTrim32(rRaw), 0);
+    raw.set(normalizeLowS(padOrTrim32(sRaw)), 32);
+    return raw;
+}
+/**
+ * Normalise a DER integer component to exactly 32 bytes.
+ * DER uses a leading 0x00 to denote positive sign when the high bit is set;
+ * we strip that and left-pad with zeros if the value is shorter than 32 bytes.
+ */
+function padOrTrim32(bytes) {
+    // Strip leading 0x00 sign byte(s)
+    let start = 0;
+    while (start < bytes.length - 32 && bytes[start] === 0)
+        start++;
+    const trimmed = bytes.slice(start);
+    if (trimmed.length > 32)
+        throw new Error('Integer component too large for P-256');
+    const padded = new Uint8Array(32);
+    padded.set(trimmed, 32 - trimmed.length);
+    return padded;
+}
+/**
+ * Extract the uncompressed P-256 public key (65 bytes: 0x04 ‖ x ‖ y) from a
+ * WebAuthn attestation response.
+ *
+ * Uses `AuthenticatorAttestationResponse.getPublicKey()` (Chrome 95+, Firefox 93+)
+ * combined with SubtleCrypto to avoid manual CBOR/SPKI parsing.
+ */
+export async function extractP256PublicKey(response) {
+    const spkiBuffer = response.getPublicKey();
+    if (!spkiBuffer) {
+        throw new Error('getPublicKey() returned null — authenticator may not support SPKI export, ' +
+            'or the browser is too old (requires Chrome 95+ / Firefox 93+)');
+    }
+    // Import as ECDSA P-256 so SubtleCrypto validates the format
+    const cryptoKey = await crypto.subtle.importKey('spki', spkiBuffer, { name: 'ECDSA', namedCurve: 'P-256' }, true, // extractable
+    ['verify']);
+    // Export as 'raw' = uncompressed point: 0x04 ‖ x (32 B) ‖ y (32 B) = 65 bytes
+    const rawBuffer = await crypto.subtle.exportKey('raw', cryptoKey);
+    return new Uint8Array(rawBuffer);
+}
+/**
+ * Compute the message hash that a WebAuthn ES256 authenticator actually signs:
+ *   SHA256(authenticatorData ‖ SHA256(clientDataJSON))
+ *
+ * This is what the contract's verify_webauthn() verifies against.
+ */
+export async function computeWebAuthnMessageHash(authData, clientDataJSON) {
+    const clientDataHash = await sha256(new Uint8Array(clientDataJSON));
+    const authBytes = new Uint8Array(authData);
+    const message = new Uint8Array(authBytes.length + 32);
+    message.set(authBytes, 0);
+    message.set(clientDataHash, authBytes.length);
+    return sha256(message);
+}
+// ── WebAuthn data parsers ─────────────────────────────────────────────────────
+/**
+ * Parse WebAuthn authenticatorData binary structure.
+ *
+ * Layout: rpIdHash (32 B) | flags (1 B) | signCount (4 B) | [attestedCredData] | [extensions]
+ */
+export function parseAuthData(authData) {
+    const view = new DataView(authData);
+    const bytes = new Uint8Array(authData);
+    if (bytes.length < 37)
+        throw new Error('authData too short (expected ≥ 37 bytes)');
+    const flagByte = view.getUint8(32);
+    return {
+        rpIdHash: bytes.slice(0, 32),
+        flags: {
+            up: !!(flagByte & 0x01), // User Present
+            uv: !!(flagByte & 0x04), // User Verified
+            at: !!(flagByte & 0x40), // Attested credential data present
+            ed: !!(flagByte & 0x80), // Extension data present
+        },
+        signCount: view.getUint32(33, false), // big-endian
+    };
+}
+/** Parse the clientDataJSON buffer into a typed object. */
+export function parseClientDataJSON(clientDataJSON) {
+    return JSON.parse(new TextDecoder().decode(clientDataJSON));
+}
+// ── Encoding helpers ──────────────────────────────────────────────────────────
+/**
+ * Base64url-encode bytes without padding.
+ * Used to match how browsers encode the WebAuthn challenge inside clientDataJSON.
+ */
+export function base64UrlEncode(bytes) {
+    // btoa works on binary strings; chunk to avoid call-stack overflow on large inputs
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++)
+        binary += String.fromCharCode(bytes[i]);
+    return btoa(binary)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
+}
+/** Encode a BigInt as an 8-byte big-endian buffer (for XDR u64 fields). */
+export function encodeU64(num) {
+    const buf = new ArrayBuffer(8);
+    new DataView(buf).setBigUint64(0, num, false);
+    return new Uint8Array(buf);
+}
+// ── Wallet address derivation ─────────────────────────────────────────────────
+/**
+ * Compute the deterministic Soroban contract address for a user's passkey wallet
+ * **without** deploying it.
+ *
+ * This mirrors the on-chain derivation exactly:
+ *
+ *   1. salt         = SHA-256(publicKeyBytes)          — factory hashes the 65-byte key to get 32 bytes
+ *   2. networkId    = SHA-256(networkPassphrase)
+ *   3. preimage     = XDR(ContractID { networkId, factory, salt })
+ *   4. contractId   = SHA-256(preimage)
+ *   5. address      = StrKey.encodeContract(contractId) → "C..."
+ *
+ * @param factoryId        The factory contract's Stellar strkey (e.g. "CABC...").
+ * @param publicKeyBytes   The user's uncompressed P-256 public key (65 bytes: 0x04 ‖ x ‖ y).
+ * @param networkPassphrase Stellar network passphrase. Defaults to testnet.
+ * @returns The wallet's Stellar contract address in strkey format ("C...").
+ */
+export function computeWalletAddress(factoryId, publicKeyBytes, networkPassphrase = 'Test SDF Network ; September 2015') {
+    // Step 1: Hash the 65-byte public key → 32-byte salt.
+    //   The factory contract calls env.crypto().sha256(&public_key_bytes) for the same reason:
+    //   Soroban's deployer salt must be exactly 32 bytes (Uint256).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const salt = stellarHash(Buffer.from(publicKeyBytes));
+    // Step 2: Hash the network passphrase → 32-byte networkId.
+    //   Every Stellar network has a unique passphrase, so contract IDs don't collide
+    //   between testnet and mainnet even with identical inputs.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const networkId = stellarHash(Buffer.from(networkPassphrase));
+    // Step 3: Decode the factory's strkey → raw 32-byte contract hash.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const factoryHash = StrKey.decodeContract(factoryId);
+    // Step 4: Build the XDR preimage that Soroban hashes to derive contract addresses.
+    //   This is the canonical HashIdPreimage::ContractId structure from the Stellar XDR spec.
+    //   It encodes: "this contract was deployed by <factory> with <salt> on <network>".
+    const preimage = xdr.HashIdPreimage.envelopeTypeContractId(new xdr.HashIdPreimageContractId({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        networkId: networkId,
+        contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(new xdr.ContractIdPreimageFromAddress({
+            address: xdr.ScAddress.scAddressTypeContract(factoryHash),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            salt: salt,
+        })),
+    }));
+    // Step 5: SHA-256 the serialised XDR → 32-byte contract ID.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const contractId = stellarHash(preimage.toXDR());
+    // Step 6: Encode as a Stellar contract strkey ("C...").
+    return StrKey.encodeContract(contractId);
+}
