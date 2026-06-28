@@ -188,9 +188,13 @@ impl InvisibleWallet {
                     .ok_or(WalletError::InsufficientAllowance)?;
 
                 if let Some(expiry) = allowance.expiry {
-                    if env.ledger().timestamp() > expiry {
-                        return Err(WalletError::AllowanceExpired);
-                    }
+                    // Same clock-skew-tolerant comparison as session keys; see
+                    // `crate::auth::expiration`.
+                    auth::expiration::ensure_not_expired(
+                        env.ledger().timestamp(),
+                        expiry,
+                        WalletError::AllowanceExpired,
+                    )?;
                 }
 
                 if amount > allowance.amount {

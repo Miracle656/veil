@@ -1,6 +1,8 @@
 use soroban_sdk::{contracttype, Bytes, BytesN, Env};
 use crate::WalletError;
 
+pub(crate) mod expiration;
+
 #[contracttype]
 pub struct WebAuthnSignature {
     pub public_key: BytesN<65>,
