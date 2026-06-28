@@ -1,0 +1,19 @@
+{
+  "name": "veil-elements",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Drop-in Web Components wrapping the Invisible Wallet SDK",
+  "type": "module",
+  "main": "dist/veil-button.js",
+  "scripts": {
+    "build": "esbuild src/veil-button.ts --bundle --format=esm --platform=browser --target=es2020 --minify --outfile=dist/veil-button.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "invisible-wallet-sdk": "file:.."
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.4.0"
+  }
+}
