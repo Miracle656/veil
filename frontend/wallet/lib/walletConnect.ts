@@ -153,7 +153,9 @@ async function signAuthEntry(payload: Uint8Array): Promise<WebAuthnSignature | n
     payload.byteOffset + payload.byteLength,
   ) as ArrayBuffer
 
-  const credIdBin = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'))
+  const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  const credIdBin = atob(padded)
   const credId = Uint8Array.from(credIdBin, (c) => c.charCodeAt(0))
 
   try {

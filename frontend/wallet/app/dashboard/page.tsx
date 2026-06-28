@@ -421,7 +421,9 @@ function DashboardPageContent() {
         if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
 
         const challenge  = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer
-        const credIdBin  = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'))
+        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const credIdBin  = atob(padded)
         const credId     = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
 
         const assertion = await navigator.credentials.get({
