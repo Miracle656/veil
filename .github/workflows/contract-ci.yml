@@ -1,0 +1,64 @@
+name: Contract CI
+
+# Dedicated contract build job with sccache + rust-cache layered caching.
+# Runs only when contract sources or this workflow file change, keeping
+# unrelated PRs (SDK, wallet, docs) from paying the Rust build cost.
+#
+# Caching strategy:
+# - sccache (mozilla-actions/sccache-action): caches individual compilation
+#   units via the GitHub Actions cache backend. A warm hit compiles only
+#   changed crates, dropping build time well below 60 s.
+# - Swatinem/rust-cache: caches the Cargo registry index and downloaded
+#   crate sources so dependency resolution is fast on every run.
+#
+# Cold-build guarantee: on a cache miss both layers are transparent no-ops.
+# sccache falls back to invoking rustc directly; rust-cache simply skips
+# the restore step. The build produces the same output as a fresh machine.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contract-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'contracts/**'
+      - '.github/workflows/contract-ci.yml'
+
+jobs:
+  build:
+    name: Rust contracts - build (sccache)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contracts
+
+      - name: Build contracts
+        run: cargo build --all
+        # cargo test is disabled — stellar-xdr 20.1.0 transitively pulls a
+        # broken `arbitrary` feature on fresh CI builds. See issue #79.
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
