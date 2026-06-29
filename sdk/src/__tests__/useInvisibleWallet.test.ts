@@ -8,7 +8,7 @@
 
 import { renderHook, act } from '@testing-library/react'
 import { useInvisibleWallet } from '../useInvisibleWallet'
-import { rpc as SorobanRpc, TransactionBuilder } from '@stellar/stellar-sdk'
+import { rpc as SorobanRpc, TransactionBuilder, Keypair } from '@stellar/stellar-sdk'
 
 // ── @stellar/stellar-sdk mock ─────────────────────────────────────────────────
 
@@ -385,6 +385,75 @@ describe('useInvisibleWallet', () => {
       await expect(
         act(async () => { await result.current.signAuthEntry(payload) })
       ).rejects.toThrow(/No key ID/)
+    })
+  })
+
+  // ── rotateSigner() ───────────────────────────────────────────────────────────
+
+  describe('rotateSigner()', () => {
+    beforeEach(() => {
+      localStorage.setItem('invisible_wallet_address', 'CEXISTING_WALLET')
+      localStorage.setItem('invisible_wallet_public_key', 'aabbcc')
+      localStorage.setItem('invisible_wallet_key_id', 'bW9jay1jcmVkZW50aWFsLWlk')
+
+      // The default Server mock lacks getAccount, which rotateSigner needs.
+      jest.mocked(SorobanRpc.Server).mockImplementation(
+        () =>
+          ({
+            getAccount: jest.fn().mockResolvedValue({
+              accountId:      () => 'GPUBKEY',
+              sequenceNumber: () => '0',
+            }),
+            getContractData:     jest.fn().mockResolvedValue({}),
+            simulateTransaction: jest.fn().mockResolvedValue({
+              result: { retval: {} },
+              minResourceFee: '0',
+              transactionData: {},
+              events: [],
+              latestLedger: 1,
+            }),
+            sendTransaction: jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'mock-hash' }),
+            getTransaction:  jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
+          }) as any,
+      )
+    })
+
+    it('registers a new credential, preserves the wallet address, and stores the new key', async () => {
+      mockCredentialsCreate.mockResolvedValueOnce(makeMockRegistrationCredential())
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+      await act(async () => {}) // flush mount effect so the stored address is picked up
+
+      const keypair = Keypair.fromSecret('SUSER')
+
+      let rotateResult!: Awaited<ReturnType<typeof result.current.rotateSigner>>
+      await act(async () => {
+        rotateResult = await result.current.rotateSigner(keypair as any, 'new-device')
+      })
+
+      // A brand-new WebAuthn credential was registered.
+      expect(mockCredentialsCreate).toHaveBeenCalledTimes(1)
+      // The wallet address (and therefore balances) is unchanged.
+      expect(rotateResult.walletAddress).toBe('CEXISTING_WALLET')
+      expect(result.current.address).toBe('CEXISTING_WALLET')
+      // A new 65-byte uncompressed P-256 key was produced.
+      expect(rotateResult.newPublicKeyBytes).toHaveLength(65)
+      // Storage now holds the new public key, not the old one.
+      expect(localStorage.getItem('invisible_wallet_public_key')).not.toBe('aabbcc')
+      expect(result.current.error).toBeNull()
+    })
+
+    it('throws when there is no existing public key in storage', async () => {
+      localStorage.removeItem('invisible_wallet_public_key')
+      mockCredentialsCreate.mockResolvedValueOnce(makeMockRegistrationCredential())
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+      await act(async () => {})
+
+      const keypair = Keypair.fromSecret('SUSER')
+      await expect(
+        act(async () => { await result.current.rotateSigner(keypair as any) })
+      ).rejects.toThrow(/No existing public key/)
     })
   })
 

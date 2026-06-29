@@ -184,6 +184,19 @@ export type AddSignerResult = {
     signerIndex: number;
 };
 
+/** Result returned by a successful rotateSigner() call. */
+export type RotateSignerResult = {
+    /** The previous (rotated-out) P-256 public key bytes (65 bytes). */
+    oldPublicKeyBytes: Uint8Array;
+    /** The newly registered P-256 public key bytes (65 bytes). */
+    newPublicKeyBytes: Uint8Array;
+    /**
+     * The wallet's contract address — unchanged by the rotation. Returned so
+     * callers can assert that the address (and therefore balances) is preserved.
+     */
+    walletAddress: string;
+};
+
 /** Result returned by getSigners(). */
 export type SignerInfo = {
     /** The index of the signer in the wallet's signer list. */
@@ -299,6 +312,25 @@ export type InvisibleWallet = {
      * @param signerIndex   The index of the signer to remove.
      */
     removeSigner: (signerKeypair: Keypair, signerIndex: number) => Promise<void>;
+    /**
+     * Rotate the wallet's passkey signer without redeploying — the device-loss
+     * recovery flow. Registers a brand-new WebAuthn credential, then calls the
+     * contract's `rotate_signer(old_key, new_key)` entrypoint, authorizing the
+     * swap with the **current** passkey (an interactive assertion). The wallet
+     * address and balances are preserved; afterwards the new credential becomes
+     * the active signer in storage.
+     *
+     * Two user gestures are involved: creating the new credential, and signing
+     * the rotation with the existing one.
+     *
+     * @param signerKeypair Stellar Keypair used as the transaction fee source.
+     *                      Separate from the passkey — pays fees only.
+     * @param username      Optional display name for the new credential.
+     * @param options       Optional WebAuthn options for the new credential
+     *                      (e.g. `authenticatorAttachment`).
+     * @returns The old/new public keys and the unchanged wallet address.
+     */
+    rotateSigner: (signerKeypair: Keypair, username?: string, options?: RegisterOptions) => Promise<RotateSignerResult>;
     /**
      * Fetch the list of all registered signers from the wallet contract.
      *
@@ -1162,6 +1194,191 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         }
     }, [address, rpcUrl, networkPassphrase, signAuthEntry, config]);
 
+    // ── rotateSigner ──────────────────────────────────────────────────────────
+
+    const rotateSigner = useCallback(async (
+        signerKeypair: Keypair,
+        username?: string,
+        options?: RegisterOptions
+    ): Promise<RotateSignerResult> => {
+        setIsPending(true);
+        setError(null);
+        try {
+            if (!address) throw new Error('No wallet address. Call register() or login() first.');
+
+            // The key currently registered on-chain — read before we touch storage.
+            const oldPublicKeyHex = await store.getItem('invisible_wallet_public_key');
+            if (!oldPublicKeyHex) {
+                throw new Error('No existing public key found. Call register() or login() first.');
+            }
+            const oldPublicKeyBytes = hexToUint8Array(oldPublicKeyHex);
+
+            // 1. Register a brand-new WebAuthn credential for the new device.
+            const challenge = crypto.getRandomValues(new Uint8Array(32));
+            const normalizedUsername = username ? username.normalize('NFC') : undefined;
+            const name   = normalizedUsername || 'Veil User';
+            const userId = normalizedUsername
+                ? new TextEncoder().encode(normalizedUsername)
+                : crypto.getRandomValues(new Uint8Array(16));
+            const resolvedRpId = rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
+
+            const {
+                credentialId: newCredentialId,
+                publicKeyBytes: newPublicKeyBytes,
+                attestationObject,
+                clientDataJSON,
+                authenticatorAttachment,
+                transports,
+            } = await webAuthnProvider.create({
+                challenge,
+                rpId:     resolvedRpId,
+                rpName:   'Invisible Wallet',
+                userId,
+                userName: name,
+                authenticatorAttachment: options?.authenticatorAttachment,
+            });
+
+            if (newPublicKeyBytes.length !== 65) {
+                throw new Error('New credential did not yield a 65-byte uncompressed P-256 key');
+            }
+
+            // Optional attestation verification for the new credential — mirrors register().
+            if (config.attestationPolicy) {
+                if (attestationObject && clientDataJSON) {
+                    await verifyAttestation({
+                        attestationObject,
+                        clientDataJSON,
+                        policy: config.attestationPolicy,
+                    });
+                } else if (config.requireAttestation) {
+                    throw new AttestationError(
+                        'Attestation required but the platform did not expose an attestationObject.'
+                    );
+                }
+            }
+
+            // 2. Build the rotate_signer(old, new) call against the wallet contract.
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(signerKeypair.publicKey());
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(
+                    walletContract.call(
+                        'rotate_signer',
+                        nativeToScVal(oldPublicKeyBytes, { type: 'bytes' }),
+                        nativeToScVal(newPublicKeyBytes, { type: 'bytes' })
+                    )
+                )
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+
+            // 3. Authorize the rotation with the CURRENT passkey. signAuthEntry reads
+            //    the still-current credential from storage, so this must run before we
+            //    persist the new credential below.
+            const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+            const authEntries = successSim.result?.auth;
+            if (authEntries) {
+                const networkIdBytes = new Uint8Array(
+                    (stellarHash as (input: Buffer) => Buffer)(Buffer.from(networkPassphrase))
+                );
+
+                for (const parsed of authEntries) {
+                    const cred = parsed.credentials();
+                    if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+                        continue;
+                    }
+
+                    const addrCred = cred.address();
+                    const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+                        new xdr.HashIdPreimageSorobanAuthorization({
+                            networkId: Buffer.from(networkIdBytes),
+                            nonce: addrCred.nonce(),
+                            invocation: parsed.rootInvocation(),
+                            signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                        })
+                    );
+                    const payloadHash = new Uint8Array(
+                        (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
+                    );
+
+                    const webAuthnSig = await signAuthEntry(payloadHash);
+                    if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
+
+                    const sigVec = xdr.ScVal.scvVec([
+                        nativeToScVal(webAuthnSig.publicKey,      { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.authData,       { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
+                        nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
+                    ]);
+
+                    parsed.credentials(
+                        xdr.SorobanCredentials.sorobanCredentialsAddress(
+                            new xdr.SorobanAddressCredentials({
+                                address: addrCred.address(),
+                                nonce: addrCred.nonce(),
+                                signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                                signature: sigVec,
+                            })
+                        )
+                    );
+                }
+            }
+
+            const submissionTx = signForSubmission(assembled, signerKeypair, config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+            // 4. Rotation confirmed on-chain — the new credential is now the active
+            //    signer. Persist it; the wallet address is intentionally untouched.
+            const newPublicKeyHex = bufferToHex(newPublicKeyBytes);
+            await store.setItem('invisible_wallet_public_key', newPublicKeyHex);
+            await store.setItem('invisible_wallet_key_id',     newCredentialId);
+
+            const resolvedAttachment = authenticatorAttachment ?? options?.authenticatorAttachment;
+            if (resolvedAttachment === 'cross-platform') {
+                const portable: PortableSigner = {
+                    credentialId: newCredentialId,
+                    publicKey: newPublicKeyHex,
+                    authenticatorAttachment: 'cross-platform',
+                    transports: transports ?? [],
+                };
+                await store.setItem(PORTABLE_SIGNER_KEY, JSON.stringify(portable));
+            } else if (store.removeItem) {
+                await store.removeItem(PORTABLE_SIGNER_KEY);
+            }
+
+            return { oldPublicKeyBytes, newPublicKeyBytes, walletAddress: address };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            throw err;
+        } finally {
+            setIsPending(false);
+        }
+    }, [address, rpcUrl, networkPassphrase, rpId, store, signAuthEntry, config]);
+
     // ── initiateRecovery ──────────────────────────────────────────────────────
 
     const initiateRecovery = useCallback(async (
@@ -1680,6 +1897,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     }, [getCipher]);
 
     return useMemo(() => (
-        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode }
-    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode]);
+        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode }
+    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode]);
 }

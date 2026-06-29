@@ -56,6 +56,8 @@ pub enum WalletError {
     SessionKeyExpired           = 19,
     /// A session key call violates its ACL (wrong target, selector, or cumulative budget exceeded).
     SessionKeyAclViolation      = 20,
+    /// The replacement key passed to `rotate_signer` is already a registered signer.
+    SignerAlreadyExists         = 21,
 }
 
 #[contract]
@@ -107,6 +109,46 @@ impl InvisibleWallet {
         }
 
         if !storage::remove_signer(&env, index) {
+            return Err(WalletError::SignerNotFound);
+        }
+
+        Ok(())
+    }
+
+    /// Atomically replace a registered signer key (`old_public_key`) with a new
+    /// one (`new_public_key`) — the device-rotation flow for a lost or replaced
+    /// passkey.
+    ///
+    /// Requires authorization from the contract itself, so an *existing* signer
+    /// must authorize the call via `__check_auth`. This means only the current
+    /// owner can rotate the key: a lost device cannot be silently swapped out by
+    /// a third party.
+    ///
+    /// The new key takes over the **same index** as the old one, so the signer
+    /// set size is unchanged and — critically — the wallet's contract address and
+    /// balances are untouched. No redeploy is needed.
+    ///
+    /// Errors:
+    /// * `InvalidPublicKey`     — `old` and `new` are the same key (no-op).
+    /// * `SignerAlreadyExists`  — `new_public_key` is already registered.
+    /// * `SignerNotFound`       — `old_public_key` is not a registered signer.
+    pub fn rotate_signer(
+        env: Env,
+        old_public_key: BytesN<65>,
+        new_public_key: BytesN<65>,
+    ) -> Result<(), WalletError> {
+        env.current_contract_address().require_auth();
+
+        if old_public_key == new_public_key {
+            return Err(WalletError::InvalidPublicKey);
+        }
+
+        // Reject collapsing two slots into a duplicate key.
+        if storage::has_signer(&env, &new_public_key) {
+            return Err(WalletError::SignerAlreadyExists);
+        }
+
+        if !storage::replace_signer(&env, &old_public_key, &new_public_key) {
             return Err(WalletError::SignerNotFound);
         }
 
@@ -771,6 +813,166 @@ mod test {
             client.try_remove_signer(&99),
             Err(Ok(WalletError::SignerNotFound))
         );
+    }
+
+    // ── Rotate-signer tests ───────────────────────────────────────────────────
+
+    fn third_keypair() -> (SigningKey, [u8; 65]) {
+        let signing_key = SigningKey::from_bytes(&[7u8; 32].into()).unwrap();
+        let encoded = signing_key.verifying_key().to_encoded_point(false);
+        let pub_bytes: [u8; 65] = encoded.as_bytes().try_into().unwrap();
+        (signing_key, pub_bytes)
+    }
+
+    #[test]
+    fn test_rotate_signer_swaps_key_and_keeps_address() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, old_pub) = test_keypair();
+        let (_, new_pub) = third_keypair();
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://localhost:5173");
+
+        let old_key = BytesN::from_array(&env, &old_pub);
+        let new_key = BytesN::from_array(&env, &new_pub);
+
+        client.init(&old_key, &rp_id, &origin);
+        let count_before = client.get_signers().len();
+
+        client.rotate_signer(&old_key, &new_key);
+
+        // New key authorizes, old key rejected.
+        assert!(client.has_signer(&new_key));
+        assert!(!client.has_signer(&old_key));
+        // Signer set size unchanged — the new key took the old key's slot.
+        assert_eq!(client.get_signers().len(), count_before);
+        // Wallet address (contract id) is untouched by the rotation.
+        assert_eq!(client.address, contract_id);
+    }
+
+    #[test]
+    fn test_rotate_signer_preserves_other_signers() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, first_pub)  = test_keypair();
+        let (_, second_pub) = second_keypair();
+        let (_, new_pub)    = third_keypair();
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://localhost:5173");
+
+        let first_key  = BytesN::from_array(&env, &first_pub);
+        let second_key = BytesN::from_array(&env, &second_pub);
+        let new_key    = BytesN::from_array(&env, &new_pub);
+
+        client.init(&first_key, &rp_id, &origin);
+        client.add_signer(&second_key);
+
+        // Rotate only the first signer; the second must remain untouched.
+        client.rotate_signer(&first_key, &new_key);
+
+        assert!(client.has_signer(&new_key));
+        assert!(!client.has_signer(&first_key));
+        assert!(client.has_signer(&second_key));
+        assert_eq!(client.get_signers().len(), 2);
+    }
+
+    #[test]
+    fn test_rotate_signer_unknown_old_key_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, old_pub) = test_keypair();
+        let (_, other_pub) = second_keypair();
+        let (_, new_pub) = third_keypair();
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://localhost:5173");
+
+        client.init(&BytesN::from_array(&env, &old_pub), &rp_id, &origin);
+
+        assert_eq!(
+            client.try_rotate_signer(
+                &BytesN::from_array(&env, &other_pub),
+                &BytesN::from_array(&env, &new_pub),
+            ),
+            Err(Ok(WalletError::SignerNotFound))
+        );
+    }
+
+    #[test]
+    fn test_rotate_signer_to_existing_key_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, first_pub)  = test_keypair();
+        let (_, second_pub) = second_keypair();
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://localhost:5173");
+
+        let first_key  = BytesN::from_array(&env, &first_pub);
+        let second_key = BytesN::from_array(&env, &second_pub);
+
+        client.init(&first_key, &rp_id, &origin);
+        client.add_signer(&second_key);
+
+        // Rotating onto an already-registered key would create a duplicate.
+        assert_eq!(
+            client.try_rotate_signer(&first_key, &second_key),
+            Err(Ok(WalletError::SignerAlreadyExists))
+        );
+    }
+
+    #[test]
+    fn test_rotate_signer_same_key_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://localhost:5173");
+
+        let key = BytesN::from_array(&env, &pub_bytes);
+        client.init(&key, &rp_id, &origin);
+
+        assert_eq!(
+            client.try_rotate_signer(&key, &key),
+            Err(Ok(WalletError::InvalidPublicKey))
+        );
+    }
+
+    /// Rotation must be authorized by the current signer. Without any auth mocked,
+    /// `current_contract_address().require_auth()` rejects the call.
+    #[test]
+    #[should_panic]
+    fn test_rotate_signer_requires_current_signer_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, old_pub) = test_keypair();
+        let (_, new_pub) = third_keypair();
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://localhost:5173");
+
+        let old_key = BytesN::from_array(&env, &old_pub);
+        let new_key = BytesN::from_array(&env, &new_pub);
+
+        // init does not require auth; the rotation below does.
+        client.init(&old_key, &rp_id, &origin);
+
+        // No env.mock_all_auths() → require_auth() panics with "Unauthorized".
+        client.rotate_signer(&old_key, &new_key);
     }
 
     // ── WebAuthn verification tests ───────────────────────────────────────────
