@@ -69,6 +69,13 @@ export function hydrateActivityFeed(records: TxRecord[]): void {
   notify()
 }
 
+export function appendActivityFeed(newRecords: TxRecord[]): void {
+  const deduped = newRecords.filter(r => !_records.some(existing => existing.hash === r.hash))
+  if (deduped.length === 0) return
+  _records = [..._records, ...deduped].sort((a, b) => b.timestamp - a.timestamp)
+  notify()
+}
+
 export function subscribeActivityFeed(listener: ActivityListener): () => void {
   _listeners.add(listener)
   listener([..._records])
