@@ -5,10 +5,11 @@ import { motion } from 'framer-motion'
 import Link from 'next/link'
 import {
   Shield, Fingerprint, CheckCircle,
-  Key, Code2, Zap, ExternalLink,
+  ExternalLink,
 } from 'lucide-react'
 import CodeBlock from '@/components/ui/code-block'
 import { supabase } from '@/lib/supabase'
+import WhyVeil from '@/components/WhyVeil'
 
 /* ── Animation primitives ─────────────────────────────────────────────── */
 const fadeUp = {
@@ -286,112 +287,6 @@ function HowItWorks() {
               {/* Inter body */}
               <p className="font-inter text-near-black/60 text-sm leading-relaxed">
                 {step.body}
-              </p>
-            </motion.div>
-          ))}
-        </motion.div>
-      </div>
-    </section>
-  )
-}
-
-/* ════════════════════════════════════════════════════════════════════════
-   3. WHY VEIL — features 2×3 grid
-════════════════════════════════════════════════════════════════════════ */
-const FEATURES = [
-  {
-    Icon: Key,
-    accent: 'teal' as const,
-    title: 'No Seed Phrases',
-    body: 'Nothing to write down. Nothing to lose. Nothing to steal.',
-  },
-  {
-    Icon: Fingerprint,
-    accent: 'lilac' as const,
-    title: 'Biometric Auth',
-    body: 'Face ID and fingerprint via WebAuthn/FIDO2. Native to every modern device.',
-  },
-  {
-    Icon: Shield,
-    accent: 'teal' as const,
-    title: 'On-Chain Verification',
-    body: 'P-256 ECDSA verified in a Soroban custom account contract. No oracles. No servers.',
-  },
-  {
-    Icon: CheckCircle,
-    accent: 'lilac' as const,
-    title: 'Non-Custodial',
-    body: 'Your keys never leave your device. Not even to us.',
-  },
-  {
-    Icon: Code2,
-    accent: 'teal' as const,
-    title: 'Drop-In SDK',
-    body: 'One React hook. useInvisibleWallet(). Ship in an afternoon.',
-  },
-  {
-    Icon: Zap,
-    accent: 'lilac' as const,
-    title: 'Stellar Native',
-    body: 'Built on Soroban. Settled on Stellar. Fast and cheap by default.',
-  },
-]
-
-const ACCENT_COLOR = {
-  teal:  '#00A7B5',
-  lilac: '#B7ACE8',
-}
-
-function WhyVeil() {
-  return (
-    <section id="features" className="bg-near-black section-pad">
-      <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <motion.div
-          initial="hidden"
-          whileInView="show"
-          viewport={vp}
-          variants={stagger}
-          className="text-center mb-16"
-        >
-          <motion.p
-            variants={fadeUp}
-            className="font-anton uppercase text-gold text-[11px] tracking-[0.3em] mb-5"
-          >
-            Why Veil
-          </motion.p>
-          <motion.h2
-            variants={fadeUp}
-            className="font-lora font-semibold italic text-off-white text-display-sm md:text-display leading-tight"
-          >
-            Invisible to attackers.<br />
-            <H>Obvious to you.</H>
-          </motion.h2>
-        </motion.div>
-
-        {/* 2×3 grid */}
-        <motion.div
-          initial="hidden"
-          whileInView="show"
-          viewport={vp}
-          variants={stagger}
-          className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4"
-        >
-          {FEATURES.map(({ Icon, accent, title, body }) => (
-            <motion.div key={title} variants={fadeUp} className="card-dark p-7">
-              <Icon
-                size={22}
-                strokeWidth={1.5}
-                className="mb-5"
-                style={{ color: ACCENT_COLOR[accent] }}
-              />
-              {/* Lora subhead */}
-              <h3 className="font-lora font-semibold text-off-white text-lg mb-2">
-                {title}
-              </h3>
-              {/* Inter body */}
-              <p className="font-inter text-warm-grey/75 text-sm leading-relaxed">
-                {body}
               </p>
             </motion.div>
           ))}
