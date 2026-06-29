@@ -144,12 +144,15 @@ export const webAuthnProvider: WebAuthnProvider = {
 
     async authenticate({ challenge, credentialId, rpId, transports }) {
         const credId = b64urlToUint8Array(credentialId);
+        const credIdBuf = credId.buffer.slice(
+            credId.byteOffset, credId.byteOffset + credId.byteLength
+        ) as ArrayBuffer;
 
         const assertion = await navigator.credentials.get({
             publicKey: {
                 challenge,
                 allowCredentials: [{
-                    id: credId,
+                    id: credIdBuf,
                     type: 'public-key',
                     ...(transports && transports.length ? { transports: transports as AuthenticatorTransport[] } : {}),
                 }],
