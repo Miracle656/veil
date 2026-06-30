@@ -10,12 +10,16 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 permissions:
   contents: write
   pull-requests: write
-  id-token: write # npm provenance / trusted publishing
 
 jobs:
   release:
     name: Version or publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write      # npm OIDC trusted publishing + provenance signing
+      attestations: write  # upload provenance attestation to GitHub
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,7 +34,10 @@ jobs:
         run: npm install --legacy-peer-deps
 
       - name: Build publishable packages
-        run: npm run build --workspace invisible-wallet-sdk --if-present
+        run: |
+          npm run build --workspace invisible-wallet-sdk --if-present
+          npm run build --workspace @veil/agent --if-present
+          npm run build --workspace create-veil-app --if-present
 
       # When changeset files exist, this opens/updates a "Version Packages" PR
       # that consumes them. When that PR is merged (versions already bumped, no
@@ -44,5 +51,3 @@ jobs:
           title: 'chore: version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
