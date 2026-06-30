@@ -1,0 +1,27 @@
+{
+  "name": "veil-discord-faucet-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord slash-command faucet example for sending Stellar testnet XLM with the Veil SDK",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --env-file=.env dist/bot.js",
+    "dev": "tsx --env-file=.env src/bot.ts",
+    "register-commands": "tsx --env-file=.env src/register-commands.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.1.0",
+    "discord.js": "^14.16.3",
+    "invisible-wallet-sdk": "file:../../sdk"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.2"
+  },
+  "engines": {
+    "node": ">=20.6.0"
+  }
+}

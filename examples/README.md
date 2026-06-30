@@ -6,6 +6,12 @@ This directory contains example implementations of the Invisible Wallet SDK.
 
 The `vanilla/` directory contains a complete HTML page demonstrating how to use the SDK without any framework dependencies.
 
+## Discord Faucet
+
+The `discord-faucet/` directory contains a `discord.js` bot that registers a
+`/faucet` slash command and sends 10 testnet XLM to a requester-provided Stellar
+account with per-user rate limiting.
+
 ### Running the vanilla example
 
 1. Build the SDK:
