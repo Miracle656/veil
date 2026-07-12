@@ -20,6 +20,10 @@
         "src/**/*.test.ts",
         "src/**/*.test.tsx",
         "react/src/**/*.test.ts",
-        "react/src/**/*.test.tsx"
+        "react/src/**/*.test.tsx",
+        "react/src/**/*.stories.ts",
+        "react/src/**/*.stories.tsx",
+        "react/.storybook/**/*",
+        "react/storybook-static/**/*"
     ]
 }

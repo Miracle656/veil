@@ -33,8 +33,9 @@ export default function LockPage() {
 
       if (keyId !== 'recovery') {
         // Decode base64url key ID → ArrayBuffer
-        const b64 = keyId.replace(/-/g, '+').replace(/_/g, '/')
-        const binary = atob(b64)
+        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const binary = atob(padded)
         const idBuffer = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) idBuffer[i] = binary.charCodeAt(i)
 
@@ -91,16 +92,18 @@ export default function LockPage() {
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
       <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem' }}>
-
-        {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
+        <header style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'center' }}>
+           {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
         <span style={{ fontFamily: 'Anton, Impact, sans-serif', fontSize: '2rem', letterSpacing: '0.08em', color: 'var(--gold)', userSelect: 'none' }}>
           VEIL
         </span>
-
+        </header>
+       
+        <main style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
         {/* Lock card */}
         <div
           className="card"
-          style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '2.5rem 2rem' }}
+          style={{ maxWidth:400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem'}}
         >
           {/* Lock icon */}
           <div style={{
@@ -116,7 +119,7 @@ export default function LockPage() {
             <h1 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.25rem', color: 'var(--off-white)' }}>
               Wallet locked
             </h1>
-            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.45)', lineHeight: 1.6 }}>
+            <p className='text-muted'>
               Your session was locked after a period of inactivity.
               <br />
               Verify your identity to continue.
@@ -147,11 +150,13 @@ export default function LockPage() {
           </button>
 
           {/* Subtle hint */}
-          <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.25)', textAlign: 'center' }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', textAlign: 'center' }}>
             Your biometric is your key — no password needed.
           </p>
         </div>
+        </main>
       </div>
     </div>
   )
 }
+

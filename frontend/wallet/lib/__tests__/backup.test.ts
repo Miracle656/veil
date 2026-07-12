@@ -1,4 +1,10 @@
 /**
+ * @jest-environment node
+ *
+ * Runs under Node (not jsdom) so Web Crypto sees same-realm ArrayBuffers —
+ * jsdom's separate realm makes the PBKDF2 `salt` fail SubtleCrypto's
+ * `instanceof ArrayBuffer` check ("Failed to normalize algorithm").
+ *
  * Tests for the wallet-level encrypted backup wiring (lib/backup.ts).
  *
  * Exercises a full round-trip through a pluggable backend, confirms the backend

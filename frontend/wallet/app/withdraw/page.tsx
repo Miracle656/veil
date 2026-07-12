@@ -268,7 +268,9 @@ export default function WithdrawPage() {
       const keyId = localStorage.getItem('invisible_wallet_key_id')
       if (!keyId) throw new Error('No passkey found. Please register the wallet first.')
       if (keyId !== 'recovery') {
-        const credIdBin = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'))
+        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const credIdBin = atob(padded)
         const credId    = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
         const challenge = crypto.getRandomValues(new Uint8Array(32))
         const assertion = await navigator.credentials.get({

@@ -1,4 +1,9 @@
 /**
+ * @jest-environment node
+ *
+ * Runs under Node (not jsdom): jsdom's separate ArrayBuffer realm makes
+ * SubtleCrypto reject same-realm buffers ("not instance of ArrayBuffer").
+ *
  * Tests for WebAuthn PRF-derived client-side encryption.
  *
  * The PRF ceremony (navigator.credentials.get) is replaced with an injected

@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Avoid overlapping release runs racing on the Version Packages PR / publish.
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Version or publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write      # npm OIDC trusted publishing + provenance signing
+      attestations: write  # upload provenance attestation to GitHub
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Build publishable packages
+        run: |
+          npm run build --workspace invisible-wallet-sdk --if-present
+          npm run build --workspace @veil/agent --if-present
+          npm run build --workspace create-veil-app --if-present
+
+      # When changeset files exist, this opens/updates a "Version Packages" PR
+      # that consumes them. When that PR is merged (versions already bumped, no
+      # changesets left), the same action runs `publish` to release to npm.
+      - name: Create Release PR or publish
+        uses: changesets/action@v1
+        with:
+          version: npm run version-packages
+          # Publishing is gated until npm trusted publishing is set up for
+          # @veil/agent, invisible-wallet-sdk and create-veil-app. A brand-new
+          # package's first publish can't be authorized by OIDC alone, so
+          # `changeset publish` E404s. Until then only the version flow runs
+          # (opens/updates the "Version Packages" PR). To enable real publishing,
+          # configure the packages on npmjs.com and set repository variable
+          # ENABLE_NPM_PUBLISH=true (Settings → Secrets and variables → Actions).
+          publish: ${{ vars.ENABLE_NPM_PUBLISH == 'true' && 'npm run release' || '' }}
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Emit npm provenance via OIDC (changesets forwards this to `npm publish`;
+          # `changeset publish` has no --provenance flag). id-token: write is granted above.
+          NPM_CONFIG_PROVENANCE: 'true'

@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { InstallBanner } from './InstallBanner'
+import { SentryInit } from './SentryInit'
 
 export const metadata: Metadata = {
   title: 'Veil Wallet',
@@ -17,13 +18,13 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
   themeColor: '#0F0F0F',
 }
+  
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       {/* Inline script runs before first paint to apply stored theme and prevent flash */}
       <head>
         <script
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         {children}
         <InstallBanner />
+        <SentryInit />
       </body>
     </html>
   )

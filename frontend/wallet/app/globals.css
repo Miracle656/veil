@@ -24,6 +24,8 @@
 
   /* Animation */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --text-muted: rgba(246, 247, 248, 0.55);
 }
 
 /* ── Light theme overrides ───────────────────────────────────────────── */
@@ -36,6 +38,7 @@
   --gold:       #C4A800;
   --teal:       #007A85;
   --navy:       #002E5D;
+  --text-muted: rgba(26, 26, 26, 0.60);
 }
 
 [data-theme="light"] .wallet-nav {
@@ -364,4 +367,10 @@ body {
 @keyframes badgePulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.5; }
+}
+
+.text-muted {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.6;
 }

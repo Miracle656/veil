@@ -125,6 +125,7 @@ export default function OnboardingPage() {
 
   return (
     <>
+    <main>
       {showTutorial && <OnboardingTutorial onComplete={handleTutorialComplete} />}
       <div className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
       <div style={{ maxWidth: 400, width: '100%' }}>
@@ -145,6 +146,9 @@ export default function OnboardingPage() {
         </div>
 
         {/* Main card */}
+        
+
+        
         {step === 'landing' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <button className="btn-gold" onClick={handleCreate}>
@@ -205,12 +209,16 @@ export default function OnboardingPage() {
         )}
 
         {/* Footer */}
-        <p style={{ textAlign: 'center', fontSize: '0.75rem', color: 'rgba(246,247,248,0.25)', marginTop: '2rem' }}>
+        <p
+        id= "tutorial-title"
+        style={{ textAlign: 'center', fontSize: '0.75rem', color: '#7c7c7c', marginTop: '2rem' }}>
           No seed phrase. No private key. Powered by{' '}
-          <span style={{ color: 'rgba(246,247,248,0.4)' }}>Stellar Soroban</span>
+          <span style={{ color: 'rgba(246,247,248,0.88)' }}>Stellar Soroban</span>
         </p>
+      
       </div>
     </div>
+    </main>
     </>
   )
 }

@@ -41,6 +41,14 @@ export async function addVirtualAuthenticator(
     automaticPresenceSimulation?: boolean;
   }
 ): Promise<VirtualAuthenticator> {
+  // Skip the first-run onboarding tutorial. It renders as a full-screen overlay
+  // whenever `veil_seen_tutorial` is unset (always, in a fresh test context) and
+  // intercepts the "Create wallet" click — force-clicking only bypasses
+  // actionability checks, the event still lands on the topmost (overlay) element.
+  await page.addInitScript(() => {
+    try { window.localStorage.setItem('veil_seen_tutorial', '1'); } catch {}
+  });
+
   const cdpSession = await page.context().newCDPSession(page);
   
   await cdpSession.send('WebAuthn.enable', { enableUI: false });

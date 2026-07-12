@@ -20,15 +20,21 @@ import { Keypair } from '@stellar/stellar-sdk'
 const SALT = new TextEncoder().encode('veil:feepayer:salt:v1')
 const INFO = new TextEncoder().encode('veil:feepayer:ed25519:v1')
 
+function base64UrlToUint8Array(value: string): Uint8Array<ArrayBuffer> {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  const binary = atob(padded)
+  const rawId = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) rawId[i] = binary.charCodeAt(i)
+  return rawId
+}
+
 /**
  * Derive a Stellar Keypair from a base64url-encoded WebAuthn credential ID.
  */
 export async function deriveFeePayerKeypair(credentialIdBase64url: string): Promise<Keypair> {
   // Decode base64url → raw bytes
-  const b64 = credentialIdBase64url.replace(/-/g, '+').replace(/_/g, '/')
-  const binary = atob(b64)
-  const rawId = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) rawId[i] = binary.charCodeAt(i)
+  const rawId = base64UrlToUint8Array(credentialIdBase64url)
 
   // HKDF: extract then expand
   const keyMaterial = await crypto.subtle.importKey(

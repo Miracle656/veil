@@ -29,7 +29,7 @@ export default function CTA() {
           initial={{ opacity: 0, y: 44 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.85, ease: [0.65, 0.05, 0.36, 1] }}
+          transition={{ duration: 0.85, ease: [0.65, 0.05, 0.36, 1] as [number, number, number, number] }}
         >
           {/* Badge */}
           <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-pill border border-white/10 bg-white/[0.03] text-xs text-[#8f8f8f] font-medium mb-8">

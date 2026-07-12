@@ -18,10 +18,17 @@ declare const BarcodeDetector: {
   new(options: { formats: string[] }): BarcodeDetectorApi
 }
 
+export function isValidStellarAddress(addr: string): boolean {
+  return (addr.startsWith('G') || addr.startsWith('C')) && addr.length === 56
+}
+
 export function QrScanner({ onScan, onClose }: QrScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [announcement, setAnnouncement] = useState('')
+  const [manualAddress, setManualAddress] = useState('')
+  const [manualError, setManualError] = useState<string | null>(null)
 
   useEffect(() => {
     let animFrame = 0
@@ -59,7 +66,8 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
             const codes = await detector.detect(video)
             for (const code of codes) {
               const addr = code.rawValue.trim()
-              if ((addr.startsWith('G') || addr.startsWith('C')) && addr.length === 56) {
+              if (isValidStellarAddress(addr)) {
+                setAnnouncement(`QR code recognized. Address: ${addr}`)
                 stop()
                 onScan(addr)
                 return
@@ -82,8 +90,22 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
     return stop
   }, [onScan])
 
+  function handleManualSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const addr = manualAddress.trim()
+    if (!isValidStellarAddress(addr)) {
+      setManualError('Enter a valid Stellar address (G... or C..., 56 characters).')
+      return
+    }
+    setManualError(null)
+    onScan(addr)
+  }
+
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Scan or enter recipient address"
       style={{
         position: 'fixed', inset: 0, zIndex: 50,
         background: 'rgba(15,15,15,0.95)',
@@ -92,6 +114,19 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
         padding: '1.5rem',
       }}
     >
+      {/* aria-live region — announces QR recognition to screen readers */}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        style={{
+          position: 'absolute', width: 1, height: 1,
+          overflow: 'hidden', clip: 'rect(0 0 0 0)',
+          whiteSpace: 'nowrap', border: 0,
+        }}
+      >
+        {announcement}
+      </div>
+
       <div style={{ width: '100%', maxWidth: 360 }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -122,6 +157,7 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
             ref={videoRef}
             muted
             playsInline
+            aria-label="Camera viewfinder for QR scanning"
             style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           />
           {/* Corner-bracket viewfinder overlay */}
@@ -154,10 +190,77 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
           </p>
         )}
 
+        {/* Fallback: manual address entry for screen-reader / no-camera users */}
+        <div style={{ marginTop: '1.25rem' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.5rem',
+            marginBottom: '0.625rem',
+          }}>
+            <div style={{ flex: 1, height: 1, background: 'rgba(246,247,248,0.15)' }} aria-hidden="true" />
+            <span style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.4)', whiteSpace: 'nowrap' }}>
+              or type / paste address
+            </span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(246,247,248,0.15)' }} aria-hidden="true" />
+          </div>
+
+          <form onSubmit={handleManualSubmit} noValidate>
+            <label
+              htmlFor="qr-manual-address"
+              style={{
+                display: 'block', fontSize: '0.6875rem',
+                color: 'rgba(246,247,248,0.5)', marginBottom: '0.375rem',
+              }}
+            >
+              Stellar address
+            </label>
+            <input
+              id="qr-manual-address"
+              type="text"
+              value={manualAddress}
+              onChange={e => { setManualAddress(e.target.value); setManualError(null) }}
+              placeholder="G... or C..."
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={manualError ? 'qr-manual-error' : undefined}
+              aria-invalid={manualError ? true : undefined}
+              style={{
+                width: '100%',
+                boxSizing: 'border-box',
+                background: 'rgba(246,247,248,0.06)',
+                border: `1px solid ${manualError ? 'rgba(255,80,80,0.6)' : 'rgba(246,247,248,0.15)'}`,
+                borderRadius: '0.5rem',
+                color: 'var(--off-white)',
+                fontSize: '0.8125rem',
+                padding: '0.5rem 0.75rem',
+                outline: 'none',
+              }}
+            />
+            {manualError && (
+              <p
+                id="qr-manual-error"
+                role="alert"
+                style={{
+                  marginTop: '0.375rem', fontSize: '0.75rem',
+                  color: 'rgba(255,100,100,0.9)',
+                }}
+              >
+                {manualError}
+              </p>
+            )}
+            <button
+              type="submit"
+              className="btn-ghost"
+              style={{ marginTop: '0.75rem', width: '100%' }}
+            >
+              Use this address
+            </button>
+          </form>
+        </div>
+
         <button
           className="btn-ghost"
           onClick={onClose}
-          style={{ marginTop: '1.25rem', width: '100%' }}
+          style={{ marginTop: '0.75rem', width: '100%' }}
         >
           Cancel
         </button>

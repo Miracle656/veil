@@ -7,6 +7,13 @@
 
 import { extractP256PublicKey, derToRawSignature } from './utils';
 
+function b64urlToUint8Array(b64: string): Uint8Array {
+    const std = b64.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = std + '='.repeat((4 - (std.length % 4)) % 4);
+    const raw = atob(padded);
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -136,14 +143,16 @@ export const webAuthnProvider: WebAuthnProvider = {
     },
 
     async authenticate({ challenge, credentialId, rpId, transports }) {
-        const credIdBin = atob(credentialId.replace(/-/g, '+').replace(/_/g, '/'));
-        const credId = Uint8Array.from(credIdBin, c => c.charCodeAt(0));
+        const credId = b64urlToUint8Array(credentialId);
+        const credIdBuf = credId.buffer.slice(
+            credId.byteOffset, credId.byteOffset + credId.byteLength
+        ) as ArrayBuffer;
 
         const assertion = await navigator.credentials.get({
             publicKey: {
                 challenge,
                 allowCredentials: [{
-                    id: credId,
+                    id: credIdBuf,
                     type: 'public-key',
                     ...(transports && transports.length ? { transports: transports as AuthenticatorTransport[] } : {}),
                 }],

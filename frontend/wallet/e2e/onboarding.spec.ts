@@ -82,6 +82,12 @@ async function seedExistingWallet(page: Page) {
 
 test.describe('Onboarding — new wallet creation', () => {
   test.beforeEach(async ({ page }) => {
+    // Skip the first-run onboarding tutorial on every navigation (incl. each
+    // test's own goto). Its full-screen overlay otherwise intercepts the
+    // "Create wallet" click. The tutorial itself is covered separately below.
+    await page.addInitScript(() => {
+      try { window.localStorage.setItem('veil_seen_tutorial', '1') } catch {}
+    })
     // Clear all storage so each test starts fresh
     await page.goto('/')
     await page.evaluate(() => {

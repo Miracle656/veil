@@ -10,6 +10,11 @@ jobs:
   security-audit:
     name: Security Audit — cargo audit
     runs-on: ubuntu-latest
+    permissions:
+      # rustsec/audit-check posts results as a check run; the default read-only
+      # GITHUB_TOKEN returned "Resource not accessible by integration".
+      contents: read
+      checks: write
     defaults:
       run:
         working-directory: contracts
@@ -19,6 +24,13 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: contracts
+          # RUSTSEC-2026-0009 (time <0.3.47, DoS via RFC 2822 parse recursion):
+          # `time` is a host/dev-only dependency — it is NOT in the wasm32 build
+          # tree (verified with `cargo tree -i time --target wasm32-unknown-unknown`),
+          # so the parsing path is unreachable in the deployed contract. Patching
+          # forward pulls time-macros, which raises the MSRV to Rust 1.88 and
+          # breaks the pinned 1.85 reproducible build.
+          ignore: RUSTSEC-2026-0009
 
   contracts:
     name: Rust contracts — build & test
@@ -51,11 +63,83 @@ jobs:
           node-version: '20'
           cache: npm
           cache-dependency-path: sdk/package-lock.json
-      - run: npm ci || npm install
+      # sdk is declared as a workspace member, so any npm command inside sdk/
+      # resolves the root manifest and desyncs against the standalone sdk
+      # lockfile — and a root/hoisted install scatters typescript, @types/jest
+      # and @stellar/stellar-sdk out of sdk/node_modules where the jest config's
+      # rootDir-based mappers expect them. Detach the root workspaces field (the
+      # CI checkout is ephemeral) so npm treats sdk/ as its own project and
+      # installs everything into sdk/node_modules, exactly as it works locally.
+      - name: Detach SDK from the workspace root
+        working-directory: ${{ github.workspace }}
+        run: node -e "const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json'));delete p.workspaces;fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+      # --legacy-peer-deps: detaching makes sdk/ the project root, so npm no
+      # longer reads the root .npmrc, and sdk's own @types/react 18 vs
+      # @types/react-dom 19 (storybook) peer set would otherwise ERESOLVE.
+      - run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
       - run: npx tsc --noEmit
       - run: npm test --if-present
+      - name: Run Jest with coverage
+        run: npx jest --coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
       - name: Bundle size budget (size-limit)
         run: npm run size
+
+  # SDK Browser Matrix — Playwright tests across browsers
+  sdk-browser-matrix:
+    name: SDK Browser Matrix — Playwright
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+      - name: Install dependencies
+        run: npm ci || npm install
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+      - name: Run Playwright (Chromium)
+        run: npx playwright test --project=chromium --reporter=html
+        env:
+          PLAYWRIGHT_HTML_REPORT: playwright-report/chromium
+      - name: Run Playwright (Firefox)
+        if: always()
+        run: npx playwright test --project=firefox --reporter=html
+        env:
+          PLAYWRIGHT_HTML_REPORT: playwright-report/firefox
+      - name: Run Playwright (Webkit)
+        if: always()
+        run: npx playwright test --project=webkit --reporter=html
+        env:
+          PLAYWRIGHT_HTML_REPORT: playwright-report/webkit
+      - name: Upload Playwright Chromium report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-chromium
+          path: sdk/playwright-report/chromium
+      - name: Upload Playwright Firefox report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-firefox
+          path: sdk/playwright-report/firefox
+      - name: Upload Playwright Webkit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-webkit
+          path: sdk/playwright-report/webkit
 
   wallet:
     name: Wallet frontend — typecheck & build
@@ -63,6 +147,13 @@ jobs:
     defaults:
       run:
         working-directory: frontend/wallet
+    # gitguardian:ignore=true — public testnet values (NEXT_PUBLIC_* are browser-exposed)
+    env:
+      NEXT_PUBLIC_NETWORK: testnet
+      NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
+      NEXT_PUBLIC_HORIZON_URL: https://horizon-testnet.stellar.org
+      NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
+      NEXT_PUBLIC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -73,13 +164,14 @@ jobs:
       - run: npm ci || npm install
       - run: npm run typecheck
       - run: npm run build
-        # gitguardian:ignore=true — public testnet values (NEXT_PUBLIC_* are browser-exposed)
-        env:
-          NEXT_PUBLIC_NETWORK: testnet
-          NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
-          NEXT_PUBLIC_HORIZON_URL: https://horizon-testnet.stellar.org
-          NEXT_PUBLIC_SOROBAN_RPC_URL: https://soroban-testnet.stellar.org
-          NEXT_PUBLIC_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
+      - name: Run Jest with coverage
+        run: npx jest --coverage
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage/lcov.info
+          fail_ci_if_error: false
 
   agent:
     name: Agent — typecheck & build

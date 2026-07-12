@@ -119,7 +119,9 @@ function validateMemo(memo: string, memoType: Sep7MemoType): void {
             // SEP-7 transmits hash/return memos base64-encoded; must decode to 32 bytes.
             let decodedLen: number;
             try {
-                decodedLen = atob(memo.replace(/-/g, '+').replace(/_/g, '/')).length;
+                const normalized = memo.replace(/-/g, '+').replace(/_/g, '/');
+                const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+                decodedLen = atob(padded).length;
             } catch {
                 throw new Sep7Error(`${memoType} memo is not valid base64`);
             }
@@ -347,3 +349,4 @@ export function buildSep7PayUri(params: Sep7PayParams): string {
     const query = pairs.map(([k, v]) => `${k}=${encode(v)}`).join('&');
     return `${SEP7_SCHEME}pay?${query}`;
 }
+

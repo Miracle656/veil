@@ -188,6 +188,19 @@ export type AddSignerResult = {
   signerIndex: number;
 };
 
+/** Result returned by a successful rotateSigner() call. */
+export type RotateSignerResult = {
+    /** The previous (rotated-out) P-256 public key bytes (65 bytes). */
+    oldPublicKeyBytes: Uint8Array;
+    /** The newly registered P-256 public key bytes (65 bytes). */
+    newPublicKeyBytes: Uint8Array;
+    /**
+     * The wallet's contract address — unchanged by the rotation. Returned so
+     * callers can assert that the address (and therefore balances) is preserved.
+     */
+    walletAddress: string;
+};
+
 /** Result returned by getSigners(). */
 export type SignerInfo = {
   /** The index of the signer in the wallet's signer list. */
@@ -257,239 +270,213 @@ export type BatchResult = {
 };
 
 export type InvisibleWallet = {
-  /** Soroban contract address of the deployed wallet, or null if not yet registered. */
-  address: string | null;
-  /** True if the wallet contract has been confirmed to exist on-chain. */
-  isDeployed: boolean;
-  isPending: boolean;
-  error: string | null;
-  /**
-   * Create a new WebAuthn credential and compute the deterministic wallet address.
-   *
-   * Pass `{ authenticatorAttachment: 'cross-platform' }` to enrol a roaming
-   * FIDO2 security key (YubiKey, etc.) as a portable signer that can sign from
-   * any device the key is plugged into. The roaming credential is persisted
-   * independently of platform passkeys — see {@link getPortableSigner}.
-   */
-  register: (
-    username?: string,
-    options?: RegisterOptions,
-  ) => Promise<RegisterResult>;
-  /**
-   * Deploy the user's wallet contract on-chain via the factory.
-   *
-   * Reads the P-256 public key stored by a prior register() call and submits
-   * a Soroban transaction to the factory contract. If the wallet is already
-   * deployed, returns the existing address without submitting a new transaction.
-   *
-   * @param signerKeypair  A traditional Stellar Keypair used as the transaction
-   *                       fee source. Separate from the passkey — pays fees only,
-   *                       does not control the wallet.
-   * @param publicKeyBytes Optional override for the P-256 public key. Defaults to
-   *                       the key stored in storage by register().
-   * @returns The deployed wallet's contract address and whether it was already live.
-   */
-  deploy: (
-    signerKeypair: Keypair | string,
-    publicKeyBytes?: Uint8Array,
-  ) => Promise<DeployResult>;
-  /**
-   * Sign a Soroban authorization entry using the stored passkey.
-   *
-   * @param signaturePayload  The 32-byte payload from the Soroban SorobanAuthorizationEntry.
-   */
-  signAuthEntry: (
-    signaturePayload: Uint8Array,
-  ) => Promise<WebAuthnSignature | null>;
-  /** Derive the counterfactual wallet address for a given P-256 public key before deployment. */
-  deriveCounterfactualAddress: (
-    publicKeyBytes: Uint8Array,
-  ) => import("./counterfactual").CounterfactualAddress;
-  /**
-   * Return the roaming FIDO2 credential persisted as a portable signer, or null
-   * if the active credential is a device-bound platform passkey. Stored under a
-   * dedicated key so it is identified independently of platform passkeys.
-   */
-  getPortableSigner: () => Promise<PortableSigner | null>;
-  /**
-   * Restore an existing wallet session from storage.
-   * Verifies that the wallet contract actually exists on-chain before setting the address.
-   */
-  login: () => Promise<{ walletAddress: string } | null>;
-  /**
-   * Read the wallet contract's current nonce without submitting a transaction.
-   * Uses `server.simulateTransaction` to invoke `get_nonce` in read-only mode.
-   *
-   * @returns The current nonce as a bigint.
-   */
-  getNonce: () => Promise<bigint>;
-  /**
-   * Register an additional P-256 public key as a valid signer on the wallet contract.
-   * Follows the simulate → build → sign → submit → poll pattern.
-   *
-   * @param signerKeypair    The Stellar Keypair used as the transaction fee source.
-   * @param newPublicKeyBytes The uncompressed P-256 public key (65 bytes) to add.
-   * @returns The index of the newly added signer.
-   */
-  addSigner: (
-    signerKeypair: Keypair,
-    newPublicKeyBytes: Uint8Array,
-  ) => Promise<AddSignerResult>;
-  /**
-   * Remove a signer from the wallet contract by index.
-   * Follows the simulate → build → sign → submit → poll pattern.
-   *
-   * @param signerKeypair The Stellar Keypair used as the transaction fee source.
-   * @param signerIndex   The index of the signer to remove.
-   */
-  removeSigner: (signerKeypair: Keypair, signerIndex: number) => Promise<void>;
-  /**
-   * Fetch the list of all registered signers from the wallet contract.
-   *
-   * @returns Array of SignerInfo objects containing index and hex public key.
-   */
-  getSigners: () => Promise<SignerInfo[]>;
-  /**
-   * Set a guardian address that can initiate key recovery for this wallet.
-   * Requires WebAuthn authentication — builds an auth entry, signs it with the
-   * stored passkey, and submits the transaction.
-   *
-   * @param signerKeypair   Stellar Keypair used as the transaction fee source.
-   * @param guardianAddress Stellar address (G...) of the guardian account.
-   */
-  setGuardian: (
-    signerKeypair: Keypair,
-    guardianAddress: string,
-  ) => Promise<void>;
-  /**
-   * Initiate guardian-based key recovery. Replaces the wallet's signer after
-   * a timelock expires. Signed using the guardian's regular Stellar keypair.
-   *
-   * @param guardianKeypair  The guardian's Stellar Keypair.
-   * @param newPublicKeyBytes Uncompressed P-256 public key (65 bytes) of the new signer.
-   * @returns The unix timestamp after which completeRecovery() can be called.
-   * @throws {NoGuardianSet} If no guardian has been configured.
-   */
-  initiateRecovery: (
-    guardianKeypair: Keypair,
-    newPublicKeyBytes: Uint8Array,
-  ) => Promise<InitiateRecoveryResult>;
-  /**
-   * Complete a pending guardian recovery after the timelock has expired.
-   * This is a permissionless call — any Stellar keypair can submit it.
-   *
-   * @param payerKeypair Any Stellar Keypair to pay the transaction fee.
-   * @throws {RecoveryTimelockActive} If the timelock has not yet expired.
-   * @throws {RecoveryNotPending}     If no recovery is in progress.
-   */
-  completeRecovery: (payerKeypair: Keypair) => Promise<void>;
-  /**
-   * Set a spending limit for a specific token and spender.
-   * Requires WebAuthn authentication.
-   *
-   * @param signerKeypair Stellar Keypair used as the transaction fee source.
-   * @param spender       Stellar address of the spender.
-   * @param token         Stellar address of the token contract.
-   * @param amount        Maximum amount the spender is allowed to spend.
-   * @param expiry        Optional Unix timestamp (seconds) when the allowance expires.
-   */
-  approve: (
-    signerKeypair: Keypair,
-    spender: string,
-    token: string,
-    amount: number,
-    expiry?: number,
-  ) => Promise<void>;
-  /**
-   * Get the current on-chain balance of this wallet from a token contract.
-   * @param token Optional token contract address. Defaults to native XLM.
-   */
-  getBalance: (
-    token?: string,
-  ) => Promise<{ address: string; amount: bigint; assetCode: string }>;
-  /**
-   * Send a payment from this wallet contract using a fee payer.
-   * @param signerKeypair Stellar Keypair or secret used to pay transaction fees.
-   * @param to Recipient address.
-   * @param amount Amount in contract units (stroops for native XLM).
-   * @param token Optional token contract address. Defaults to native XLM.
-   * @param memo Optional transaction memo.
-   */
-  sendPayment: (
-    signerKeypair: Keypair | string,
-    to: string,
-    amount: number | bigint,
-    token?: string,
-    memo?: string,
-  ) => Promise<{
-    transactionHash: string;
-    status: "PENDING" | "SUCCESS" | "FAILED";
-  }>;
-  /**
-   * Get the current allowance for a spender and token.
-   *
-   * @param spender       Stellar address of the spender.
-   * @param token         Stellar address of the token contract.
-   * @returns Object with amount and expiry, or null if no allowance exists.
-   */
-  getAllowance: (
-    spender: string,
-    token: string,
-  ) => Promise<{ amount: number; expiry: number | undefined } | null>;
-  /**
-   * The durable offline transaction outbox. Record a signed transaction here
-   * (via {@link TransactionOutbox.enqueue}) before submitting it so it can be
-   * replayed if the network call is lost. Persists through the configured
-   * StorageAdapter, so queued transactions survive a reload.
-   */
-  outbox: TransactionOutbox;
-  /**
-   * Replay any transactions still queued in the offline outbox against the
-   * network. Safe to call repeatedly — already-confirmed transactions are
-   * deduped by hash and never resubmitted (at-most-once).
-   *
-   * @returns A summary of which queued transactions confirmed, failed, were
-   *          already on-chain, or remain pending.
-   */
-  replayOutbox: (opts?: ReplayOptions) => Promise<ReplayResult>;
-  /**
-   * Execute multiple operations atomically in a single transaction with one passkey approval.
-   * All operations succeed or fail together; a single WebAuthn assertion covers all contexts.
-   *
-   * @param signerKeypair Stellar Keypair used as the transaction fee source.
-   * @param operations    Array of BatchOperation objects (contract, function, args).
-   * @returns Transaction hash, operation count, and status.
-   */
-  batch: (
-    signerKeypair: Keypair,
-    operations: BatchOperation[],
-  ) => Promise<BatchResult>;
-  /**
-   * Encrypt local app data (cached metadata, backup blobs, …) with a symmetric
-   * key derived from the user's passkey via the WebAuthn PRF extension.
-   *
-   * The first call runs an interactive PRF assertion (the same passkey gesture
-   * as signing) and caches the derived key for the session. The key is stable
-   * across sessions for the same credential, so ciphertext written in one
-   * session decrypts in the next. When PRF is unsupported, falls back to a
-   * random key persisted in the configured storage adapter — see
-   * {@link encryptionMode}.
-   *
-   * @param plaintext UTF-8 string or raw bytes to encrypt.
-   * @returns Base64 ciphertext (iv ‖ ciphertext), unreadable without the passkey.
-   */
-  encryptLocal: (plaintext: string | Uint8Array) => Promise<string>;
-  /**
-   * Decrypt a payload previously produced by {@link encryptLocal}.
-   * @returns The decoded UTF-8 plaintext.
-   */
-  decryptLocal: (payload: string) => Promise<string>;
-  /**
-   * Resolve which key-derivation path local encryption uses for the current
-   * credential: 'prf' (passkey-bound) or 'fallback' (local random key, not
-   * bound to the passkey). Useful to warn users on the weaker fallback path.
-   */
-  encryptionMode: () => Promise<"prf" | "fallback">;
+    /** Soroban contract address of the deployed wallet, or null if not yet registered. */
+    address: string | null;
+    /** True if the wallet contract has been confirmed to exist on-chain. */
+    isDeployed: boolean;
+    isPending: boolean;
+    error: string | null;
+    /**
+     * Create a new WebAuthn credential and compute the deterministic wallet address.
+     *
+     * Pass `{ authenticatorAttachment: 'cross-platform' }` to enrol a roaming
+     * FIDO2 security key (YubiKey, etc.) as a portable signer that can sign from
+     * any device the key is plugged into. The roaming credential is persisted
+     * independently of platform passkeys — see {@link getPortableSigner}.
+     */
+    register: (username?: string, options?: RegisterOptions) => Promise<RegisterResult>;
+    /**
+     * Deploy the user's wallet contract on-chain via the factory.
+     *
+     * Reads the P-256 public key stored by a prior register() call and submits
+     * a Soroban transaction to the factory contract. If the wallet is already
+     * deployed, returns the existing address without submitting a new transaction.
+     *
+     * @param signerKeypair  A traditional Stellar Keypair used as the transaction
+     *                       fee source. Separate from the passkey — pays fees only,
+     *                       does not control the wallet.
+     * @param publicKeyBytes Optional override for the P-256 public key. Defaults to
+     *                       the key stored in storage by register().
+     * @returns The deployed wallet's contract address and whether it was already live.
+     */
+    deploy: (signerKeypair: Keypair | string, publicKeyBytes?: Uint8Array) => Promise<DeployResult>;
+    /**
+     * Sign a Soroban authorization entry using the stored passkey.
+     *
+     * @param signaturePayload  The 32-byte payload from the Soroban SorobanAuthorizationEntry.
+     */
+    signAuthEntry: (signaturePayload: Uint8Array) => Promise<WebAuthnSignature | null>;
+    /** Derive the counterfactual wallet address for a given P-256 public key before deployment. */
+    deriveCounterfactualAddress: (publicKeyBytes: Uint8Array) => import('./counterfactual').CounterfactualAddress;
+    /**
+     * Return the roaming FIDO2 credential persisted as a portable signer, or null
+     * if the active credential is a device-bound platform passkey. Stored under a
+     * dedicated key so it is identified independently of platform passkeys.
+     */
+    getPortableSigner: () => Promise<PortableSigner | null>;
+    /**
+     * Restore an existing wallet session from storage.
+     * Verifies that the wallet contract actually exists on-chain before setting the address.
+     */
+    login: () => Promise<{ walletAddress: string } | null>;
+    /**
+     * Read the wallet contract's current nonce without submitting a transaction.
+     * Uses `server.simulateTransaction` to invoke `get_nonce` in read-only mode.
+     *
+     * @returns The current nonce as a bigint.
+     */
+    getNonce: () => Promise<bigint>;
+    /**
+     * Register an additional P-256 public key as a valid signer on the wallet contract.
+     * Follows the simulate → build → sign → submit → poll pattern.
+     *
+     * @param signerKeypair    The Stellar Keypair used as the transaction fee source.
+     * @param newPublicKeyBytes The uncompressed P-256 public key (65 bytes) to add.
+     * @returns The index of the newly added signer.
+     */
+    addSigner: (signerKeypair: Keypair, newPublicKeyBytes: Uint8Array) => Promise<AddSignerResult>;
+    /**
+     * Remove a signer from the wallet contract by index.
+     * Follows the simulate → build → sign → submit → poll pattern.
+     *
+     * @param signerKeypair The Stellar Keypair used as the transaction fee source.
+     * @param signerIndex   The index of the signer to remove.
+     */
+    removeSigner: (signerKeypair: Keypair, signerIndex: number) => Promise<void>;
+    /**
+     * Rotate the wallet's passkey signer without redeploying — the device-loss
+     * recovery flow. Registers a brand-new WebAuthn credential, then calls the
+     * contract's `rotate_signer(old_key, new_key)` entrypoint, authorizing the
+     * swap with the **current** passkey (an interactive assertion). The wallet
+     * address and balances are preserved; afterwards the new credential becomes
+     * the active signer in storage.
+     *
+     * Two user gestures are involved: creating the new credential, and signing
+     * the rotation with the existing one.
+     *
+     * @param signerKeypair Stellar Keypair used as the transaction fee source.
+     *                      Separate from the passkey — pays fees only.
+     * @param username      Optional display name for the new credential.
+     * @param options       Optional WebAuthn options for the new credential
+     *                      (e.g. `authenticatorAttachment`).
+     * @returns The old/new public keys and the unchanged wallet address.
+     */
+    rotateSigner: (signerKeypair: Keypair, username?: string, options?: RegisterOptions) => Promise<RotateSignerResult>;
+    /**
+     * Fetch the list of all registered signers from the wallet contract.
+     *
+     * @returns Array of SignerInfo objects containing index and hex public key.
+     */
+    getSigners: () => Promise<SignerInfo[]>;
+    /**
+     * Set a guardian address that can initiate key recovery for this wallet.
+     * Requires WebAuthn authentication — builds an auth entry, signs it with the
+     * stored passkey, and submits the transaction.
+     *
+     * @param signerKeypair   Stellar Keypair used as the transaction fee source.
+     * @param guardianAddress Stellar address (G...) of the guardian account.
+     */
+    setGuardian: (signerKeypair: Keypair, guardianAddress: string) => Promise<void>;
+    /**
+     * Initiate guardian-based key recovery. Replaces the wallet's signer after
+     * a timelock expires. Signed using the guardian's regular Stellar keypair.
+     *
+     * @param guardianKeypair  The guardian's Stellar Keypair.
+     * @param newPublicKeyBytes Uncompressed P-256 public key (65 bytes) of the new signer.
+     * @returns The unix timestamp after which completeRecovery() can be called.
+     * @throws {NoGuardianSet} If no guardian has been configured.
+     */
+    initiateRecovery: (guardianKeypair: Keypair, newPublicKeyBytes: Uint8Array) => Promise<InitiateRecoveryResult>;
+    /**
+     * Complete a pending guardian recovery after the timelock has expired.
+     * This is a permissionless call — any Stellar keypair can submit it.
+     *
+     * @param payerKeypair Any Stellar Keypair to pay the transaction fee.
+     * @throws {RecoveryTimelockActive} If the timelock has not yet expired.
+     * @throws {RecoveryNotPending}     If no recovery is in progress.
+     */
+    completeRecovery: (payerKeypair: Keypair) => Promise<void>;
+    /**
+     * Set a spending limit for a specific token and spender.
+     * Requires WebAuthn authentication.
+     *
+     * @param signerKeypair Stellar Keypair used as the transaction fee source.
+     * @param spender       Stellar address of the spender.
+     * @param token         Stellar address of the token contract.
+     * @param amount        Maximum amount the spender is allowed to spend.
+     * @param expiry        Optional Unix timestamp (seconds) when the allowance expires.
+     */
+    approve: (signerKeypair: Keypair, spender: string, token: string, amount: number, expiry?: number) => Promise<void>;
+    /**
+     * Get the current on-chain balance of this wallet from a token contract.
+     * @param token Optional token contract address. Defaults to native XLM.
+     */
+    getBalance: (token?: string) => Promise<{ address: string; amount: bigint; assetCode: string }>;
+    /**
+     * Send a payment from this wallet contract using a fee payer.
+     * @param signerKeypair Stellar Keypair or secret used to pay transaction fees.
+     * @param to Recipient address.
+     * @param amount Amount in contract units (stroops for native XLM).
+     * @param token Optional token contract address. Defaults to native XLM.
+     * @param memo Optional transaction memo.
+     */
+    sendPayment: (
+        signerKeypair: Keypair | string,
+        to: string,
+        amount: number | bigint,
+        token?: string,
+        memo?: string,
+    ) => Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }>;
+    /**
+     * Get the current allowance for a spender and token.
+     *
+     * @param spender       Stellar address of the spender.
+     * @param token         Stellar address of the token contract.
+     * @returns Object with amount and expiry, or null if no allowance exists.
+     */
+    getAllowance: (spender: string, token: string) => Promise<{ amount: number; expiry: number | undefined } | null>;
+    /**
+     * The durable offline transaction outbox. Record a signed transaction here
+     * (via {@link TransactionOutbox.enqueue}) before submitting it so it can be
+     * replayed if the network call is lost. Persists through the configured
+     * StorageAdapter, so queued transactions survive a reload.
+     */
+    outbox: TransactionOutbox;
+    /**
+     * Replay any transactions still queued in the offline outbox against the
+     * network. Safe to call repeatedly — already-confirmed transactions are
+     * deduped by hash and never resubmitted (at-most-once).
+     *
+     * @returns A summary of which queued transactions confirmed, failed, were
+     *          already on-chain, or remain pending.
+     */
+    replayOutbox: (opts?: ReplayOptions) => Promise<ReplayResult>;
+    /**
+     * Encrypt local app data (cached metadata, backup blobs, …) with a symmetric
+     * key derived from the user's passkey via the WebAuthn PRF extension.
+     *
+     * The first call runs an interactive PRF assertion (the same passkey gesture
+     * as signing) and caches the derived key for the session. The key is stable
+     * across sessions for the same credential, so ciphertext written in one
+     * session decrypts in the next. When PRF is unsupported, falls back to a
+     * random key persisted in the configured storage adapter — see
+     * {@link encryptionMode}.
+     *
+     * @param plaintext UTF-8 string or raw bytes to encrypt.
+     * @returns Base64 ciphertext (iv ‖ ciphertext), unreadable without the passkey.
+     */
+    encryptLocal: (plaintext: string | Uint8Array) => Promise<string>;
+    /**
+     * Decrypt a payload previously produced by {@link encryptLocal}.
+     * @returns The decoded UTF-8 plaintext.
+     */
+    decryptLocal: (payload: string) => Promise<string>;
+    /**
+     * Resolve which key-derivation path local encryption uses for the current
+     * credential: 'prf' (passkey-bound) or 'fallback' (local random key, not
+     * bound to the passkey). Useful to warn users on the weaker fallback path.
+     */
+    encryptionMode: () => Promise<'prf' | 'fallback'>;
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

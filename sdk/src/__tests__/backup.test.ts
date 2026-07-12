@@ -1,4 +1,9 @@
 /**
+ * @jest-environment node
+ *
+ * Runs under Node (not jsdom): jsdom's separate ArrayBuffer realm makes
+ * SubtleCrypto reject same-realm buffers ("not instance of ArrayBuffer").
+ *
  * Tests for encrypted cloud backup & cross-device restore.
  *
  * Uses Node's real Web Crypto (webcrypto) so AES-GCM authentication — and thus
