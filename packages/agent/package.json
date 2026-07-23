@@ -31,7 +31,7 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.100.1",
+    "@anthropic-ai/sdk": "^0.113.0",
     "@soroswap/sdk": "^0.4.0",
     "@stellar/stellar-sdk": "^15.1.0",
     "@x402/core": "^2.13.0",
