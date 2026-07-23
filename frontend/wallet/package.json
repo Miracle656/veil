@@ -24,7 +24,7 @@
     "@vitest/coverage-v8": "^1.3.0",
     "@walletconnect/utils": "2.17.1",
     "@walletconnect/web3wallet": "^1.16.1",
-    "framer-motion": "^12.40.0",
+    "framer-motion": "^12.42.2",
     "invisible-wallet-sdk": "file:../../sdk",
     "jsqr": "^1.4.0",
     "lucide-react": "^1.16.0",
