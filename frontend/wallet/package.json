@@ -15,7 +15,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@blend-capital/blend-sdk": "^3.2.2",
+    "@blend-capital/blend-sdk": "^3.3.0",
     "@scure/bip39": "^1.6.0",
     "@sentry/nextjs": "^8.0.0",
     "@soroswap/sdk": "^0.4.0",
