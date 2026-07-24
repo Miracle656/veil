@@ -17,6 +17,12 @@ frontend/docs/.next/
 frontend/wallet/node_modules/
 frontend/wallet/.next/
 
+# Mobile (Expo)
+frontend/mobile/node_modules/
+frontend/mobile/.expo/
+frontend/mobile/ios/
+frontend/mobile/android/
+
 # Misc
 *.env
 .DS_Store
