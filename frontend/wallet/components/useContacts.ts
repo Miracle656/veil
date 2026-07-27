@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { StrKey } from '@stellar/stellar-sdk'
+import { supabase } from '@/lib/supabase'
 
 export interface Contact {
   id: string
@@ -9,55 +10,101 @@ export interface Contact {
   address: string
 }
 
-const STORAGE_KEY = 'veil_contacts'
+/** Fetch the current wallet's C... contract address from session storage. */
+function getOwnerContract(): string | null {
+  if (typeof window === 'undefined') return null
+  return sessionStorage.getItem('invisible_wallet_address')
+}
 
 export function useContacts() {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [isLoaded, setIsLoaded] = useState(false)
 
-  // Load contacts from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      try {
-        setContacts(JSON.parse(saved))
-      } catch (err) {
-        console.error('Failed to parse contacts from localStorage', err)
-      }
+  const ownerContract = getOwnerContract()
+
+  // ── Load contacts from Supabase ──────────────────────────────────────────
+  const fetchContacts = useCallback(async () => {
+    if (!ownerContract) {
+      setIsLoaded(true)
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('id, name, address')
+      .eq('owner_contract', ownerContract)
+      .order('name', { ascending: true })
+
+    if (error) {
+      console.error('Failed to load contacts', error)
+    } else {
+      setContacts(data ?? [])
     }
     setIsLoaded(true)
-  }, [])
+  }, [ownerContract])
 
-  // Sync to localStorage whenever contacts change
   useEffect(() => {
-    if (isLoaded) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(contacts))
-    }
-  }, [contacts, isLoaded])
+    fetchContacts()
+  }, [fetchContacts])
 
-  const addContact = (name: string, address: string) => {
+  // ── Add ────────────────────────────────────────────────────────────────────
+  const addContact = useCallback(async (name: string, address: string) => {
     if (!name.trim()) throw new Error('Name is required')
     if (!StrKey.isValidEd25519PublicKey(address) && !StrKey.isValidContract(address)) {
       throw new Error('Invalid Stellar address')
     }
+    if (!ownerContract) throw new Error('No wallet connected')
 
-    const newContact: Contact = {
-      id: Date.now().toString(),
-      name: name.trim(),
-      address: address.trim(),
+    const trimmedName = name.trim()
+    const trimmedAddr = address.trim()
+
+    // Check for duplicate address in local state first (fast feedback)
+    if (contacts.some(c => c.address === trimmedAddr)) {
+      throw new Error('This address is already in your contacts')
     }
 
-    setContacts(prev => [...prev, newContact])
-    return newContact
-  }
+    const { data, error } = await supabase
+      .from('contacts')
+      .insert({
+        owner_contract: ownerContract,
+        name: trimmedName,
+        address: trimmedAddr,
+      })
+      .select('id, name, address')
+      .single()
 
-  const removeContact = (id: string) => {
-    setContacts((prev: Contact[]) => prev.filter(c => c.id !== id))
-  }
+    if (error) {
+      if (error.code === '23505') throw new Error('This address is already in your contacts')
+      throw new Error(error.message)
+    }
 
-  const updateContact = (id: string, updates: Partial<Omit<Contact, 'id'>>) => {
-    setContacts((prev: Contact[]) => prev.map(c => c.id === id ? { ...c, ...updates } : c))
-  }
+    setContacts(prev => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)))
+    return data
+  }, [ownerContract, contacts])
+
+  // ── Remove ─────────────────────────────────────────────────────────────────
+  const removeContact = useCallback(async (id: string) => {
+    const { error } = await supabase
+      .from('contacts')
+      .delete()
+      .eq('id', id)
+      .eq('owner_contract', ownerContract ?? '')
+
+    if (error) throw new Error(error.message)
+    setContacts(prev => prev.filter(c => c.id !== id))
+  }, [ownerContract])
+
+  // ── Update ─────────────────────────────────────────────────────────────────
+  const updateContact = useCallback(async (id: string, updates: Partial<Omit<Contact, 'id'>>) => {
+    const { error } = await supabase
+      .from('contacts')
+      .update(updates)
+      .eq('id', id)
+      .eq('owner_contract', ownerContract ?? '')
+
+    if (error) throw new Error(error.message)
+    setContacts(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c))
+  }, [ownerContract])
 
   return {
     contacts,
