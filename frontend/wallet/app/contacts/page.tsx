@@ -12,17 +12,29 @@ export default function ContactsPage() {
   const [address, setAddress] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
+  const [saving, setSaving] = useState(false)
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+    setSaving(true)
     try {
-      addContact(name, address)
+      await addContact(name, address)
       setName('')
       setAddress('')
       setShowAddForm(false)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleRemove = async (id: string) => {
+    try {
+      await removeContact(id)
+    } catch (err: unknown) {
+      console.error('Failed to delete contact', err)
     }
   }
 
@@ -51,7 +63,7 @@ export default function ContactsPage() {
           <button
             className="btn-gold"
             style={{ width: 'auto', padding: '0.5rem 1rem', fontSize: '0.8125rem' }}
-            onClick={() => setShowAddForm(!showAddForm)}
+            onClick={() => { setShowAddForm(!showAddForm); setError(null) }}
           >
             {showAddForm ? 'Cancel' : 'Add contact'}
           </button>
@@ -91,8 +103,8 @@ export default function ContactsPage() {
                 <p style={{ fontSize: '0.8125rem', color: 'var(--teal)' }}>{error}</p>
               )}
 
-              <button type="submit" className="btn-gold">
-                Save contact
+              <button type="submit" className="btn-gold" disabled={saving}>
+                {saving ? <span className="spinner" style={{ width: 16, height: 16 }} /> : 'Save contact'}
               </button>
             </div>
           </form>
@@ -105,8 +117,16 @@ export default function ContactsPage() {
             </div>
           ) : contacts.length === 0 ? (
             <div className="card" style={{ textAlign: 'center', padding: '3rem 2rem' }}>
-              <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)' }}>
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" style={{ margin: '0 auto 1rem' }}>
+                <circle cx="9" cy="7" r="4" stroke="rgba(246,247,248,0.2)" strokeWidth="1.5"/>
+                <path d="M2 21v-2a4 4 0 014-4h6a4 4 0 014 4v2" stroke="rgba(246,247,248,0.2)" strokeWidth="1.5" strokeLinecap="round"/>
+                <path d="M19 8v6m3-3h-6" stroke="rgba(253,218,36,0.4)" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '0.5rem' }}>
                 No contacts saved yet.
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.25)' }}>
+                Add a contact to quickly send to friends and collaborators.
               </p>
             </div>
           ) : (
@@ -121,7 +141,7 @@ export default function ContactsPage() {
                   </p>
                 </div>
                 <button
-                  onClick={() => removeContact(contact.id)}
+                  onClick={() => handleRemove(contact.id)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(246,247,248,0.3)', padding: '0.5rem' }}
                   title="Delete contact"
                 >
