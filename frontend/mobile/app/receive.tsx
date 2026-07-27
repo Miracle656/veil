@@ -1,12 +1,13 @@
+import React from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { QuickActions } from "../components/QuickActions";
+import { Stack } from "expo-router";
 
-export default function Home() {
+export default function ReceiveScreen() {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Veil Mobile</Text>
-      <Text style={styles.subtitle}>Dashboard</Text>
-      <QuickActions />
+      <Stack.Screen options={{ title: "Receive", headerShown: true }} />
+      <Text style={styles.title}>Receive</Text>
+      <Text style={styles.subtitle}>Receive tokens via QR code or address</Text>
     </View>
   );
 }
@@ -21,7 +22,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: "#FFFFFF",
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: "700",
   },
   subtitle: {
