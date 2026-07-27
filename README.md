@@ -72,10 +72,14 @@ veil/
 ├── sdk/
 │   ├── src/
 │   │   ├── useInvisibleWallet.ts  # React hook
+│   │   ├── InvisibleWalletCore.ts  # Framework-agnostic core class
 │   │   ├── webauthn.ts            # WebAuthn provider interface
 │   │   ├── webauthn.native.ts     # React Native implementation
 │   │   ├── utils.ts               # Crypto utilities
 │   │   └── index.ts               # Package exports
+│   ├── svelte/
+│   │   └── src/
+│   │       └── index.ts           # Svelte adapter with writable store
 │   └── package.json
 ├── packages/
 │   └── agent/                     # Veil AI Agent (Node.js / TypeScript)
