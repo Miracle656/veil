@@ -1,0 +1,35 @@
+appId: xyz.veil.wallet
+name: Receive
+tags:
+  - core
+  - receive
+---
+# Covers the receive path the web wallet exposes at /receive: reach the screen
+# and show an address the payer can act on.
+- runFlow: ../subflows/launch-fresh.yaml
+
+- tapOn:
+    id: "home-receive-link"
+- assertVisible:
+    id: "receive-screen"
+- assertVisible:
+    id: "receive-address"
+- assertVisible: "Share this address to get paid."
+
+# Back out and return, so the route survives more than its first mount.
+- back
+- assertVisible:
+    id: "home-screen"
+- tapOn:
+    id: "home-receive-link"
+- assertVisible:
+    id: "receive-address"
+
+# A requested amount arrives as a query parameter on the link.
+- stopApp
+- openLink: "veil://receive?amount=42&asset=XLM"
+- assertVisible:
+    id: "receive-screen"
+- assertVisible:
+    id: "receive-requested-amount"
+- assertVisible: "Requesting 42 XLM"

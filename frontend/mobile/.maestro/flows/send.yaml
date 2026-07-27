@@ -1,0 +1,42 @@
+appId: xyz.veil.wallet
+name: Send
+tags:
+  - core
+  - send
+env:
+  RECIPIENT: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+  AMOUNT: "12.5"
+---
+# Ports the send half of the web happy path (frontend/wallet/e2e/happy-path.spec.ts):
+# reach the send screen, fill the form, and confirm the values stick. Signing and
+# submission are not asserted here because the screen does not own them yet;
+# what this protects is the route and its prefill contract, which deep links and
+# SEP-7 requests both depend on.
+- runFlow: ../subflows/launch-fresh.yaml
+
+- tapOn:
+    id: "home-send-link"
+- assertVisible:
+    id: "send-screen"
+
+- tapOn:
+    id: "send-recipient-input"
+- inputText: ${RECIPIENT}
+- hideKeyboard
+
+- tapOn:
+    id: "send-amount-input"
+- inputText: ${AMOUNT}
+- hideKeyboard
+
+- assertVisible: ${RECIPIENT}
+- assertVisible: ${AMOUNT}
+
+# Prefill from a payment request. Stop the app first so this exercises the
+# cold-start path into the send form; deep-link.yaml covers the warm resume.
+- stopApp
+- openLink: "veil://send?to=${RECIPIENT}&amount=25"
+- assertVisible:
+    id: "send-screen"
+- assertVisible: ${RECIPIENT}
+- assertVisible: "25"

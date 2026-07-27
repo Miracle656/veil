@@ -1,0 +1,19 @@
+appId: xyz.veil.wallet
+---
+# Dismiss the first-run tutorial overlay if it is present.
+#
+# The `skipTutorial` launch argument set by launch-fresh.yaml is the primary
+# mechanism, exactly as the web suite pre-seeds `veil_seen_tutorial`. This is the
+# fallback for the case where the overlay renders anyway — a build that predates
+# the flag, or a device where the launch argument did not survive a warm resume.
+# Guarded by `when`, so it is a no-op until the tutorial ships (backlog #27) and
+# never becomes a hard dependency on it.
+- runFlow:
+    when:
+      visible:
+        id: "tutorial-overlay"
+    commands:
+      - tapOn:
+          id: "tutorial-skip-button"
+      - assertNotVisible:
+          id: "tutorial-overlay"

@@ -1,0 +1,61 @@
+appId: xyz.veil.wallet
+name: Passkey smoke (real device)
+tags:
+  - device
+  - passkey
+---
+# Real-device smoke test. Excluded from the default run by `excludeTags` in
+# config.yaml, because the platform biometric prompt cannot be satisfied on a
+# stock emulator or simulator — there is no enrolled credential to match, and
+# the prompt either never appears or cannot be dismissed.
+#
+# Run it against a device with Face ID / fingerprint enrolled and a screen lock
+# set:
+#
+#   maestro test --include-tags device .maestro
+#
+# Maestro cannot press a physical fingerprint sensor. On iOS the simulator's
+# "Matching Touch ID" menu item is the equivalent; on a real device the operator
+# authenticates by hand while the flow waits. Everything before and after that
+# moment is asserted automatically, so this catches the two failures that
+# actually happen in the field: the prompt never being raised, and the app not
+# recovering after it is answered.
+- runFlow: ../subflows/launch-fresh.yaml
+
+- tapOn:
+    id: "home-create-wallet-link"
+- assertVisible:
+    id: "create-wallet-screen"
+
+- tapOn:
+    id: "create-wallet-button"
+
+# The system credential sheet is drawn by the OS, so it is matched by its text
+# rather than a testID, and it is optional: once the wallet SDK lands
+# (backlog #25) the prompt is mandatory here, but the assertion must not fail
+# the flow on a build that still stubs registration out.
+- extendedWaitUntil:
+    visible:
+      text: "(?i)(face id|touch id|fingerprint|passkey|biometric)"
+    timeout: 20000
+    optional: true
+
+# Operator authenticates. The generous timeout is the human in the loop.
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-success"
+    timeout: 60000
+
+- tapOn:
+    id: "create-wallet-continue-button"
+- assertVisible:
+    id: "home-screen"
+
+# Relaunch cold. Once the credential is persisted (backlog #25) this is where the
+# unlock-with-passkey assertion goes — a passkey that only works in the session
+# that created it is the failure this smoke test exists to catch.
+- stopApp
+- launchApp
+- runFlow: ../subflows/skip-tutorial.yaml
+- assertVisible:
+    id: "home-screen"

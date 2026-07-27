@@ -16,8 +16,13 @@ Then press `i` for the iOS simulator, `a` for the Android emulator, or `w` for w
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # vitest run
+npm test            # vitest run — unit tests
+npm run e2e         # maestro — device tests on an emulator/simulator
+npm run e2e:device  # maestro — real-device passkey smoke test
 ```
+
+The Maestro suite and how to run it are documented in
+[`.maestro/README.md`](.maestro/README.md).
 
 ## Structure
 
@@ -28,6 +33,7 @@ npm test            # vitest run
 - `app/+native-intent.ts` — expo-router hook that normalises every inbound deep link.
 - `lib/deepLinks.ts` — the pure resolver those two share.
 - `app.config.ts` — Expo config, including the deep-linking surface.
+- `.maestro/` — device e2e flows (create-wallet, send, receive, deep links, passkey).
 
 Native `ios/` and `android/` folders are generated on demand (via prebuild/EAS) and
 are gitignored, along with `node_modules/` and `.expo/`.

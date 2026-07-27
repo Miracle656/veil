@@ -1,0 +1,41 @@
+appId: xyz.veil.wallet
+name: Create wallet
+tags:
+  - core
+  - onboarding
+---
+# Ports the web suite's onboarding scenarios (frontend/wallet/e2e/onboarding.spec.ts):
+# land on the entry screen, start wallet creation, observe the biometric wait
+# state, and finish on a created wallet.
+- runFlow: ../subflows/launch-fresh.yaml
+
+- tapOn:
+    id: "home-create-wallet-link"
+- assertVisible:
+    id: "create-wallet-screen"
+- assertVisible: "Create your wallet"
+
+- tapOn:
+    id: "create-wallet-button"
+
+# The waiting state is what the web suite asserts on ("Waiting for biometric…"),
+# and it is the only window in which a passkey prompt can appear. It is brief, so
+# assert on the outcome rather than racing the intermediate frame; the real
+# prompt is covered by passkey-smoke.yaml on a device that can satisfy it.
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-success"
+    timeout: 15000
+
+- tapOn:
+    id: "create-wallet-continue-button"
+- assertVisible:
+    id: "home-screen"
+
+# A warm resume returns to the app rather than restarting onboarding. Once the
+# wallet address is persisted (backlog #25) this is where the lock screen
+# assertion goes, mirroring the web suite's "redirects to /lock" case.
+- launchApp
+- runFlow: ../subflows/skip-tutorial.yaml
+- assertVisible:
+    id: "home-screen"

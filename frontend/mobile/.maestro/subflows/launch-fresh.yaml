@@ -1,0 +1,15 @@
+appId: xyz.veil.wallet
+---
+# Cold start from a wiped install: no wallet, no tutorial state, nothing carried
+# over from the previous flow. Every flow begins here so ordering between flows
+# can never leak state.
+- launchApp:
+    clearState: true
+    # Read by the first-run tutorial (backlog #27) so its overlay never
+    # intercepts the taps below. The web e2e suite does the same thing through
+    # localStorage (`veil_seen_tutorial`); this is the mobile equivalent.
+    arguments:
+      skipTutorial: true
+- runFlow: skip-tutorial.yaml
+- assertVisible:
+    id: "home-screen"
