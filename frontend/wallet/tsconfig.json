@@ -21,10 +21,7 @@
       "@veil/utils": ["../../sdk/src/utils"],
       "@veil/recovery": ["../../sdk/src/recovery/sep30"],
       "@veil/backup": ["../../sdk/src/backup"],
-      "@veil/sep7": ["../../sdk/src/sep7"],
-      "react": ["./node_modules/@types/react"],
-      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
-      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"]
+      "@veil/sep7": ["../../sdk/src/sep7"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", "**/*.d.ts", ".next/types/**/*.ts"],

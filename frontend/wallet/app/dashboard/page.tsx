@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
+import React, { Suspense, useEffect, useRef, useCallback, useState, type ReactNode } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
 import {
@@ -107,30 +107,30 @@ function DashboardPageContent() {
   const searchParams = useSearchParams()
   useInactivityLock()
 
-  const [walletAddress, setWalletAddress] = useState<string | null>(null)
-  const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
+  const [walletAddress, setWalletAddress] = useState(null as string | null)
+  const [assets, setAssets]               = useState(() => cachedAssets ?? ([] as WalletAsset[]))
   const transactions                      = useActivityFeed()
-  const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
-  const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
+  const [selectedTx, setSelectedTx]       = useState(null as TxRecord | null)
+  const [txFilter, setTxFilter]           = useState('all' as 'all' | 'transfers' | 'swaps')
   const [loading, setLoading]             = useState(cachedAssets === null)
-  const [prices, setPrices]               = useState<Record<string, number | null>>(() => cachedPrices)
+  const [prices, setPrices]               = useState(() => cachedPrices as Record<string, number | null>)
   const [isFunding, setIsFunding]         = useState(false)
-  const [fundingError, setFundingError]   = useState<string | null>(null)
+  const [fundingError, setFundingError]   = useState(null as string | null)
   const [copied, setCopied]               = useState(false)
   const [hasFeePayerKey, setHasFeePayerKey] = useState(true)
   const [agentBadge, setAgentBadge]         = useState(false)
   const [contractXlm, setContractXlm]       = useState(() => cachedContractXlm ?? 0)
   const [isSweeping, setIsSweeping]         = useState(false)
-  const [sweepError, setSweepError]         = useState<string | null>(null)
+  const [sweepError, setSweepError]         = useState(null as string | null)
   const [sweepDismissed, setSweepDismissed] = useState(false)
   const [showConnectDapp, setShowConnectDapp] = useState(false)
-  const [connectToast, setConnectToast] = useState<string | null>(null)
-  const [sep24Modal, setSep24Modal] = useState<'deposit' | 'withdraw' | null>(null)
-  const [wraithInCursor, setWraithInCursor]   = useState<string | null>(null)
-  const [wraithOutCursor, setWraithOutCursor] = useState<string | null>(null)
+  const [connectToast, setConnectToast] = useState(null as string | null)
+  const [sep24Modal, setSep24Modal] = useState(null as 'deposit' | 'withdraw' | null)
+  const [wraithInCursor, setWraithInCursor]   = useState(null as string | null)
+  const [wraithOutCursor, setWraithOutCursor] = useState(null as string | null)
   const [hasMorePages, setHasMorePages]       = useState(false)
   const [isLoadingMore, setIsLoadingMore]     = useState(false)
-  const horizonNextRef = useRef<(() => Promise<any>) | null>(null)
+  const horizonNextRef = useRef(null as (() => Promise<any>) | null)
 
   useEffect(() => {
     const stored = sessionStorage.getItem('invisible_wallet_address')
@@ -173,8 +173,8 @@ function DashboardPageContent() {
         .build()
 
       const sim = await rpcServer.simulateTransaction(balanceTx)
-      if (!SorobanRpc.Api.isSimulationError(sim)) {
-        const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
+      if (!(SorobanRpc as any).Api?.isSimulationError?.(sim) && !(SorobanRpc as any).isSimulationError?.(sim)) {
+        const result = (sim as any).result
         if (result) {
           const stroops = scValToNative(result.retval) as bigint
           contractXlm  = Number(stroops) / 10_000_000
@@ -402,7 +402,7 @@ function DashboardPageContent() {
   useEffect(() => {
     if (assets.length === 0) return
     let cancelled = false
-    fetchPrices(assets.map(a => ({ code: a.code, issuer: a.issuer }))).then(result => {
+    fetchPrices(assets.map((a: WalletAsset) => ({ code: a.code, issuer: a.issuer }))).then(result => {
       if (!cancelled) {
         cachedPrices = result
         setPrices(result)
@@ -438,7 +438,7 @@ function DashboardPageContent() {
     if (tx) setSelectedTx(tx)
   }, [searchParams, transactions])
 
-  const xlmBalance = assets.find(a => a.code === 'XLM')?.balance ?? null
+  const xlmBalance = assets.find((a: WalletAsset) => a.code === 'XLM')?.balance ?? null
 
   const handleFund = async () => {
     setIsFunding(true)
@@ -505,7 +505,7 @@ function DashboardPageContent() {
       if (!signerSecret) throw new Error('Signing key not found. Return to dashboard and tap "Set up fee-payer".')
       const feePayerKp = Keypair.fromSecret(signerSecret)
 
-      const localSignAuthEntry = async (payload: Uint8Array): Promise<WebAuthnSignature | null> => {
+      const localSignAuthEntry = async (payload: Uint8Array): Promise<any> => {
         const keyId        = localStorage.getItem('invisible_wallet_key_id')
         const publicKeyHex = localStorage.getItem('invisible_wallet_public_key')
         if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
@@ -780,6 +780,11 @@ function DashboardPageContent() {
             onClick={() => router.push('/vault')}
             icon={<path d="M7 10V7a5 5 0 0110 0v3M5 10h14v10H5V10zm7 4v3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
           />
+          <ActionButton
+            label="NFTs"
+            onClick={() => router.push('/nfts')}
+            icon={<path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
+          />
         </div>
 
         {/* ── Buy crypto ── */}
@@ -838,7 +843,7 @@ function DashboardPageContent() {
             </div>
           ) : (
             <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              {assets.map((asset, i) => {
+              {assets.map((asset: WalletAsset, i: number) => {
                 const tokenHref = asset.issuer
                   ? `/token/${asset.code}?issuer=${asset.issuer}`
                   : `/token/${asset.code}`
@@ -1105,7 +1110,7 @@ function TokenIcon({ code, size = 32 }: { code: string; size?: number }) {
   )
 }
 
-function ActionButton({ label, onClick, icon, badge }: { label: string; onClick: () => void; icon: React.ReactNode; badge?: boolean }) {
+function ActionButton({ label, onClick, icon, badge }: { label: string; onClick: () => void; icon: any; badge?: boolean }) {
   return (
     <button
       onClick={onClick}
