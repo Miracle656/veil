@@ -63,6 +63,7 @@ exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
   "useInvisibleWallet: function(arity: 1)",
   "verifyAttestation: function(arity: 1)",
   "verifyMessage: function(arity: 3)",
+  "webAuthnProvider: object",
 ]
 `;
 

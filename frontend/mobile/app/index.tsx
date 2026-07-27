@@ -4,7 +4,9 @@ export default function Home() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Veil Mobile</Text>
-      <Text style={styles.subtitle}>Placeholder home route — toolchain is live.</Text>
+      <Text style={styles.subtitle}>
+        Placeholder home route — toolchain is live.
+      </Text>
     </View>
   );
 }
