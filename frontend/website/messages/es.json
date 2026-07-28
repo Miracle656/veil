@@ -1,9 +1,9 @@
 {
   "metadata": {
     "title": "Veil — Billeteras Stellar con Passkey",
-    "description": "Una billetera inteligente sin semilla y nativa por biométricos, construida en Stellar Soroban. Sin frases semilla. Sin claves privadas. Solo tu huella dactilar.",
+    "description": "Una billetera inteligente sin frase semilla y nativa en biometría, construida sobre Stellar Soroban. Sin frases semilla. Sin claves privadas. Solo tu huella dactilar.",
     "ogTitle": "Veil — Billeteras Stellar con Passkey",
-    "ogDescription": "Tu biométrico ES tu clave. Cuentas inteligentes sin semilla en Stellar Soroban.",
+    "ogDescription": "Tu biometría ES tu clave. Cuentas inteligentes sin frase semilla en Stellar Soroban.",
     "twitterTitle": "Veil — Billeteras Stellar con Passkey",
     "twitterDescription": "Sin frases semilla. Sin claves privadas. Solo tu huella dactilar."
   },
@@ -21,14 +21,15 @@
     "title1": "La billetera inteligente",
     "title2": "que nunca ves",
     "title3": "pero siempre confías.",
-    "subtitle": "Cuentas inteligentes con passkey en Stellar Soroban. Tu biométrico es la clave — sin frase que anotar, sin clave que perder.",
+    "subtitle": "Cuentas inteligentes con passkey en Stellar Soroban. Tu biometría es la clave — sin frase que anotar, sin clave que perder.",
     "cta1": "Obtener Acceso Anticipado",
     "cta2": "Leer la Documentación",
     "builtOn": "Construido en Stellar Soroban"
   },
   "howItWorks": {
     "sectionLabel": "El Apretón de Manos Invisible",
-    "title": "Tres pasos. Cero frases.",
+    "title1": "Tres pasos.",
+    "title2": "Cero frases.",
     "steps": {
       "register": {
         "title": "Registrar",
@@ -36,11 +37,11 @@
       },
       "approve": {
         "title": "Aprobar",
-        "body": "Un prompt biométrico — Face ID, huella dactilar, Windows Hello — firma el payload de autenticación Soroban. Sin contraseña. Sin frase."
+        "body": "Una solicitud biométrica — Face ID, huella dactilar, Windows Hello — firma la carga de autenticación de Soroban. Sin contraseña. Sin frase."
       },
       "verified": {
         "title": "Verificado",
-        "body": "El contrato Soroban verifica tu firma ECDSA P-256 en cadena. Sin confianza necesaria. Invisible. Listo."
+        "body": "El contrato Soroban verifica tu firma ECDSA P-256 en cadena. Sin confianza de por medio. Invisible. Listo."
       }
     }
   },
@@ -51,7 +52,7 @@
     "bullets": {
       "noSeedPhrases": {
         "title": "Sin Frases Semilla",
-        "body": "Nada que anotar, nada que perder. Tu biométrico es la única clave que necesitas."
+        "body": "Nada que anotar, nada que perder. Tu biometría es la única clave que necesitas."
       },
       "noExtensions": {
         "title": "Sin Extensiones de Navegador",
@@ -63,7 +64,7 @@
       }
     },
     "comparison": {
-      "label": "Cómo Nos Compararmos",
+      "label": "Cómo Nos Comparamos",
       "feature": "Característica",
       "rows": {
         "noSeedPhrase": "Sin frase semilla",
@@ -74,7 +75,9 @@
         "socialRecovery": "Guardián / recuperación social"
       },
       "yes": "Sí",
-      "no": "No"
+      "no": "No",
+      "regionLabel": "Comparativa de características: Veil frente a Freighter y xBull",
+      "caption": "Comparativa de características entre las billeteras Stellar Veil, Freighter y xBull"
     }
   },
   "devQuickstart": {
@@ -88,17 +91,17 @@
   "ecosystem": {
     "title1": "El ecosistema Stellar potencia",
     "title2": "cada transacción.",
-    "description": "Las billeteras Veil son contratos de cuenta personalizados de Soroban — un primitivo nativo de Stellar. Cada transacción se liquida con la finalidad de Stellar: comisiones inferiores a un centavo, confirmación de 3 a 5 segundos y la completa seguridad de la red Stellar respaldando cada firma.",
+    "description": "Las billeteras Veil son contratos de cuenta personalizada de Soroban — una primitiva nativa de Stellar. Cada transacción se liquida con la firmeza de Stellar: comisiones inferiores a un centavo, confirmación en 3–5 segundos y toda la seguridad de la red Stellar respaldando cada firma.",
     "poweredBy": "Impulsado por Stellar"
   },
   "earlyAccess": {
     "sectionLabel": "Acceso Anticipado",
     "title1": "Firma con una mirada.",
     "title2": "Desarrolla sin compromisos.",
-    "description": "Sé el primero en construir en Veil. Estamos incorporando desarrolladores y socios de diseño antes del lanzamiento público de la Testnet.",
+    "description": "Sé el primero en construir sobre Veil. Estamos incorporando desarrolladores y socios de diseño antes del lanzamiento público de la Testnet.",
     "emailPlaceholder": "tu@correo.com",
     "joinWaitlist": "Unirse a la Lista de Espera",
-    "joining": "Uniéndose...",
+    "joining": "Enviando...",
     "error": "Algo salió mal — intenta de nuevo.",
     "success": "Estás en la lista.",
     "subtext": "Sin spam. Sin frases semilla. Obviamente."

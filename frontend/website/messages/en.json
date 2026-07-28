@@ -28,7 +28,8 @@
   },
   "howItWorks": {
     "sectionLabel": "The Invisible Handshake",
-    "title": "Three steps. Zero phrases.",
+    "title1": "Three steps.",
+    "title2": "Zero phrases.",
     "steps": {
       "register": {
         "title": "Register",
@@ -74,7 +75,9 @@
         "socialRecovery": "Guardian / social recovery"
       },
       "yes": "Yes",
-      "no": "No"
+      "no": "No",
+      "regionLabel": "Feature comparison: Veil vs Freighter vs xBull",
+      "caption": "Feature comparison between Veil, Freighter, and xBull Stellar wallets"
     }
   },
   "devQuickstart": {

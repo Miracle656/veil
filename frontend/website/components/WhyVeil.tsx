@@ -2,6 +2,7 @@
 
 import { motion } from 'framer-motion'
 import { Key, Globe, Layers } from 'lucide-react'
+import type { Messages } from '@/lib/i18n'
 
 const fadeUp = {
   hidden: { opacity: 0, y: 28 },
@@ -19,34 +20,7 @@ const stagger = {
 
 const vp = { once: true, margin: '-72px' as const }
 
-const BULLETS = [
-  {
-    Icon: Key,
-    title: 'No Seed Phrases',
-    body: 'Nothing to write down, nothing to lose. Your biometric is the only key you need.',
-  },
-  {
-    Icon: Globe,
-    title: 'No Browser Extensions',
-    body: 'Works in any modern browser. No installs, no plugins, no platform lock-in.',
-  },
-  {
-    Icon: Layers,
-    title: 'Account Abstraction',
-    body: 'Soroban custom accounts unlock gas sponsorship, multi-sig, and social recovery — built-in.',
-  },
-]
-
 const TEAL = '#00A7B5'
-
-const TABLE_ROWS = [
-  { feature: 'No seed phrase',            veil: true,  freighter: false, xbull: false },
-  { feature: 'No browser extension',      veil: true,  freighter: false, xbull: false },
-  { feature: 'Account abstraction',       veil: true,  freighter: false, xbull: false },
-  { feature: 'Biometric sign-in',         veil: true,  freighter: false, xbull: false },
-  { feature: 'On-chain key verification', veil: true,  freighter: false, xbull: false },
-  { feature: 'Guardian / social recovery',veil: true,  freighter: false, xbull: false },
-]
 
 function Check() {
   return (
@@ -70,7 +44,26 @@ function Cross() {
   )
 }
 
-export default function WhyVeil() {
+export default function WhyVeil({ t }: { t: Messages }) {
+  const bullets = [
+    { Icon: Key,    ...t.features.bullets.noSeedPhrases },
+    { Icon: Globe,  ...t.features.bullets.noExtensions },
+    { Icon: Layers, ...t.features.bullets.accountAbstraction },
+  ]
+
+  const rows = t.features.comparison.rows
+  const tableRows = [
+    { feature: rows.noSeedPhrase,        veil: true, freighter: false, xbull: false },
+    { feature: rows.noExtension,         veil: true, freighter: false, xbull: false },
+    { feature: rows.accountAbstraction,  veil: true, freighter: false, xbull: false },
+    { feature: rows.biometricSignIn,     veil: true, freighter: false, xbull: false },
+    { feature: rows.onChainVerification, veil: true, freighter: false, xbull: false },
+    { feature: rows.socialRecovery,      veil: true, freighter: false, xbull: false },
+  ]
+
+  const yes = t.features.comparison.yes
+  const no = t.features.comparison.no
+
   return (
     <section
       id="features"
@@ -91,15 +84,15 @@ export default function WhyVeil() {
             variants={fadeUp}
             className="font-anton uppercase text-gold text-[11px] tracking-[0.3em] mb-5"
           >
-            Why Veil
+            {t.features.sectionLabel}
           </motion.p>
           <motion.h2
             id="why-veil-heading"
             variants={fadeUp}
             className="font-lora font-semibold italic text-off-white text-display-sm md:text-display leading-tight"
           >
-            Invisible to attackers.<br />
-            <span className="hl">Obvious to you.</span>
+            {t.features.title1}<br />
+            <span className="hl">{t.features.title2}</span>
           </motion.h2>
         </motion.div>
 
@@ -111,7 +104,7 @@ export default function WhyVeil() {
           variants={stagger}
           className="grid sm:grid-cols-3 gap-4 mb-20"
         >
-          {BULLETS.map(({ Icon, title, body }) => (
+          {bullets.map(({ Icon, title, body }) => (
             <motion.div key={title} variants={fadeUp} className="card-dark p-7">
               <Icon
                 size={22}
@@ -141,7 +134,7 @@ export default function WhyVeil() {
             className="font-anton uppercase text-gold text-[11px] tracking-[0.3em] text-center mb-8"
             aria-hidden="true"
           >
-            How We Stack Up
+            {t.features.comparison.label}
           </p>
 
           <div
@@ -161,7 +154,7 @@ export default function WhyVeil() {
                     scope="col"
                     className="text-left font-inter text-xs text-warm-grey/50 uppercase tracking-widest px-6 py-4 w-1/2"
                   >
-                    Feature
+                    {t.features.comparison.feature}
                   </th>
                   <th
                     scope="col"
@@ -184,10 +177,10 @@ export default function WhyVeil() {
                 </tr>
               </thead>
               <tbody>
-                {TABLE_ROWS.map(({ feature, veil, freighter, xbull }, i) => (
+                {tableRows.map(({ feature, veil, freighter, xbull }, i) => (
                   <tr
                     key={feature}
-                    className={i < TABLE_ROWS.length - 1 ? 'border-b border-white/[0.05]' : ''}
+                    className={i < tableRows.length - 1 ? 'border-b border-white/[0.05]' : ''}
                   >
                     <th
                       scope="row"
@@ -197,15 +190,15 @@ export default function WhyVeil() {
                     </th>
                     <td className="text-center px-6 py-4">
                       {veil ? <Check /> : <Cross />}
-                      <span className="sr-only">{veil ? 'Yes' : 'No'}</span>
+                      <span className="sr-only">{veil ? yes : no}</span>
                     </td>
                     <td className="text-center px-6 py-4">
                       {freighter ? <Check /> : <Cross />}
-                      <span className="sr-only">{freighter ? 'Yes' : 'No'}</span>
+                      <span className="sr-only">{freighter ? yes : no}</span>
                     </td>
                     <td className="text-center px-6 py-4">
                       {xbull ? <Check /> : <Cross />}
-                      <span className="sr-only">{xbull ? 'Yes' : 'No'}</span>
+                      <span className="sr-only">{xbull ? yes : no}</span>
                     </td>
                   </tr>
                 ))}
