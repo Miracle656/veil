@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+
+import { ThemeToggle } from '../components/ThemeToggle';
+import { useTheme } from '../hooks/useTheme';
 import { getSoroswapQuote, type SwapQuote } from '../lib/soroswap';
+import type { ThemeColors } from '../lib/theme';
 
 const DEBOUNCE_MS = 600;
 const NATIVE_XLM_CONTRACT = process.env['EXPO_PUBLIC_XLM_CONTRACT_ID']?.trim() || '';
@@ -8,6 +12,8 @@ const DEFAULT_TOKEN_OUT = process.env['EXPO_PUBLIC_USDC_CONTRACT_ID']?.trim() ||
 const FEE_PAYER_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
 
 export default function SwapScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [amountIn, setAmountIn] = useState('');
   const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [isFetching, setIsFetching] = useState(false);
@@ -53,29 +59,37 @@ export default function SwapScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Swap</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Swap</Text>
+        <ThemeToggle />
+      </View>
       <Text style={styles.subtitle}>XLM → USDC</Text>
 
       <TextInput
         style={styles.input}
         placeholder="Amount (XLM)"
-        placeholderTextColor="#64748b"
+        placeholderTextColor={colors.textFaint}
         value={amountIn}
         onChangeText={setAmountIn}
         keyboardType="decimal-pad"
       />
 
-      {isFetching && <ActivityIndicator color="#6366f1" style={styles.spinner} />}
+      {isFetching && <ActivityIndicator color={colors.accent} style={styles.spinner} />}
 
       {quote && !isFetching && (
         <View style={styles.card}>
-          <Row label="You receive" value={`${(Number(quote.amountOut) / 1e7).toFixed(7)} USDC`} />
-          {rate && <Row label="Rate" value={`1 XLM ≈ ${rate} USDC`} />}
           <Row
+            styles={styles}
+            label="You receive"
+            value={`${(Number(quote.amountOut) / 1e7).toFixed(7)} USDC`}
+          />
+          {rate && <Row styles={styles} label="Rate" value={`1 XLM ≈ ${rate} USDC`} />}
+          <Row
+            styles={styles}
             label="Price impact"
             value={quote.priceImpact < 0.005 ? '< 0.01%' : `${(quote.priceImpact * 100).toFixed(2)}%`}
           />
-          <Row label="Route" value={quote.protocols.join(' · ')} />
+          <Row styles={styles} label="Route" value={quote.protocols.join(' · ')} />
         </View>
       )}
 
@@ -84,7 +98,15 @@ export default function SwapScreen() {
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({
+  styles,
+  label,
+  value,
+}: {
+  styles: SwapStyles;
+  label: string;
+  value: string;
+}) {
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -93,58 +115,66 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: '#0B0B0F',
-    padding: 24,
-    gap: 16,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: '#9BA1A6',
-    fontSize: 15,
-  },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    color: '#f1f5f9',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  spinner: {
-    marginTop: 8,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    gap: 8,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  rowLabel: {
-    color: '#94a3b8',
-    fontSize: 13,
-  },
-  rowValue: {
-    color: '#f1f5f9',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  error: {
-    color: '#f87171',
-    fontSize: 13,
-    backgroundColor: '#450a0a',
-    borderRadius: 8,
-    padding: 10,
-  },
-});
+type SwapStyles = ReturnType<typeof createStyles>;
+
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      flexGrow: 1,
+      backgroundColor: colors.background,
+      padding: 24,
+      gap: 16,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 28,
+      fontWeight: '700',
+    },
+    subtitle: {
+      color: colors.textSecondary,
+      fontSize: 15,
+    },
+    input: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      padding: 14,
+      color: colors.textPrimary,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    spinner: {
+      marginTop: 8,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      padding: 14,
+      gap: 8,
+    },
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    rowLabel: {
+      color: colors.textMuted,
+      fontSize: 13,
+    },
+    rowValue: {
+      color: colors.textPrimary,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    error: {
+      color: colors.danger,
+      fontSize: 13,
+      backgroundColor: colors.dangerSurface,
+      borderRadius: 8,
+      padding: 10,
+    },
+  });
