@@ -3,6 +3,7 @@ import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { fontAssets } from "../theme/typography";
 
@@ -27,9 +28,9 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <SafeAreaProvider>
       <Stack screenOptions={{ headerShown: false }} />
       <StatusBar style="light" />
-    </>
+    </SafeAreaProvider>
   );
 }
