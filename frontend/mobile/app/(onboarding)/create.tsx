@@ -33,7 +33,11 @@ export default function MobileOnboardingCreate() {
   const [webAuthnSupported, setWebAuthnSupported] = useState(true)
 
   const qrRef = useRef<HTMLDivElement | null>(null)
+  const qrSecretRef = useRef<HTMLDivElement | null>(null)
   const [downloading, setDownloading] = useState(false)
+
+  // Secret QR visibility (opt-in). Default false.
+  const [showSecretQr, setShowSecretQr] = useState(false)
 
   useEffect(() => {
     // feature-detect WebAuthn/platform authenticator availability
@@ -80,12 +84,7 @@ export default function MobileOnboardingCreate() {
   }
 
   // Download the rendered QR as a PNG (wrap canvas with white padding)
-  const handleDownloadQr = () => {
-    if (!qrRef.current) return
-    const canvas = qrRef.current.querySelector('canvas') as HTMLCanvasElement | null
-    if (!canvas) return
-    setDownloading(true)
-
+  const downloadCanvasAsPng = (canvas: HTMLCanvasElement, defaultName: string) => {
     const pad = 24
     const out = document.createElement('canvas')
     out.width = canvas.width + pad * 2
@@ -96,9 +95,26 @@ export default function MobileOnboardingCreate() {
     ctx.drawImage(canvas, pad, pad)
 
     const link = document.createElement('a')
-    link.download = `veil-signer-${signerPublicKey?.slice(0, 8) ?? 'key'}.png`
+    link.download = defaultName
     link.href = out.toDataURL('image/png')
     link.click()
+  }
+
+  const handleDownloadQr = () => {
+    if (!qrRef.current) return
+    const canvas = qrRef.current.querySelector('canvas') as HTMLCanvasElement | null
+    if (!canvas) return
+    setDownloading(true)
+    downloadCanvasAsPng(canvas, `veil-signer-${signerPublicKey?.slice(0, 8) ?? 'key'}.png`)
+    setDownloading(false)
+  }
+
+  const handleDownloadSecretQr = () => {
+    if (!qrSecretRef.current) return
+    const canvas = qrSecretRef.current.querySelector('canvas') as HTMLCanvasElement | null
+    if (!canvas) return
+    setDownloading(true)
+    downloadCanvasAsPng(canvas, `veil-fee-payer-secret-${signerPublicKey?.slice(0, 8) ?? 'secret'}.png`)
     setDownloading(false)
   }
 
@@ -259,6 +275,54 @@ export default function MobileOnboardingCreate() {
               </div>
             </div>
 
+            {/* Secret QR opt-in with strong warning */}
+            <div className="mt-4 p-3 border rounded bg-yellow-50">
+              <label className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={showSecretQr}
+                  onChange={(e) => setShowSecretQr(e.target.checked)}
+                />
+                <div>
+                  <div className="font-semibold">Show fee-payer secret (dangerous)</div>
+                  <div className="text-xs text-gray-600">Only reveal this on a private device. The fee-payer secret exposes the account used to pay transaction fees — treat it like any private key.</div>
+                </div>
+              </label>
+
+              {showSecretQr && signerSecret && (
+                <div className="mt-3 space-y-2">
+                  <div className="text-xs text-gray-500 mb-1">Fee-payer secret (S...)</div>
+                  <div className="rounded border px-3 py-2 font-mono break-all flex items-center justify-between">
+                    <span className="text-sm">{signerSecret}</span>
+                    <div className="flex items-center gap-2 ml-2">
+                      <button className="text-sm text-blue-600" onClick={() => copyToClipboard(signerSecret)}>Copy</button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-center gap-2">
+                    <div ref={qrSecretRef} style={{ background: '#fff', padding: 12, borderRadius: 12 }}>
+                      <QRCodeCanvas value={signerSecret} size={140} includeMargin={true} />
+                    </div>
+                    <div className="flex gap-2 w-full">
+                      <button
+                        onClick={() => copyToClipboard(signerSecret)}
+                        className="flex-1 rounded border px-3 py-2 text-sm"
+                      >
+                        Copy Secret
+                      </button>
+                      <button
+                        onClick={handleDownloadSecretQr}
+                        className="px-3 rounded bg-gray-100"
+                        disabled={downloading}
+                      >
+                        {downloading ? 'Downloading…' : 'Download Secret QR'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {fundingError && (
               <div className="text-sm text-red-600">{fundingError}</div>
             )}
@@ -282,6 +346,7 @@ export default function MobileOnboardingCreate() {
                   setSignerSecret(null)
                   setErrorMsg(null)
                   setFundingError(null)
+                  setShowSecretQr(false)
                   setStep('landing')
                 }}
                 className="px-3 rounded border"
@@ -320,6 +385,7 @@ export default function MobileOnboardingCreate() {
                   setFundingError(null)
                   setSignerPublicKey(null)
                   setSignerSecret(null)
+                  setShowSecretQr(false)
                   setStep('landing')
                 }}
                 className="flex-1 bg-teal-600 text-white rounded py-2"
