@@ -38,6 +38,8 @@ export default function MobileOnboardingCreate() {
 
   // Secret QR visibility (opt-in). Default false.
   const [showSecretQr, setShowSecretQr] = useState(false)
+  // Confirmation modal for revealing secret
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false)
 
   useEffect(() => {
     // feature-detect WebAuthn/platform authenticator availability
@@ -281,7 +283,14 @@ export default function MobileOnboardingCreate() {
                 <input
                   type="checkbox"
                   checked={showSecretQr}
-                  onChange={(e) => setShowSecretQr(e.target.checked)}
+                  onChange={(e) => {
+                    // When trying to enable, show confirmation modal first
+                    if (e.target.checked) {
+                      setConfirmModalOpen(true)
+                    } else {
+                      setShowSecretQr(false)
+                    }
+                  }}
                 />
                 <div>
                   <div className="font-semibold">Show fee-payer secret (dangerous)</div>
@@ -396,6 +405,36 @@ export default function MobileOnboardingCreate() {
           </div>
         )}
       </div>
+
+      {/* Confirmation modal */}
+      {confirmModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="max-w-md w-full bg-white rounded p-6">
+            <h3 className="text-lg font-semibold mb-2">Reveal fee-payer secret?</h3>
+            <p className="text-sm text-gray-700 mb-4">The fee-payer secret is a private key that grants control over the account used to pay transaction fees. Revealing it may expose funds if someone else copies it. Only proceed on a private, trusted device.</p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => {
+                  setConfirmModalOpen(false)
+                  setShowSecretQr(false)
+                }}
+                className="px-3 py-2 rounded border"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmModalOpen(false)
+                  setShowSecretQr(true)
+                }}
+                className="px-3 py-2 rounded bg-red-600 text-white"
+              >
+                I understand the risks — Reveal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
