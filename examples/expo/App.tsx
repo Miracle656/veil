@@ -15,13 +15,14 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useInvisibleWallet } from 'invisible-wallet-sdk';
 import { Networks } from '@stellar/stellar-sdk';
@@ -102,8 +103,10 @@ export default function App() {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.root}>
-      <ScrollView contentContainerStyle={styles.container}>
+    <SafeAreaProvider>
+      <StatusBar style="light" backgroundColor="#0a0f1e" translucent={false} />
+      <SafeAreaView style={styles.root}>
+        <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Veil Invisible Wallet</Text>
         <Text style={styles.subtitle}>React Native / Expo demo</Text>
 
@@ -171,7 +174,8 @@ export default function App() {
           )}
         </View>
       </ScrollView>
-    </SafeAreaView>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 
