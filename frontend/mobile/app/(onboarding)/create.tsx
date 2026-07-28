@@ -2,11 +2,13 @@
 
 import React, { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Keypair } from '@stellar/stellar-sdk'
+import { Horizon, Keypair } from '@stellar/stellar-sdk'
 import { useInvisibleWallet } from '@veil/sdk'
 import { deriveFeePayerKeypair } from '@/lib/deriveFeePayer'
-import { walletConfig, getNetwork } from '@/lib/network'
+import { walletConfig, getNetwork, buildFriendbotUrl } from '@/lib/network'
 import { trackWalletCreated } from '@/lib/supabase'
+
+const HorizonServer = Horizon.Server
 
 type Step = 'landing' | 'registering' | 'deploying' | 'done' | 'error'
 
@@ -42,6 +44,28 @@ export default function MobileOnboardingCreate() {
       signerKeypair = await deriveFeePayerKeypair(credentialId)
       const signerSecret = signerKeypair.secret()
 
+      // Persist the signer before deploy so a failed mainnet attempt can be retried
+      // after the account is funded externally.
+      localStorage.setItem('veil_signer_public_key', signerKeypair.publicKey())
+      localStorage.setItem('veil_signer_secret', signerSecret)
+
+      const friendbotUrl = buildFriendbotUrl(signerKeypair.publicKey())
+      if (friendbotUrl) {
+        const friendbotRes = await fetch(friendbotUrl)
+        if (!friendbotRes.ok) throw new Error('Friendbot funding failed — try again')
+      } else {
+        const horizonServer = new HorizonServer(network.horizonUrl)
+        try {
+          await horizonServer.loadAccount(signerKeypair.publicKey())
+        } catch {
+          throw new Error(
+            `Mainnet deployment requires a funded signer account. Fund ${signerKeypair.publicKey()} with XLM for fees, then tap Create wallet again.`
+          )
+        }
+      }
+
+      // Pass secret string so the SDK uses its own Keypair instance internally,
+      // avoiding XDR type mismatches between two stellar-sdk copies.
       const deployed = await wallet.deploy(signerSecret)
 
       // Persist minimal session state for dashboard
