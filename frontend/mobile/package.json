@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@gorhom/bottom-sheet": "^5.2.14",
     "@soroswap/sdk": "^0.4.0",
     "@stellar/stellar-sdk": "^14.6.1",
     "expo": "~57.0.8",
