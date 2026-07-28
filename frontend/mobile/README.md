@@ -62,3 +62,25 @@ rejects the metadata before encryption if it finds a secret-looking field.
 
 Native `ios/` and `android/` folders are generated on demand (via prebuild/EAS) and
 are gitignored, along with `node_modules/` and `.expo/`.
+
+## Multisig
+
+`/multisig` connects to a deployed M-of-N wallet
+(`contracts/multisig-wallet`) and runs the full lifecycle: an owner raises a
+transfer, owners approve it, and the approval that reaches the threshold
+executes it.
+
+There is no Execute button, because the contract has no `execute` entry point —
+`sign_transaction` performs the transfer in the same invocation that reaches the
+threshold. The screen names that approval for what it is ("Approve and execute")
+rather than implying a separate step that does not exist.
+
+Deployment stays on the desktop wizard; the contract address is stored under the
+same `veil_multisig_contract` key the web wallet uses. Point the screen at a
+network with `EXPO_PUBLIC_SOROBAN_RPC_URL` and `EXPO_PUBLIC_NETWORK_PASSPHRASE`
+(defaults to Soroban testnet).
+
+`lib/multisig.ts` holds the rules the screen applies before touching the chain —
+amount conversion, owner and duplicate-approval checks, and whether the next
+approval is the deciding one — so a rejection arrives immediately instead of as
+a contract panic after a fee.
