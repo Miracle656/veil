@@ -2,19 +2,19 @@ import type { Metadata } from 'next'
 import LandingPage from '@/components/LandingPage'
 import { getMessages } from '@/lib/i18n'
 
-const t = getMessages('en')
+const t = getMessages('es')
 
 export const metadata: Metadata = {
   title: t.metadata.title,
   description: t.metadata.description,
   alternates: {
-    canonical: '/',
+    canonical: '/es',
     languages: { en: '/', es: '/es' },
   },
   openGraph: {
     title: t.metadata.ogTitle,
     description: t.metadata.ogDescription,
-    locale: 'en_US',
+    locale: 'es_ES',
     type: 'website',
   },
   twitter: {
@@ -24,6 +24,6 @@ export const metadata: Metadata = {
   },
 }
 
-export default function Page() {
-  return <LandingPage locale="en" />
+export default function EsPage() {
+  return <LandingPage locale="es" />
 }

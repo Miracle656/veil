@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@soroswap/sdk": "^0.4.0",
+    "@stellar/stellar-sdk": "^14.6.1",
     "expo": "~57.0.8",
     "expo-constants": "~57.0.7",
     "expo-font": "~57.0.1",
