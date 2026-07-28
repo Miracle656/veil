@@ -1,12 +1,13 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Horizon, Keypair } from '@stellar/stellar-sdk'
 import { useInvisibleWallet } from '@veil/sdk'
 import { deriveFeePayerKeypair } from '@/lib/deriveFeePayer'
 import { walletConfig, getNetwork, buildFriendbotUrl } from '@/lib/network'
 import { trackWalletCreated } from '@/lib/supabase'
+import { QRCodeCanvas } from 'qrcode.react'
 
 const HorizonServer = Horizon.Server
 
@@ -30,6 +31,9 @@ export default function MobileOnboardingCreate() {
   const [fundingError, setFundingError] = useState<string | null>(null)
 
   const [webAuthnSupported, setWebAuthnSupported] = useState(true)
+
+  const qrRef = useRef<HTMLDivElement | null>(null)
+  const [downloading, setDownloading] = useState(false)
 
   useEffect(() => {
     // feature-detect WebAuthn/platform authenticator availability
@@ -73,6 +77,29 @@ export default function MobileOnboardingCreate() {
       setErrorMsg(msg)
       setStep('error')
     }
+  }
+
+  // Download the rendered QR as a PNG (wrap canvas with white padding)
+  const handleDownloadQr = () => {
+    if (!qrRef.current) return
+    const canvas = qrRef.current.querySelector('canvas') as HTMLCanvasElement | null
+    if (!canvas) return
+    setDownloading(true)
+
+    const pad = 24
+    const out = document.createElement('canvas')
+    out.width = canvas.width + pad * 2
+    out.height = canvas.height + pad * 2
+    const ctx = out.getContext('2d')!
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, out.width, out.height)
+    ctx.drawImage(canvas, pad, pad)
+
+    const link = document.createElement('a')
+    link.download = `veil-signer-${signerPublicKey?.slice(0, 8) ?? 'key'}.png`
+    link.href = out.toDataURL('image/png')
+    link.click()
+    setDownloading(false)
   }
 
   async function handleFundAndDeploy() {
@@ -208,6 +235,28 @@ export default function MobileOnboardingCreate() {
                 </div>
               </div>
               <div className="text-xs text-gray-500 mt-2">You can fund this address manually (mainnet) or let Friendbot fund it for testnet.</div>
+            </div>
+
+            {/* QR code and download */}
+            <div className="flex flex-col items-center gap-2">
+              <div ref={qrRef} style={{ background: '#fff', padding: 12, borderRadius: 12 }}>
+                <QRCodeCanvas value={signerPublicKey} size={160} includeMargin={true} />
+              </div>
+              <div className="flex gap-2 w-full">
+                <button
+                  onClick={() => copyToClipboard(signerPublicKey)}
+                  className="flex-1 rounded border px-3 py-2 text-sm"
+                >
+                  Copy Address
+                </button>
+                <button
+                  onClick={handleDownloadQr}
+                  className="px-3 rounded bg-gray-100"
+                  disabled={downloading}
+                >
+                  {downloading ? 'Downloading…' : 'Download QR'}
+                </button>
+              </div>
             </div>
 
             {fundingError && (
