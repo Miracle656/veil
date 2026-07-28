@@ -1,4 +1,4 @@
-import { Text } from 'react-native';
+import { Text, type ColorValue } from 'react-native';
 import { colors } from './ScreenScaffold';
 
 /**
@@ -19,7 +19,7 @@ const GLYPHS: Record<TabIconName, string> = {
   settings: '⚙',  // gear (miscellaneous symbol, non-emoji variant)
 };
 
-export function TabIcon({ name, color }: { name: TabIconName; color: string }) {
+export function TabIcon({ name, color }: { name: TabIconName; color: ColorValue }) {
   return (
     <Text
       accessibilityElementsHidden
