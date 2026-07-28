@@ -1,0 +1,116 @@
+{
+  "metadata": {
+    "title": "Veil — Passkey-Powered Stellar Wallets",
+    "description": "A seedless, biometric-native smart wallet built on Stellar Soroban. No seed phrases. No private keys. Just your fingerprint.",
+    "ogTitle": "Veil — Passkey-Powered Stellar Wallets",
+    "ogDescription": "Your biometric IS your key. Seedless smart accounts on Stellar Soroban.",
+    "twitterTitle": "Veil — Passkey-Powered Stellar Wallets",
+    "twitterDescription": "No seed phrases. No private keys. Just your fingerprint."
+  },
+  "nav": {
+    "howItWorks": "How It Works",
+    "features": "Features",
+    "developers": "Developers",
+    "products": "Products",
+    "ecosystem": "Ecosystem",
+    "docs": "Docs",
+    "getEarlyAccess": "Get Early Access"
+  },
+  "hero": {
+    "tagline": "No seed phrase. No compromise.",
+    "title1": "The smart wallet",
+    "title2": "you never see",
+    "title3": "but always trust.",
+    "subtitle": "Passkey-powered smart accounts on Stellar Soroban. Your biometric is the key — no phrase to write down, no key to lose.",
+    "cta1": "Get Early Access",
+    "cta2": "Read the Docs",
+    "builtOn": "Built on Stellar Soroban"
+  },
+  "howItWorks": {
+    "sectionLabel": "The Invisible Handshake",
+    "title1": "Three steps.",
+    "title2": "Zero phrases.",
+    "steps": {
+      "register": {
+        "title": "Register",
+        "body": "Your browser creates a P-256 key pair. The public key goes on-chain. The private key never leaves your device."
+      },
+      "approve": {
+        "title": "Approve",
+        "body": "A biometric prompt — Face ID, fingerprint, Windows Hello — signs the Soroban auth payload. No password. No phrase."
+      },
+      "verified": {
+        "title": "Verified",
+        "body": "The Soroban contract verifies your P-256 ECDSA signature on-chain. Trustless. Invisible. Done."
+      }
+    }
+  },
+  "features": {
+    "sectionLabel": "Why Veil",
+    "title1": "Invisible to attackers.",
+    "title2": "Obvious to you.",
+    "bullets": {
+      "noSeedPhrases": {
+        "title": "No Seed Phrases",
+        "body": "Nothing to write down, nothing to lose. Your biometric is the only key you need."
+      },
+      "noExtensions": {
+        "title": "No Browser Extensions",
+        "body": "Works in any modern browser. No installs, no plugins, no platform lock-in."
+      },
+      "accountAbstraction": {
+        "title": "Account Abstraction",
+        "body": "Soroban custom accounts unlock gas sponsorship, multi-sig, and social recovery — built-in."
+      }
+    },
+    "comparison": {
+      "label": "How We Stack Up",
+      "feature": "Feature",
+      "rows": {
+        "noSeedPhrase": "No seed phrase",
+        "noExtension": "No browser extension",
+        "accountAbstraction": "Account abstraction",
+        "biometricSignIn": "Biometric sign-in",
+        "onChainVerification": "On-chain key verification",
+        "socialRecovery": "Guardian / social recovery"
+      },
+      "yes": "Yes",
+      "no": "No",
+      "regionLabel": "Feature comparison: Veil vs Freighter vs xBull",
+      "caption": "Feature comparison between Veil, Freighter, and xBull Stellar wallets"
+    }
+  },
+  "devQuickstart": {
+    "sectionLabel": "Ship in Minutes",
+    "title1": "One hook.",
+    "title2": "Biometric auth.",
+    "title3": "On-chain.",
+    "description": "The Veil SDK wraps the full WebAuthn + Soroban pipeline into a single React hook. Register a passkey wallet, sign auth entries, and recover accounts — without touching a private key.",
+    "viewDocs": "View full docs"
+  },
+  "ecosystem": {
+    "title1": "The Stellar ecosystem powers",
+    "title2": "every transaction.",
+    "description": "Veil wallets are Soroban custom account contracts — a native Stellar primitive. Each transaction settles with Stellar finality: sub-cent fees, 3–5 second confirmation, and the full security of the Stellar network backing every signature.",
+    "poweredBy": "Powered by Stellar"
+  },
+  "earlyAccess": {
+    "sectionLabel": "Early Access",
+    "title1": "Sign with a glance.",
+    "title2": "Ship without compromise.",
+    "description": "Be first to build on Veil. We're onboarding developers and design partners ahead of the public Testnet launch.",
+    "emailPlaceholder": "your@email.com",
+    "joinWaitlist": "Join Waitlist",
+    "joining": "Joining...",
+    "error": "Something went wrong — try again.",
+    "success": "You're on the list.",
+    "subtext": "No spam. No seed phrases. Obviously."
+  },
+  "footer": {
+    "docs": "Docs",
+    "github": "GitHub",
+    "twitter": "Twitter / X",
+    "stellar": "Stellar.org",
+    "poweredBy": "Powered by Stellar Soroban · WebAuthn / FIDO2"
+  }
+}

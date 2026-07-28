@@ -43,6 +43,17 @@ matching the web wallet's standalone `useTheme`. New screens should style from
 `ThemeColors` roles rather than literal hex values, so light mode cannot be
 forgotten.
 
+## Encrypted backups
+
+`/settings/backup` exports the wallet's non-secret state — address, signer public
+keys, settings — as an AES-256-GCM envelope sealed with a user passphrase, then
+hands the file to the system share sheet.
+
+The envelope format is byte-compatible with `sdk/src/backup.ts`, so a file
+exported on mobile restores in the web wallet and vice versa. Private key
+material never enters a backup: `assertNoSecretMaterial` in `lib/backup.ts`
+rejects the metadata before encryption if it finds a secret-looking field.
+
 ## Structure
 
 - `app/_layout.tsx` — root Stack navigator (expo-router).
