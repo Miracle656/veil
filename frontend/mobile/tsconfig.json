@@ -2,13 +2,20 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
     "paths": {
       "@/*": [
         "./app/*"
       ],
       "@/assets/*": [
         "./assets/*"
-      ]
+      ],
+      "@veil/sdk": [
+        "../../sdk/src/useInvisibleWallet"
+      ],
+      "react": ["./node_modules/@types/react"],
+      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"]
     }
   },
   "include": [
