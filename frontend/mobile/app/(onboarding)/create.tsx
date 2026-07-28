@@ -71,9 +71,8 @@ export default function MobileOnboardingCreate() {
       const secret = derived.secret()
       const pub = derived.publicKey()
 
-      // Persist signer so retries are possible
+      // Persist public key so retries are possible; keep secret ephemeral in memory only
       localStorage.setItem('veil_signer_public_key', pub)
-      localStorage.setItem('veil_signer_secret', secret)
 
       setSignerPublicKey(pub)
       setSignerSecret(secret)
@@ -155,7 +154,7 @@ export default function MobileOnboardingCreate() {
       // Pass secret string so the SDK uses its own Keypair instance internally
       const deployed = await wallet.deploy(signerSecret)
 
-      // Persist minimal session state for dashboard
+      // Persist minimal session state for dashboard (keep secret only in sessionStorage)
       sessionStorage.setItem('invisible_wallet_address', deployed.walletAddress)
       sessionStorage.setItem('veil_signer_secret', signerSecret)
 
@@ -365,7 +364,7 @@ export default function MobileOnboardingCreate() {
             </div>
 
             {!buildFriendbotUrl(signerPublicKey) && (
-              <div className="text-xs text-gray-500 mt-2">No Friendbot configured for this network — if you're on mainnet, copy the public key and fund it externally before tapping Fund & Deploy.</div>
+              <div className="text-xs text-gray-500 mt-2">No Friendbot configured for this network — if you're on mainnet, copy the public key and fund it externally before tapping Fund & Deplo[...]</div>
             )}
           </div>
         )}
