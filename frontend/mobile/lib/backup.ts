@@ -267,11 +267,79 @@ export function encryptBackup(
   };
 }
 
+/**
+ * Decrypt and validate a backup envelope.
+ *
+ * Every failure mode that could hand the caller a corrupted wallet is raised as
+ * {@link BackupTamperError} rather than returning partial data: a failed GCM
+ * tag, plaintext that is not JSON, and plaintext that is JSON but missing the
+ * fields a wallet needs. A restore either produces intact metadata or throws.
+ *
+ * @throws {BackupTamperError} if authentication fails (wrong secret or tampering).
+ * @throws {BackupError}       if the envelope is malformed or an unsupported version.
+ */
+export function decryptBackup(
+  encrypted: EncryptedBackup,
+  secret: BackupSecret
+): WalletBackupMetadata {
+  if (!encrypted || typeof encrypted !== 'object') {
+    throw new BackupError('Malformed backup envelope');
+  }
+  if (encrypted.version !== BACKUP_FORMAT_VERSION) {
+    throw new BackupError(`Unsupported backup version: ${encrypted.version}`);
+  }
+  if (encrypted.algorithm !== 'AES-GCM') {
+    throw new BackupError(`Unsupported backup algorithm: ${encrypted.algorithm}`);
+  }
+
+  const wantsPassphrase = encrypted.kdf === 'PBKDF2';
+  if (wantsPassphrase !== (typeof secret === 'string')) {
+    throw new BackupError(
+      `Backup was sealed with kdf "${encrypted.kdf}" but the supplied secret does not match`
+    );
+  }
+
+  const salt = encrypted.salt ? fromBase64(encrypted.salt) : undefined;
+  const iv = fromBase64(encrypted.iv);
+  const ciphertext = fromBase64(encrypted.ciphertext);
+  const key = deriveAesKey(secret, salt, encrypted.iterations ?? DEFAULT_PBKDF2_ITERATIONS);
+
+  let plaintext: Uint8Array;
+  try {
+    plaintext = gcm(key, iv).decrypt(ciphertext);
+  } catch {
+    // GCM raises when the authentication tag does not verify — which is both
+    // "you typed the wrong passphrase" and "these bytes were altered". The two
+    // are indistinguishable by design, and both must stop the restore.
+    throw new BackupTamperError();
+  }
+
+  let metadata: WalletBackupMetadata;
+  try {
+    metadata = JSON.parse(new TextDecoder().decode(plaintext)) as WalletBackupMetadata;
+  } catch {
+    throw new BackupTamperError('Decrypted backup is not valid JSON');
+  }
+  if (!metadata || typeof metadata.address !== 'string' || !Array.isArray(metadata.signers)) {
+    throw new BackupTamperError('Decrypted backup is missing required fields');
+  }
+  return metadata;
+}
+
 // ── Serialisation ────────────────────────────────────────────────────────────────
 
 /** Serialise an envelope to the JSON string written to a backup file. */
 export function serializeBackup(encrypted: EncryptedBackup): string {
   return JSON.stringify(encrypted);
+}
+
+/** Parse a serialised envelope produced by {@link serializeBackup}. */
+export function deserializeBackup(blob: string): EncryptedBackup {
+  try {
+    return JSON.parse(blob) as EncryptedBackup;
+  } catch {
+    throw new BackupError('Backup file is not valid JSON');
+  }
 }
 
 // ── Backup identifiers ───────────────────────────────────────────────────────────
@@ -286,7 +354,7 @@ export function deriveBackupId(address: string): string {
   return `backup_${toBase64(digest).replace(/[+/=]/g, '').slice(0, 24)}`;
 }
 
-// ── Backend-driven create ────────────────────────────────────────────────────────
+// ── Backend-driven create / restore ──────────────────────────────────────────────
 
 /**
  * Encrypt a wallet backup and hand the ciphertext to a storage backend. Returns
@@ -303,4 +371,41 @@ export async function createBackup(
   const id = opts.id ?? deriveBackupId(metadata.address);
   await backend.put(id, serializeBackup(encrypted));
   return { id, encrypted };
+}
+
+/**
+ * Fetch and decrypt a wallet backup from a backend.
+ *
+ * @throws {BackupError}       if no blob exists for `id`.
+ * @throws {BackupTamperError} if the ciphertext fails authentication.
+ */
+export async function restoreBackup(
+  id: string,
+  secret: BackupSecret,
+  backend: BackupStorageBackend
+): Promise<WalletBackupMetadata> {
+  const blob = await backend.get(id);
+  if (!blob) throw new BackupError(`No backup found for id "${id}"`);
+  return decryptBackup(deserializeBackup(blob), secret);
+}
+
+/**
+ * Reconstruct wallet state with a freshly enrolled signer bound in. Used on the
+ * new device after restore: the device's new passkey public key is appended as
+ * a signer (at the next free index) so it can authorise transactions once the
+ * wallet adds it on-chain. Returns a new object; the input is not mutated.
+ */
+export function bindNewSigner(
+  metadata: WalletBackupMetadata,
+  newSignerPublicKeyHex: string
+): WalletBackupMetadata {
+  if (!newSignerPublicKeyHex) throw new BackupError('A new signer public key is required');
+  const alreadyBound = metadata.signers.some((s) => s.publicKey === newSignerPublicKeyHex);
+  if (alreadyBound) return { ...metadata, signers: [...metadata.signers] };
+
+  const nextIndex = metadata.signers.reduce((max, s) => Math.max(max, s.index), -1) + 1;
+  return {
+    ...metadata,
+    signers: [...metadata.signers, { index: nextIndex, publicKey: newSignerPublicKeyHex }],
+  };
 }
