@@ -1,10 +1,44 @@
-import { StyleSheet, Text, View } from "react-native";
+import { useEffect, useState } from "react";
+import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-export default function Home() {
+const WALLET_KEY = "invisible_wallet_address";
+const SEEN_WELCOME_KEY = "veil_seen_welcome";
+
+export default function Index() {
+  const router = useRouter();
+  const [checking, setChecking] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const wallet = await AsyncStorage.getItem(WALLET_KEY);
+        if (wallet) {
+          router.replace("/dashboard");
+          return;
+        }
+
+        const seenWelcome = await AsyncStorage.getItem(SEEN_WELCOME_KEY);
+        if (seenWelcome) {
+          router.replace("/dashboard");
+          return;
+        }
+
+        router.replace("/welcome");
+      } catch {
+        router.replace("/welcome");
+      } finally {
+        setChecking(false);
+      }
+    })();
+  }, []);
+
+  if (!checking) return null;
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Veil Mobile</Text>
-      <Text style={styles.subtitle}>Placeholder home route — toolchain is live.</Text>
+      <ActivityIndicator size="large" color="#D4A843" />
     </View>
   );
 }
@@ -15,17 +49,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: "#0B0B0F",
-    padding: 24,
-  },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 28,
-    fontWeight: "700",
-  },
-  subtitle: {
-    color: "#9BA1A6",
-    fontSize: 15,
-    marginTop: 8,
-    textAlign: "center",
   },
 });
