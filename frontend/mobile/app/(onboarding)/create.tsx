@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Horizon, Keypair } from '@stellar/stellar-sdk'
 import { useInvisibleWallet } from '@veil/sdk'
@@ -10,7 +10,7 @@ import { trackWalletCreated } from '@/lib/supabase'
 
 const HorizonServer = Horizon.Server
 
-type Step = 'landing' | 'registering' | 'deploying' | 'done' | 'error'
+type Step = 'landing' | 'registering' | 'ready' | 'funding' | 'deploying' | 'done' | 'error'
 
 export default function MobileOnboardingCreate() {
   const router = useRouter()
@@ -21,9 +21,26 @@ export default function MobileOnboardingCreate() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [username, setUsername] = useState('')
 
+  // Derived signer info shown before deploy
+  const [signerPublicKey, setSignerPublicKey] = useState<string | null>(null)
+  const [signerSecret, setSignerSecret] = useState<string | null>(null)
+
+  // Funding UI state
+  const [funding, setFunding] = useState(false)
+  const [fundingError, setFundingError] = useState<string | null>(null)
+
+  const [webAuthnSupported, setWebAuthnSupported] = useState(true)
+
+  useEffect(() => {
+    // feature-detect WebAuthn/platform authenticator availability
+    const supported = typeof window !== 'undefined' && window.isSecureContext && !!navigator.credentials
+    setWebAuthnSupported(supported)
+  }, [])
+
   async function handleCreate() {
     setErrorMsg(null)
-    let signerKeypair: Keypair | null = null
+    setFundingError(null)
+    let derived: Keypair | null = null
 
     try {
       const hasStoredPasskey =
@@ -36,36 +53,61 @@ export default function MobileOnboardingCreate() {
         if (!result) throw new Error('Registration returned no result')
       }
 
-      setStep('deploying')
-
+      // Derive deterministic fee-payer and show before deploy so user can fund/copy it
       const credentialId = localStorage.getItem('invisible_wallet_key_id')
       if (!credentialId) throw new Error('Passkey credential not found after registration')
 
-      signerKeypair = await deriveFeePayerKeypair(credentialId)
-      const signerSecret = signerKeypair.secret()
+      derived = await deriveFeePayerKeypair(credentialId)
+      const secret = derived.secret()
+      const pub = derived.publicKey()
 
-      // Persist the signer before deploy so a failed mainnet attempt can be retried
-      // after the account is funded externally.
-      localStorage.setItem('veil_signer_public_key', signerKeypair.publicKey())
-      localStorage.setItem('veil_signer_secret', signerSecret)
+      // Persist signer so retries are possible
+      localStorage.setItem('veil_signer_public_key', pub)
+      localStorage.setItem('veil_signer_secret', secret)
 
-      const friendbotUrl = buildFriendbotUrl(signerKeypair.publicKey())
+      setSignerPublicKey(pub)
+      setSignerSecret(secret)
+      setStep('ready')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrorMsg(msg)
+      setStep('error')
+    }
+  }
+
+  async function handleFundAndDeploy() {
+    setFundingError(null)
+    setErrorMsg(null)
+    setFunding(true)
+    setStep('funding')
+
+    if (!signerPublicKey || !signerSecret) {
+      setFundingError('Missing signer keys — restart the flow.')
+      setFunding(false)
+      setStep('error')
+      return
+    }
+
+    try {
+      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
       if (friendbotUrl) {
-        const friendbotRes = await fetch(friendbotUrl)
-        if (!friendbotRes.ok) throw new Error('Friendbot funding failed — try again')
+        const res = await fetch(friendbotUrl)
+        if (!res.ok) throw new Error('Friendbot funding failed — try again')
       } else {
-        const horizonServer = new HorizonServer(network.horizonUrl)
+        // Mainnet: verify the account exists (must be pre-funded externally)
+        const horizon = new HorizonServer(network.horizonUrl)
         try {
-          await horizonServer.loadAccount(signerKeypair.publicKey())
-        } catch {
+          await horizon.loadAccount(signerPublicKey)
+        } catch (e) {
           throw new Error(
-            `Mainnet deployment requires a funded signer account. Fund ${signerKeypair.publicKey()} with XLM for fees, then tap Create wallet again.`
+            `Signer account ${signerPublicKey} is not funded. Fund this address with XLM for fees, then tap Fund & Deploy again.`
           )
         }
       }
 
-      // Pass secret string so the SDK uses its own Keypair instance internally,
-      // avoiding XDR type mismatches between two stellar-sdk copies.
+      setStep('deploying')
+
+      // Pass secret string so the SDK uses its own Keypair instance internally
       const deployed = await wallet.deploy(signerSecret)
 
       // Persist minimal session state for dashboard
@@ -74,37 +116,44 @@ export default function MobileOnboardingCreate() {
 
       // Track creation (non-blocking)
       try {
-        trackWalletCreated?.(deployed.walletAddress, signerKeypair.publicKey())
+        trackWalletCreated?.(deployed.walletAddress, signerPublicKey)
       } catch (e) {
-        // ignore tracking failures
+        // ignore
       }
 
+      setFunding(false)
       setStep('done')
 
       // Navigate to dashboard
       router.replace('/dashboard')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      setErrorMsg(msg)
-      setStep('error')
-
-      // Provide a helpful fallback message if it's a network/funding issue
-      if (
-        !network.friendbotUrl &&
-        signerKeypair &&
-        !msg.includes(signerKeypair.publicKey()) &&
-        /account|source|balance|insufficient/i.test(msg)
-      ) {
-        setErrorMsg('Deployment failed due to account/funding error. Try again or check the network configuration.')
-      }
+      setFundingError(msg)
+      setFunding(false)
+      setStep('ready')
     }
   }
 
-  const busy = step !== 'landing' && step !== 'done' && step !== 'error'
+  const copyToClipboard = async (text?: string | null) => {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  const busy = step === 'registering' || funding || step === 'deploying' || step === 'funding'
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6">
       <h1 className="text-2xl font-semibold mb-4">Create a Veil Wallet</h1>
+
+      {!webAuthnSupported && (
+        <div className="mb-4 text-sm text-yellow-600">
+          WebAuthn / platform authenticator not available in this context. Ensure you are on HTTPS or http://localhost and your device supports a platform authenticator.
+        </div>
+      )}
 
       <p className="mb-4 text-sm text-muted-foreground">Use your device passkey (biometrics) to create a private smart wallet.</p>
 
@@ -113,34 +162,124 @@ export default function MobileOnboardingCreate() {
       )}
 
       <div className="w-full max-w-md">
-        <label className="block mb-2 text-sm">Username (optional)</label>
-        <input
-          className="w-full rounded border px-3 py-2 mb-4"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder="e.g. alice"
-          disabled={busy}
-        />
+        {step === 'landing' && (
+          <>
+            <label className="block mb-2 text-sm">Username (optional)</label>
+            <input
+              className="w-full rounded border px-3 py-2 mb-4"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="e.g. alice"
+              disabled={busy}
+            />
 
-        <button
-          onClick={handleCreate}
-          disabled={busy}
-          className="w-full bg-teal-600 text-white rounded py-2 disabled:opacity-60"
-        >
-          {step === 'registering' && 'Creating passkey…'}
-          {step === 'deploying' && 'Deploying wallet…'}
-          {step === 'done' && 'Done — opening dashboard'}
-          {step === 'error' && 'Retry'}
-          {step === 'landing' && 'Create Wallet'}
-        </button>
+            <button
+              onClick={handleCreate}
+              disabled={busy}
+              className="w-full bg-teal-600 text-white rounded py-2 disabled:opacity-60"
+            >
+              Create Wallet
+            </button>
 
-        <div className="mt-4 text-center text-sm text-muted-foreground">
-          {step === 'landing' && 'Tap Create Wallet to begin.'}
-          {step === 'registering' && 'Registering passkey on this device.'}
-          {step === 'deploying' && 'Deploying your wallet contract on-chain.'}
-          {step === 'done' && 'Wallet ready — redirecting…'}
-          {step === 'error' && 'An error occurred. Read the message above and try again.'}
-        </div>
+            <div className="mt-4 text-center text-sm text-muted-foreground">Tap Create Wallet to begin.</div>
+          </>
+        )}
+
+        {step === 'registering' && (
+          <div className="text-center py-6">
+            <div className="spinner" />
+            <div className="mt-3 text-sm">Creating passkey… Approve the platform authenticator prompt on your device.</div>
+          </div>
+        )}
+
+        {step === 'ready' && signerPublicKey && (
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs text-gray-500 mb-1">Derived signer public key</div>
+              <div className="rounded border px-3 py-2 font-mono break-all flex items-center justify-between">
+                <span className="text-sm">{signerPublicKey}</span>
+                <div className="flex items-center gap-2 ml-2">
+                  <button
+                    className="text-sm text-blue-600"
+                    onClick={() => copyToClipboard(signerPublicKey)}
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+              <div className="text-xs text-gray-500 mt-2">You can fund this address manually (mainnet) or let Friendbot fund it for testnet.</div>
+            </div>
+
+            {fundingError && (
+              <div className="text-sm text-red-600">{fundingError}</div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={handleFundAndDeploy}
+                disabled={busy}
+                className="flex-1 bg-purple-600 text-white rounded py-2 disabled:opacity-60"
+              >
+                {funding ? 'Funding…' : 'Fund & Deploy'}
+              </button>
+              <button
+                onClick={() => {
+                  // allow retrying registration from scratch
+                  localStorage.removeItem('invisible_wallet_key_id')
+                  localStorage.removeItem('invisible_wallet_public_key')
+                  localStorage.removeItem('veil_signer_public_key')
+                  localStorage.removeItem('veil_signer_secret')
+                  setSignerPublicKey(null)
+                  setSignerSecret(null)
+                  setErrorMsg(null)
+                  setFundingError(null)
+                  setStep('landing')
+                }}
+                className="px-3 rounded border"
+              >
+                Start over
+              </button>
+            </div>
+
+            {!buildFriendbotUrl(signerPublicKey) && (
+              <div className="text-xs text-gray-500 mt-2">No Friendbot configured for this network — if you're on mainnet, copy the public key and fund it externally before tapping Fund & Deploy.</div>
+            )}
+          </div>
+        )}
+
+        {step === 'deploying' && (
+          <div className="text-center py-6">
+            <div className="spinner" />
+            <div className="mt-3 text-sm">Deploying wallet on-chain…</div>
+          </div>
+        )}
+
+        {step === 'done' && (
+          <div className="text-center">
+            <div className="text-green-600 font-semibold mb-2">Wallet created — redirecting to dashboard…</div>
+          </div>
+        )}
+
+        {step === 'error' && (
+          <div className="space-y-3">
+            <div className="text-sm text-red-600">{errorMsg}</div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  // retry whole flow
+                  setErrorMsg(null)
+                  setFundingError(null)
+                  setSignerPublicKey(null)
+                  setSignerSecret(null)
+                  setStep('landing')
+                }}
+                className="flex-1 bg-teal-600 text-white rounded py-2"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
