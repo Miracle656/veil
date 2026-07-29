@@ -14,6 +14,8 @@ export type VeilNetwork = {
   networkPassphrase: string;
   horizonUrl: string;
   rpcUrl: string;
+  /** Wallet factory contract, or "" when it has not been configured for this network. */
+  factoryContractId: string;
 };
 
 export const NETWORKS: Record<VeilNetworkName, VeilNetwork> = {
@@ -27,6 +29,10 @@ export const NETWORKS: Record<VeilNetworkName, VeilNetwork> = {
       process.env['EXPO_PUBLIC_SOROBAN_RPC_URL']?.trim() ||
       process.env['EXPO_PUBLIC_RPC_URL']?.trim() ||
       'https://soroban-testnet.stellar.org',
+    factoryContractId:
+      process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID_TESTNET']?.trim() ||
+      process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID']?.trim() ||
+      '',
   },
   mainnet: {
     name: 'mainnet',
@@ -34,6 +40,7 @@ export const NETWORKS: Record<VeilNetworkName, VeilNetwork> = {
     networkPassphrase: Networks.PUBLIC,
     horizonUrl: process.env['EXPO_PUBLIC_HORIZON_URL']?.trim() || 'https://horizon.stellar.org',
     rpcUrl: process.env['EXPO_PUBLIC_MAINNET_RPC_URL']?.trim() || '',
+    factoryContractId: process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID_MAINNET']?.trim() || '',
   },
 };
 
