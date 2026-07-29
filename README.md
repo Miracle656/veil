@@ -334,6 +334,28 @@ function App() {
 }
 ```
 
+### With Svelte
+
+```ts
+import { createWalletStore } from '@veil/invisible-wallet-svelte';
+
+const wallet = createWalletStore({
+  factoryAddress: FACTORY_CONTRACT_ID,
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+});
+
+// $wallet reactively reflects { status, walletAddress, error }
+await wallet.register('alice');
+await wallet.deploy(feePayerSecret);
+const sig = await wallet.sign(signaturePayload);
+await wallet.send(feePayerSecret, to, amountInStroops);
+```
+
+See [`sdk/svelte`](sdk/svelte) for the adapter and
+[`examples/sveltekit`](examples/sveltekit) for a full register/dashboard/send
+example.
+
 ### Without a framework
 
 ```js

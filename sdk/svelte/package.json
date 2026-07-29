@@ -1,0 +1,23 @@
+{
+  "name": "@veil/invisible-wallet-svelte",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Svelte bindings for the Invisible Wallet SDK — a writable store plus register/login/sign/send/deploy helpers",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.1.0",
+    "invisible-wallet-sdk": "file:.."
+  },
+  "peerDependencies": {
+    "svelte": ">=4.0.0"
+  },
+  "devDependencies": {
+    "svelte": "^4.2.19",
+    "typescript": "^5.4.0"
+  }
+}
