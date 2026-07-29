@@ -71,7 +71,15 @@ describe('encryptBackup / decryptBackup', () => {
     const sealed = await encryptBackup(metadata, 'pw')
     const blob = serializeBackup(sealed)
     expect(blob).not.toContain('CWALLETADDRESS1234567890')
-    expect(blob).not.toContain('USD')
+
+    // Short markers must be searched in the decoded ciphertext, not in the
+    // base64 envelope: base64 draws from a 64-symbol alphabet, so a 3-letter
+    // token like the currency code turns up by chance in a ~700-character
+    // encoding roughly once every few hundred runs and fails CI at random.
+    const plaintextBytes = Buffer.from(sealed.ciphertext, 'base64').toString('latin1')
+    expect(plaintextBytes).not.toContain('USD')
+    expect(plaintextBytes).not.toContain('CWALLETADDRESS1234567890')
+
     expect(sealed.algorithm).toBe('AES-GCM')
     expect(sealed.kdf).toBe('PBKDF2')
     expect(typeof sealed.salt).toBe('string')
