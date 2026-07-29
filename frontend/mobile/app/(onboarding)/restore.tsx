@@ -1,8 +1,9 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "expo-router";
 import { LockKeyhole, Fingerprint, AlertCircle } from "lucide-react-native";
-import { requirePasskey } from "@/lib/passkeyAuth";
-import { useInvisibleWallet } from "@/lib/wallet";
+import * as SecureStore from "expo-secure-store";
+import { requirePasskey } from "../../lib/passkeyAuth";
+import { useInvisibleWallet } from "../../lib/wallet";
 
 // ── Restore screen ───────────────────────────────────────────────────────────────
 export default function RestorePage() {
@@ -22,7 +23,7 @@ export default function RestorePage() {
     setIsUnlocking(true);
 
     try {
-      const keyId = localStorage.getItem("invisible_wallet_key_id");
+      const keyId = await SecureStore.getItemAsync("invisible_wallet_key_id");
       if (!keyId) {
         setError("No passkey found. Please register again.");
         return;
