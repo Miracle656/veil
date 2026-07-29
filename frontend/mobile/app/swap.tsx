@@ -1,150 +1,303 @@
-import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { getSoroswapQuote, type SwapQuote } from '../lib/soroswap';
+import { useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-const DEBOUNCE_MS = 600;
-const NATIVE_XLM_CONTRACT = process.env['EXPO_PUBLIC_XLM_CONTRACT_ID']?.trim() || '';
-const DEFAULT_TOKEN_OUT = process.env['EXPO_PUBLIC_USDC_CONTRACT_ID']?.trim() || '';
-const FEE_PAYER_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
+import { Button, Card, Screen } from "../components/ui";
+import { colors } from "../theme/colors";
+import { fontFamily, typography } from "../theme/typography";
 
+type Token = { code: string; name: string };
+
+const TOKENS: Token[] = [
+  { code: "XLM", name: "Stellar Lumens" },
+  { code: "USDC", name: "USD Coin" },
+  { code: "EURC", name: "Euro Coin" },
+  { code: "AQUA", name: "Aquarius" },
+];
+
+/**
+ * Swap surface (`/swap`) — ports the layout of the web wallet's swap page
+ * (`frontend/wallet/app/swap/page.tsx`): in/out token selectors and the amount
+ * input. Quoting (backlog #45) and execution (backlog #46) fill in later, so
+ * the receive amount and quote area render an empty state for now.
+ */
 export default function SwapScreen() {
-  const [amountIn, setAmountIn] = useState('');
-  const [quote, setQuote] = useState<SwapQuote | null>(null);
-  const [isFetching, setIsFetching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]!);
+  const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]!);
+  const [amountIn, setAmountIn] = useState("");
+  const [picker, setPicker] = useState<null | "in" | "out">(null);
 
-  useEffect(() => {
-    const parsed = parseFloat(amountIn);
-    if (!amountIn || isNaN(parsed) || parsed <= 0) {
-      setQuote(null);
-      setError(null);
-      return;
+  const hasAmount = Number(amountIn) > 0;
+
+  function handleSelect(token: Token) {
+    if (picker === "in") {
+      if (token.code === tokenOut.code) setTokenOut(tokenIn);
+      setTokenIn(token);
+    } else if (picker === "out") {
+      if (token.code === tokenIn.code) setTokenIn(tokenOut);
+      setTokenOut(token);
     }
+    setPicker(null);
+  }
 
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(async () => {
-      setIsFetching(true);
-      setError(null);
-      const amountInStroops = Math.round(parsed * 1e7).toString();
-      const result = await getSoroswapQuote({
-        tokenIn: NATIVE_XLM_CONTRACT,
-        tokenOut: DEFAULT_TOKEN_OUT,
-        amountIn: amountInStroops,
-        slippageBps: 50,
-        feePayerAddress: FEE_PAYER_ADDRESS,
-      });
-      if (result) {
-        setQuote(result);
-      } else {
-        setQuote(null);
-        setError('No live quote available for this pair.');
-      }
-      setIsFetching(false);
-    }, DEBOUNCE_MS);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [amountIn]);
-
-  const rate =
-    quote && amountIn ? (Number(quote.amountOut) / 1e7 / parseFloat(amountIn)).toFixed(4) : null;
+  function flip() {
+    setTokenIn(tokenOut);
+    setTokenOut(tokenIn);
+  }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Swap</Text>
-      <Text style={styles.subtitle}>XLM → USDC</Text>
+    <Screen>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={[typography.heading, styles.title]}>Swap tokens</Text>
 
-      <TextInput
-        style={styles.input}
-        placeholder="Amount (XLM)"
-        placeholderTextColor="#64748b"
-        value={amountIn}
-        onChangeText={setAmountIn}
-        keyboardType="decimal-pad"
-      />
+        {/* You pay */}
+        <Card style={styles.leg}>
+          <View style={styles.legHeader}>
+            <Text style={styles.legLabel}>YOU PAY</Text>
+            <Text style={styles.balance}>Balance —</Text>
+          </View>
+          <View style={styles.legRow}>
+            <TokenButton token={tokenIn} onPress={() => setPicker("in")} />
+            <TextInput
+              style={styles.amountInput}
+              value={amountIn}
+              onChangeText={setAmountIn}
+              placeholder="0.00"
+              placeholderTextColor="rgba(246,247,248,0.3)"
+              keyboardType="decimal-pad"
+              textAlign="right"
+            />
+          </View>
+        </Card>
 
-      {isFetching && <ActivityIndicator color="#6366f1" style={styles.spinner} />}
-
-      {quote && !isFetching && (
-        <View style={styles.card}>
-          <Row label="You receive" value={`${(Number(quote.amountOut) / 1e7).toFixed(7)} USDC`} />
-          {rate && <Row label="Rate" value={`1 XLM ≈ ${rate} USDC`} />}
-          <Row
-            label="Price impact"
-            value={quote.priceImpact < 0.005 ? '< 0.01%' : `${(quote.priceImpact * 100).toFixed(2)}%`}
-          />
-          <Row label="Route" value={quote.protocols.join(' · ')} />
+        {/* Flip direction */}
+        <View style={styles.flipWrap}>
+          <Pressable
+            onPress={flip}
+            accessibilityRole="button"
+            accessibilityLabel="Swap direction"
+            style={styles.flipButton}
+          >
+            <Text style={styles.flipIcon}>↓</Text>
+          </Pressable>
         </View>
-      )}
 
-      {error && !isFetching && <Text style={styles.error}>{error}</Text>}
-    </ScrollView>
+        {/* You receive */}
+        <Card style={styles.leg}>
+          <View style={styles.legHeader}>
+            <Text style={styles.legLabel}>YOU RECEIVE</Text>
+          </View>
+          <View style={styles.legRow}>
+            <TokenButton token={tokenOut} onPress={() => setPicker("out")} />
+            <Text style={[styles.amountInput, styles.amountOut]}>0.00</Text>
+          </View>
+        </Card>
+
+        {/* Quote area — empty until quoting lands (backlog #45) */}
+        <Card variant="md" style={styles.quote}>
+          <Text style={styles.quoteTitle}>{hasAmount ? "No quote yet" : "Enter an amount"}</Text>
+          <Text style={styles.quoteBody}>
+            {hasAmount
+              ? "Live quotes arrive in a later update."
+              : "Enter an amount above to see what you’ll receive."}
+          </Text>
+        </Card>
+
+        <Button label="Review swap" variant="gold" disabled={!hasAmount} />
+      </ScrollView>
+
+      <Modal
+        visible={picker !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPicker(null)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setPicker(null)} />
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle}>Select a token</Text>
+            {TOKENS.map((t) => (
+              <Pressable key={t.code} style={styles.tokenRow} onPress={() => handleSelect(t)}>
+                <View style={styles.tokenDot} />
+                <View style={styles.tokenRowText}>
+                  <Text style={styles.tokenRowCode}>{t.code}</Text>
+                  <Text style={styles.tokenRowName}>{t.name}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Modal>
+    </Screen>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function TokenButton({ token, onPress }: { token: Token; onPress: () => void }) {
   return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue}>{value}</Text>
-    </View>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Select token, currently ${token.code}`}
+      style={styles.tokenButton}
+    >
+      <View style={styles.tokenDot} />
+      <Text style={styles.tokenCode}>{token.code}</Text>
+      <Text style={styles.chevron}>▾</Text>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: '#0B0B0F',
-    padding: 24,
-    gap: 16,
+  content: {
+    gap: 12,
+    paddingVertical: 24,
   },
   title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
+    color: colors.offWhite,
+    marginBottom: 8,
   },
-  subtitle: {
-    color: '#9BA1A6',
-    fontSize: 15,
+  leg: {
+    padding: 20,
   },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    color: '#f1f5f9',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
+  legHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
   },
-  spinner: {
-    marginTop: 8,
+  legLabel: {
+    fontFamily: fontFamily.accent,
+    fontSize: 12,
+    letterSpacing: 1,
+    color: "rgba(246,247,248,0.4)",
   },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
+  balance: {
+    fontFamily: fontFamily.body,
+    fontSize: 12,
+    color: "rgba(246,247,248,0.3)",
+  },
+  legRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  tokenButton: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 8,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  rowLabel: {
-    color: '#94a3b8',
-    fontSize: 13,
-  },
-  rowValue: {
-    color: '#f1f5f9',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  error: {
-    color: '#f87171',
-    fontSize: 13,
-    backgroundColor: '#450a0a',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 8,
-    padding: 10,
+    backgroundColor: colors.surfaceMd,
+  },
+  tokenDot: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.goldSoft,
+    borderWidth: 1,
+    borderColor: colors.goldBorder,
+  },
+  tokenCode: {
+    fontFamily: fontFamily.bodySemiBold,
+    fontSize: 15,
+    color: colors.offWhite,
+  },
+  chevron: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  amountInput: {
+    flex: 1,
+    fontFamily: fontFamily.body,
+    fontSize: 24,
+    color: colors.offWhite,
+    padding: 0,
+  },
+  amountOut: {
+    color: "rgba(246,247,248,0.45)",
+  },
+  flipWrap: {
+    alignItems: "center",
+    marginVertical: -4,
+  },
+  flipButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.surfaceMd,
+    borderWidth: 1,
+    borderColor: colors.borderDim,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  flipIcon: {
+    fontSize: 18,
+    color: colors.gold,
+    lineHeight: 20,
+  },
+  quote: {
+    padding: 16,
+    gap: 4,
+  },
+  quoteTitle: {
+    fontFamily: fontFamily.bodySemiBold,
+    fontSize: 14,
+    color: colors.offWhite,
+  },
+  quoteBody: {
+    fontFamily: fontFamily.body,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textMuted,
+  },
+  modalRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  backdrop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.6)",
+  },
+  sheet: {
+    backgroundColor: "#141418",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    borderColor: colors.borderDim,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 32,
+    gap: 4,
+  },
+  sheetTitle: {
+    fontFamily: fontFamily.accent,
+    fontSize: 12,
+    letterSpacing: 1,
+    color: colors.textMuted,
+    marginBottom: 8,
+  },
+  tokenRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+  },
+  tokenRowText: {
+    flex: 1,
+  },
+  tokenRowCode: {
+    fontFamily: fontFamily.bodySemiBold,
+    fontSize: 15,
+    color: colors.offWhite,
+  },
+  tokenRowName: {
+    fontFamily: fontFamily.body,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 2,
   },
 });

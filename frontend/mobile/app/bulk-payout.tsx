@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -9,6 +9,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
+import { ThemeToggle } from '../components/ThemeToggle';
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
 import {
   executeBulkPayout,
   isRowValid,
@@ -20,6 +24,8 @@ import {
 type Step = 'form' | 'submitting' | 'done';
 
 export default function BulkPayoutScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [rows, setRows] = useState<PayoutRow[]>([]);
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
@@ -96,14 +102,17 @@ export default function BulkPayoutScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Bulk payout</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Bulk payout</Text>
+        <ThemeToggle />
+      </View>
       <Text style={styles.subtitle}>Add recipients, then sign once for the whole batch.</Text>
 
       <View style={styles.form}>
         <TextInput
           style={styles.input}
           placeholder="Recipient address (G...)"
-          placeholderTextColor="#64748b"
+          placeholderTextColor={colors.textFaint}
           value={recipient}
           onChangeText={setRecipient}
           autoCapitalize="none"
@@ -113,7 +122,7 @@ export default function BulkPayoutScreen() {
           <TextInput
             style={[styles.input, styles.inputFlex]}
             placeholder="Amount"
-            placeholderTextColor="#64748b"
+            placeholderTextColor={colors.textFaint}
             value={amount}
             onChangeText={setAmount}
             keyboardType="decimal-pad"
@@ -121,7 +130,7 @@ export default function BulkPayoutScreen() {
           <TextInput
             style={[styles.input, styles.inputAsset]}
             placeholder="Asset"
-            placeholderTextColor="#64748b"
+            placeholderTextColor={colors.textFaint}
             value={asset}
             onChangeText={setAsset}
             autoCapitalize="characters"
@@ -168,7 +177,7 @@ export default function BulkPayoutScreen() {
         disabled={rows.length === 0 || step === 'submitting'}
       >
         {step === 'submitting' ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color={colors.onAccent} />
         ) : (
           <Text style={styles.btnText}>Sign once & submit batch</Text>
         )}
@@ -177,116 +186,122 @@ export default function BulkPayoutScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: '#0B0B0F',
-    padding: 24,
-    gap: 16,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: '#9BA1A6',
-    fontSize: 15,
-  },
-  form: {
-    gap: 10,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    color: '#f1f5f9',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  inputFlex: {
-    flex: 2,
-  },
-  inputAsset: {
-    flex: 1,
-  },
-  btn: {
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  btnPrimary: {
-    backgroundColor: '#6366f1',
-  },
-  btnSecondary: {
-    backgroundColor: '#334155',
-  },
-  btnDisabled: {
-    opacity: 0.4,
-  },
-  btnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  list: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 12,
-    gap: 8,
-  },
-  listTitle: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  listItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-    paddingTop: 8,
-  },
-  listItemInfo: {
-    flex: 1,
-    marginRight: 12,
-  },
-  listItemAddr: {
-    color: '#f1f5f9',
-    fontFamily: 'monospace',
-    fontSize: 12,
-  },
-  listItemAmount: {
-    color: '#94a3b8',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  remove: {
-    color: '#f87171',
-    fontSize: 13,
-  },
-  totals: {
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-    paddingTop: 8,
-    marginTop: 4,
-  },
-  totalLine: {
-    color: '#a5b4fc',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  hash: {
-    color: '#94a3b8',
-    fontFamily: 'monospace',
-    fontSize: 12,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      flexGrow: 1,
+      backgroundColor: colors.background,
+      padding: 24,
+      gap: 16,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 28,
+      fontWeight: '700',
+    },
+    subtitle: {
+      color: colors.textSecondary,
+      fontSize: 15,
+    },
+    form: {
+      gap: 10,
+    },
+    row: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    input: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      padding: 14,
+      color: colors.textPrimary,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    inputFlex: {
+      flex: 2,
+    },
+    inputAsset: {
+      flex: 1,
+    },
+    btn: {
+      borderRadius: 10,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    btnPrimary: {
+      backgroundColor: colors.accent,
+    },
+    btnSecondary: {
+      backgroundColor: colors.border,
+    },
+    btnDisabled: {
+      opacity: 0.4,
+    },
+    btnText: {
+      color: colors.onAccent,
+      fontSize: 16,
+      fontWeight: '600',
+    },
+    list: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      padding: 12,
+      gap: 8,
+    },
+    listTitle: {
+      color: colors.textFaint,
+      fontSize: 11,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+    },
+    listItem: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingTop: 8,
+    },
+    listItemInfo: {
+      flex: 1,
+      marginRight: 12,
+    },
+    listItemAddr: {
+      color: colors.textPrimary,
+      fontFamily: 'monospace',
+      fontSize: 12,
+    },
+    listItemAmount: {
+      color: colors.textMuted,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    remove: {
+      color: colors.danger,
+      fontSize: 13,
+    },
+    totals: {
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingTop: 8,
+      marginTop: 4,
+    },
+    totalLine: {
+      color: colors.accentText,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+    hash: {
+      color: colors.textMuted,
+      fontFamily: 'monospace',
+      fontSize: 12,
+    },
+  });
