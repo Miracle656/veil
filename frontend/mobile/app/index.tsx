@@ -1,6 +1,8 @@
-import { useMemo } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 
+import { ConnectDAppModal } from "../components/ConnectDAppModal";
+import { useWalletConnect } from "../hooks/useWalletConnect";
 import { ThemeToggle } from "../components/ThemeToggle";
 import { useTheme } from "../hooks/useTheme";
 import type { ThemeColors } from "../lib/theme";
@@ -8,6 +10,8 @@ import type { ThemeColors } from "../lib/theme";
 export default function Home() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { sessions, disconnectSession } = useWalletConnect();
+  const [isConnectOpen, setIsConnectOpen] = useState(false);
 
   return (
     <View style={styles.container}>
@@ -44,5 +48,52 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 15,
       marginTop: 8,
       textAlign: "center",
+    },
+    connectButton: {
+      marginTop: 24,
+      backgroundColor: colors.accent,
+      borderRadius: 999,
+      paddingVertical: 12,
+      paddingHorizontal: 28,
+    },
+    pressed: {
+      opacity: 0.75,
+    },
+    connectLabel: {
+      color: colors.background,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    sessions: {
+      alignSelf: "stretch",
+      marginTop: 28,
+      gap: 8,
+    },
+    sessionsTitle: {
+      color: colors.textFaint,
+      fontSize: 12,
+      textTransform: "uppercase",
+      letterSpacing: 0.8,
+    },
+    sessionRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+    },
+    sessionName: {
+      color: colors.textPrimary,
+      fontSize: 14,
+      flexShrink: 1,
+    },
+    disconnect: {
+      color: colors.accentText,
+      fontSize: 13,
+      fontWeight: "600",
     },
   });
