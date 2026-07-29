@@ -12,9 +12,25 @@ import {
   subscribeOutbox,
 } from '../outbox';
 
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
+// async-storage 3.x no longer ships `jest/async-storage-mock`, so this is the
+// same in-memory stand-in the other mobile suites use.
+const mockStorage = new Map<string, string>();
+
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: {
+    getItem: jest.fn(async (key: string) => mockStorage.get(key) ?? null),
+    setItem: jest.fn(async (key: string, value: string) => {
+      mockStorage.set(key, value);
+    }),
+    removeItem: jest.fn(async (key: string) => {
+      mockStorage.delete(key);
+    }),
+    clear: jest.fn(async () => {
+      mockStorage.clear();
+    }),
+  },
+}));
 
 const STORAGE_KEY = 'veil_outbox_v1';
 
