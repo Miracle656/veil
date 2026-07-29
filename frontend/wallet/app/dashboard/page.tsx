@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
+import { useTranslation } from 'react-i18next'
 import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
   TransactionBuilder, BASE_FEE, Networks, Asset, nativeToScVal, scValToNative,
@@ -106,6 +107,7 @@ function DashboardPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   useInactivityLock()
+  const { t } = useTranslation(['dashboard', 'common'])
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
@@ -580,7 +582,7 @@ function DashboardPageContent() {
             }}
             className='settings-button'
             style={{ color: "var(--color-muted)"}}
-            title="Copy wallet address"
+            title={t('copyAddress')}
           >
             <span className="address-chip">
               {walletAddress.slice(0, 6)}…{walletAddress.slice(-6)}
@@ -598,7 +600,7 @@ function DashboardPageContent() {
           onClick={() => router.push('/settings')}
           className='settings-button'
           style={{ color: "var(--color-muted)"}}
-          title="Settings"
+          title={t('common:settings')}
         >
           
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
@@ -615,10 +617,10 @@ function DashboardPageContent() {
             fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic',
             fontSize: '1.75rem', color: 'var(--off-white)', marginBottom: '0.25rem',
           }}>
-            Dashboard
+            {t('title')}
           </h1>
           <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.5)' }}>
-            Your wallet locks automatically after 5 minutes of inactivity.
+            {t('subtitle')}
           </p>
         </div>
 
@@ -632,10 +634,10 @@ function DashboardPageContent() {
             borderRadius: '12px',
           }}>
             <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', marginBottom: '0.5rem', fontWeight: 500 }}>
-              Signing key not found
+              {t('signingKeyMissing.title')}
             </p>
             <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
-              Your browser storage was cleared. Tap below to set up a new fee-payer account so you can send, swap, and use the agent.
+              {t('signingKeyMissing.description')}
             </p>
             <button
               className="btn-gold"
@@ -645,7 +647,7 @@ function DashboardPageContent() {
             >
               {isFunding
                 ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
-                : 'Set up fee-payer'}
+                : t('signingKeyMissing.cta')}
             </button>
             {fundingError && (
               <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginTop: '0.625rem' }}>{fundingError}</p>

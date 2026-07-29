@@ -1,0 +1,5 @@
+{
+  "generic": "Something went wrong. Please try again.",
+  "network": "Network error. Check your connection and try again.",
+  "sessionExpired": "Your session expired. Please unlock your wallet again."
+}

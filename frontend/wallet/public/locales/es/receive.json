@@ -1,0 +1,18 @@
+{
+  "title": "Recibir",
+  "subtitle": "Comparte la dirección correcta según desde dónde te envían.",
+  "spending": {
+    "label": "DIRECCIÓN DE GASTO (G…) — ÚSALA PARA LA MAYORÍA DE REMITENTES",
+    "description": "Usa esta dirección para recibir XLM de exchanges, billeteras clásicas y la mayoría de apps. Funciona con Coinbase, Lobstr y cualquier billetera Stellar."
+  },
+  "spendingMissing": "Tu dirección de gasto (G…) aparecerá aquí después de tocar <bold>Financiar billetera</bold> en el panel.",
+  "contract": {
+    "label": "DIRECCIÓN DE CONTRATO (C…) — SOLO BILLETERAS SOROBAN / VEIL",
+    "description": "Usa esta dirección solo al enviar desde otra billetera Veil o una app compatible con Soroban. Las billeteras clásicas no pueden enviar a direcciones C…."
+  },
+  "copy": "Copiar",
+  "copied": "¡Copiado!",
+  "qr": "QR",
+  "savingQr": "Guardando…",
+  "share": "Compartir"
+}

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { InstallBanner } from './InstallBanner'
 import { SentryInit } from './SentryInit'
+import { I18nInit } from './I18nInit'
 
 export const metadata: Metadata = {
   title: 'Veil Wallet',
@@ -37,6 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {children}
         <InstallBanner />
         <SentryInit />
+        <I18nInit />
       </body>
     </html>
   )

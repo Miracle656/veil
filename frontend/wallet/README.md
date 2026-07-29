@@ -149,6 +149,14 @@ If the browser cache is cleared (wiping `localStorage`):
 
 > **Note:** XLM held in the old fee-payer G... account is unrecoverable after a cache clear — the private key existed only in browser storage. XLM held in the smart wallet contract (C...) is safe and persists on-chain.
 
+### Internationalization
+
+`lib/i18n.ts` wires up `react-i18next` with a browser language detector (auto-detects from the browser on first load, then persists a manual switch to `localStorage` under `veil_language`, same convention as `veil_theme`) and lazy-loads translation JSON from `public/locales/{lng}/{ns}.json` via `i18next-http-backend`.
+
+Namespaces: `common`, `dashboard`, `send`, `receive`, `errors`. English (`en`) is the source of truth; `lib/__tests__/i18nLocales.test.ts` fails CI if another locale's keys drift from it.
+
+Currently wired up: the dashboard header/title, the send flow, and the receive flow, plus a language switcher (`<LanguageSwitcher />`) in Settings. The rest of the app (swap, agent, settings sub-pages, contacts, multisig, etc.) is still English-only literals — extending coverage to those is follow-up work, same pattern: add keys to the relevant namespace file (both `en` and `es`), then swap the literal for `t('key')`.
+
 ---
 
 ## Tech stack

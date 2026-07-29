@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslation } from 'react-i18next'
 
 import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation,
@@ -30,6 +31,7 @@ interface WalletAsset {
 export default function SendPage() {
   const router = useRouter()
   useInactivityLock()
+  const { t } = useTranslation(['send', 'common'])
   const [step, setStep]               = useState<Step>('form')
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
@@ -108,7 +110,7 @@ export default function SendPage() {
       ).BarcodeDetector
 
       if (!BarcodeDetectorClass) {
-        setImgError('QR image scan is not supported in this browser. Please type the address manually or use the camera scanner.')
+        setImgError(t('errors.noBarcodeDetector'))
         return
       }
 
@@ -116,21 +118,21 @@ export default function SendPage() {
       const codes = await detector.detect(canvas)
 
       if (codes.length === 0) {
-        setImgError('No QR code found in the image. Try a clearer photo.')
+        setImgError(t('errors.noQrFound'))
         return
       }
 
       const value = codes[0].rawValue.trim()
       const isAddress = (value.startsWith('G') || value.startsWith('C')) && value.length === 56
       if (!isAddress) {
-        setImgError(`QR decoded "${value.slice(0, 20)}…" — doesn't look like a Stellar address.`)
+        setImgError(t('errors.qrNotAddress', { value: value.slice(0, 20) }))
         return
       }
 
       setRecipient(value)
       setImgError(null)
     } catch {
-      setImgError('Could not read the image. Please try a different file.')
+      setImgError(t('errors.imageReadFailed'))
     } finally {
       setImgDecoding(false)
       // Reset file input so the same file can be re-selected if needed
@@ -154,14 +156,14 @@ export default function SendPage() {
       const signerSecret = sessionStorage.getItem('veil_signer_secret')
         || localStorage.getItem('veil_signer_secret')
       if (!signerSecret) {
-        setErrorMsg('Signing key not found. Return to dashboard and tap "Fund wallet" to set up a fee-payer.')
+        setErrorMsg(t('errors.signingKeyMissing'))
         setStep('error')
         return
       }
       const feePayerKp = Keypair.fromSecret(signerSecret)
 
       const keyId = localStorage.getItem('invisible_wallet_key_id')
-      if (!keyId) throw new Error('No passkey found. Please register the wallet first.')
+      if (!keyId) throw new Error(t('errors.noPasskey'))
       if (keyId !== 'recovery') {
         const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
         const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
@@ -175,7 +177,7 @@ export default function SendPage() {
             userVerification: 'required',
           },
         })
-        if (!assertion) throw new Error('Passkey verification was cancelled.')
+        if (!assertion) throw new Error(t('errors.passkeyCancelled'))
       }
 
       const horizonServer = new Server(network.horizonUrl)
@@ -244,7 +246,7 @@ export default function SendPage() {
       const msg = err instanceof Error ? err.message : String(err)
       setErrorMsg(
         msg.includes('NotAllowedError') || msg.includes('not allowed')
-          ? 'Biometric verification was cancelled. Please try again.'
+          ? t('errors.biometricCancelled')
           : msg
       )
       setStep('error')
@@ -263,7 +265,7 @@ export default function SendPage() {
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
-          Back
+          {t('common:back')}
         </button>
         <VeilLogo size={22} />
         <div style={{ width: 40 }} />
@@ -271,7 +273,7 @@ export default function SendPage() {
 
       <main className="wallet-main">
         <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '1.75rem' }}>
-          Send
+          {t('title')}
         </h2>
 
         {step === 'form' && (
@@ -280,7 +282,7 @@ export default function SendPage() {
             {assets.length > 1 && (
               <div>
                 <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  ASSET
+                  {t('assetLabel').toUpperCase()}
                 </label>
                 <select
                   value={selectedAsset?.code ?? ''}
@@ -301,13 +303,13 @@ export default function SendPage() {
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                 <label htmlFor="send-recipient" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  RECIPIENT ADDRESS
+                  {t('recipientLabel').toUpperCase()}
                 </label>
                 <button
                   onClick={() => setShowPicker(true)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold)', fontSize: '0.75rem' }}
                 >
-                  Choose from contacts
+                  {t('chooseFromContacts')}
                 </button>
               </div>
 
@@ -316,7 +318,7 @@ export default function SendPage() {
                   id="send-recipient"
                   className="input-field mono"
                   type="text"
-                  placeholder="G... or C..."
+                  placeholder={t('recipientPlaceholder')}
                   value={recipient}
                   onChange={e => { setRecipient(e.target.value.trim()); setImgError(null) }}
                   autoComplete="off"
@@ -329,8 +331,8 @@ export default function SendPage() {
                   <button
                     type="button"
                     onClick={() => setShowScanner(true)}
-                    aria-label="Scan QR code with camera"
-                    title="Scan QR code with camera"
+                    aria-label={t('scanQr')}
+                    title={t('scanQr')}
                     style={iconBtnStyle}
                   >
                     <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -349,8 +351,8 @@ export default function SendPage() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  aria-label="Upload QR code image"
-                  title="Upload a QR code image from your device"
+                  aria-label={t('uploadQr')}
+                  title={t('uploadQr')}
                   disabled={imgDecoding}
                   style={{ ...iconBtnStyle, opacity: imgDecoding ? 0.5 : 1 }}
                 >
@@ -387,7 +389,7 @@ export default function SendPage() {
 
             <div>
               <label htmlFor="send-amount" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                AMOUNT{selectedAsset ? ` (${selectedAsset.code})` : ''}
+                {selectedAsset ? t('amountLabelWithAsset', { asset: selectedAsset.code }).toUpperCase() : t('amountLabel').toUpperCase()}
               </label>
               <input
                 id="send-amount"
@@ -404,13 +406,13 @@ export default function SendPage() {
 
             <div>
               <label htmlFor="send-memo" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                MEMO (OPTIONAL)
+                {t('memoLabel').toUpperCase()}
               </label>
               <input
                 id="send-memo"
                 className="input-field"
                 type="text"
-                placeholder="Add a note..."
+                placeholder={t('memoPlaceholder')}
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
                 maxLength={28}
@@ -423,7 +425,7 @@ export default function SendPage() {
                 onClick={() => setStep('confirm')}
                 disabled={!validateForm()}
               >
-                Review
+                {t('review')}
               </button>
             </div>
           </div>
@@ -433,19 +435,19 @@ export default function SendPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <div className="card">
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <Row label="To"      value={`${recipient.slice(0, 8)}...${recipient.slice(-8)}`} mono />
-                <Row label="Amount"  value={`${amount} ${selectedAsset?.code ?? 'XLM'}`} />
-                {memo && <Row label="Memo" value={memo} />}
-                <Row label="Network" value="Stellar Testnet" />
-                <Row label="Auth"    value="Passkey (WebAuthn)" />
+                <Row label={t('confirm.to')}      value={`${recipient.slice(0, 8)}...${recipient.slice(-8)}`} mono />
+                <Row label={t('confirm.amount')}  value={`${amount} ${selectedAsset?.code ?? 'XLM'}`} />
+                {memo && <Row label={t('confirm.memo')} value={memo} />}
+                <Row label={t('confirm.network')} value={t('confirm.networkValue')} />
+                <Row label={t('confirm.auth')}    value={t('confirm.authValue')} />
               </div>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <button className="btn-gold" onClick={handleSend}>
-                Confirm &amp; sign
+                {t('confirm.confirmAndSign')}
               </button>
               <button className="btn-ghost" onClick={() => setStep('form')}>
-                Edit
+                {t('confirm.edit')}
               </button>
             </div>
           </div>
@@ -456,9 +458,9 @@ export default function SendPage() {
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
               <div className="spinner spinner-light" />
             </div>
-            <p style={{ fontWeight: 500 }}>Waiting for passkey…</p>
+            <p style={{ fontWeight: 500 }}>{t('signing.waiting')}</p>
             <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.5rem' }}>
-              Approve the prompt to authorise the transfer
+              {t('signing.hint')}
             </p>
           </div>
         )}
@@ -471,7 +473,7 @@ export default function SendPage() {
             </svg>
             <div>
               <p style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.25rem' }}>
-                Sent successfully
+                {t('done.title')}
               </p>
               {txHash && (
                 <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)', fontFamily: 'Inconsolata, monospace', marginTop: '0.5rem', wordBreak: 'break-all' }}>
@@ -480,7 +482,7 @@ export default function SendPage() {
               )}
             </div>
             <button className="btn-gold" onClick={() => router.push('/dashboard')}>
-              Done
+              {t('common:done')}
             </button>
           </div>
         )}
@@ -492,13 +494,13 @@ export default function SendPage() {
               <path d="M14 14l12 12M26 14l-12 12" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round"/>
             </svg>
             <div>
-              <p style={{ fontWeight: 500 }}>Transaction failed</p>
+              <p style={{ fontWeight: 500 }}>{t('error.title')}</p>
               <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.5rem' }}>
                 {errorMsg}
               </p>
             </div>
             <button className="btn-ghost" onClick={() => setStep('form')}>
-              Try again
+              {t('error.tryAgain')}
             </button>
           </div>
         )}
