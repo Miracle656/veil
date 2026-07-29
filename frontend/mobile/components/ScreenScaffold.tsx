@@ -1,6 +1,7 @@
-import { ReactNode } from 'react';
+import { ReactElement, ReactNode } from 'react';
 import {
   Pressable,
+  RefreshControlProps,
   ScrollView,
   StyleSheet,
   Text,
@@ -44,6 +45,8 @@ export type ScreenScaffoldProps = {
   scrollable?: boolean;
   /** Forwarded to the root view so e2e flows can identify the screen. */
   testID?: string;
+  /** Optional refresh control for pull-to-refresh. */
+  refreshControl?: ReactElement<RefreshControlProps>;
 };
 
 // ── Scaffold ────────────────────────────────────────────────────────────
@@ -58,6 +61,7 @@ export function ScreenScaffold({
   children,
   scrollable = true,
   testID,
+  refreshControl,
 }: ScreenScaffoldProps) {
   const router = useRouter();
 
@@ -105,6 +109,7 @@ export function ScreenScaffold({
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
         >
           <View style={styles.body}>{ContentInner}</View>
         </ScrollView>

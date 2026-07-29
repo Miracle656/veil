@@ -235,7 +235,7 @@ export function useActivityFeed(): TxRecord[] {
 export function useInitActivityFeed(
   address: string | null,
   wraithUrl: string | null,
-): { loading: boolean; error: string | null } {
+): { loading: boolean; error: string | null; refresh: () => Promise<void> } {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const initiatedRef = useRef<string | null>(null);
@@ -287,5 +287,5 @@ export function useInitActivityFeed(
     };
   }, [address, wraithUrl, load]);
 
-  return { loading, error };
+  return { loading, error, refresh: load };
 }

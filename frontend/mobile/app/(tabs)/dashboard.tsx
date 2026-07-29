@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenScaffold, NavRow, colors } from '@/components/ScreenScaffold';
 import { QuickActions } from '../../components/QuickActions';
@@ -14,6 +14,8 @@ import type { ThemeColors } from '../../lib/theme';
 import { getWalletAddress } from '../../lib/walletStore';
 import ActivityFeed from '../../components/ActivityFeed';
 import { useInitActivityFeed, type TxRecord } from '../../lib/activityFeed';
+import { usePolling } from '../../hooks/usePolling';
+import { fetchDashboardData } from '../../lib/activity';
 
 const WRAITH_URL =
   process.env.EXPO_PUBLIC_WRAITH_URL?.replace(/\/+$/, '') ?? null;
@@ -30,6 +32,8 @@ export default function DashboardTab() {
   const { sessions, disconnectSession } = useWalletConnect();
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [balance, setBalance] = useState<string>('—');
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
   const detailSheetRef = useRef<BottomSheetModal>(null);
 
@@ -38,13 +42,54 @@ export default function DashboardTab() {
     detailSheetRef.current?.present();
   }, []);
 
-  // Load the wallet address from secure storage on mount
+  // Load the wallet address and balance from secure storage on mount
   useEffect(() => {
-    getWalletAddress().then(setWalletAddress).catch(() => setWalletAddress(null));
+    getWalletAddress()
+      .then(async (addr) => {
+        setWalletAddress(addr);
+        if (addr) {
+          try {
+            const data = await fetchDashboardData(addr);
+            setBalance(data.xlmBalance);
+          } catch {
+            setBalance('0');
+          }
+        }
+      })
+      .catch(() => setWalletAddress(null));
   }, []);
 
   // Initialise the activity feed (no-op when address is null — renders empty state)
-  const { loading, error } = useInitActivityFeed(walletAddress, WRAITH_URL);
+  const { loading, error, refresh: refreshFeed } = useInitActivityFeed(walletAddress, WRAITH_URL);
+
+  // Background polling for XLM balance every 15s
+  usePolling(async () => {
+    if (walletAddress) {
+      try {
+        const data = await fetchDashboardData(walletAddress);
+        setBalance(data.xlmBalance);
+      } catch {
+        // fail silently during background poll
+      }
+    }
+  }, 15_000, !!walletAddress);
+
+  // Handle pull-to-refresh gesture
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (walletAddress) {
+      try {
+        const [data] = await Promise.all([
+          fetchDashboardData(walletAddress),
+          refreshFeed(),
+        ]);
+        setBalance(data.xlmBalance);
+      } catch {
+        // ignore errors to finish refreshing
+      }
+    }
+    setRefreshing(false);
+  }, [walletAddress, refreshFeed]);
 
   return (
     <ScreenScaffold
@@ -53,13 +98,17 @@ export default function DashboardTab() {
       eyebrow="Veil Wallet"
       title="Dashboard"
       description="Your passkey-powered Stellar wallet."
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          tintColor={themeColors.accent}
+        />
+      }
     >
       <View style={styles.balanceHero}>
         <Text style={styles.balanceLabel}>Available balance</Text>
-        <Text style={styles.balanceValue}>— XLM</Text>
-        <Text style={styles.balanceHint}>
-          Balance will load once the wallet screen is implemented.
-        </Text>
+        <Text style={styles.balanceValue}>{balance} XLM</Text>
       </View>
 
       <View style={styles.sectionHeader}>
