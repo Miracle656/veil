@@ -8,6 +8,14 @@
  * A signed transaction is recorded *before* it is sent, then replayed
  * automatically once the device comes back online. Duplicate submission
  * is prevented by transaction-hash dedup and sequence-number uniqueness.
+ *
+ * ── Privacy note ──────────────────────────────────────────────────────────────
+ * Queued entries (signed XDR envelopes) are stored in plaintext AsyncStorage.
+ * XDRs reveal destinations, amounts, and memos to anything with filesystem
+ * access to the app's storage. They *cannot* be altered without invalidating
+ * the embedded signature, so an attacker cannot forge or modify queued
+ * transactions — only read them. expo-secure-store's ~2 KB per-item limit
+ * prevents it as a drop-in replacement for the queue.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -64,9 +72,21 @@ const DEFAULT_POLL_MAX_ATTEMPTS = 30;
  */
 export class MobileOutbox {
   private readonly key: string;
+  private tail: Promise<unknown> = Promise.resolve();
 
   constructor(opts?: { key?: string }) {
     this.key = opts?.key ?? DEFAULT_STORAGE_KEY;
+  }
+
+  /**
+   * Serialise mutator calls so overlapping enqueue/remove/replay operations
+   * do not read, modify, and write independently — which would silently drop
+   * entries (read-modify-write race). Reads via list() stay unserialised.
+   */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(fn, fn);
+    this.tail = run.catch(() => {});
+    return run;
   }
 
   async list(): Promise<OutboxEntry[]> {
@@ -97,32 +117,48 @@ export class MobileOutbox {
     xdr: string;
     networkPassphrase: string;
   }): Promise<OutboxEntry> {
-    const entries = await this.list();
-    const existing = entries.find((e) => e.hash === input.hash);
-    if (existing) return existing;
+    const seq = String(input.sequence);
+    return this.serialize(async () => {
+      const entries = await this.list();
+      const existing = entries.find((e) => e.hash === input.hash);
+      if (existing) return existing;
 
-    const entry: OutboxEntry = {
-      hash: input.hash,
-      sequence: String(input.sequence),
-      xdr: input.xdr,
-      networkPassphrase: input.networkPassphrase,
-      createdAt: Date.now(),
-      attempts: 0,
-      status: 'pending',
-    };
-    entries.push(entry);
-    await this.persist(entries);
-    return entry;
+      const clash = entries.find(
+        (e) => e.sequence === seq && e.hash !== input.hash,
+      );
+      if (clash) {
+        throw new Error(
+          `Sequence ${seq} already queued as ${clash.hash}`,
+        );
+      }
+
+      const entry: OutboxEntry = {
+        hash: input.hash,
+        sequence: seq,
+        xdr: input.xdr,
+        networkPassphrase: input.networkPassphrase,
+        createdAt: Date.now(),
+        attempts: 0,
+        status: 'pending',
+      };
+      entries.push(entry);
+      await this.persist(entries);
+      return entry;
+    });
   }
 
   async remove(hash: string): Promise<void> {
-    const entries = await this.list();
-    const next = entries.filter((e) => e.hash !== hash);
-    if (next.length !== entries.length) await this.persist(next);
+    return this.serialize(async () => {
+      const entries = await this.list();
+      const next = entries.filter((e) => e.hash !== hash);
+      if (next.length !== entries.length) await this.persist(next);
+    });
   }
 
   async clear(): Promise<void> {
-    await this.persist([]);
+    return this.serialize(async () => {
+      await this.persist([]);
+    });
   }
 
   async replay(
@@ -240,14 +276,16 @@ export class MobileOutbox {
     }
 
     // Persist the post-pass queue
-    const all = await this.list();
-    const next = all
-      .filter((e) => !toRemove.has(e.hash))
-      .map((e) => {
-        const patch = mutations.get(e.hash);
-        return patch ? { ...e, ...patch } : e;
-      });
-    await this.persist(next);
+    await this.serialize(async () => {
+      const all = await this.list();
+      const next = all
+        .filter((e) => !toRemove.has(e.hash))
+        .map((e) => {
+          const patch = mutations.get(e.hash);
+          return patch ? { ...e, ...patch } : e;
+        });
+      await this.persist(next);
+    });
 
     return result;
   }
