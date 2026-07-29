@@ -61,6 +61,34 @@ Every field of the envelope is authenticated. A backup opened with the wrong
 passphrase, or altered by so much as a bit, fails with `BackupTamperError` and
 changes nothing on the device — there is no partial restore.
 
+## Agent
+
+`/agent` is the chat surface for the Claude-powered agent in `packages/agent`. Point
+it at the service before running:
+
+```bash
+# frontend/mobile/.env.local
+EXPO_PUBLIC_AGENT_WS_URL=ws://localhost:3001
+```
+
+The agent can read, explain, and propose — it cannot move funds. Each message type
+renders differently: prose from the agent (with `**bold**` and `` `code` `` shown as
+styled text, never as interpreted markup), the user's own messages, service errors,
+app notices, and transaction proposals.
+
+A proposal is decoded from its XDR here, so the amounts and destinations on screen
+come from the transaction itself; the agent's own summary is shown beneath them,
+labelled as the agent's words. An operation the app cannot describe is called out
+rather than passed over, and a proposal whose XDR will not decode cannot be
+approved at all.
+
+Approving requires the device passkey. The prompt is over the transaction's own
+hash, so the biometric is bound to the transaction being approved; only after it
+clears is the fee-payer key read from the keychain and the transaction signed and
+submitted. Dismissing the prompt is a decline, not an error. A transaction sourced
+from any account other than this wallet's fee payer is refused before the prompt
+is ever raised.
+
 ## Structure
 
 - `app/_layout.tsx` — root Stack navigator (expo-router) wrapped in the connectivity provider.
@@ -82,6 +110,8 @@ changes nothing on the device — there is no partial restore.
 - `hooks/useWalletConnect.ts` — React binding over the WalletConnect store.
 - `lib/walletConnect.ts` — WalletConnect client, pairing, sessions and signing.
 - `lib/walletConnectHelpers.ts` — pure parsing/validation helpers (unit-tested).
+- `app/agent.tsx` — agent chat, with passkey-gated transaction proposals.
+- `lib/agentMessages.ts` — agent frame parsing and transaction review (unit-tested).
 - `lib/passkey.ts` — device passkey signer for dApp requests.
 - `lib/webauthn.ts` — WebAuthn encoding and DER signature conversion (unit-tested).
 - `lib/polyfills.ts` — React Native shims WalletConnect and the Stellar SDK need.
