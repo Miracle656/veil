@@ -61,6 +61,42 @@ Every field of the envelope is authenticated. A backup opened with the wrong
 passphrase, or altered by so much as a bit, fails with `BackupTamperError` and
 changes nothing on the device — there is no partial restore.
 
+## Recovery (SEP-30)
+
+`/recover` is the way back in after losing the device that held the wallet's
+passkey. There is no seed phrase, so nothing on a new device can authorize a
+signer change on its own — the SEP-30 recovery servers registered while the wallet
+was healthy do it instead:
+
+```bash
+# frontend/mobile/.env.local
+EXPO_PUBLIC_RECOVERY_SERVERS=https://recovery.example.com,https://recovery2.example.com
+EXPO_PUBLIC_RECOVERY_KEY_ADDRESS=G...   # only for the multi-server case, see below
+```
+
+The screen walks four steps: confirm the wallet address (read on-chain, so a wrong
+address fails immediately), contact each recovery server, create a fresh passkey on
+this device, and finalize once the contract's timelock expires.
+
+On-chain this is the wallet contract's two-step rotation. `request_recovery` is
+authorized by the wallet's recovery-key address and starts a 7-day timelock;
+`finalize_recovery` is permissionless afterwards and installs the new signer. Both
+transactions are sourced from the recovery-key address, so the servers' envelope
+signatures are what satisfy the contract's `require_auth`. With one server that
+address is simply the signer it contributes, discovered from the server itself;
+with several it is the multisig account they are all signers on, which
+`EXPO_PUBLIC_RECOVERY_KEY_ADDRESS` names.
+
+The wait is the safety property, not an inconvenience: it is the window in which an
+owner who still holds their key can cancel a recovery they did not start. The
+pending recovery — including the new credential — is persisted to `AsyncStorage`
+so the user can close the app and come back, and the new passkey is only written to
+the keychain as this device's wallet credential after the contract confirms the
+rotation.
+
+SEP-10 authentication is out of scope here, as it is in `sdk/src/recovery`: each
+server's session token is pasted into the screen and kept in memory only.
+
 ## Structure
 
 - `app/_layout.tsx` — root Stack navigator (expo-router) wrapped in the connectivity provider.
@@ -82,6 +118,8 @@ changes nothing on the device — there is no partial restore.
 - `hooks/useWalletConnect.ts` — React binding over the WalletConnect store.
 - `lib/walletConnect.ts` — WalletConnect client, pairing, sessions and signing.
 - `lib/walletConnectHelpers.ts` — pure parsing/validation helpers (unit-tested).
+- `app/recover.tsx` — SEP-30 recovery screen.
+- `lib/recovery.ts` — SEP-30 client, recovery transactions, pending-recovery state (unit-tested).
 - `lib/passkey.ts` — device passkey signer for dApp requests.
 - `lib/webauthn.ts` — WebAuthn encoding and DER signature conversion (unit-tested).
 - `lib/polyfills.ts` — React Native shims WalletConnect and the Stellar SDK need.
