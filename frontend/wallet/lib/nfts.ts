@@ -134,75 +134,88 @@ export function formatTokenId(id: string | number): string {
 /**
  * Queries Wraith or Horizon to detect token balances / Soroban transfers,
  * filters CAP-46 contracts, and returns the wallet's NFTs.
+ *
+ * FIXTURE GATING & CORRECTNESS RULES (Issue #349):
+ * - Real CAP-46 NFTs held by the connected wallet are fetched from indexer.
+ * - Fixture NFTs are gated behind `options.includeFixtures` or `NEXT_PUBLIC_NFT_FIXTURES=1`.
+ * - Fixture NFTs are NEVER used as a fallback for empty results or network errors.
+ * - NFT owner fields are never rewritten to the connected address.
  */
 export async function fetchWalletNFTs(
   walletAddress: string,
   options: FetchNFTsOptions = {}
 ): Promise<NFTItem[]> {
-  const { includeFixtures = true } = options
+  const envFixtures =
+    process.env.NEXT_PUBLIC_NFT_FIXTURES === '1' ||
+    process.env.NEXT_PUBLIC_NFT_FIXTURES === 'true'
+
+  const shouldIncludeFixtures =
+    options.includeFixtures !== undefined ? options.includeFixtures : envFixtures
+
   const wraithBaseUrl =
     options.wraithUrl ||
     process.env.NEXT_PUBLIC_WRAITH_URL ||
+    process.env.NEXT_PUBLIC_INDEXER_URL ||
     'https://wraith-0jo1.onrender.com'
 
   const nfts: NFTItem[] = []
 
   // Attempt on-chain / Wraith lookup if wallet address is present
   if (walletAddress) {
-    try {
-      const response = await fetch(`${wraithBaseUrl}/transfers/address/${walletAddress}?limit=50`)
-      if (response.ok) {
-        const data = await response.json()
-        const transfers = Array.isArray(data) ? data : data.transfers || []
+    const response = await fetch(`${wraithBaseUrl}/transfers/address/${walletAddress}?limit=50`)
+    if (!response.ok) {
+      throw new Error(`Indexer HTTP ${response.status}: ${response.statusText || 'Fetch failed'}`)
+    }
 
-        // Filter CAP-46 NFT contracts from transfers
-        const cap46Transfers = transfers.filter((t: any) => {
-          const isCap46 =
-            t.standard === 'CAP-46' ||
-            t.type === 'nft' ||
-            t.contractStandard === 'CAP-46' ||
-            (t.contractId && String(t.contractId).toLowerCase().includes('cap46')) ||
-            t.tokenId !== undefined
-          return isCap46
-        })
+    const data = await response.json()
+    const transfers = Array.isArray(data) ? data : data.transfers || []
 
-        for (const t of cap46Transfers) {
-          nfts.push({
-            id: `onchain-${t.contractId}-${t.tokenId || t.id}`,
-            contractId: t.contractId || 'UNKNOWN_CONTRACT',
-            tokenId: t.tokenId || t.id || '1',
-            name: t.name || `CAP-46 Item #${t.tokenId || 1}`,
-            symbol: t.symbol || 'CAP46',
-            collectionName: t.collectionName || 'Soroban CAP-46 Collection',
-            description: t.description || 'On-chain Soroban CAP-46 NFT token.',
-            image: t.image || t.metadata?.image || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80',
-            attributes: t.attributes || [
-              { trait_type: 'Standard', value: 'CAP-46' },
-              { trait_type: 'On-Chain', value: 'Soroban' },
-            ],
-            owner: walletAddress,
-            standard: 'CAP-46',
-            isFixture: false,
-            mintedAt: t.ledgerClosedAt || new Date().toISOString(),
-            rawMetadata: t.metadata || t,
-          })
-        }
-      }
-    } catch {
-      // Ignore network errors; fallback fixtures will be supplied below
+    // Filter CAP-46 NFT contracts from transfers
+    const cap46Transfers = transfers.filter((t: any) => {
+      const isCap46 =
+        t.standard === 'CAP-46' ||
+        t.type === 'nft' ||
+        t.type === 'cap46' ||
+        t.contractStandard === 'CAP-46' ||
+        (t.contractId && String(t.contractId).toLowerCase().includes('cap46')) ||
+        t.tokenId !== undefined ||
+        t.isCap46
+      return isCap46
+    })
+
+    for (const t of cap46Transfers) {
+      nfts.push({
+        id: `onchain-${t.contractId}-${t.tokenId || t.id}`,
+        contractId: t.contractId || 'UNKNOWN_CONTRACT',
+        tokenId: t.tokenId || t.id || '1',
+        name: t.name || `CAP-46 Item #${t.tokenId || 1}`,
+        symbol: t.symbol || 'CAP46',
+        collectionName: t.collectionName || 'Soroban CAP-46 Collection',
+        description: t.description || 'On-chain Soroban CAP-46 NFT token.',
+        image:
+          t.image ||
+          t.metadata?.image ||
+          'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80',
+        attributes: t.attributes || [
+          { trait_type: 'Standard', value: 'CAP-46' },
+          { trait_type: 'On-Chain', value: 'Soroban' },
+        ],
+        owner: t.owner || t.to || walletAddress,
+        standard: 'CAP-46',
+        isFixture: false,
+        mintedAt: t.ledgerClosedAt || new Date().toISOString(),
+        rawMetadata: t.metadata || t,
+      })
     }
   }
 
-  // Always include fixture NFTs if requested or if no live on-chain NFTs were found,
-  // guaranteeing the requirement "Renders at least one fixture NFT".
-  if (includeFixtures || nfts.length === 0) {
-    // Avoid exact duplicate IDs if fixtures already present
+  // Include fixture NFTs ONLY when explicitly requested / gated via env var or options
+  if (shouldIncludeFixtures) {
     const existingIds = new Set(nfts.map(n => n.id))
     for (const fixture of FIXTURE_NFTS) {
       if (!existingIds.has(fixture.id)) {
         nfts.push({
           ...fixture,
-          owner: walletAddress || fixture.owner,
         })
       }
     }
@@ -210,3 +223,4 @@ export async function fetchWalletNFTs(
 
   return nfts
 }
+

@@ -5,7 +5,7 @@ import {
   fetchWalletNFTs,
   formatTokenId,
   truncateAddress,
-  type NFTItem,
+  NFTItem,
 } from '../nfts'
 
 describe('Soroban CAP-46 NFT Module', () => {
@@ -52,14 +52,47 @@ describe('Soroban CAP-46 NFT Module', () => {
   })
 
   describe('fetchWalletNFTs', () => {
-    it('returns fixture NFTs when offline or fetch fails', async () => {
-      // Mock fetch failure
+    it('throws error when indexer fetch fails and fixtures are not enabled', async () => {
       const originalFetch = global.fetch
-      global.fetch = jest.fn().mockRejectedValue(new Error('Network error'))
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+      } as Response)
 
-      const nfts = await fetchWalletNFTs('GTESTWALLETADDRESS12345')
+      await expect(
+        fetchWalletNFTs('GTESTWALLETADDRESS12345', { includeFixtures: false })
+      ).rejects.toThrow('Indexer HTTP 500: Internal Server Error')
+
+      global.fetch = originalFetch
+    })
+
+    it('returns fixture NFTs when includeFixtures is explicitly true', async () => {
+      const originalFetch = global.fetch
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [],
+      } as Response)
+
+      const nfts = await fetchWalletNFTs('GTESTWALLETADDRESS12345', { includeFixtures: true })
       expect(nfts.length).toBeGreaterThanOrEqual(1)
       expect(nfts.some((n: NFTItem) => n.isFixture)).toBe(true)
+
+      global.fetch = originalFetch
+    })
+
+    it('never overwrites fixture owner with connected wallet address', async () => {
+      const originalFetch = global.fetch
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [],
+      } as Response)
+
+      const connectedWallet = 'GCONNECTED_WALLET_ADDRESS_999'
+      const nfts = await fetchWalletNFTs(connectedWallet, { includeFixtures: true })
+      const fixture = nfts.find(n => n.id === FIXTURE_NFTS[0].id)
+      expect(fixture?.owner).toBe(FIXTURE_NFTS[0].owner)
+      expect(fixture?.owner).not.toBe(connectedWallet)
 
       global.fetch = originalFetch
     })
@@ -74,6 +107,7 @@ describe('Soroban CAP-46 NFT Module', () => {
           standard: 'CAP-46',
           image: 'https://example.com/nft.png',
           attributes: [{ trait_type: 'Rarity', value: 'Epic' }],
+          owner: 'GTESTWALLETADDRESS12345',
         },
         {
           id: 102,
@@ -94,6 +128,7 @@ describe('Soroban CAP-46 NFT Module', () => {
       expect(nfts[0].name).toBe('Test On-Chain CAP-46 NFT')
       expect(nfts[0].standard).toBe('CAP-46')
       expect(nfts[0].tokenId).toBe('888')
+      expect(nfts[0].owner).toBe('GTESTWALLETADDRESS12345')
 
       global.fetch = originalFetch
     })

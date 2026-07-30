@@ -19,9 +19,11 @@ export default function NFTGalleryPage() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [nfts, setNfts] = useState<NFTItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState<'all' | 'fixtures' | 'onchain'>('all')
   const [simulateEmpty, setSimulateEmpty] = useState(false)
+  const [simulateError, setSimulateError] = useState(false)
   const [selectedNFT, setSelectedNFT] = useState<NFTItem | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [showRawJson, setShowRawJson] = useState(false)
@@ -40,17 +42,24 @@ export default function NFTGalleryPage() {
   // Load NFTs
   const loadData = useCallback(async () => {
     setLoading(true)
+    setError(null)
     try {
-      const items = await fetchWalletNFTs(walletAddress || 'GDEMO...WALLET', {
-        includeFixtures: true,
-      })
+      if (simulateError) {
+        throw new Error('Wraith Indexer API request failed (503 Service Unavailable)')
+      }
+      if (!walletAddress) {
+        setNfts([])
+        return
+      }
+      const items = await fetchWalletNFTs(walletAddress)
       setNfts(items)
-    } catch {
-      setNfts(FIXTURE_NFTS)
+    } catch (err: any) {
+      setError(err.message || 'Failed to query CAP-46 token balances from Wraith indexer.')
+      setNfts([])
     } finally {
       setLoading(false)
     }
-  }, [walletAddress])
+  }, [walletAddress, simulateError])
 
   useEffect(() => {
     loadData()
@@ -149,10 +158,35 @@ export default function NFTGalleryPage() {
             </p>
           </div>
 
-          {/* Quick controls / Empty state toggle for AC testing */}
+          {/* Quick controls for testing */}
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
             <button
-              onClick={() => setSimulateEmpty(!simulateEmpty)}
+              onClick={() => {
+                const nextState = !simulateError
+                setSimulateError(nextState)
+                if (nextState) setSimulateEmpty(false)
+              }}
+              style={{
+                fontSize: '0.8125rem',
+                fontWeight: 500,
+                padding: '0.5rem 0.875rem',
+                borderRadius: '8px',
+                background: simulateError ? 'rgba(239,68,68,0.15)' : 'var(--surface-md)',
+                border: `1px solid ${simulateError ? '#EF4444' : 'var(--border-dim)'}`,
+                color: simulateError ? '#FCA5A5' : 'var(--off-white)',
+                cursor: 'pointer',
+                transition: 'all 150ms var(--ease)',
+              }}
+              title="Toggle error state for testing AC"
+            >
+              {simulateError ? '⚠ Error Mode Active' : 'Simulate Error State'}
+            </button>
+            <button
+              onClick={() => {
+                const nextState = !simulateEmpty
+                setSimulateEmpty(nextState)
+                if (nextState) setSimulateError(false)
+              }}
               style={{
                 fontSize: '0.8125rem',
                 fontWeight: 500,
@@ -166,7 +200,7 @@ export default function NFTGalleryPage() {
               }}
               title="Toggle empty state mode for testing"
             >
-              {simulateEmpty ? '✦ Showing Empty State' : 'Simulate Empty State'}
+              {simulateEmpty ? '✦ Empty Mode Active' : 'Simulate Empty State'}
             </button>
             <button
               onClick={loadData}
@@ -265,7 +299,76 @@ export default function NFTGalleryPage() {
               />
             ))}
           </div>
+        ) : error ? (
+          /* ── Distinct Error State ── */
+          <div
+            data-testid="nft-error-state"
+            style={{
+              textAlign: 'center',
+              padding: '3.5rem 2rem',
+              background: 'rgba(239, 68, 68, 0.05)',
+              border: '1px solid rgba(239, 68, 68, 0.25)',
+              borderRadius: '20px',
+              maxWidth: '580px',
+              margin: '2rem auto',
+            }}
+          >
+            <div
+              style={{
+                width: '60px',
+                height: '60px',
+                margin: '0 auto 1.25rem',
+                borderRadius: '50%',
+                background: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#EF4444',
+              }}
+            >
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </div>
+            <h3 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontSize: '1.375rem', marginBottom: '0.5rem', color: '#FCA5A5' }}>
+              Unable to Fetch CAP-46 NFTs
+            </h3>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.75rem', lineHeight: 1.6 }}>
+              {error}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+              <button
+                onClick={() => {
+                  setSimulateError(false)
+                  loadData()
+                }}
+                style={{
+                  fontSize: '0.875rem',
+                  fontWeight: 600,
+                  padding: '0.625rem 1.5rem',
+                  borderRadius: '10px',
+                  background: '#EF4444',
+                  color: '#FFF',
+                  border: 'none',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  transition: 'opacity 150ms var(--ease)',
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                </svg>
+                Retry Fetching
+              </button>
+            </div>
+          </div>
         ) : filteredNFTs.length === 0 ? (
+          /* ── Empty State ── */
           /* ── Empty State ── */
           <div
             style={{
