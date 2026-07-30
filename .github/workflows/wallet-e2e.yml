@@ -28,6 +28,12 @@ jobs:
       run:
         working-directory: frontend/wallet
 
+    env:
+      # Without a factory address `computeWalletAddress('')` throws
+      # "invalid version byte. expected 16, got undefined" and every
+      # wallet-creation test fails. Same public testnet address ci.yml uses.
+      NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,6 +50,12 @@ jobs:
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
+
+      # Built here rather than by playwright's webServer so the build cost sits
+      # outside the server-boot timeout; the config serves this build with
+      # `next start` when CI is set.
+      - name: Build wallet
+        run: npm run build
 
       - name: Run Playwright tests
         run: npx playwright test --grep-invert @nightly
