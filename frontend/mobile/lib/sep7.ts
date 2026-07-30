@@ -1,10 +1,12 @@
 /**
  * SEP-7 "pay" request parsing for the mobile app.
  *
- * Ported from `frontend/wallet/lib/sep7.ts` (same shape and helper names) with
- * added support for parsing the app's own `veil://pay?...` deep link scheme,
- * alongside the standard `web+stellar:pay?...` URI (see `sdk/src/sep7.ts` for
- * the fuller, validated implementation used by the web wallet's send flow).
+ * Ported from `frontend/wallet/lib/sep7.ts` (same shape and helper names).
+ *
+ * Scope note: routing an inbound link to a screen is `lib/deepLinks.ts`'s job —
+ * it owns the allowlist, host checks and the `web+stellar:` → `/pay` mapping for
+ * both cold start and warm resume. This module is the SEP-7 payload layer either
+ * side of that: parsing a scanned QR value, and building a pay URI to hand out.
  */
 
 export type Sep7Parsed = {
@@ -16,7 +18,6 @@ export type Sep7Parsed = {
 }
 
 const WEB_STELLAR_SCHEME = 'web+stellar:'
-const VEIL_SCHEME = 'veil://'
 
 function toMaybeString(v: string | null | undefined): string | undefined {
   if (v == null) return undefined
@@ -54,24 +55,6 @@ export function parseSep7Uri(input: string): Sep7Parsed | null {
   return fieldsFromParams(url.searchParams)
 }
 
-/** Parse a `veil://pay?...` deep link. Returns `null` if it isn't one. */
-export function parseVeilLinkUri(input: string): Sep7Parsed | null {
-  const raw = input.trim()
-  if (!raw.toLowerCase().startsWith(VEIL_SCHEME)) return null
-
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    return null
-  }
-
-  const operation = (url.hostname || url.pathname.replace(/^\/+/, '')).toLowerCase()
-  if (operation !== 'pay') return null
-
-  return fieldsFromParams(url.searchParams)
-}
-
 export function looksLikeStellarAddress(s: string): boolean {
   const v = s.trim()
   return (v.startsWith('G') || v.startsWith('C')) && v.length === 56
@@ -85,19 +68,6 @@ export function parseQrValue(value: string): Sep7Parsed | { destination: string 
   if (looksLikeStellarAddress(v)) return { destination: v }
 
   return parseSep7Uri(v)
-}
-
-/**
- * Parse an inbound deep link opened from outside the app (link tap, QR scanner
- * app, another wallet, etc). Accepts both `web+stellar:pay?...` and this app's
- * own `veil://pay?...` scheme; returns `null` for anything else so the caller
- * can fall back to normal expo-router route handling.
- */
-export function parseDeepLink(url: string): Sep7Parsed | null {
-  const raw = url.trim()
-  if (!raw) return null
-
-  return parseSep7Uri(raw) ?? parseVeilLinkUri(raw)
 }
 
 export function buildSep7PayUri(opts: {

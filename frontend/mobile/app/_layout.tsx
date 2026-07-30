@@ -1,58 +1,87 @@
-import { useEffect } from "react";
-import * as Linking from "expo-linking";
-import { Stack, useRouter } from "expo-router";
+import { useEffect, useRef } from "react";
+import { Stack, useRouter, useSegments } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useFonts } from "expo-font";
+import * as SplashScreen from "expo-splash-screen";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-import { parseDeepLink } from "../lib/sep7";
 
-/**
- * Handles inbound `web+stellar:pay?...` and `veil://pay?...` links (opened
- * cold via `getInitialURL`, or while the app is already running via the
- * `url` event) by routing to the send flow with the parsed fields pre-filled.
- */
-function useSep7DeepLinks() {
-  const router = useRouter();
+import { fontAssets } from "../theme/typography";
+import { useTheme } from "../hooks/useTheme";
+import { ConnectivityProvider, useConnectivity } from "../lib/connectivity";
+import { WalletConnectApprovalModal } from "../components/WalletConnectApprovalModal";
 
-  useEffect(() => {
-    const openSendFlow = (url: string) => {
-      const parsed = parseDeepLink(url);
-      if (!parsed?.destination) return;
-
-      router.push({
-        pathname: "/send",
-        params: Object.fromEntries(
-          Object.entries(parsed).filter(([, v]) => v !== undefined)
-        ) as Record<string, string>,
-      });
-    };
-
-    Linking.getInitialURL().then((url) => {
-      if (url) openSendFlow(url);
-    });
-
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      openSendFlow(url);
-    });
-
-    return () => subscription.remove();
-  }, [router]);
-}
-
-function RootNavigator() {
-  useSep7DeepLinks();
-
-  return (
-    <>
-      <Stack screenOptions={{ headerShown: false }} />
-      <StatusBar style="light" />
-    </>
-  );
-}
+// Hold the native splash screen until the brand fonts are ready, so the UI
+// never flashes a system font on first paint.
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  const { colors, isDark } = useTheme();
+  const [fontsLoaded, fontError] = useFonts(fontAssets);
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
+  // Keep the splash screen up (render nothing) until the fonts resolve — either
+  // loaded, or failed, in which case we fall back to system fonts rather than
+  // blocking the app forever.
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
+
   return (
     <SafeAreaProvider>
-      <RootNavigator />
+      <ConnectivityProvider>
+        <ConnectivityGate />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            // Painted behind every route, so a screen that is still loading (or
+            // shorter than the viewport) never shows the opposite theme.
+            contentStyle: { backgroundColor: colors.background },
+          }}
+        />
+        {/* Mounted once at the root so a dApp request is presented for approval
+            no matter which screen the user is on. */}
+        <WalletConnectApprovalModal />
+        <StatusBar style={isDark ? "light" : "dark"} />
+      </ConnectivityProvider>
     </SafeAreaProvider>
   );
+}
+
+/**
+ * Pushes the offline screen when connectivity drops and pops it again when it
+ * returns, so the route the user was on is preserved underneath. Rendered as a
+ * sibling of the navigator rather than around it, so it can use the router.
+ */
+function ConnectivityGate() {
+  const { isOnline } = useConnectivity();
+  const router = useRouter();
+  const segments = useSegments();
+
+  // Only pop the offline screen if this gate is what pushed it.
+  const pushedRef = useRef(false);
+  const isOnOfflineRoute = segments[0] === "offline";
+
+  useEffect(() => {
+    if (!isOnline) {
+      if (!isOnOfflineRoute && !pushedRef.current) {
+        pushedRef.current = true;
+        router.push("/offline");
+      }
+      return;
+    }
+
+    if (pushedRef.current) {
+      pushedRef.current = false;
+      if (isOnOfflineRoute && router.canGoBack()) {
+        router.back();
+      }
+    }
+  }, [isOnOfflineRoute, isOnline, router]);
+
+  return null;
 }
