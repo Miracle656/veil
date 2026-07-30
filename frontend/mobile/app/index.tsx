@@ -1,33 +1,10 @@
-import { StyleSheet, Text, View } from "react-native";
-import { QuickActions } from "../components/QuickActions";
+import { Redirect } from 'expo-router';
 
-export default function Home() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Veil Mobile</Text>
-      <Text style={styles.subtitle}>Dashboard</Text>
-      <QuickActions />
-    </View>
-  );
+/**
+ * Entry route. Once the wallet/session logic lands this will branch between
+ * onboarding and the unlocked tab group; for the navigation shell the landing
+ * simply forwards into the (tabs) group so the route tree is exercised.
+ */
+export default function Entry() {
+  return <Redirect href="/dashboard" />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#0B0B0F",
-    padding: 24,
-  },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 28,
-    fontWeight: "700",
-  },
-  subtitle: {
-    color: "#9BA1A6",
-    fontSize: 15,
-    marginTop: 8,
-    textAlign: "center",
-  },
-});

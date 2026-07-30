@@ -1,34 +1,24 @@
-import React from "react";
-import { StyleSheet, Text, View } from "react-native";
-import { Stack } from "expo-router";
+import { ScreenScaffold, ComingSoonBadge, NavRow } from '@/components/ScreenScaffold';
+import { View, StyleSheet } from 'react-native';
 
-export default function BuyScreen() {
+export default function BuyRoute() {
   return (
-    <View style={styles.container}>
-      <Stack.Screen options={{ title: "Buy", headerShown: true }} />
-      <Text style={styles.title}>Buy Crypto</Text>
-      <Text style={styles.subtitle}>Buy crypto using on-ramp providers</Text>
-    </View>
+    <ScreenScaffold
+      eyebrow="Buy"
+      title="Buy crypto"
+      description="Fund your spending wallet via Transak (card / bank) or any SEP-24 anchor."
+      backHref="/dashboard"
+      backLabel="Dashboard"
+    >
+      <View style={styles.grid}>
+        <NavRow href="/withdraw" label="Withdraw" hint="Fiat off-ramp" />
+        <NavRow href="/dashboard" label="Dashboard" hint="Back to wallet" />
+      </View>
+      <ComingSoonBadge note="Transak + SEP-24 flows land in the buy-screen issue" />
+    </ScreenScaffold>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#0B0B0F",
-    padding: 24,
-  },
-  title: {
-    color: "#FFFFFF",
-    fontSize: 24,
-    fontWeight: "700",
-  },
-  subtitle: {
-    color: "#9BA1A6",
-    fontSize: 15,
-    marginTop: 8,
-    textAlign: "center",
-  },
+  grid: { gap: 8 },
 });
