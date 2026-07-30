@@ -47,8 +47,7 @@ jobs:
         with:
           workspaces: contracts
       - run: cargo build --all
-      # cargo test is temporarily disabled — stellar-xdr 20.1.0 transitively
-      # pulls a broken `arbitrary` feature on fresh CI builds. See issue #79.
+      - run: cargo test -p invisible-wallet
 
   sdk:
     name: SDK — typecheck, test & size budget

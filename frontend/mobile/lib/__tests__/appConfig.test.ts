@@ -1,5 +1,3 @@
-import { describe, expect, it } from 'vitest';
-
 import config from '../../app.config';
 import {
   ASSOCIATED_DOMAINS,
@@ -71,12 +69,13 @@ describe('app.config.ts — associated domains', () => {
 
 describe('app.config.ts — claimed paths', () => {
   it('claims only paths the resolver routes', () => {
-    for (const entry of appLinkData) {
-      const url = `https://${entry.host}${entry.pathPrefix}`;
-      expect(resolveDeepLink(url), `${url} is claimed natively but not routed`).not.toBe(
-        FALLBACK_ROUTE,
-      );
-    }
+    // Collected rather than asserted in the loop so a failure names every
+    // offending URL at once instead of stopping at the first.
+    const claimedButNotRouted = appLinkData
+      .map((entry) => `https://${entry.host}${entry.pathPrefix}`)
+      .filter((url) => resolveDeepLink(url) === FALLBACK_ROUTE);
+
+    expect(claimedButNotRouted).toEqual([]);
   });
 
   it('claims the payment-request path, which is the point of the exercise', () => {

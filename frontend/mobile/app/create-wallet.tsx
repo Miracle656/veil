@@ -1,8 +1,9 @@
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
-import { colors } from "../lib/theme";
+import { useTheme } from "../hooks/useTheme";
+import type { ThemeColors } from "../lib/theme";
 
 /**
  * Placeholder wallet creation screen. The real passkey registration and
@@ -11,6 +12,8 @@ import { colors } from "../lib/theme";
  */
 export default function CreateWallet() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [status, setStatus] = useState<"idle" | "creating" | "created">("idle");
 
   const handleCreate = () => {
@@ -57,43 +60,44 @@ export default function CreateWallet() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: colors.background,
-    gap: 16,
-    padding: 24,
-  },
-  title: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: "700",
-  },
-  caption: {
-    color: colors.muted,
-    fontSize: 14,
-    textAlign: "center",
-  },
-  success: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  button: {
-    backgroundColor: colors.accent,
-    borderRadius: 12,
-    marginTop: 8,
-    paddingHorizontal: 28,
-    paddingVertical: 14,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: "600",
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.background,
+      gap: 16,
+      padding: 24,
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 24,
+      fontWeight: "700",
+    },
+    caption: {
+      color: colors.textSecondary,
+      fontSize: 14,
+      textAlign: "center",
+    },
+    success: {
+      color: colors.textStrong,
+      fontSize: 18,
+      fontWeight: "600",
+    },
+    button: {
+      backgroundColor: colors.accent,
+      borderRadius: 12,
+      marginTop: 8,
+      paddingHorizontal: 28,
+      paddingVertical: 14,
+    },
+    buttonDisabled: {
+      opacity: 0.6,
+    },
+    buttonText: {
+      color: colors.onAccent,
+      fontSize: 16,
+      fontWeight: "600",
+    },
+  });

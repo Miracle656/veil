@@ -1,5 +1,3 @@
-import { describe, expect, it } from 'vitest';
-
 import { FALLBACK_ROUTE, MAX_DEEP_LINK_LENGTH, resolveDeepLink } from '../deepLinks';
 
 const DESTINATION = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';

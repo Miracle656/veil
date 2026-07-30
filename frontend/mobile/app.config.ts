@@ -88,6 +88,13 @@ const config: ExpoConfig = {
         imageWidth: 76,
       },
     ],
+    'expo-secure-store',
+    [
+      'expo-camera',
+      {
+        cameraPermission: 'Veil uses the camera to scan WalletConnect QR codes.',
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,
