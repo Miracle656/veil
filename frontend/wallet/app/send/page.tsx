@@ -300,7 +300,7 @@ export default function SendPage() {
             {/* Recipient address */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                <label htmlFor="send-recipient" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                   RECIPIENT ADDRESS
                 </label>
                 <button
@@ -313,6 +313,7 @@ export default function SendPage() {
 
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'stretch' }}>
                 <input
+                  id="send-recipient"
                   className="input-field mono"
                   type="text"
                   placeholder="G... or C..."
@@ -385,10 +386,11 @@ export default function SendPage() {
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+              <label htmlFor="send-amount" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                 AMOUNT{selectedAsset ? ` (${selectedAsset.code})` : ''}
               </label>
               <input
+                id="send-amount"
                 className="input-field"
                 type="number"
                 placeholder="0.00"
@@ -401,10 +403,11 @@ export default function SendPage() {
             </div>
 
             <div>
-              <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+              <label htmlFor="send-memo" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                 MEMO (OPTIONAL)
               </label>
               <input
+                id="send-memo"
                 className="input-field"
                 type="text"
                 placeholder="Add a note..."
