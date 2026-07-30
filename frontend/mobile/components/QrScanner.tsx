@@ -10,15 +10,28 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 
+import { isValidStellarAddress } from '../lib/address';
+import { parseQrValue } from '../lib/sep7';
+
 interface QrScannerProps {
   visible: boolean;
   onScan: (address: string) => void;
   onClose: () => void;
 }
 
-export function isValidStellarAddress(addr: string): boolean {
-  const v = addr.trim();
-  return (v.startsWith('G') || v.startsWith('C')) && v.length === 56;
+/**
+ * Pull a destination out of a scanned value. Accepts a bare G…/C… address or a
+ * SEP-7 `web+stellar:pay?...` URI — #468 requires both, and payment-request QR
+ * codes are the SEP-7 form. Returns null for anything unrecognised so the
+ * camera keeps scanning rather than latching onto junk.
+ */
+function destinationFromScan(value: string): string | null {
+  const parsed = parseQrValue(value);
+  const destination = parsed && 'destination' in parsed ? parsed.destination : undefined;
+  if (destination && isValidStellarAddress(destination)) return destination;
+
+  const trimmed = value.trim();
+  return isValidStellarAddress(trimmed) ? trimmed : null;
 }
 
 export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
@@ -33,8 +46,8 @@ export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
   const handleBarcodeScanned = useCallback(
     ({ data }: { data: string }) => {
       if (!scanEnabled) return;
-      const addr = data.trim();
-      if (isValidStellarAddress(addr)) {
+      const addr = destinationFromScan(data);
+      if (addr) {
         setScanEnabled(false);
         onScan(addr);
       }
@@ -47,8 +60,8 @@ export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
   }, [requestPermission]);
 
   const handleManualSubmit = useCallback(() => {
-    const addr = manualAddress.trim();
-    if (!isValidStellarAddress(addr)) {
+    const addr = destinationFromScan(manualAddress);
+    if (!addr) {
       setManualError(
         'Enter a valid Stellar address (G... or C..., 56 characters).'
       );
