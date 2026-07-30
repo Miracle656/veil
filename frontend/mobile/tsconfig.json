@@ -9,6 +9,9 @@
       "@/*": [
         "./app/*"
       ],
+      "@/components/*": [
+        "./components/*"
+      ],
       "@/assets/*": [
         "./assets/*"
       ]

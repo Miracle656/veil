@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -13,16 +12,20 @@ import {
 import {
   discoverAnchorInfo,
   getSep10Jwt,
+  signSep10Challenge,
   getTransactionStatus,
   initiateWithdraw,
   isSep24Complete,
   type Sep24TransactionStatus,
 } from '../lib/sep24';
+import { Keypair } from '@stellar/stellar-sdk';
+
 import { sweepContractBalance } from '../lib/sweepContractBalance';
+import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 
 const DEFAULT_ANCHOR =
   process.env['EXPO_PUBLIC_SEP24_ANCHORS']?.split(',')[0]?.trim() || 'testanchor.stellar.org';
-const FEE_PAYER_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
+const FALLBACK_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
 const WALLET_CONTRACT_ID = process.env['EXPO_PUBLIC_WALLET_CONTRACT_ID']?.trim() || '';
 const RPC_URL = process.env['EXPO_PUBLIC_RPC_URL']?.trim() || 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE =
@@ -101,7 +104,8 @@ export default function WithdrawScreen() {
   };
 
   const startWithdraw = async () => {
-    if (!FEE_PAYER_ADDRESS) {
+    const account = (await getWalletAddress()) || FALLBACK_ADDRESS;
+    if (!account) {
       setError('Spending wallet not set up yet.');
       setStep('error');
       return;
@@ -122,19 +126,24 @@ export default function WithdrawScreen() {
       const info = await discoverAnchorInfo(anchor.trim());
       transferServerRef.current = info.transferServerUrl;
 
-      // Stubbed challenge signer — mobile has no signing infra ported yet.
-      // Swap this out for real SEP-10 signing once a mobile signer exists.
+      const secret = await getSignerSecret();
+      if (!secret) {
+        throw new Error('No signing key on this device — create or restore a wallet first.');
+      }
+      const signerKeypair = Keypair.fromSecret(secret);
+
       const jwt = await getSep10Jwt(
         info.webAuthEndpoint,
-        FEE_PAYER_ADDRESS,
+        account,
         info.networkPassphrase,
-        async (challengeXdr) => challengeXdr,
+        async (params) =>
+          signSep10Challenge(params.challengeXdr, params.networkPassphrase, signerKeypair),
       );
       jwtRef.current = jwt;
 
       const result = await initiateWithdraw(
         info.transferServerUrl,
-        { assetCode: assetCode.trim(), account: FEE_PAYER_ADDRESS, amount: String(n) },
+        { assetCode: assetCode.trim(), account, amount: String(n) },
         jwt,
       );
       setTxnId(result.id);
@@ -159,17 +168,24 @@ export default function WithdrawScreen() {
     setStep('sweeping');
     setError(null);
     try {
-      // Stubbed signer — real Soroban-auth + Horizon-payment signing isn't
-      // wired up on mobile yet. Swap this out for a real passkey/session
-      // signer once mobile signing infra lands.
+      const account = (await getWalletAddress()) || FALLBACK_ADDRESS;
+      // Signing a Soroban auth entry needs lib/passkey.ts wired into this
+      // screen; until it is, refuse rather than return a hash for a transfer
+      // that never happened. The catch below already treats a failed sweep as
+      // non-fatal, so the withdrawal keeps polling.
       const result = await sweepContractBalance(
         {
           contractAddress: WALLET_CONTRACT_ID,
-          feePayerPublicKey: FEE_PAYER_ADDRESS,
+          feePayerPublicKey: account,
           rpcUrl: RPC_URL,
           networkPassphrase: NETWORK_PASSPHRASE,
         },
-        async ({ amountStroops }) => ({ hash: `pending-sweep-${amountStroops}-${Date.now().toString(36)}` }),
+        async () => {
+          throw new Error(
+            'Contract sweep needs on-device Soroban auth signing, which is not wired up yet. '
+              + 'Fund the classic account directly to complete this withdrawal.',
+          );
+        },
       );
       setSweepHash(result.hash);
       setStep('polling');
