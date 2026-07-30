@@ -11,7 +11,7 @@ export default function RecoverRoute() {
       backLabel="Home"
     >
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>What you'll need</Text>
+        <Text style={styles.cardTitle}>What you&apos;ll need</Text>
         <Text style={styles.cardText}>
           • Your device passkey (Face ID / Touch ID / Windows Hello){'\n'}
           • The same iCloud Keychain / Google Password Manager account{'\n'}

@@ -1,5 +1,5 @@
-import { ScreenScaffold, ComingSoonBadge, NavRow, colors } from '@/components/ScreenScaffold';
-import { View, Text, StyleSheet } from 'react-native';
+import { ScreenScaffold, ComingSoonBadge, NavRow } from '@/components/ScreenScaffold';
+import { View, StyleSheet } from 'react-native';
 
 export default function BuyRoute() {
   return (
