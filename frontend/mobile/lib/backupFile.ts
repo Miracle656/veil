@@ -3,20 +3,25 @@
  *
  * `lib/backup.ts` owns the format and the crypto; this module owns everything
  * that touches the device — reading the wallet's non-secret state out of
- * AsyncStorage, writing the sealed envelope to a file, and handing that file to
- * the system share sheet so the user can put it somewhere they control.
+ * AsyncStorage, writing the sealed envelope to a file and handing it to the
+ * system share sheet, and on the way back in, picking a file the user chooses
+ * and writing the decrypted state to storage.
  *
  * The storage keys mirror the ones the web wallet writes to `localStorage`, so a
  * backup exported from either client describes the same wallet.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as DocumentPicker from 'expo-document-picker';
 import { Directory, File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 import {
   BackupError,
+  bindNewSigner,
   createBackup,
+  decryptBackup,
+  deserializeBackup,
   type BackupSecret,
   type BackupStorageBackend,
   type EncryptedBackup,
@@ -202,4 +207,113 @@ export async function shareBackupFile(uri: string, filename?: string): Promise<b
     dialogTitle: filename ? `Save ${filename}` : 'Save your Veil backup',
   });
   return true;
+}
+
+// ── Import ───────────────────────────────────────────────────────────────────────
+
+/** A backup file the user selected from the system picker. */
+export type PickedBackupFile = {
+  /** Local `file://` URI of the (cached copy of the) selected file. */
+  uri: string;
+  /** The file's display name, for showing back to the user. */
+  name: string;
+};
+
+/**
+ * Open the system document picker so the user can choose a backup file.
+ *
+ * The filter is deliberately wide. Exported backups carry a compound
+ * `.veilbackup.json` extension that Android does not reliably map to a MIME
+ * type, and a narrow filter would grey out the very file the user came to pick.
+ * Nothing is trusted on the strength of its name anyway — {@link decryptBackup}
+ * authenticates the contents, and that is the check that matters.
+ *
+ * @returns The picked file, or `null` if the user cancelled.
+ */
+export async function pickBackupFile(): Promise<PickedBackupFile | null> {
+  const result = await DocumentPicker.getDocumentAsync({
+    type: '*/*',
+    copyToCacheDirectory: true,
+    multiple: false,
+  });
+  if (result.canceled) return null;
+
+  const asset = result.assets?.[0];
+  if (!asset?.uri) return null;
+  return { uri: asset.uri, name: asset.name };
+}
+
+/** Read a backup file's raw contents from a local URI. */
+export async function readBackupFile(uri: string): Promise<string> {
+  const file = new File(uri);
+  if (!file.exists) throw new BackupError('That backup file is no longer available.');
+  return file.text();
+}
+
+/** Write the non-secret parts of a restored backup into device storage. */
+export async function persistRestoredState(metadata: WalletBackupMetadata): Promise<void> {
+  const entries: Record<string, string> = { [ADDRESS_KEY]: metadata.address };
+
+  const primary = metadata.signers[0]?.publicKey;
+  if (primary) entries[PUBLIC_KEY_KEY] = primary;
+  if (metadata.settings) entries[SETTINGS_KEY] = JSON.stringify(metadata.settings);
+
+  await AsyncStorage.setMany(entries);
+}
+
+/** A passkey enrolled on this device, to be bound as an additional signer. */
+export type EnrolledSigner = {
+  /** Hex-encoded uncompressed P-256 public key (65 bytes). */
+  publicKey: string;
+  /** Base64url credential id of the enrolled passkey. */
+  credentialId: string;
+};
+
+export type RestoreResult = {
+  /** The decrypted metadata, with the new signer bound in when one was enrolled. */
+  metadata: WalletBackupMetadata;
+  /** The name of the file that was restored from. */
+  filename: string;
+  /**
+   * The signer enrolled on this device, when an enroller was supplied. The
+   * caller must still add `publicKey` as an on-chain signer for this device to
+   * be able to authorise transactions.
+   */
+  newSigner?: EnrolledSigner;
+};
+
+/**
+ * Restore a wallet from a backup file: read it, decrypt it, write the wallet
+ * state to device storage, and bind a freshly enrolled signer if one is offered.
+ *
+ * Nothing is persisted until decryption succeeds, so a wrong passphrase or a
+ * damaged file leaves whatever is already on the device untouched.
+ *
+ * Enrolling a passkey is left to the caller through `enrollSigner`: the mobile
+ * app has no registration flow yet, and the web wallet takes the same shape —
+ * it returns the restored metadata unbound when WebAuthn is not available. The
+ * on-chain `add_signer` call is the caller's job either way.
+ *
+ * @throws {BackupTamperError} if the file fails authentication — wrong
+ *                             passphrase, or altered bytes.
+ * @throws {BackupError}       if the file is not a backup envelope at all.
+ */
+export async function restoreFromFile(
+  file: PickedBackupFile,
+  secret: BackupSecret,
+  opts: { enrollSigner?: () => Promise<EnrolledSigner> } = {}
+): Promise<RestoreResult> {
+  const blob = await readBackupFile(file.uri);
+  const metadata = decryptBackup(deserializeBackup(blob), secret);
+
+  await persistRestoredState(metadata);
+
+  if (!opts.enrollSigner) return { metadata, filename: file.name };
+
+  const newSigner = await opts.enrollSigner();
+  return {
+    metadata: bindNewSigner(metadata, newSigner.publicKey),
+    filename: file.name,
+    newSigner,
+  };
 }
