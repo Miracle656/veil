@@ -1,36 +1,46 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { ScreenScaffold, ComingSoonBadge, NavRow, colors } from '@/components/ScreenScaffold';
+import { ScreenScaffold, NavRow, colors } from '@/components/ScreenScaffold';
 import { ConnectDAppModal } from '../../components/ConnectDAppModal';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { useWalletConnect } from '../../hooks/useWalletConnect';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
+import { getWalletAddress } from '../../lib/walletStore';
+import ActivityFeed from '../../components/ActivityFeed';
+import { useInitActivityFeed } from '../../lib/activityFeed';
+
+const WRAITH_URL =
+  process.env.EXPO_PUBLIC_WRAITH_URL?.replace(/\/+$/, '') ?? null;
 
 /**
  * Dashboard tab — primary destination after unlock.
  *
- * In the navigation shell this view hosts the link grid that proves every
- * non-tab route is reachable from the tab bar. As screens are built out,
- * individual NavRow entries will be replaced by their real counterparts.
- *
- * The dApp connection controls previously lived on the landing route; that
- * route now redirects into this tab group, so they were moved here to stay
- * reachable.
+ * Shows the wallet balance, quick actions, and a live activity feed
+ * sourced from the Wraith indexer.
  */
 export default function DashboardTab() {
   const { colors: themeColors } = useTheme();
   const themedStyles = useMemo(() => createThemedStyles(themeColors), [themeColors]);
   const { sessions, disconnectSession } = useWalletConnect();
   const [isConnectOpen, setIsConnectOpen] = useState(false);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+
+  // Load the wallet address from secure storage on mount
+  useEffect(() => {
+    getWalletAddress().then(setWalletAddress).catch(() => setWalletAddress(null));
+  }, []);
+
+  // Initialise the activity feed (no-op when address is null — renders empty state)
+  const { loading, error } = useInitActivityFeed(walletAddress, WRAITH_URL);
 
   return (
     <ScreenScaffold
       hideBack
       eyebrow="Veil Wallet"
       title="Dashboard"
-      description="Your passkey-powered Stellar wallet. Pick a destination to navigate to."
+      description="Your passkey-powered Stellar wallet."
     >
       <View style={styles.balanceHero}>
         <Text style={styles.balanceLabel}>Available balance</Text>
@@ -50,6 +60,19 @@ export default function DashboardTab() {
         <NavRow href="/receive" label="Receive" hint="Share your address" />
         <NavRow href="/settings" label="Settings" hint="Wallet & app prefs" />
       </View>
+
+      {/* Activity feed */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Activity</Text>
+        <Text style={styles.sectionHint}>Recent transfers</Text>
+      </View>
+      <ActivityFeed filter="all" loading={loading} />
+
+      {error ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Stack routes</Text>
@@ -102,8 +125,6 @@ export default function DashboardTab() {
       )}
 
       <ConnectDAppModal isOpen={isConnectOpen} onClose={() => setIsConnectOpen(false)} />
-
-      <ComingSoonBadge note="Dashboard screen — UI lands in a follow-up issue" />
     </ScreenScaffold>
   );
 }
@@ -155,6 +176,18 @@ const styles = StyleSheet.create({
   },
   grid: {
     gap: 8,
+  },
+  errorBanner: {
+    backgroundColor: 'rgba(255, 107, 107, 0.1)',
+    borderColor: 'rgba(255, 107, 107, 0.3)',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+  },
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 13,
+    textAlign: 'center',
   },
 });
 

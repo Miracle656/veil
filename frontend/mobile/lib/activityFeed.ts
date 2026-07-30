@@ -117,7 +117,7 @@ async function fetchTransfers(
 ): Promise<TxRecord[]> {
   try {
     const url = `${wraithUrl.replace(/\/+$/, '')}/transfers/${encodeURIComponent(address)}?limit=50`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) {
       console.warn(`[activityFeed] Wraith returned ${res.status}`);
       return [];
