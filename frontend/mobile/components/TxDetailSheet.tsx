@@ -7,20 +7,10 @@ import {
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 
+import type { TxRecord } from '../lib/activityFeed';
+
 /** A history transaction — mirrors the web wallet's `TxRecord` (components/TxDetailSheet.tsx). */
-export interface TxRecord {
-  id: string;
-  type: 'sent' | 'received' | 'swapped';
-  amount: string;
-  asset: string;
-  counterparty: string;
-  timestamp: number;
-  hash?: string;
-  memo?: string;
-  // swap-specific
-  destAmount?: string;
-  destAsset?: string;
-}
+export type { TxRecord };
 
 const TITLES: Record<TxRecord['type'], string> = {
   sent: 'Sent',
