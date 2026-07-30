@@ -59,15 +59,50 @@ function wraithTransferToTxRecord(t: WraithTransfer, userAddress: string): TxRec
     t.fromAddress !== null &&
     t.fromAddress.toUpperCase() === userAddress.toUpperCase();
 
+  // Detect swap events from the Wraith eventType
+  const isSwap =
+    t.eventType === 'path_payment' ||
+    t.eventType === 'path_payment_strict_send' ||
+    t.eventType === 'path_payment_strict_receive';
+
+  // Parse amount safely (fall back to '0' if missing or invalid)
+  const rawAmount = t.amount ?? '0';
+  const numericAmount = Number(rawAmount);
+  const safeAmount = Number.isFinite(numericAmount) ? Math.abs(numericAmount) / 10_000_000 : 0;
+
+  // Parse timestamp safely
+  let timestamp = 0;
+  if (t.ledgerClosedAt) {
+    const ts = new Date(t.ledgerClosedAt).getTime();
+    if (Number.isFinite(ts)) timestamp = Math.floor(ts / 1000);
+  }
+
+  if (isSwap) {
+    return {
+      id: `w-${t.id}`,
+      type: 'swapped',
+      amount: safeAmount.toFixed(7),
+      asset: 'XLM',
+      counterparty: isSent
+        ? t.toAddress ?? 'unknown'
+        : t.fromAddress ?? 'unknown',
+      timestamp,
+      hash: t.txHash,
+      // Swap-specific fields (Wraith may not provide destAmount/destAsset)
+      destAmount: safeAmount.toFixed(7),
+      destAsset: 'XLM',
+    };
+  }
+
   return {
     id: `w-${t.id}`,
     type: isSent ? 'sent' : 'received',
-    amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+    amount: safeAmount.toFixed(7),
     asset: 'XLM',
     counterparty: isSent
       ? t.toAddress ?? 'unknown'
       : t.fromAddress ?? 'unknown',
-    timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
+    timestamp,
     hash: t.txHash,
   };
 }
