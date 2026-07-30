@@ -39,14 +39,20 @@ import {
   scValToNative,
 } from '@stellar/stellar-sdk';
 
+import { getNetwork } from './network';
+
 // ── Network ─────────────────────────────────────────────────────────────────────
 
-const NETWORK_PASSPHRASE =
-  process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim() || Networks.TESTNET;
+// Read per call rather than captured at module load, so a runtime testnet /
+// mainnet switch (lib/network.ts, #526) is honoured instead of the app having
+// to restart to pick it up.
+function networkPassphrase(): string {
+  return getNetwork().networkPassphrase;
+}
 
-const RPC_URL =
-  process.env['EXPO_PUBLIC_SOROBAN_RPC_URL']?.trim() ||
-  (NETWORK_PASSPHRASE === Networks.PUBLIC ? '' : 'https://soroban-testnet.stellar.org');
+function rpcUrl(): string {
+  return getNetwork().rpcUrl;
+}
 
 /** AsyncStorage key holding the active multisig contract. Shared with the web wallet. */
 export const MULTISIG_CONTRACT_STORAGE_KEY = 'veil_multisig_contract';
@@ -203,10 +209,11 @@ export function approvalBlocker(
 // ── Chain access ────────────────────────────────────────────────────────────────
 
 function server(): SorobanRpc.Server {
-  if (!RPC_URL) {
+  const url = rpcUrl();
+  if (!url) {
     throw new MultisigError('No Soroban RPC URL is configured for this network.');
   }
-  return new SorobanRpc.Server(RPC_URL);
+  return new SorobanRpc.Server(url);
 }
 
 /**
@@ -222,7 +229,7 @@ async function simulateRead(contract: Contract, method: string, ...args: unknown
 
   const tx = new TransactionBuilder(reader, {
     fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
+    networkPassphrase: networkPassphrase(),
   })
     .addOperation(contract.call(method, ...(args as never[])))
     .setTimeout(30)
@@ -284,7 +291,7 @@ async function invokeAsOwner(params: {
   const contract = new Contract(params.contractId);
   const tx = new TransactionBuilder(source, {
     fee: BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
+    networkPassphrase: networkPassphrase(),
   })
     .addOperation(contract.call(params.method, ...(params.args as never[])))
     .setTimeout(60)
@@ -319,7 +326,7 @@ export async function fetchMultisigDetails(contractId: string): Promise<Multisig
   // its funds there. A failure here should not hide the rest of the wallet.
   let balance = 0n;
   try {
-    const sac = new Contract(Asset.native().contractId(NETWORK_PASSPHRASE));
+    const sac = new Contract(Asset.native().contractId(networkPassphrase()));
     balance = BigInt(
       (await simulateRead(sac, 'balance', nativeToScVal(contractId, { type: 'address' }))) as bigint
     );
