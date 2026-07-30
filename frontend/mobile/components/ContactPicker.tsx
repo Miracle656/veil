@@ -1,56 +1,85 @@
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { Contact, useContacts } from '../hooks/useContacts';
 
-export type Contact = { name: string; address: string };
-
-// Representative saved contacts. A later issue wires the real address book;
-// this is the picker surface the send form selects from.
-export const SAMPLE_CONTACTS: Contact[] = [
-  { name: 'Ada', address: 'GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ' },
-  { name: 'Chike', address: 'GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H' },
-  { name: 'Zainab', address: 'zainab*veil.money' },
-];
-
-function shorten(address: string): string {
-  if (address.includes('*') || address.length <= 12) return address;
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
-type ContactPickerProps = {
+interface ContactPickerProps {
   visible: boolean;
-  contacts?: Contact[];
   onSelect: (contact: Contact) => void;
   onClose: () => void;
-};
+}
 
-/** Bottom-sheet list of saved contacts; selecting one returns it to the caller. */
-export function ContactPicker({
-  visible,
-  contacts = SAMPLE_CONTACTS,
-  onSelect,
-  onClose,
-}: ContactPickerProps) {
+export function ContactPicker({ visible, onSelect, onClose }: ContactPickerProps) {
+  const { contacts, isLoaded } = useContacts();
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredContacts = contacts.filter(
+    (c) =>
+      c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.address.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const handleSelect = (contact: Contact) => {
+    setSearchTerm('');
+    onSelect(contact);
+  };
+
+  const handleClose = () => {
+    setSearchTerm('');
+    onClose();
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.root}>
-        <Pressable style={styles.backdrop} onPress={onClose} />
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={handleClose}>
+      <View style={styles.overlay}>
         <View style={styles.sheet}>
-          <Text style={styles.title}>CHOOSE A CONTACT</Text>
-          {contacts.map((contact) => (
-            <Pressable
-              key={contact.address}
-              accessibilityRole="button"
-              onPress={() => onSelect(contact)}
-              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
-            >
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{contact.name.charAt(0).toUpperCase()}</Text>
-              </View>
-              <View style={styles.rowText}>
-                <Text style={styles.name}>{contact.name}</Text>
-                <Text style={styles.address}>{shorten(contact.address)}</Text>
-              </View>
+          <View style={styles.header}>
+            <Text style={styles.title}>Contacts</Text>
+            <Pressable onPress={handleClose} hitSlop={8}>
+              <Text style={styles.closeText}>Close</Text>
             </Pressable>
-          ))}
+          </View>
+
+          <TextInput
+            style={styles.search}
+            placeholder="Search name or address..."
+            placeholderTextColor="#64748b"
+            value={searchTerm}
+            onChangeText={setSearchTerm}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+            {!isLoaded ? (
+              <ActivityIndicator style={styles.loader} color="#f1f5f9" />
+            ) : filteredContacts.length === 0 ? (
+              <Text style={styles.emptyText}>
+                {searchTerm ? 'No contacts found' : "You haven't saved any contacts yet."}
+              </Text>
+            ) : (
+              filteredContacts.map((contact) => (
+                <Pressable
+                  key={contact.id}
+                  style={styles.item}
+                  onPress={() => handleSelect(contact)}
+                >
+                  <Text style={styles.itemName}>{contact.name}</Text>
+                  <Text style={styles.itemAddress} numberOfLines={1}>
+                    {contact.address.slice(0, 12)}...{contact.address.slice(-12)}
+                  </Text>
+                </Pressable>
+              ))
+            )}
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -58,69 +87,74 @@ export function ContactPicker({
 }
 
 const styles = StyleSheet.create({
-  root: {
+  overlay: {
     flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'flex-end',
   },
-  backdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-  },
   sheet: {
-    backgroundColor: '#141418',
+    maxHeight: '80%',
+    backgroundColor: '#0B0B0F',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 32,
-    gap: 4,
+    borderWidth: 1,
+    borderColor: '#334155',
+    padding: 20,
+    gap: 14,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   title: {
-    color: 'rgba(246,247,248,0.55)',
-    fontSize: 12,
-    letterSpacing: 1,
-    marginBottom: 8,
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '700',
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
+  closeText: {
+    color: '#9BA1A6',
+    fontSize: 14,
   },
-  rowPressed: {
-    opacity: 0.6,
-  },
-  avatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(253,218,36,0.12)',
+  search: {
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    padding: 12,
+    color: '#f1f5f9',
+    fontSize: 15,
     borderWidth: 1,
-    borderColor: 'rgba(253,218,36,0.25)',
+    borderColor: '#334155',
   },
-  avatarText: {
-    color: '#FDDA24',
+  list: {
+    flexGrow: 0,
+  },
+  listContent: {
+    gap: 8,
+    paddingBottom: 8,
+  },
+  loader: {
+    marginVertical: 24,
+  },
+  emptyText: {
+    color: '#64748b',
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 24,
+  },
+  item: {
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  itemName: {
+    color: '#f1f5f9',
     fontSize: 15,
     fontWeight: '600',
   },
-  rowText: {
-    flex: 1,
-  },
-  name: {
-    color: '#F6F7F8',
-    fontSize: 15,
-    fontWeight: '500',
-  },
-  address: {
-    color: 'rgba(246,247,248,0.4)',
+  itemAddress: {
+    color: '#94a3b8',
     fontFamily: 'monospace',
     fontSize: 12,
     marginTop: 2,

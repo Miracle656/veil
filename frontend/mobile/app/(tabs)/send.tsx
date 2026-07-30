@@ -1,12 +1,32 @@
 import { useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import { Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { isValidDestination } from '../../lib/address';
-import { ContactPicker, type Contact } from '../../components/ContactPicker';
+import { ContactPicker } from '../../components/ContactPicker';
+import type { Contact } from '../../hooks/useContacts';
+
+/** expo-router yields `string | string[]` for a repeated query key. */
+function firstValue(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value ?? '';
+}
 
 export default function SendScreen() {
-  const [recipient, setRecipient] = useState('');
-  const [amount, setAmount] = useState('');
+  // Deep links land here prefilled: `to`, `amount`, `asset` and `memo` arrive
+  // from veil://send, https://app.veil.xyz/send, or a SEP-7 request forwarded
+  // by /pay. Seeded as initial state so the fields stay editable afterwards.
+  const params = useLocalSearchParams<{
+    to?: string;
+    amount?: string;
+    asset?: string;
+    memo?: string;
+  }>();
+  const asset = firstValue(params.asset) || 'XLM';
+  const memo = firstValue(params.memo);
+
+  const [recipient, setRecipient] = useState(() => firstValue(params.to));
+  const [amount, setAmount] = useState(() => firstValue(params.amount));
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const trimmed = recipient.trim();
@@ -37,6 +57,7 @@ export default function SendScreen() {
           </View>
           <TextInput
             style={[styles.input, showError && styles.inputError]}
+            testID="send-recipient"
             value={recipient}
             onChangeText={setRecipient}
             placeholder="Address or name*domain"
@@ -52,8 +73,9 @@ export default function SendScreen() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>AMOUNT</Text>
+          <Text style={styles.label}>AMOUNT ({asset})</Text>
           <TextInput
+            testID="send-amount"
             style={styles.input}
             value={amount}
             onChangeText={setAmount}
@@ -62,6 +84,15 @@ export default function SendScreen() {
             keyboardType="decimal-pad"
           />
         </View>
+
+        {memo ? (
+          <View style={styles.field}>
+            <Text style={styles.label}>MEMO</Text>
+            <Text testID="send-memo" style={styles.input}>
+              {memo}
+            </Text>
+          </View>
+        ) : null}
 
         <Pressable
           accessibilityRole="button"
