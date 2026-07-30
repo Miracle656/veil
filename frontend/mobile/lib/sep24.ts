@@ -212,6 +212,12 @@ export interface Sep24TransactionStatus {
   amount_in_asset?: string;
   amount_out?: string;
   amount_out_asset?: string;
+  /** Withdraw-only: Stellar address the wallet must pay to settle the withdrawal. */
+  withdraw_anchor_account?: string;
+  /** Withdraw-only: memo the anchor uses to route the incoming payment to this txn. */
+  withdraw_memo?: string;
+  /** Withdraw-only: 'text' | 'id' | 'hash'. */
+  withdraw_memo_type?: string;
 }
 
 // ── Deposit ──────────────────────────────────────────────────────────────────
@@ -276,6 +282,45 @@ export async function getTransactionStatus(
 }
 
 /** Returns true once a SEP-24 status no longer requires polling. */
+// ── Withdraw (off-ramp) ──────────────────────────────────────────────────────
+
+/**
+ * Start a SEP-24 interactive withdrawal. Same contract as
+ * {@link initiateDeposit} — the anchor returns a URL to open and an id to poll
+ * — but against `/transactions/withdraw/interactive`.
+ */
+export async function initiateWithdraw(
+  transferServerUrl: string,
+  params: InitiateDepositParams,
+  jwt?: string,
+): Promise<Sep24InteractiveResult> {
+  const body = new URLSearchParams({
+    asset_code: params.assetCode,
+    account: params.account,
+    lang: params.lang ?? 'en',
+    ...(params.amount ? { amount: params.amount } : {}),
+  });
+
+  const res = await fetch(`${transferServerUrl}/transactions/withdraw/interactive`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+    },
+    body: body.toString(),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => res.statusText);
+    throw new Error(`Withdraw initiation failed (HTTP ${res.status}): ${errText}`);
+  }
+
+  const data = (await res.json()) as { url?: string; id?: string };
+  if (!data.url || !data.id) throw new Error('Anchor returned an invalid response (missing url or id)');
+  return { url: data.url, id: data.id };
+}
+
 export function isSep24Complete(status: string): boolean {
   return ['completed', 'error', 'refunded', 'expired'].includes(status);
 }

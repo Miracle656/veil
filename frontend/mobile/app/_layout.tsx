@@ -8,6 +8,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { fontAssets } from "../theme/typography";
 import { useTheme } from "../hooks/useTheme";
 import { ConnectivityProvider, useConnectivity } from "../lib/connectivity";
+import { hydrateNetwork } from "../lib/network";
 import { WalletConnectApprovalModal } from "../components/WalletConnectApprovalModal";
 
 // Hold the native splash screen until the brand fonts are ready, so the UI
@@ -23,6 +24,13 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
+
+  // Apply any persisted network override before the first screen reads
+  // getNetwork(). Without this the app always starts on the build-time network
+  // and a saved choice would only take effect after the user re-picked it.
+  useEffect(() => {
+    void hydrateNetwork();
+  }, []);
 
   // Keep the splash screen up (render nothing) until the fonts resolve — either
   // loaded, or failed, in which case we fall back to system fonts rather than
