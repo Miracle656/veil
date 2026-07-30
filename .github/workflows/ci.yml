@@ -47,8 +47,7 @@ jobs:
         with:
           workspaces: contracts
       - run: cargo build --all
-      # cargo test is temporarily disabled — stellar-xdr 20.1.0 transitively
-      # pulls a broken `arbitrary` feature on fresh CI builds. See issue #79.
+      - run: cargo test -p invisible-wallet
 
   sdk:
     name: SDK — typecheck, test & size budget
@@ -189,6 +188,23 @@ jobs:
       - run: npm ci || npm install
       - run: npx tsc --noEmit
       - run: npm run build
+
+  mobile:
+    name: Mobile — typecheck & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/mobile/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
 
   lighthouse-ci:
     name: Wallet PWA — Lighthouse performance budget
