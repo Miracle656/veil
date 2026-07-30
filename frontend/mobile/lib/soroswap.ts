@@ -1,4 +1,3 @@
-import { Networks } from '@stellar/stellar-sdk';
 import {
   SoroswapSDK,
   SupportedNetworks,
@@ -6,19 +5,24 @@ import {
   TradeType,
 } from '@soroswap/sdk';
 
-const NETWORK_PASSPHRASE =
-  process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim() || Networks.TESTNET;
-const IS_TESTNET = NETWORK_PASSPHRASE === Networks.TESTNET;
+import { getNetworkName } from './network';
 
 const SOROSWAP_API_KEY = process.env['EXPO_PUBLIC_SOROSWAP_API_KEY']?.trim() || '';
+
+/** Whether the *currently active* network is testnet. Read per call, not cached. */
+function isTestnet(): boolean {
+  return getNetworkName() === 'testnet';
+}
 
 function getSoroswapClient(): SoroswapSDK | null {
   if (!SOROSWAP_API_KEY) {
     return null;
   }
+  // Built per call rather than memoised: the user can switch networks at
+  // runtime, and a client pinned at module load would keep quoting the old one.
   return new SoroswapSDK({
     apiKey: SOROSWAP_API_KEY,
-    defaultNetwork: IS_TESTNET ? SupportedNetworks.TESTNET : SupportedNetworks.MAINNET,
+    defaultNetwork: isTestnet() ? SupportedNetworks.TESTNET : SupportedNetworks.MAINNET,
   });
 }
 
@@ -127,7 +131,7 @@ export async function resolveTokenAddress(symbol: string): Promise<string | null
     );
     const list = await res.json();
     const tokens: Array<{ symbol: string; contract: string; network: string }> = list.tokens ?? [];
-    const network = IS_TESTNET ? 'TESTNET' : 'MAINNET';
+    const network = isTestnet() ? 'TESTNET' : 'MAINNET';
     const found = tokens.find(
       (t) => t.symbol.toUpperCase() === symbol.toUpperCase() && t.network === network
     );
