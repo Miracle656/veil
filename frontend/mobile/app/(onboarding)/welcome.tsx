@@ -28,7 +28,7 @@ export default function Welcome() {
 
   const handleGetStarted = async () => {
     await AsyncStorage.setItem(SEEN_WELCOME_KEY, "1");
-    router.push("/register");
+    router.push("/create-wallet");
   };
 
   const handleRecover = async () => {
@@ -118,7 +118,6 @@ export default function Welcome() {
 }
 
 const GOLD = "#D4A843";
-const TEAL = "#2EC4B6";
 
 const styles = StyleSheet.create({
   root: {
