@@ -10,19 +10,48 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Keypair } from '@stellar/stellar-sdk';
+
 import {
   discoverAnchorInfo,
+  getSep10Jwt,
   getTransactionStatus,
   initiateDeposit,
   isSep24Complete,
+  signSep10Challenge,
   type Sep24TransactionStatus,
 } from '../lib/sep24';
+import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 
-// Mobile has no signing infra ported yet — the fee payer address is read from
-// env, matching the stub pattern used in swap.tsx. Once wallet signing lands,
-// this can be replaced with the real spending address.
-const FEE_PAYER_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
+// Falls back to env so the screen can be exercised against a testnet anchor
+// before a wallet exists on the device.
+const FALLBACK_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
 const DEFAULT_ANCHOR_DOMAIN = process.env['EXPO_PUBLIC_SEP24_ANCHOR_DOMAIN']?.trim() || 'testanchor.stellar.org';
+
+/**
+ * Authenticate with the anchor if it advertises a SEP-10 endpoint.
+ *
+ * Most anchors reject `deposit/interactive` without a JWT. Returns `undefined`
+ * when the anchor publishes no `WEB_AUTH_ENDPOINT`, in which case the deposit is
+ * attempted unauthenticated and the anchor's own error is surfaced.
+ */
+async function authenticate(
+  webAuthEndpoint: string,
+  account: string,
+  networkPassphrase: string,
+): Promise<string | undefined> {
+  if (!webAuthEndpoint) return undefined;
+
+  const secret = await getSignerSecret();
+  if (!secret) {
+    throw new Error('No signing key on this device — create or restore a wallet first.');
+  }
+  const signerKeypair = Keypair.fromSecret(secret);
+
+  return getSep10Jwt(webAuthEndpoint, account, networkPassphrase, async (params) =>
+    signSep10Challenge(params.challengeXdr, params.networkPassphrase, signerKeypair),
+  );
+}
 
 type Step = 'form' | 'connecting' | 'pending' | 'success' | 'error';
 
@@ -38,6 +67,21 @@ export default function BuyScreen() {
   const [transferServerUrl, setTransferServerUrl] = useState<string | null>(null);
   const [txnId, setTxnId] = useState<string | null>(null);
   const [txnStatus, setTxnStatus] = useState<Sep24TransactionStatus | null>(null);
+  const [account, setAccount] = useState<string>(FALLBACK_ADDRESS);
+
+  useEffect(() => {
+    let cancelled = false;
+    getWalletAddress()
+      .then((address) => {
+        if (!cancelled && address) setAccount(address);
+      })
+      .catch(() => {
+        // Leave the env fallback in place; handleBuy surfaces the missing account.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -72,11 +116,6 @@ export default function BuyScreen() {
   useEffect(() => () => stopPolling(), [stopPolling]);
 
   const handleBuy = async () => {
-    if (!FEE_PAYER_ADDRESS) {
-      setError('Spending wallet not set up yet. Fund your wallet first.');
-      setStep('error');
-      return;
-    }
     if (!anchorDomain.trim()) {
       setError('Enter the anchor domain.');
       setStep('error');
@@ -86,14 +125,29 @@ export default function BuyScreen() {
     setStep('connecting');
     setError(null);
     try {
-      const { transferServerUrl: server } = await discoverAnchorInfo(anchorDomain.trim());
+      const resolved = (await getWalletAddress()) || FALLBACK_ADDRESS;
+      if (!resolved) {
+        throw new Error('Spending wallet not set up yet. Fund your wallet first.');
+      }
+
+      const {
+        transferServerUrl: server,
+        webAuthEndpoint,
+        networkPassphrase,
+      } = await discoverAnchorInfo(anchorDomain.trim());
       setTransferServerUrl(server);
 
-      const deposit = await initiateDeposit(server, {
-        assetCode: assetCode.trim() || 'XLM',
-        account: FEE_PAYER_ADDRESS,
-        amount: amount.trim() || undefined,
-      });
+      const jwt = await authenticate(webAuthEndpoint, resolved, networkPassphrase);
+
+      const deposit = await initiateDeposit(
+        server,
+        {
+          assetCode: assetCode.trim() || 'XLM',
+          account: resolved,
+          amount: amount.trim() || undefined,
+        },
+        jwt,
+      );
       setTxnId(deposit.id);
 
       // Launch the anchor's interactive flow in an in-app browser session and
@@ -180,7 +234,7 @@ export default function BuyScreen() {
       <Text style={styles.title}>Buy</Text>
       <Text style={styles.subtitle}>Bring fiat into your wallet through a SEP-24 anchor.</Text>
 
-      {!FEE_PAYER_ADDRESS && (
+      {!account && (
         <View style={styles.notice}>
           <Text style={styles.noticeText}>
             Spending wallet not set up yet. Fund your wallet first so the anchor knows where to
