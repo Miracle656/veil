@@ -1,52 +1,148 @@
-import { ScreenScaffold, ComingSoonBadge, colors } from '@/components/ScreenScaffold';
-import { View, Text, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import { useRouter } from 'expo-router';
 
-export default function LockRoute() {
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
+
+/**
+ * Lock screen — the native port of the web wallet's `app/lock/page.tsx`.
+ *
+ * The wallet reaches here after an inactivity timeout or on returning from the
+ * background (see `hooks/useInactivityLock.ts`). Unlocking requires a real
+ * device biometric via `expo-local-authentication`
+ * (`authenticateAsync` prompts Face ID / fingerprint, falling back to the device
+ * passcode); on success we return to the dashboard.
+ */
+export default function LockScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const router = useRouter();
+
+  const [isUnlocking, setIsUnlocking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleUnlock = useCallback(async () => {
+    setError(null);
+    setIsUnlocking(true);
+    try {
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !isEnrolled) {
+        setError('No biometric or device passcode is set up. Add one in system settings.');
+        return;
+      }
+
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Unlock Veil',
+        cancelLabel: 'Cancel',
+        // Allow the device passcode when biometrics fail, matching OS behaviour.
+        disableDeviceFallback: false,
+      });
+
+      if (result.success) {
+        router.replace('/');
+        return;
+      }
+      setError('Unlock failed. Please try again.');
+    } catch {
+      setError('Unlock failed. Please try again.');
+    } finally {
+      setIsUnlocking(false);
+    }
+  }, [router]);
+
+  // Prompt immediately on arrival so the user isn't stranded on a dead screen.
+  useEffect(() => {
+    void handleUnlock();
+  }, [handleUnlock]);
+
   return (
-    <ScreenScaffold
-      eyebrow="Locked"
-      title="Unlock Veil"
-      description="Authenticate with your device passkey to continue."
-      backHref="/"
-      backLabel="Home"
-    >
-      <View style={styles.lockCircle}>
-        <Text style={styles.lockGlyph}>◉</Text>
+    <View style={styles.container}>
+      <View style={styles.iconCircle}>
+        <Text style={styles.iconGlyph}>🔒</Text>
       </View>
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Why we lock</Text>
-        <Text style={styles.cardText}>
-          Wallet signs automatically lock when the app is backgrounded or after extended inactivity.
-          Approve the passkey prompt to resume your session.
-        </Text>
+
+      <View style={styles.copy}>
+        <Text style={styles.title}>Wallet locked</Text>
+        <Text style={styles.subtitle}>Unlock with your biometric to continue.</Text>
       </View>
-      <ComingSoonBadge note="Passkey prompt wiring lands in the lock-screen issue" />
-    </ScreenScaffold>
+
+      {error && <Text style={styles.error}>{error}</Text>}
+
+      <Pressable
+        accessibilityRole="button"
+        onPress={handleUnlock}
+        disabled={isUnlocking}
+        style={({ pressed }) => [styles.button, (pressed || isUnlocking) && styles.buttonPressed]}
+      >
+        {isUnlocking ? (
+          <ActivityIndicator color={colors.onAccent} />
+        ) : (
+          <Text style={styles.buttonLabel}>Unlock</Text>
+        )}
+      </Pressable>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  lockCircle: {
-    alignSelf: 'center',
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: colors.surface,
-    borderColor: colors.gold,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 4,
-  },
-  lockGlyph: { color: colors.gold, fontSize: 38, lineHeight: 40 },
-  card: {
-    padding: 18,
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    gap: 8,
-  },
-  cardTitle: { color: colors.gold, fontSize: 12, fontWeight: '700', letterSpacing: 1.4, textTransform: 'uppercase' },
-  cardText: { color: colors.offWhite, fontSize: 14, lineHeight: 20 },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.background,
+      padding: 32,
+      gap: 28,
+    },
+    iconCircle: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    iconGlyph: {
+      fontSize: 30,
+    },
+    copy: {
+      alignItems: 'center',
+      gap: 6,
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 22,
+      fontWeight: '700',
+    },
+    subtitle: {
+      color: colors.textSecondary,
+      fontSize: 15,
+      textAlign: 'center',
+    },
+    error: {
+      color: colors.danger,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    button: {
+      alignSelf: 'stretch',
+      maxWidth: 320,
+      backgroundColor: colors.accent,
+      borderRadius: 999,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    buttonPressed: {
+      opacity: 0.75,
+    },
+    buttonLabel: {
+      color: colors.onAccent,
+      fontSize: 16,
+      fontWeight: '700',
+    },
+  });

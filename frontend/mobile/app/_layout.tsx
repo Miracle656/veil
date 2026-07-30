@@ -10,6 +10,7 @@ import { StyleSheet } from 'react-native';
 
 import { fontAssets } from '../theme/typography';
 import { useTheme } from '../hooks/useTheme';
+import { useInactivityLock } from '../hooks/useInactivityLock';
 import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
 import { hydrateLockSettings } from '../lib/appLock';
@@ -54,6 +55,7 @@ export default function RootLayout() {
         <BottomSheetModalProvider>
           <ConnectivityProvider>
             <ConnectivityGate />
+            <InactivityLockGate />
             <Stack
               screenOptions={{
                 headerShown: false,
@@ -76,6 +78,15 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
 });
+
+/**
+ * Arms the inactivity/background auto-lock. Rendered as a sibling of the
+ * navigator, like {@link ConnectivityGate}, so the hook can use the router.
+ */
+function InactivityLockGate() {
+  useInactivityLock();
+  return null;
+}
 
 /**
  * Pushes the offline screen when connectivity drops and pops it again when it
