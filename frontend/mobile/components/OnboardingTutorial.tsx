@@ -13,7 +13,7 @@
  *   - Skip flag available for tests
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -22,8 +22,18 @@ import {
   Text,
   View,
 } from 'react-native';
-import { colors, radii, spacing } from '../constants/theme';
-import { fonts } from '../constants/typography';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { colors } from '../theme/colors';
+import { fontFamily } from '../theme/typography';
+import { radii, spacing } from '../theme/spacing';
+
+/**
+ * Set once the user dismisses or completes the tutorial, so it shows exactly
+ * once per install. Maestro's `clearState: true` wipes this, which is why the
+ * flows also tap through `tutorial-skip-button`.
+ */
+export const SEEN_TUTORIAL_KEY = 'veil_seen_tutorial';
 
 // ── E2E skip flag ─────────────────────────────────────────────────────────
 //
@@ -229,11 +239,6 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [animating, setAnimating] = useState(false);
 
-  // Skip rendering entirely when the e2e flag is set.
-  if (__e2eSkipTutorial) {
-    return null;
-  }
-
   const isLastStep = step === STEPS.length - 1;
 
   const animateToStep = useCallback(
@@ -275,17 +280,35 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
     [animating, fadeAnim, slideAnim],
   );
 
+  // Persist before handing control back, so a crash mid-dismiss doesn't bring
+  // the tutorial back on the next launch.
+  const finish = useCallback(async () => {
+    try {
+      await AsyncStorage.setItem(SEEN_TUTORIAL_KEY, '1');
+    } catch {
+      // Losing the flag only means the tutorial shows again; not worth blocking on.
+    }
+    onComplete();
+  }, [onComplete]);
+
   const handleNext = useCallback(() => {
     if (isLastStep) {
-      onComplete();
+      void finish();
     } else {
       animateToStep(step + 1);
     }
-  }, [isLastStep, onComplete, animateToStep, step]);
+  }, [isLastStep, finish, animateToStep, step]);
 
   const handleSkip = useCallback(() => {
-    onComplete();
-  }, [onComplete]);
+    void finish();
+  }, [finish]);
+
+  // Skip rendering entirely when the e2e flag is set. Placed after every hook so
+  // the hook order stays identical between renders — an early return above the
+  // useCallbacks violates the rules of hooks and breaks if the flag ever flips.
+  if (__e2eSkipTutorial) {
+    return null;
+  }
 
   return (
     <Modal
@@ -295,7 +318,7 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
       statusBarTranslucent
       onRequestClose={handleSkip}
     >
-      <View style={styles.overlay}>
+      <View style={styles.overlay} testID="tutorial-overlay">
         <Animated.View
           style={[
             styles.content,
@@ -342,7 +365,13 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
             </Pressable>
 
             {!isLastStep && (
-              <Pressable style={styles.skipButton} onPress={handleSkip}>
+              <Pressable
+                style={styles.skipButton}
+                onPress={handleSkip}
+                accessibilityRole="button"
+                accessibilityLabel="Skip tutorial"
+                testID="tutorial-skip-button"
+              >
                 <Text style={styles.skipButtonText}>Skip</Text>
               </Pressable>
             )}
@@ -373,7 +402,7 @@ const styles = StyleSheet.create({
     marginBottom: spacing.md,
   },
   title: {
-    fontFamily: fonts.lora,
+    fontFamily: fontFamily.heading,
     fontStyle: 'italic',
     fontWeight: '600',
     fontSize: 28,
@@ -381,7 +410,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   description: {
-    fontFamily: fonts.inter,
+    fontFamily: fontFamily.body,
     fontSize: 16,
     lineHeight: 26,
     color: 'rgba(246,247,248,0.6)',
@@ -411,7 +440,7 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: '#111111',
-    fontFamily: fonts.inter,
+    fontFamily: fontFamily.body,
     fontWeight: '600',
     fontSize: 15,
   },
@@ -425,8 +454,38 @@ const styles = StyleSheet.create({
   },
   skipButtonText: {
     color: '#A0A0A0',
-    fontFamily: fonts.inter,
+    fontFamily: fontFamily.body,
     fontWeight: '500',
     fontSize: 14,
   },
 });
+
+/**
+ * Drop-in wrapper that decides for itself whether the tutorial should appear.
+ *
+ * Renders nothing until the persisted flag has been read, then shows the
+ * overlay only on a first run. Mount it once near the root of the first screen
+ * a new user lands on; it needs no props.
+ */
+export function FirstRunTutorial() {
+  const [shouldShow, setShouldShow] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(SEEN_TUTORIAL_KEY)
+      .then((seen) => {
+        if (!cancelled) setShouldShow(seen !== '1');
+      })
+      .catch(() => {
+        // Unreadable storage shouldn't trap a new user behind a missing tutorial.
+        if (!cancelled) setShouldShow(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (shouldShow !== true) return null;
+
+  return <OnboardingTutorial onComplete={() => setShouldShow(false)} />;
+}

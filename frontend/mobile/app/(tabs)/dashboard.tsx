@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenScaffold, NavRow, colors } from '@/components/ScreenScaffold';
 import { QuickActions } from '../../components/QuickActions';
+import { FirstRunTutorial } from '../../components/OnboardingTutorial';
 import { ConnectDAppModal } from '../../components/ConnectDAppModal';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { useWalletConnect } from '../../hooks/useWalletConnect';
@@ -126,6 +127,9 @@ export default function DashboardTab() {
       )}
 
       <ConnectDAppModal isOpen={isConnectOpen} onClose={() => setIsConnectOpen(false)} />
+
+      {/* Shows once per install; self-gates on the persisted flag. */}
+      <FirstRunTutorial />
     </ScreenScaffold>
   );
 }
