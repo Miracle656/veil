@@ -16,6 +16,8 @@ import ActivityFeed from '../../components/ActivityFeed';
 import { useInitActivityFeed, type TxRecord } from '../../lib/activityFeed';
 import { usePolling } from '../../hooks/usePolling';
 import { fetchDashboardData } from '../../lib/activity';
+import { BalanceCard } from '../../components/BalanceCard';
+import { fetchPrice, usdValue } from '../../lib/fetchPrice';
 
 const WRAITH_URL =
   process.env.EXPO_PUBLIC_WRAITH_URL?.replace(/\/+$/, '') ?? null;
@@ -33,6 +35,7 @@ export default function DashboardTab() {
   const [isConnectOpen, setIsConnectOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string>('—');
+  const [price, setPrice] = useState<number | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
   const detailSheetRef = useRef<BottomSheetModal>(null);
@@ -42,15 +45,19 @@ export default function DashboardTab() {
     detailSheetRef.current?.present();
   }, []);
 
-  // Load the wallet address and balance from secure storage on mount
+  // Load the wallet address, balance, and price from secure storage on mount
   useEffect(() => {
     getWalletAddress()
       .then(async (addr) => {
         setWalletAddress(addr);
         if (addr) {
           try {
-            const data = await fetchDashboardData(addr);
+            const [data, p] = await Promise.all([
+              fetchDashboardData(addr),
+              fetchPrice('XLM', null),
+            ]);
             setBalance(data.xlmBalance);
+            setPrice(p);
           } catch {
             setBalance('0');
           }
@@ -62,12 +69,16 @@ export default function DashboardTab() {
   // Initialise the activity feed (no-op when address is null — renders empty state)
   const { loading, error, refresh: refreshFeed } = useInitActivityFeed(walletAddress, WRAITH_URL);
 
-  // Background polling for XLM balance every 15s
+  // Background polling for XLM balance and price every 15s
   usePolling(async () => {
     if (walletAddress) {
       try {
-        const data = await fetchDashboardData(walletAddress);
+        const [data, p] = await Promise.all([
+          fetchDashboardData(walletAddress),
+          fetchPrice('XLM', null),
+        ]);
         setBalance(data.xlmBalance);
+        setPrice(p);
       } catch {
         // fail silently during background poll
       }
@@ -79,17 +90,21 @@ export default function DashboardTab() {
     setRefreshing(true);
     if (walletAddress) {
       try {
-        const [data] = await Promise.all([
+        const [data, p] = await Promise.all([
           fetchDashboardData(walletAddress),
+          fetchPrice('XLM', null),
           refreshFeed(),
         ]);
         setBalance(data.xlmBalance);
+        setPrice(p);
       } catch {
         // ignore errors to finish refreshing
       }
     }
     setRefreshing(false);
   }, [walletAddress, refreshFeed]);
+
+  const usd = useMemo(() => usdValue(balance, price), [balance, price]);
 
   return (
     <ScreenScaffold
@@ -106,10 +121,12 @@ export default function DashboardTab() {
         />
       }
     >
-      <View style={styles.balanceHero}>
-        <Text style={styles.balanceLabel}>Available balance</Text>
-        <Text style={styles.balanceValue}>{balance} XLM</Text>
-      </View>
+      <BalanceCard
+        balance={balance === '—' ? undefined : balance}
+        usd={usd}
+        loading={balance === '—' && loading}
+        error={!!error}
+      />
 
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Quick actions</Text>
@@ -197,33 +214,6 @@ export default function DashboardTab() {
 }
 
 const styles = StyleSheet.create({
-  balanceHero: {
-    marginTop: 8,
-    padding: 20,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    gap: 4,
-  },
-  balanceLabel: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.6,
-    textTransform: 'uppercase',
-  },
-  balanceValue: {
-    color: colors.offWhite,
-    fontSize: 40,
-    fontWeight: '700',
-    letterSpacing: -1,
-  },
-  balanceHint: {
-    color: colors.muted,
-    fontSize: 12,
-    marginTop: 4,
-  },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'baseline',
