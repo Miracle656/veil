@@ -34,6 +34,13 @@
         }
       ],
       "expo-web-browser"
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Veil uses the camera to scan WalletConnect QR codes."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
