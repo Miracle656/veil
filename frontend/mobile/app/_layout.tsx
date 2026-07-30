@@ -12,6 +12,7 @@ import { fontAssets } from '../theme/typography';
 import { useTheme } from '../hooks/useTheme';
 import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
+import { hydrateLockSettings } from '../lib/appLock';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
 
 // Hold the native splash screen until the brand fonts are ready, so the UI
@@ -33,6 +34,9 @@ export default function RootLayout() {
   // and a saved choice would only take effect after the user re-picked it.
   useEffect(() => {
     void hydrateNetwork();
+    // Same reason as the network override: without this the app starts on the
+    // defaults and a saved lock timeout only takes effect once re-picked.
+    void hydrateLockSettings();
   }, []);
 
   // Keep the splash screen up (render nothing) until the fonts resolve — either
