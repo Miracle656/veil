@@ -17,6 +17,8 @@ export interface ActivityFeedProps {
   onSelectTx?: (tx: TxRecord) => void;
   /** Whether the feed is in a loading state (shows skeleton) */
   loading?: boolean;
+  /** Message shown instead of the empty state when the fetch failed. */
+  error?: string | null;
   /** Called when the user taps the refresh button */
   onRefresh?: () => void;
 }
@@ -42,6 +44,7 @@ export default function ActivityFeed({
   filter = 'all',
   onSelectTx,
   loading = false,
+  error = null,
 }: ActivityFeedProps) {
   const transactions = useActivityFeed();
 
@@ -115,6 +118,16 @@ export default function ActivityFeed({
               <View style={styles.skeletonLineMedium} />
             </View>
           ))}
+        </View>
+      );
+    }
+
+    // Distinct from the empty state on purpose: an unreachable indexer must not
+    // read as "you have no transactions".
+    if (error) {
+      return (
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyText}>Couldn&apos;t load activity — {error}</Text>
         </View>
       );
     }

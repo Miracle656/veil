@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ScreenScaffold, NavRow, colors } from '@/components/ScreenScaffold';
+import { QuickActions } from '../../components/QuickActions';
 import { ConnectDAppModal } from '../../components/ConnectDAppModal';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import { useWalletConnect } from '../../hooks/useWalletConnect';
@@ -66,7 +67,7 @@ export default function DashboardTab() {
         <Text style={styles.sectionTitle}>Activity</Text>
         <Text style={styles.sectionHint}>Recent transfers</Text>
       </View>
-      <ActivityFeed filter="all" loading={loading} />
+      <ActivityFeed filter="all" loading={loading} error={error} />
 
       {error ? (
         <View style={styles.errorBanner}>

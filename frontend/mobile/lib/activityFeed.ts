@@ -109,27 +109,27 @@ function wraithTransferToTxRecord(t: WraithTransfer, userAddress: string): TxRec
 
 /**
  * Fetch transfers for a given Stellar address from the Wraith indexer.
- * Returns an empty array on network or parse errors (never throws).
+ *
+ * Throws on network, HTTP or parse failure. Returning an empty array instead
+ * would make "the indexer is unreachable" indistinguishable from "this wallet
+ * has no transfers", and the caller needs to tell a user those apart.
  */
 async function fetchTransfers(
   wraithUrl: string,
   address: string,
 ): Promise<TxRecord[]> {
-  try {
-    const url = `${wraithUrl.replace(/\/+$/, '')}/transfers/${encodeURIComponent(address)}?limit=50`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) {
-      console.warn(`[activityFeed] Wraith returned ${res.status}`);
-      return [];
-    }
-    const data = (await res.json()) as WraithResponse;
-    if (!data.transfers || !Array.isArray(data.transfers)) return [];
-
-    return data.transfers.map((t) => wraithTransferToTxRecord(t, address));
-  } catch (err) {
-    console.warn('[activityFeed] fetchTransfers failed:', err);
-    return [];
+  const url = `${wraithUrl.replace(/\/+$/, '')}/transfers/${encodeURIComponent(address)}?limit=50`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (!res.ok) {
+    throw new Error(`Wraith returned HTTP ${res.status}`);
   }
+
+  const data = (await res.json()) as WraithResponse;
+  if (!data.transfers || !Array.isArray(data.transfers)) {
+    throw new Error('Wraith returned an unexpected response shape');
+  }
+
+  return data.transfers.map((t) => wraithTransferToTxRecord(t, address));
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
