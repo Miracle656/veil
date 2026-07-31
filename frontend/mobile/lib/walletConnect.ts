@@ -242,7 +242,7 @@ async function signAuthEntry(payloadHash: Uint8Array): Promise<WebAuthnSignature
  * footprint covers the wallet contract storage that `__check_auth` reads, then
  * assemble and sign with the fee payer.
  */
-async function signXdrPayload(xdrString: string): Promise<string> {
+export async function signXdrPayload(xdrString: string): Promise<string> {
   const network = getNetwork();
   const rpc = getRpcServer();
   const feePayerKeypair = await getFeePayerKeypair();
