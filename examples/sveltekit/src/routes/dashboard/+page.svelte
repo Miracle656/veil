@@ -56,10 +56,10 @@
       'invisible_wallet_address',
       'invisible_wallet_pubkey',
       'invisible_wallet_credential_id',
-      'veil_fee_payer_secret',
     ]) {
       localStorage.removeItem(key);
     }
+    sessionStorage.removeItem('veil_fee_payer_key');
     goto('/');
   }
 

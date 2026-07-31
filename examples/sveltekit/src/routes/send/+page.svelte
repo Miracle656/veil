@@ -16,7 +16,7 @@
       goto('/');
       return;
     }
-    feePayerSecret = localStorage.getItem('veil_fee_payer_secret');
+    feePayerSecret = sessionStorage.getItem('veil_fee_payer_key');
   });
 
   async function handleSend() {

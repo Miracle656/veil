@@ -37,7 +37,10 @@
       // 2. Generate + fund a fee-payer keypair (pays fees, does NOT own the wallet).
       step = 'funding';
       const feePayer = Keypair.random();
-      localStorage.setItem('veil_fee_payer_secret', feePayer.secret());
+      // Demo only: sessionStorage clears when the tab closes, so the fee-payer
+      // key doesn't persist on disk. A production wallet should hold this in
+      // memory only, or behind a non-extractable key (e.g. WebCrypto).
+      sessionStorage.setItem('veil_fee_payer_key', feePayer.secret());
 
       if (friendbotUrl) {
         const res = await fetch(`${friendbotUrl}?addr=${feePayer.publicKey()}`);
