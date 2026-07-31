@@ -40,6 +40,7 @@ export default function Welcome() {
 
   return (
     <ScrollView
+      testID="welcome-screen"
       style={styles.root}
       contentContainerStyle={styles.content}
       bounces={false}
@@ -94,6 +95,8 @@ export default function Welcome() {
       {/* Actions */}
       <View style={styles.actions}>
         <Pressable
+          testID="welcome-get-started-button"
+          accessibilityRole="button"
           style={({ pressed }) => [styles.btnPrimary, pressed && styles.btnPressed]}
           onPress={handleGetStarted}
         >
@@ -101,6 +104,8 @@ export default function Welcome() {
         </Pressable>
 
         <Pressable
+          testID="welcome-recover-button"
+          accessibilityRole="button"
           style={({ pressed }) => [styles.btnSecondary, pressed && styles.btnPressed]}
           onPress={handleRecover}
         >

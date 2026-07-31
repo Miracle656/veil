@@ -10,7 +10,9 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "e2e": "maestro test .maestro",
+    "e2e:device": "maestro test --include-tags device .maestro"
   },
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.2.14",

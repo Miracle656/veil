@@ -26,7 +26,7 @@ export default function ReceiveScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={styles.screen} testID="receive-screen">
       <View style={styles.body}>
         <Text style={styles.title}>Receive</Text>
         <Text style={styles.subtitle}>Show this to get paid on Stellar.</Text>
@@ -39,13 +39,14 @@ export default function ReceiveScreen() {
 
         <View style={styles.addressCard}>
           <Text style={styles.addressLabel}>YOUR ADDRESS</Text>
-          <Text style={styles.address} selectable>
+          <Text testID="receive-address" style={styles.address} selectable>
             {ADDRESS}
           </Text>
         </View>
 
         <View style={styles.actions}>
           <Pressable
+            testID="receive-copy-button"
             onPress={handleCopy}
             accessibilityRole="button"
             style={({ pressed }) => [styles.btn, styles.btnGhost, pressed && styles.pressed]}
@@ -53,6 +54,7 @@ export default function ReceiveScreen() {
             <Text style={styles.btnGhostText}>{copied ? 'Copied' : 'Copy'}</Text>
           </Pressable>
           <Pressable
+            testID="receive-share-button"
             onPress={handleShare}
             accessibilityRole="button"
             style={({ pressed }) => [styles.btn, styles.btnGold, pressed && styles.pressed]}

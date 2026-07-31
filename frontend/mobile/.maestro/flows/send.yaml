@@ -1,0 +1,60 @@
+appId: xyz.veil.wallet
+name: Send
+tags:
+  - core
+  - send
+env:
+  RECIPIENT: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+  AMOUNT: "12.5"
+---
+# Ports the send half of the web happy path (frontend/wallet/e2e/happy-path.spec.ts)
+# plus its recipient-validation case. Signing and submission are not asserted —
+# the screen does not own them yet — so what this protects is the form, its
+# validation, and the prefill contract that deep links and SEP-7 requests depend on.
+- runFlow: ../subflows/launch-fresh.yaml
+
+- openLink: "veil://send"
+- extendedWaitUntil:
+    visible:
+      id: "send-screen"
+    timeout: 20000
+
+# A malformed address must be rejected before it can be submitted (#540).
+- tapOn:
+    id: "send-recipient"
+- inputText: "not-a-stellar-address"
+- hideKeyboard
+- assertVisible: "Enter a valid Stellar address"
+
+- tapOn:
+    id: "send-recipient"
+- eraseText
+- inputText: ${RECIPIENT}
+- hideKeyboard
+- assertNotVisible: "Enter a valid Stellar address"
+
+- tapOn:
+    id: "send-amount"
+- inputText: ${AMOUNT}
+- hideKeyboard
+
+- assertVisible: ${RECIPIENT}
+- assertVisible: ${AMOUNT}
+# Review only enables once the address parses and the amount is positive.
+- assertVisible:
+    id: "send-submit"
+    enabled: true
+
+# Prefill from a payment request. The app is stopped first so this exercises the
+# cold-start path into the send form; deep-link.yaml covers the warm resume.
+- stopApp
+- openLink: "veil://send?to=${RECIPIENT}&amount=25&memo=invoice-42"
+- extendedWaitUntil:
+    visible:
+      id: "send-screen"
+    timeout: 30000
+- assertVisible: ${RECIPIENT}
+- assertVisible: "25"
+- assertVisible:
+    id: "send-memo"
+- assertVisible: "invoice-42"

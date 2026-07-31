@@ -42,7 +42,7 @@ export default function SendScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={styles.screen} testID="send-screen">
       <View style={styles.body}>
         <Text style={styles.title}>Send</Text>
 
@@ -107,6 +107,7 @@ export default function SendScreen() {
         ) : null}
 
         <Pressable
+          testID="send-submit"
           accessibilityRole="button"
           accessibilityState={{ disabled: !canSubmit }}
           disabled={!canSubmit}

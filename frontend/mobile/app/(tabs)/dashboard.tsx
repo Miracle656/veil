@@ -48,6 +48,7 @@ export default function DashboardTab() {
 
   return (
     <ScreenScaffold
+      testID="dashboard-screen"
       hideBack
       eyebrow="Veil Wallet"
       title="Dashboard"

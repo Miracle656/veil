@@ -42,6 +42,8 @@ export type ScreenScaffoldProps = {
   children?: ReactNode;
   /** When true, content scrolls; defaults to true */
   scrollable?: boolean;
+  /** Forwarded to the root view so e2e flows can identify the screen. */
+  testID?: string;
 };
 
 // ── Scaffold ────────────────────────────────────────────────────────────
@@ -55,6 +57,7 @@ export function ScreenScaffold({
   hideBack = false,
   children,
   scrollable = true,
+  testID,
 }: ScreenScaffoldProps) {
   const router = useRouter();
 
@@ -77,7 +80,7 @@ export function ScreenScaffold({
   );
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={styles.root} edges={['top']} testID={testID}>
       <View style={styles.header}>
         {hideBack ? (
           <View style={styles.headerSide} />
