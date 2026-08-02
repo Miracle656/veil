@@ -100,7 +100,7 @@ function createStyles(colors: ThemeColors) {
       padding: 24,
     },
     title: {
-      color: colors.text,
+      color: colors.textStrong,
       fontSize: 24,
       fontWeight: "700",
     },
@@ -112,13 +112,3 @@ function createStyles(colors: ThemeColors) {
     },
   });
 }
-
-const createStyles = (colors: ThemeColors) =>
-  StyleSheet.create({
-    container: {
-      flex: 1,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: colors.background,
-    },
-  });
