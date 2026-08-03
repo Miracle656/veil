@@ -9,6 +9,7 @@ import {
 
 const isMainnet = PUBLIC_NETWORK === 'mainnet';
 
+// gitguardian:ignore=true — public well-known Stellar network passphrase, not a secret
 export const networkPassphrase = isMainnet ? Networks.PUBLIC : Networks.TESTNET;
 export const rpcUrl = PUBLIC_SOROBAN_RPC_URL;
 export const horizonUrl = PUBLIC_HORIZON_URL;
