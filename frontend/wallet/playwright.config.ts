@@ -23,9 +23,13 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
+    // Serve a production build in CI: `next dev` compiles each route on first
+    // request, which regularly pushes the first navigation to a route past the
+    // test timeout and shows up as a flaky `waitForURL`/`goto`. The build runs
+    // as its own workflow step, so this only has to boot the server.
+    command: process.env.CI ? 'npm run start' : 'npm run dev',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    timeout: 300_000,
   },
 })
