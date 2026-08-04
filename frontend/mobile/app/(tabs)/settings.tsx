@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AboutSection } from "../../components/AboutSection";
 import { AddressChip, Card, Screen } from "../../components/ui";
 import { colors } from "../../theme/colors";
 import { fontFamily, typography } from "../../theme/typography";
@@ -74,11 +75,15 @@ export default function SettingsScreen() {
             <Text style={styles.backText}>‹ Settings</Text>
           </Pressable>
           <Text style={[typography.heading, styles.title]}>{active.title}</Text>
-          <Card variant="md" style={styles.placeholder}>
-            <Text style={styles.placeholderText}>
-              This section is configured in a later update.
-            </Text>
-          </Card>
+          {active.key === "about" ? (
+            <AboutSection />
+          ) : (
+            <Card variant="md" style={styles.placeholder}>
+              <Text style={styles.placeholderText}>
+                This section is configured in a later update.
+              </Text>
+            </Card>
+          )}
         </ScrollView>
       </Screen>
     );
