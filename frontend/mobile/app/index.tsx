@@ -1,56 +1,78 @@
-import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { useRouter } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { ConnectDAppModal } from "../components/ConnectDAppModal";
-import { useWalletConnect } from "../hooks/useWalletConnect";
-import { ThemeToggle } from "../components/ThemeToggle";
 import { useTheme } from "../hooks/useTheme";
 import type { ThemeColors } from "../lib/theme";
+import { getWalletAddress } from "../lib/walletStore";
 
-export default function Home() {
+// Whether the intro has been seen is presentation state, not a secret, so it
+// lives in AsyncStorage. The wallet address itself is read through walletStore,
+// which keeps it in the Keychain/Keystore — reading it from AsyncStorage here
+// would be a second source of truth that never sees a real wallet.
+const SEEN_WELCOME_KEY = "veil_seen_welcome";
+
+async function readEntryState(
+  retries = 1,
+): Promise<{ wallet: string | null; seenWelcome: string | null }> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const [wallet, seenWelcome] = await Promise.all([
+        getWalletAddress(),
+        AsyncStorage.getItem(SEEN_WELCOME_KEY),
+      ]);
+      return { wallet, seenWelcome };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
+}
+
+export default function Index() {
+  const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { sessions, disconnectSession } = useWalletConnect();
-  const [isConnectOpen, setIsConnectOpen] = useState(false);
+  const navigated = useRef(false);
+  const [loading, setLoading] = useState(true);
 
-  return (
-    <View style={styles.container}>
-      <ThemeToggle style={styles.toggle} />
-      <Text style={styles.title}>Veil Mobile</Text>
-      <Text style={styles.subtitle}>Placeholder home route — toolchain is live.</Text>
+  useEffect(() => {
+    (async () => {
+      try {
+        const { wallet, seenWelcome } = await readEntryState();
+        if (navigated.current) return;
+        navigated.current = true;
 
-      <Pressable
-        accessibilityRole="button"
-        onPress={() => setIsConnectOpen(true)}
-        style={({ pressed }) => [styles.connectButton, pressed && styles.pressed]}
-      >
-        <Text style={styles.connectLabel}>Connect dApp</Text>
-      </Pressable>
+        if (wallet) {
+          router.replace("/dashboard");
+        } else if (seenWelcome) {
+          router.replace("/create-wallet");
+        } else {
+          router.replace("/welcome");
+        }
+      } catch {
+        if (navigated.current) return;
+        navigated.current = true;
+        router.replace("/welcome");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
-      {sessions.length > 0 && (
-        <View style={styles.sessions}>
-          <Text style={styles.sessionsTitle}>Connected dApps</Text>
-          {sessions.map((session) => (
-            <View key={session.topic} style={styles.sessionRow}>
-              <Text style={styles.sessionName} numberOfLines={1}>
-                {session.peer?.name || "Unknown dApp"}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => {
-                  disconnectSession(session.topic).catch(() => {});
-                }}
-              >
-                <Text style={styles.disconnect}>Disconnect</Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
-      )}
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color={colors.accent} />
+      </View>
+    );
+  }
 
-      <ConnectDAppModal isOpen={isConnectOpen} onClose={() => setIsConnectOpen(false)} />
-    </View>
-  );
+  return null;
 }
 
 const createStyles = (colors: ThemeColors) =>
@@ -60,69 +82,5 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: "center",
       justifyContent: "center",
       backgroundColor: colors.background,
-      padding: 24,
-    },
-    toggle: {
-      position: "absolute",
-      top: 64,
-      right: 24,
-    },
-    title: {
-      color: colors.textStrong,
-      fontSize: 28,
-      fontWeight: "700",
-    },
-    subtitle: {
-      color: colors.textSecondary,
-      fontSize: 15,
-      marginTop: 8,
-      textAlign: "center",
-    },
-    connectButton: {
-      marginTop: 24,
-      backgroundColor: colors.accent,
-      borderRadius: 999,
-      paddingVertical: 12,
-      paddingHorizontal: 28,
-    },
-    pressed: {
-      opacity: 0.75,
-    },
-    connectLabel: {
-      color: colors.background,
-      fontSize: 15,
-      fontWeight: "700",
-    },
-    sessions: {
-      alignSelf: "stretch",
-      marginTop: 28,
-      gap: 8,
-    },
-    sessionsTitle: {
-      color: colors.textFaint,
-      fontSize: 12,
-      textTransform: "uppercase",
-      letterSpacing: 0.8,
-    },
-    sessionRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 10,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-    },
-    sessionName: {
-      color: colors.textPrimary,
-      fontSize: 14,
-      flexShrink: 1,
-    },
-    disconnect: {
-      color: colors.accentText,
-      fontSize: 13,
-      fontWeight: "600",
     },
   });

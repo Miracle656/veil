@@ -23,7 +23,7 @@ export default function OfflineScreen() {
   const queued = pendingActions.length;
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} testID="offline-screen">
       <NoSignalGlyph />
 
       <Text style={styles.title}>You&apos;re offline</Text>
@@ -43,6 +43,7 @@ export default function OfflineScreen() {
       )}
 
       <Pressable
+        testID="offline-retry-button"
         accessibilityRole="button"
         accessibilityState={{ disabled: isRetrying }}
         disabled={isRetrying}

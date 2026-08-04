@@ -1,0 +1,19 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["APPLE_TEAM_ID.xyz.veil.wallet"],
+        "components": [
+          { "/": "/pay", "comment": "Payment requests" },
+          { "/": "/pay/*", "comment": "Payment requests" },
+          { "/": "/send", "comment": "Send flow" },
+          { "/": "/send/*", "comment": "Send flow" },
+          { "/": "/receive", "comment": "Receive flow" },
+          { "/": "/receive/*", "comment": "Receive flow" },
+          { "/": "/create-wallet", "comment": "Onboarding" },
+          { "/": "/*", "exclude": true, "comment": "Everything else stays on the web" }
+        ]
+      }
+    ]
+  }
+}
