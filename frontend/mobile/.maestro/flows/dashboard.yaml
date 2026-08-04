@@ -1,0 +1,37 @@
+appId: xyz.veil.wallet
+name: Dashboard and first-run tutorial
+tags:
+  - core
+  - onboarding
+---
+# The first-run tutorial (backlog #27) is the mobile equivalent of the overlay
+# the web suite has to pre-seed past, and the dashboard is the only screen that
+# mounts it. This flow is where that skip is actually exercised rather than
+# silently no-op'd, and it covers the quick actions the dashboard routes through.
+- runFlow: ../subflows/launch-fresh.yaml
+- runFlow: ../subflows/open-dashboard.yaml
+
+# Dismissed once, it stays dismissed: `veil_seen_tutorial` is persisted, so a
+# return visit must not put the overlay back in the way.
+- tapOn: "Send"
+- assertVisible:
+    id: "send-screen"
+- tapOn: "Dashboard"
+- assertVisible:
+    id: "dashboard-screen"
+- assertNotVisible:
+    id: "tutorial-overlay"
+
+# Quick actions are the dashboard's routes into the two critical paths.
+- assertVisible:
+    id: "quick-actions-grid"
+- tapOn:
+    id: "quick-action-send"
+- assertVisible:
+    id: "send-screen"
+
+- tapOn: "Dashboard"
+- tapOn:
+    id: "quick-action-receive"
+- assertVisible:
+    id: "receive-screen"
