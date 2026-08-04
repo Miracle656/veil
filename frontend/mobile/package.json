@@ -10,9 +10,12 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "e2e": "maestro test .maestro",
+    "e2e:device": "maestro test --include-tags device .maestro"
   },
   "dependencies": {
+    "@gorhom/bottom-sheet": "^5.2.14",
     "@expo-google-fonts/anton": "^0.4.2",
     "@expo-google-fonts/inconsolata": "^0.4.2",
     "@expo-google-fonts/inter": "^0.4.2",
@@ -33,6 +36,7 @@
     "expo-clipboard": "~57.0.1",
     "expo-constants": "~57.0.7",
     "expo-crypto": "~57.0.1",
+    "expo-dev-client": "~57.0.10",
     "expo-document-picker": "~57.0.1",
     "expo-file-system": "~57.0.1",
     "expo-font": "~57.0.1",
@@ -44,7 +48,6 @@
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.1",
     "expo-web-browser": "~57.0.2",
-    "expo-web-browser": "~15.0.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
@@ -63,8 +66,11 @@
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/react": "~19.2.2",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~10.0.0",
     "jest": "^29.7.0",
     "jest-expo": "~57.0.2",
+    "prettier": "^3.0.0",
     "typescript": "~6.0.3"
   }
 }

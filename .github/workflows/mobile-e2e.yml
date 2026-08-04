@@ -1,0 +1,109 @@
+name: Mobile E2E Tests
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/mobile/**'
+      - '.github/workflows/mobile-e2e.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/mobile/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  maestro-android:
+    name: Maestro — Android emulator
+    runs-on: ubuntu-latest
+    # Prebuild plus a Gradle debug build dominates the runtime; the flows
+    # themselves take a few minutes.
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        working-directory: frontend/mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/mobile/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ios/ and android/ are gitignored and generated on demand, so the native
+      # project has to be produced before Gradle can build it.
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build debug APK
+        working-directory: frontend/mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The `device`-tagged passkey smoke test is excluded by .maestro/config.yaml;
+      # an emulator has no enrolled biometric credential to satisfy the prompt.
+      - name: Run Maestro flows
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          working-directory: frontend/mobile
+          script: |
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+
+            # The app pushes /offline whenever NetInfo reports no usable
+            # connection, and a freshly booted emulator often has not finished
+            # bringing its network up. Without this wait every flow fails on the
+            # cold-start assertion before it reaches anything it meant to test.
+            # The flows also dismiss the offline screen defensively, so a failure
+            # to validate here degrades rather than blocks.
+            for i in $(seq 1 30); do
+              if adb shell dumpsys connectivity | grep -q "VALIDATED"; then
+                echo "Emulator network validated"
+                break
+              fi
+              echo "Waiting for emulator network ($i/30)"
+              sleep 5
+            done
+
+            maestro test .maestro --format junit --output maestro-report.xml
+
+      - name: Upload Maestro report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-report
+          path: |
+            frontend/mobile/maestro-report.xml
+            ~/.maestro/tests/**
+          if-no-files-found: ignore
