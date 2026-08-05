@@ -12,9 +12,13 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "e2e": "maestro test .maestro",
-    "e2e:device": "maestro test --include-tags device .maestro"
+    "e2e:device": "maestro test --include-tags device .maestro",
+    "build:android:dev": "eas build -p android --profile development",
+    "build:android:preview": "eas build -p android --profile preview",
+    "build:android:production": "eas build -p android --profile production"
   },
   "dependencies": {
+    "@blend-capital/blend-sdk": "^3.3.0",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@expo-google-fonts/anton": "^0.4.2",
     "@expo-google-fonts/inconsolata": "^0.4.2",
