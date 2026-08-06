@@ -36,6 +36,19 @@ export function setPasskeyPublicKey(publicKey: string): Promise<void> {
   return setSecureItem(SecureKey.passkeyPublicKey, publicKey);
 }
 
+/**
+ * Adopt a passkey as this device's wallet credential.
+ *
+ * Both halves are written together — a credential id without its public key
+ * produces assertions the wallet contract cannot verify.
+ */
+export async function setPasskeyCredential(keyId: string, publicKeyHex: string): Promise<void> {
+  await Promise.all([
+    setSecureItem(SecureKey.passkeyId, keyId),
+    setSecureItem(SecureKey.passkeyPublicKey, publicKeyHex),
+  ]);
+}
+
 /** Stellar secret seed of the account that pays fees for wallet transactions. */
 export function getSignerSecret(): Promise<string | null> {
   return getSecureItem(SecureKey.signerSecret);
