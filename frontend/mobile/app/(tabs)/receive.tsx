@@ -3,23 +3,17 @@ import { Pressable, SafeAreaView, Share, StyleSheet, Text, View } from 'react-na
 import QRCode from 'react-native-qrcode-svg';
 import * as Clipboard from 'expo-clipboard';
 
+import { buildSep7PayUri } from '../../lib/sep7';
+
 // Placeholder address — the mobile shell has no wallet integration yet (that
 // lands with a later issue), so the screen renders a representative address.
 const ADDRESS = 'GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ';
 
-/**
- * Destination-only SEP-7 pay URI — byte-compatible with the web wallet's
- * `buildSep7PayUri` (`frontend/wallet/lib/sep7.ts`). A payer's wallet opens it
- * pre-filled with this account as the destination. Ported inline because the
- * shared lib lives in the web/SDK workspace, not the mobile app.
- */
-function buildSep7PayUri(destination: string): string {
-  return `web+stellar:pay?destination=${encodeURIComponent(destination)}`;
-}
-
 export default function ReceiveScreen() {
   const [copied, setCopied] = useState(false);
-  const payUri = buildSep7PayUri(ADDRESS);
+  // Destination only for now; the amount/asset/memo fields the builder accepts
+  // become useful once this screen can request a specific amount.
+  const payUri = buildSep7PayUri({ destination: ADDRESS });
 
   async function handleCopy() {
     await Clipboard.setStringAsync(ADDRESS);
@@ -32,7 +26,7 @@ export default function ReceiveScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.screen}>
+    <SafeAreaView style={styles.screen} testID="receive-screen">
       <View style={styles.body}>
         <Text style={styles.title}>Receive</Text>
         <Text style={styles.subtitle}>Show this to get paid on Stellar.</Text>
@@ -45,13 +39,14 @@ export default function ReceiveScreen() {
 
         <View style={styles.addressCard}>
           <Text style={styles.addressLabel}>YOUR ADDRESS</Text>
-          <Text style={styles.address} selectable>
+          <Text testID="receive-address" style={styles.address} selectable>
             {ADDRESS}
           </Text>
         </View>
 
         <View style={styles.actions}>
           <Pressable
+            testID="receive-copy-button"
             onPress={handleCopy}
             accessibilityRole="button"
             style={({ pressed }) => [styles.btn, styles.btnGhost, pressed && styles.pressed]}
@@ -59,6 +54,7 @@ export default function ReceiveScreen() {
             <Text style={styles.btnGhostText}>{copied ? 'Copied' : 'Copy'}</Text>
           </Pressable>
           <Pressable
+            testID="receive-share-button"
             onPress={handleShare}
             accessibilityRole="button"
             style={({ pressed }) => [styles.btn, styles.btnGold, pressed && styles.pressed]}

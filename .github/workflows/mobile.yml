@@ -1,0 +1,49 @@
+name: Mobile
+
+# Scoped to the mobile app so unrelated PRs (contracts, sdk, wallet, website)
+# do not pay for an Expo install. The workflow file itself is in the filter so
+# changes to the pipeline still get exercised.
+on:
+  pull_request:
+    paths:
+      - 'frontend/mobile/**'
+      - '.github/workflows/mobile.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/mobile/**'
+      - '.github/workflows/mobile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile:
+    name: Mobile app — typecheck, lint & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend/mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/mobile/package-lock.json
+      # frontend/mobile is not a workspace member and keeps its own lockfile, so
+      # a plain install inside the directory is enough. `npm install` is the
+      # fallback for the window after a dependency bump lands ahead of the lock.
+      - run: npm ci || npm install
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npx expo lint
+      - name: Test
+        run: npm test --if-present -- --ci

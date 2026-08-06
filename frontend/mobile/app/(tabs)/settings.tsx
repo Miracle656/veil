@@ -1,11 +1,13 @@
 import { useState } from "react";
+import { useRouter } from "expo-router";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+import { AboutSection } from "../../components/AboutSection";
 import { AddressChip, Card, Screen } from "../../components/ui";
 import { colors } from "../../theme/colors";
 import { fontFamily, typography } from "../../theme/typography";
 
-type SettingsRow = { key: string; title: string; subtitle: string };
+type SettingsRow = { key: string; title: string; subtitle: string; href?: string };
 type SettingsGroup = { heading: string; rows: SettingsRow[] };
 
 const SAMPLE_ADDRESS = "GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ";
@@ -30,7 +32,12 @@ const GROUPS: SettingsGroup[] = [
         title: "Paper backup",
         subtitle: "Generate an offline 12-word recovery phrase",
       },
-      { key: "lock", title: "Security & lock", subtitle: "Auto-lock the wallet after inactivity" },
+      {
+        key: "lock",
+        title: "Security & lock",
+        subtitle: "Auto-lock the wallet after inactivity",
+        href: "/settings/security",
+      },
     ],
   },
   {
@@ -53,6 +60,7 @@ const GROUPS: SettingsGroup[] = [
 export default function SettingsScreen() {
   // In-page navigation, mirroring the web page's section state: the shell shows
   // the grouped overview, and selecting a row opens that section's detail.
+  const router = useRouter();
   const [active, setActive] = useState<SettingsRow | null>(null);
 
   if (active) {
@@ -67,11 +75,15 @@ export default function SettingsScreen() {
             <Text style={styles.backText}>‹ Settings</Text>
           </Pressable>
           <Text style={[typography.heading, styles.title]}>{active.title}</Text>
-          <Card variant="md" style={styles.placeholder}>
-            <Text style={styles.placeholderText}>
-              This section is configured in a later update.
-            </Text>
-          </Card>
+          {active.key === "about" ? (
+            <AboutSection />
+          ) : (
+            <Card variant="md" style={styles.placeholder}>
+              <Text style={styles.placeholderText}>
+                This section is configured in a later update.
+              </Text>
+            </Card>
+          )}
         </ScrollView>
       </Screen>
     );
@@ -95,7 +107,7 @@ export default function SettingsScreen() {
               {group.rows.map((row, i) => (
                 <Pressable
                   key={row.key}
-                  onPress={() => setActive(row)}
+                  onPress={() => (row.href ? router.push(row.href as never) : setActive(row))}
                   accessibilityRole="button"
                   style={[styles.row, i > 0 && styles.rowDivider]}
                 >

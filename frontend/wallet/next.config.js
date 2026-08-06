@@ -8,6 +8,22 @@ const nextConfig = {
     // Allow imports from outside the Next.js project root (e.g. ../../sdk/src)
     externalDir: true,
   },
+  async headers() {
+    // iOS refuses an apple-app-site-association file that is not served as
+    // JSON, and the file has no extension so Next cannot infer the type.
+    // Android is stricter still: assetlinks.json must be reachable over HTTPS
+    // with no redirect. Both files live in public/.well-known/.
+    return [
+      {
+        source: '/.well-known/apple-app-site-association',
+        headers: [{ key: 'Content-Type', value: 'application/json' }],
+      },
+      {
+        source: '/.well-known/assetlinks.json',
+        headers: [{ key: 'Content-Type', value: 'application/json' }],
+      },
+    ]
+  },
   webpack: (config) => {
     // When webpack compiles SDK source files from ../../sdk/src/, it resolves
     // node_modules going up from that directory and misses the wallet's

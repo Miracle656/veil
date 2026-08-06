@@ -1,3 +1,4 @@
+import * as Crypto from 'expo-crypto';
 import * as Passkeys from 'react-native-passkeys';
 
 import {
@@ -86,4 +87,17 @@ export async function signPayloadWithPasskey(
 export function registerPasskeySigner(): () => void {
   const signer: AuthEntrySigner = (payloadHash) => signPayloadWithPasskey(payloadHash);
   return registerAuthEntrySigner(signer);
+}
+
+/**
+ * Gate a sensitive action behind the device passkey.
+ *
+ * Mirrors `requirePasskey` in the web wallet: assert over a fresh random
+ * challenge so the user proves presence before anything is built or submitted.
+ * Throws when the sheet is dismissed, so a caller can abort rather than sign.
+ */
+export async function requirePasskey(): Promise<void> {
+  const challenge = Crypto.getRandomBytes(32);
+  const assertion = await signPayloadWithPasskey(challenge);
+  if (!assertion) throw new Error('Passkey cancelled. Please try again.');
 }
