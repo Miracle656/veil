@@ -1,0 +1,46 @@
+{
+  "title": "Send",
+  "assetLabel": "Asset",
+  "recipientLabel": "Recipient address",
+  "recipientPlaceholder": "G... or C...",
+  "chooseFromContacts": "Choose from contacts",
+  "scanQr": "Scan QR code with camera",
+  "uploadQr": "Upload a QR code image from your device",
+  "amountLabel": "Amount",
+  "amountLabelWithAsset": "Amount ({{asset}})",
+  "memoLabel": "Memo (optional)",
+  "memoPlaceholder": "Add a note...",
+  "review": "Review",
+  "confirm": {
+    "to": "To",
+    "amount": "Amount",
+    "memo": "Memo",
+    "network": "Network",
+    "networkValue": "Stellar Testnet",
+    "auth": "Auth",
+    "authValue": "Passkey (WebAuthn)",
+    "confirmAndSign": "Confirm & sign",
+    "edit": "Edit"
+  },
+  "signing": {
+    "waiting": "Waiting for passkey…",
+    "hint": "Approve the prompt to authorise the transfer"
+  },
+  "done": {
+    "title": "Sent successfully"
+  },
+  "error": {
+    "title": "Transaction failed",
+    "tryAgain": "Try again"
+  },
+  "errors": {
+    "noBarcodeDetector": "QR image scan is not supported in this browser. Please type the address manually or use the camera scanner.",
+    "noQrFound": "No QR code found in the image. Try a clearer photo.",
+    "qrNotAddress": "QR decoded \"{{value}}…\" — doesn't look like a Stellar address.",
+    "imageReadFailed": "Could not read the image. Please try a different file.",
+    "signingKeyMissing": "Signing key not found. Return to dashboard and tap \"Fund wallet\" to set up a fee-payer.",
+    "noPasskey": "No passkey found. Please register the wallet first.",
+    "passkeyCancelled": "Passkey verification was cancelled.",
+    "biometricCancelled": "Biometric verification was cancelled. Please try again."
+  }
+}

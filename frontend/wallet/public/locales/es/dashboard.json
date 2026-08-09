@@ -1,0 +1,10 @@
+{
+  "title": "Panel",
+  "subtitle": "Tu billetera se bloquea automáticamente después de 5 minutos de inactividad.",
+  "copyAddress": "Copiar dirección de la billetera",
+  "signingKeyMissing": {
+    "title": "Clave de firma no encontrada",
+    "description": "Se borró el almacenamiento de tu navegador. Toca abajo para configurar una nueva cuenta de pago de comisiones y así poder enviar, intercambiar y usar el agente.",
+    "cta": "Configurar pagador de comisiones"
+  }
+}

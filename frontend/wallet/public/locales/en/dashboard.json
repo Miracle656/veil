@@ -1,0 +1,10 @@
+{
+  "title": "Dashboard",
+  "subtitle": "Your wallet locks automatically after 5 minutes of inactivity.",
+  "copyAddress": "Copy wallet address",
+  "signingKeyMissing": {
+    "title": "Signing key not found",
+    "description": "Your browser storage was cleared. Tap below to set up a new fee-payer account so you can send, swap, and use the agent.",
+    "cta": "Set up fee-payer"
+  }
+}

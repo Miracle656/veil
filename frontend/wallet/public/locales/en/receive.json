@@ -1,0 +1,18 @@
+{
+  "title": "Receive",
+  "subtitle": "Share the right address for where the sender is sending from.",
+  "spending": {
+    "label": "SPENDING ADDRESS (G…) — USE FOR MOST SENDERS",
+    "description": "Use this address to receive XLM from exchanges, classic wallets, and most apps. Works with Coinbase, Lobstr, and any Stellar wallet."
+  },
+  "spendingMissing": "Your spending address (G…) will appear here after you tap <bold>Fund wallet</bold> on the dashboard.",
+  "contract": {
+    "label": "CONTRACT ADDRESS (C…) — SOROBAN / VEIL WALLETS ONLY",
+    "description": "Use this address only when sending from another Veil wallet or a Soroban-compatible app. Classic wallets cannot send to C… addresses."
+  },
+  "copy": "Copy",
+  "copied": "Copied!",
+  "qr": "QR",
+  "savingQr": "Saving…",
+  "share": "Share"
+}

@@ -1,0 +1,5 @@
+{
+  "generic": "Algo salió mal. Inténtalo de nuevo.",
+  "network": "Error de red. Revisa tu conexión e inténtalo de nuevo.",
+  "sessionExpired": "Tu sesión expiró. Vuelve a desbloquear tu billetera."
+}

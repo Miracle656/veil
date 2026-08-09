@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { VeilLogo } from '@/components/VeilLogo'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
 import { useWalletConnect } from '@/lib/walletConnect'
@@ -355,7 +356,10 @@ export default function SettingsPage() {
           {section === 'overview' ? 'Dashboard' : 'Settings'}
         </button>
         <VeilLogo size={22} />
-        <ThemeToggle />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <LanguageSwitcher />
+          <ThemeToggle />
+        </div>
       </nav>
 
       <main className="wallet-main">

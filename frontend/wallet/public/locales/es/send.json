@@ -1,0 +1,46 @@
+{
+  "title": "Enviar",
+  "assetLabel": "Activo",
+  "recipientLabel": "Dirección del destinatario",
+  "recipientPlaceholder": "G... o C...",
+  "chooseFromContacts": "Elegir de contactos",
+  "scanQr": "Escanear código QR con la cámara",
+  "uploadQr": "Subir una imagen de código QR desde tu dispositivo",
+  "amountLabel": "Monto",
+  "amountLabelWithAsset": "Monto ({{asset}})",
+  "memoLabel": "Memo (opcional)",
+  "memoPlaceholder": "Agregar una nota...",
+  "review": "Revisar",
+  "confirm": {
+    "to": "Para",
+    "amount": "Monto",
+    "memo": "Memo",
+    "network": "Red",
+    "networkValue": "Stellar Testnet",
+    "auth": "Autenticación",
+    "authValue": "Passkey (WebAuthn)",
+    "confirmAndSign": "Confirmar y firmar",
+    "edit": "Editar"
+  },
+  "signing": {
+    "waiting": "Esperando la passkey…",
+    "hint": "Aprueba la solicitud para autorizar la transferencia"
+  },
+  "done": {
+    "title": "Enviado con éxito"
+  },
+  "error": {
+    "title": "La transacción falló",
+    "tryAgain": "Intentar de nuevo"
+  },
+  "errors": {
+    "noBarcodeDetector": "El escaneo de imágenes QR no es compatible con este navegador. Escribe la dirección manualmente o usa el escáner de cámara.",
+    "noQrFound": "No se encontró ningún código QR en la imagen. Intenta con una foto más clara.",
+    "qrNotAddress": "El código QR decodificado \"{{value}}…\" no parece una dirección de Stellar.",
+    "imageReadFailed": "No se pudo leer la imagen. Prueba con otro archivo.",
+    "signingKeyMissing": "No se encontró la clave de firma. Vuelve al panel y toca \"Financiar billetera\" para configurar un pagador de comisiones.",
+    "noPasskey": "No se encontró ninguna passkey. Por favor registra la billetera primero.",
+    "passkeyCancelled": "Se canceló la verificación de la passkey.",
+    "biometricCancelled": "Se canceló la verificación biométrica. Inténtalo de nuevo."
+  }
+}
