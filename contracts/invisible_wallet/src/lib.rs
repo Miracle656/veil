@@ -2,7 +2,7 @@
 #[cfg(test)]
 extern crate alloc;
 use soroban_sdk::{
-    contract, contractimpl, contracterror,
+    contract, contractimpl, contracterror, contracttype,
     Env, Address, Bytes, BytesN, Vec, Symbol, Val,
     auth::Context, FromVal, TryFromVal, TryIntoVal, symbol_short, Map};
 
@@ -19,6 +19,13 @@ use storage::{DataKey, AllowanceKey, PendingRecovery};
 
 /// Recovery timelock duration: 3 days in seconds.
 const RECOVERY_DELAY_SECONDS: u64 = 259_200;
+
+#[contracttype]
+pub struct BatchInvocation {
+    pub target: Address,
+    pub func: Symbol,
+    pub args: Vec<Val>,
+}
 
 
 #[contracterror]
@@ -450,6 +457,15 @@ impl InvisibleWallet {
     pub fn execute(env: Env, target: Address, func: Symbol, args: Vec<Val>) {
         env.current_contract_address().require_auth();
         env.invoke_contract::<Val>(&target, &func, args);
+    }
+
+    /// Execute several contract invocations under one wallet authorization.
+    /// Soroban rolls back every nested invocation if any invocation fails.
+    pub fn batch(env: Env, invocations: Vec<BatchInvocation>) {
+        env.current_contract_address().require_auth();
+        for invocation in invocations.iter() {
+            env.invoke_contract::<Val>(&invocation.target, &invocation.func, invocation.args);
+        }
     }
 
     /// Set spending limit for a specific token and spender.
@@ -1541,5 +1557,45 @@ mod test {
 
         let remaining = client.get_allowance(&spender, &token).unwrap();
         assert_eq!(remaining.amount, 300);
+    }
+
+    #[test]
+    fn test_batch_rolls_back_when_later_invocation_fails() {
+        let env = Env::default();
+        let (_, pub_bytes) = test_keypair();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        client.init(
+            &BytesN::from_array(&env, &pub_bytes),
+            &bytes_from_str(&env, "localhost"),
+            &bytes_from_str(&env, "https://test.example"),
+        );
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+        let first = BatchInvocation {
+            target: contract_id.clone(),
+            func: Symbol::new(&env, "approve"),
+            args: Vec::from_array(&env, [
+                spender.clone().into_val(&env),
+                token.clone().into_val(&env),
+                500i128.into_val(&env),
+                ().into_val(&env),
+            ]),
+        };
+        let second = BatchInvocation {
+            target: contract_id.clone(),
+            func: Symbol::new(&env, "approve"),
+            args: Vec::from_array(&env, [
+                spender.clone().into_val(&env),
+                token.clone().into_val(&env),
+                0i128.into_val(&env),
+                ().into_val(&env),
+            ]),
+        };
+
+        env.mock_all_auths();
+        assert!(client.try_batch(&Vec::from_array(&env, [first, second])).is_err());
+        assert!(client.get_allowance(&spender, &token).is_none());
     }
 }

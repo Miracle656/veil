@@ -117,6 +117,16 @@ export type WebAuthnSignature = {
     signature: Uint8Array;
 };
 
+/** A contract invocation executed by batch() under one wallet authorization. */
+export type BatchOperation = {
+    /** Target contract address. */
+    target: string;
+    /** Target contract function name. */
+    functionName: string;
+    /** Arguments encoded as Soroban ScVals. */
+    args?: xdr.ScVal[];
+};
+
 /**
  * Where the WebAuthn credential lives.
  *
@@ -427,6 +437,14 @@ export type InvisibleWallet = {
         amount: number | bigint,
         token?: string,
         memo?: string,
+    ) => Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }>;
+    /**
+     * Execute multiple contract invocations atomically with one passkey assertion.
+     * The wallet contract authorizes the nested contexts as a single invocation.
+     */
+    batch: (
+        signerKeypair: Keypair | string,
+        operations: BatchOperation[],
     ) => Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }>;
     /**
      * Get the current allowance for a spender and token.
@@ -1773,6 +1791,121 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
         }
     }, [address, networkPassphrase, rpcUrl, signAuthEntry, config]);
 
+    // ── batch ────────────────────────────────────────────────────────────────
+
+    const batch = useCallback(async (
+        signerSecret: Keypair | string,
+        operations: BatchOperation[],
+    ): Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }> => {
+        setIsPending(true);
+        setError(null);
+        try {
+            if (!address) throw new Error('No wallet address. Call register() or login() first.');
+            if (operations.length === 0) throw new Error('At least one batch operation is required');
+
+            const signerKeypair = typeof signerSecret === 'string'
+                ? Keypair.fromSecret(signerSecret)
+                : signerSecret;
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(signerKeypair.publicKey());
+            const invocationValues = operations.map((operation) => xdr.ScVal.scvMap([
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol('target'),
+                    val: nativeToScVal(operation.target, { type: 'address' }),
+                }),
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol('func'),
+                    val: xdr.ScVal.scvSymbol(operation.functionName),
+                }),
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol('args'),
+                    val: xdr.ScVal.scvVec(operation.args ?? []),
+                }),
+            ]));
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(walletContract.call('batch', xdr.ScVal.scvVec(invocationValues)))
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+            const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+            const authEntries = successSim.result?.auth;
+            if (authEntries) {
+                const networkIdBytes = new Uint8Array(
+                    (stellarHash as (input: Buffer) => Buffer)(Buffer.from(networkPassphrase))
+                );
+
+                for (const parsed of authEntries) {
+                    const cred = parsed.credentials();
+                    if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+                        continue;
+                    }
+
+                    const addrCred = cred.address();
+                    const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+                        new xdr.HashIdPreimageSorobanAuthorization({
+                            networkId: Buffer.from(networkIdBytes),
+                            nonce: addrCred.nonce(),
+                            invocation: parsed.rootInvocation(),
+                            signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                        })
+                    );
+                    const payloadHash = new Uint8Array(
+                        (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
+                    );
+                    const webAuthnSig = await signAuthEntry(payloadHash);
+                    if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
+
+                    parsed.credentials(
+                        xdr.SorobanCredentials.sorobanCredentialsAddress(
+                            new xdr.SorobanAddressCredentials({
+                                address: addrCred.address(),
+                                nonce: addrCred.nonce(),
+                                signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                                signature: xdr.ScVal.scvVec([
+                                    nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
+                                    nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
+                                    nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
+                                    nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+                                ]),
+                            })
+                        )
+                    );
+                }
+            }
+
+            const submissionTx = signForSubmission(assembled, signerKeypair, config);
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                return { transactionHash: sendResult.hash, status: 'FAILED' };
+            }
+            return { transactionHash: sendResult.hash, status: 'SUCCESS' };
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            setError(message);
+            throw err;
+        } finally {
+            setIsPending(false);
+        }
+    }, [address, rpcUrl, networkPassphrase, signAuthEntry, config]);
+
     // ── getAllowance ──────────────────────────────────────────────────────────
 
     const getAllowance = useCallback(async (spender: string, token: string): Promise<{ amount: number; expiry: number | undefined } | null> => {
@@ -1975,6 +2108,6 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     }, [getCipher]);
 
     return useMemo(() => (
-        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode }
-    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode]);
+        { address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, batch, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode }
+    ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, batch, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode]);
 }
