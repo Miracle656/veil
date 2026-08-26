@@ -6,7 +6,6 @@ export const dynamic = 'force-dynamic'
 import { inclusionFee } from '@/lib/fees'
 import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Image from 'next/image'
 import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
   TransactionBuilder, BASE_FEE, Networks, Asset, nativeToScVal, scValToNative,
@@ -26,6 +25,7 @@ import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import type { WebAuthnSignature } from '@veil/sdk'
 import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
 import { VeilMark } from '@/components/ui/VeilMark'
+import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 
@@ -846,7 +846,7 @@ function DashboardPageContent() {
                 {loading ? 'Loading…' : 'Nothing yet.'}
               </p>
             ) : recent.map((tx) => (
-              <button key={tx.id} className="vw-listrow" style={{ padding: '14px 0' }} onClick={() => setSelectedTx(tx)}>
+              <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
                   <span style={{ fontSize: '14px', fontWeight: 500 }}>
                     {tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'}
@@ -857,12 +857,12 @@ function DashboardPageContent() {
                       : tx.counterparty}
                   </span>
                 </span>
-                <span style={{ fontSize: '14px', fontWeight: 600, flexShrink: 0, color: tx.type === 'received' ? 'var(--teal)' : 'var(--off-white)' }}>
+                <Amount className={`text-sm font-semibold shrink-0 ${tx.type === 'received' ? 'text-teal' : 'text-off-white'}`}>
                   {hideAmounts
                     ? '••••'
                     : (tx.type === 'sent' ? '-' : tx.type === 'received' ? '+' : '') + tx.amount + ' ' + tx.asset}
-                </span>
-              </button>
+                </Amount>
+              </Row>
             ))}
           </div>
 
@@ -891,7 +891,7 @@ function DashboardPageContent() {
         <div className="vw-rail">
           <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
-              <div className="vw-label">Assets</div>
+              <Label className="vw-label">Assets</Label>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
             </div>
             {loading && assets.length === 0 ? (
@@ -904,7 +904,7 @@ function DashboardPageContent() {
               const price = priceOf(asset)
               const value = price != null ? parseFloat(asset.balance) * price : null
               return (
-                <button
+                <Row
                   key={asset.code + '-' + (asset.issuer ?? 'native')}
                   className="vw-listrow"
                   onClick={() => router.push(asset.issuer ? '/token/' + asset.code + '?issuer=' + asset.issuer : '/token/' + asset.code)}
@@ -918,10 +918,10 @@ function DashboardPageContent() {
                       </span>
                     </span>
                   </span>
-                  <span style={{ fontSize: '15px', fontWeight: 600, flexShrink: 0 }}>
+                  <Amount className="text-[15px] font-semibold shrink-0">
                     {hideAmounts ? '••••' : (value != null ? usd(value) : '—')}
-                  </span>
-                </button>
+                  </Amount>
+                </Row>
               )
             })}
           </div>
@@ -981,27 +981,6 @@ export default function DashboardPage() {
     <Suspense fallback={<div className="wallet-shell"><main className="wallet-main" /></div>}>
       <DashboardPageContent />
     </Suspense>
-  )
-}
-
-const TOKEN_LOGOS: Record<string, string> = {
-  XLM:  '/tokens/xlm.png',
-  USDC: '/tokens/usdc.png',
-}
-
-function TokenIcon({ code, size = 32 }: { code: string; size?: number }) {
-  const src = TOKEN_LOGOS[code.toUpperCase()]
-  if (src) {
-    return (
-      <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: code === 'XLM' ? '#000' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Image src={src} alt={code} width={size} height={size} style={{ objectFit: 'contain', ...(code === 'XLM' ? { filter: 'invert(1)', padding: '4px' } : {}) }} />
-      </div>
-    )
-  }
-  return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: 'rgba(253,218,36,0.12)', border: '1px solid rgba(253,218,36,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.38, fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>
-      {code[0]}
-    </div>
   )
 }
 

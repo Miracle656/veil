@@ -1,4 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400;1,600&family=Inter:wght@400;500;600&family=Anton&family=Inconsolata:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -58,7 +57,7 @@
 html { scroll-behavior: smooth; }
 
 body {
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: var(--font-inter), 'Inter', system-ui, sans-serif;
   background: var(--near-black);
   color: var(--off-white);
   -webkit-font-smoothing: antialiased;
@@ -96,7 +95,7 @@ body {
   padding: 0.75rem 2rem;
   background: var(--gold);
   color: var(--near-black);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-inter), 'Inter', sans-serif;
   font-weight: 600;
   font-size: 0.9375rem;
   border-radius: 100px;
@@ -118,7 +117,7 @@ body {
   padding: 0.75rem 2rem;
   background: transparent;
   color: var(--off-white);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-inter), 'Inter', sans-serif;
   font-weight: 500;
   font-size: 0.9375rem;
   border-radius: 100px;
@@ -229,14 +228,14 @@ body {
   border: 1px solid var(--border-dim);
   border-radius: 12px;
   color: var(--off-white);
-  font-family: 'Inter', sans-serif;
+  font-family: var(--font-inter), 'Inter', sans-serif;
   font-size: 0.9375rem;
   outline: none;
   transition: border-color 120ms var(--ease);
 }
 .input-field::placeholder { color: rgba(246,247,248,0.3); }
 .input-field:focus        { border-color: rgba(253,218,36,0.4); }
-.input-field.mono         { font-family: 'Inconsolata', monospace; font-size: 0.875rem; }
+.input-field.mono         { font-family: var(--font-inconsolata), 'Inconsolata', monospace; font-size: 0.875rem; }
 
 /* ── Address chip ────────────────────────────────────────────────────── */
 .address-chip {
@@ -247,7 +246,7 @@ body {
   background: rgba(253,218,36,0.08);
   border: 1px solid rgba(253,218,36,0.18);
   border-radius: 100px;
-  font-family: 'Inconsolata', monospace;
+  font-family: var(--font-inconsolata), 'Inconsolata', monospace;
   font-size: 0.8125rem;
   color: var(--gold);
   letter-spacing: 0.01em;
@@ -346,7 +345,7 @@ body {
 
 /* ── Amount display ──────────────────────────────────────────────────── */
 .amount-display {
-  font-family: 'Lora', Georgia, serif;
+  font-family: var(--font-lora), 'Lora', Georgia, serif;
   font-weight: 600;
   font-style: italic;
   font-size: 3.5rem;
@@ -424,7 +423,7 @@ body {
 
 .vw-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
 .vw-eyebrow { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(246,247,248,0.4); font-weight: 700; }
-.vw-title { font-family: 'Lora', Georgia, serif; font-style: italic; font-weight: 600; font-size: 30px; margin-top: 3px; }
+.vw-title { font-family: var(--font-lora), 'Lora', Georgia, serif; font-style: italic; font-weight: 600; font-size: 30px; margin-top: 3px; }
 .vw-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .vw-pill { border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); border-radius: 100px; padding: 9px 18px; font-size: 13px; font-weight: 500; color: rgba(246,247,248,0.72); cursor: pointer; white-space: nowrap; }
 .vw-pill--gold { background: #FDDA24; color: #0F0F0F; border-color: #FDDA24; font-weight: 600; padding: 10px 22px; display: inline-flex; align-items: center; gap: 7px; }
@@ -500,19 +499,19 @@ body {
    in a column nor hold their width as the total changes. Lora italic stays on
    the page and section titles. */
 .vw-silver__amountrow { position: relative; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
-.vw-silver__amount { font-family: 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 52px; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.vw-silver__amount { font-family: var(--font-inter), 'Inter', system-ui, sans-serif; font-weight: 600; font-size: 52px; line-height: 1.1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 
 /* The plate is a light metallic gradient carrying near-black text, so the
    change chip takes the darker end of the teal/red pair to stay legible on it
    rather than the values used against the dark surfaces elsewhere. */
-.vw-silver__delta { font-family: 'Inter', system-ui, sans-serif; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; border-radius: 100px; padding: 4px 10px; white-space: nowrap; }
+.vw-silver__delta { font-family: var(--font-inter), 'Inter', system-ui, sans-serif; font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; border-radius: 100px; padding: 4px 10px; white-space: nowrap; }
 .vw-silver__delta--up { color: #00646E; background: rgba(0,100,110,0.14); }
 .vw-silver__delta--down { color: #9E332B; background: rgba(158,51,43,0.13); }
-.vw-silver__sub { font-family: 'Inconsolata', monospace; font-size: 13px; color: rgba(15,15,15,0.6); }
+.vw-silver__sub { font-family: var(--font-inconsolata), 'Inconsolata', monospace; font-size: 13px; color: rgba(15,15,15,0.6); }
 
 .vw-label { font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); }
 .vw-label--lilac { color: #B7ACE8; }
-.vw-meta { font-family: 'Inconsolata', monospace; font-size: 12px; color: rgba(246,247,248,0.4); }
+.vw-meta { font-family: var(--font-inconsolata), 'Inconsolata', monospace; font-size: 12px; color: rgba(246,247,248,0.4); }
 .vw-listrow { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid rgba(255,255,255,0.06); width: 100%; background: none; border-left: 0; border-right: 0; border-top: 0; color: var(--off-white); cursor: pointer; text-align: left; }
 .vw-listrow:last-child { border-bottom: none; }
 .vw-agent { background: rgba(183,172,232,0.06); border: 1px solid rgba(183,172,232,0.22); border-radius: 26px; padding: 22px 26px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box; }
@@ -537,13 +536,13 @@ body {
 @media (max-width: 1180px) { .vw-sendcol { width: 100%; } }
 
 .vw-amountcard { background: rgba(255,255,255,0.04); border: 1px solid var(--border-dim); border-radius: 16px; padding: 26px 22px 18px; display: flex; flex-direction: column; align-items: center; }
-.vw-amountinput { font-family: 'Lora', Georgia, serif; font-style: italic; font-weight: 600; font-size: 56px; line-height: 1; text-align: center; width: 100%; background: none; border: 0; color: var(--off-white); outline: none; }
+.vw-amountinput { font-family: var(--font-lora), 'Lora', Georgia, serif; font-style: italic; font-weight: 600; font-size: 56px; line-height: 1; text-align: center; width: 100%; background: none; border: 0; color: var(--off-white); outline: none; }
 .vw-amountinput::placeholder { color: rgba(246,247,248,0.25); }
 /* Chrome/Safari spinners wreck the centred display type. */
 .vw-amountinput::-webkit-outer-spin-button,
 .vw-amountinput::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .vw-amountinput { -moz-appearance: textfield; appearance: textfield; }
-.vw-amountsub { font-family: 'Inconsolata', monospace; font-size: 14px; color: rgba(246,247,248,0.5); margin-top: 10px; min-height: 1em; }
+.vw-amountsub { font-family: var(--font-inconsolata), 'Inconsolata', monospace; font-size: 14px; color: rgba(246,247,248,0.5); margin-top: 10px; min-height: 1em; }
 .vw-amountfoot { align-self: stretch; display: flex; justify-content: space-between; align-items: center; margin-top: 18px; gap: 10px; flex-wrap: wrap; }
 .vw-amountbal { font-size: 12px; color: rgba(246,247,248,0.45); }
 .vw-chips { display: flex; gap: 7px; }

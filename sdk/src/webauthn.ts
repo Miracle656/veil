@@ -14,6 +14,11 @@ function b64urlToUint8Array(b64: string): Uint8Array {
     return Uint8Array.from(raw, c => c.charCodeAt(0));
 }
 
+function b64urlToArrayBuffer(b64: string): ArrayBuffer {
+    const bytes = b64urlToUint8Array(b64);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -82,6 +87,14 @@ export interface WebAuthnProvider {
          * decide (typically a device-bound platform passkey).
          */
         authenticatorAttachment?: AuthenticatorAttachment;
+        /**
+         * Credential ids already registered for this wallet (e.g. its existing
+         * platform passkey and/or portable signer). Forwarded to
+         * `excludeCredentials` so an authenticator that already holds one of
+         * these refuses the request instead of silently replacing the
+         * existing resident credential (same rp.id + user.id).
+         */
+        excludeCredentials?: { id: string; transports?: string[] }[];
     }): Promise<WebAuthnCreateResult>;
 
     authenticate(options: {
@@ -100,7 +113,7 @@ export interface WebAuthnProvider {
 // ── Browser implementation ────────────────────────────────────────────────────
 
 export const webAuthnProvider: WebAuthnProvider = {
-    async create({ challenge, rpId, rpName, userId, userName, authenticatorAttachment }) {
+    async create({ challenge, rpId, rpName, userId, userName, authenticatorAttachment, excludeCredentials }) {
         // Slice to ensure a plain ArrayBuffer (Uint8Array.buffer may be SharedArrayBuffer)
         const challengeBuf = challenge.buffer.slice(
             challenge.byteOffset, challenge.byteOffset + challenge.byteLength
@@ -120,6 +133,15 @@ export const webAuthnProvider: WebAuthnProvider = {
                 user: { id: userIdBuf, name: userName, displayName: userName },
                 pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
                 timeout: 60_000,
+                ...(excludeCredentials && excludeCredentials.length
+                    ? {
+                        excludeCredentials: excludeCredentials.map(({ id, transports }) => ({
+                            id:   b64urlToArrayBuffer(id),
+                            type: 'public-key' as const,
+                            ...(transports && transports.length ? { transports: transports as AuthenticatorTransport[] } : {}),
+                        })),
+                    }
+                    : {}),
                 authenticatorSelection: {
                     residentKey: roaming ? 'required' : 'preferred',
                     userVerification: 'required',

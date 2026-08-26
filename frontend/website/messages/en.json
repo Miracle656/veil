@@ -18,13 +18,19 @@
   },
   "hero": {
     "tagline": "No seed phrase. No compromise.",
-    "title1": "The smart wallet",
-    "title2": "you never see",
-    "title3": "but always trust.",
+    "title1": "The agentic",
+    "title2": "passkey wallet",
+    "title3": "for Stellar.",
     "subtitle": "Passkey-powered smart accounts on Stellar Soroban. Your biometric is the key — no phrase to write down, no key to lose.",
     "cta1": "Get Early Access",
     "cta2": "Read the Docs",
-    "builtOn": "Built on Stellar Soroban"
+    "builtOn": "Built on Stellar Soroban",
+    "notes": [
+      "Send and receive USDC and XLM, settled in seconds.",
+      "Swap through Soroswap and earn through Blend, in-wallet.",
+      "Ask the agent for a payment; approve it with your fingerprint.",
+      "See every balance in your local currency."
+    ]
   },
   "howItWorks": {
     "sectionLabel": "The Invisible Handshake",
@@ -117,7 +123,7 @@
     "line1": "The agentic",
     "line2": "passkey wallet",
     "line3": "for Stellar.",
-    "body": "Hold dollars, spend in naira. The balance earns yield underneath, and nothing moves without your passkey — face, fingerprint, your device, your call.",
+    "body": "Hold dollars, spend in your local currency. The balance earns yield underneath, and nothing moves without your passkey — face, fingerprint, your device, your call.",
     "cta1": "Create wallet",
     "cta2": "Read the docs",
     "metrics": [
@@ -179,7 +185,7 @@
       },
       {
         "name": "Local currency",
-        "blurb": "Read your balance in naira, cedi, shilling or dollars."
+        "blurb": "Read your balance in naira, cedi, shilling, rand or dollars."
       },
       {
         "name": "AI agent",
@@ -244,7 +250,7 @@
       },
       {
         "q": "Is this actually live, or a prototype?",
-        "a": "Live on Stellar mainnet. The contracts are deployed and source-verified, and the core flows have real transactions behind them — a passkey-authorised spend and a live DEX swap among them. Bills and airtime are the exception: those need a licensed naira partner and are not switched on yet."
+        "a": "Live on Stellar mainnet. The contracts are deployed and source-verified, and the core flows have real transactions behind them — a passkey-authorised spend and a live DEX swap among them. Bills and airtime are the exception: those need a licensed partner in each market and are not switched on yet."
       }
     ]
   },

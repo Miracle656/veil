@@ -2,7 +2,7 @@
 
 import { useActivityFeed } from '@/lib/activityFeed'
 import { inclusionFee } from '@/lib/fees'
-import { PageHeader } from '@/components/ui/primitives'
+import { Label, Nav, PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
@@ -12,7 +12,6 @@ import {
 } from '@stellar/stellar-sdk'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
-import { VeilMark } from '@/components/ui/VeilMark'
 import { ContactPicker } from '@/components/ContactPicker'
 import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
@@ -274,19 +273,7 @@ export default function SendPage() {
 
   return (
     <div className="wallet-shell">
-      <nav className="wallet-nav">
-        <button
-          onClick={() => router.back()}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--off-white)', display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.875rem' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          Back
-        </button>
-        <VeilMark size={22} />
-        <div style={{ width: 40 }} />
-      </nav>
+      <Nav onBack={() => router.back()} title="VEIL" />
 
       <main className="wallet-main wallet-main--wide">
         <div style={{ marginBottom: '1.75rem' }}>
@@ -299,9 +286,7 @@ export default function SendPage() {
 
             {assets.length > 1 && (
               <div>
-                <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  ASSET
-                </label>
+                <Label className="mb-2 block">ASSET</Label>
                 <select
                   value={selectedAsset?.code ?? ''}
                   onChange={e => setSelectedAsset(assets.find(a => a.code === e.target.value) ?? null)}

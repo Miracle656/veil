@@ -19,7 +19,7 @@ Stellar offers three networks for development and production. This guide helps y
 | **Real XLM** | No (free) | No (free) | Yes (real money) |
 | **Use Case** | Experimental features | App development & QA | Production dApps |
 | **Friendbot** | Yes | Yes | No (must buy XLM) |
-| **RPC Endpoint** | soroban-futurenet.stellar.org | soroban-testnet.stellar.org | soroban-mainnet.stellar.org |
+| **RPC Endpoint** | soroban-futurenet.stellar.org | soroban-testnet.stellar.org | No public host — paid provider (see [Mainnet RPC](#mainnet-rpc-is-paid-and-why-the-wallet-proxies-it)) |
 | **Horizon API** | horizon-futurenet.stellar.org | horizon-testnet.stellar.org | horizon.stellar.org |
 | **Network ID** | `StellarFuturenetNetwork` | `Test SDF Network` | `Public Global Stellar` |
 | **Fee Rate** | ~100 stroops/tx | ~100 stroops/tx | ~100 stroops/tx |
@@ -150,11 +150,50 @@ Most Veil development happens on Testnet. It has stable features and monthly res
 ```bash
 # Environment variables for Mainnet
 export STELLAR_NETWORK="mainnet"
-export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+# There is NO public mainnet Soroban RPC. Point this at your own paid/keyed
+# provider endpoint (see "Mainnet RPC is paid" below). Horizon, by contrast,
+# does have a free public host.
+export SOROBAN_RPC_HOST="$MAINNET_RPC_URL"
 export SOROBAN_RPC_PORT="443"
 export HORIZON_URL="https://horizon.stellar.org"
 export NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
 ```
+
+### Mainnet RPC is paid (and why the wallet proxies it)
+
+Unlike Futurenet and Testnet, **Stellar runs no free public Soroban RPC for
+mainnet.** There is no `soroban-mainnet.stellar.org` host — following any table
+that lists one lands on a dead DNS name. Mainnet Soroban RPC is a paid, keyed
+service. Practical providers:
+
+- [QuickNode](https://www.quicknode.com/chains/xlm)
+- [Blockdaemon](https://www.blockdaemon.com/protocols/stellar)
+- [Validation Cloud](https://www.validationcloud.io/)
+- Self-hosted [Stellar RPC](https://developers.stellar.org/docs/data/rpc/admin-guide)
+
+Because that endpoint carries an account key, the Veil wallet never ships it to
+the browser. It lives in a **server-only** variable and is reached through a
+same-origin proxy, `app/api/rpc/mainnet/route.ts`:
+
+- **Keep the URL server-side.** Set `MAINNET_RPC_URL` (note: **no**
+  `NEXT_PUBLIC_` prefix). A `NEXT_PUBLIC_` variable is inlined into the client
+  bundle, so it would publish the key to every visitor of the live site — an
+  immediate, metered cost. `SOROBAN_MAINNET_RPC_URL` is also accepted.
+- **The proxy is not an open relay.** It allow-lists only the eleven JSON-RPC
+  methods the wallet actually calls (`getHealth`, `getNetwork`,
+  `getVersionInfo`, `getLatestLedger`, `getFeeStats`, `getLedgerEntries`,
+  `getEvents`, `getTransaction`, `getTransactions`, `simulateTransaction`,
+  `sendTransaction`) and rejects anything else with `403`, so a public endpoint
+  can't be used to drain the quota. The upstream URL is never echoed in an error.
+- **The UI checks before offering mainnet.** `GET /api/rpc/mainnet` returns
+  `{"configured": <bool>}` — `true` when a URL is set, `false` otherwise. The
+  network switcher uses this to decide whether to offer the mainnet toggle at
+  all; when unset, `POST` replies `503` and the wallet stays on testnet rather
+  than failing halfway through a transaction.
+
+For **local development** against your own unkeyed or self-hosted RPC, an
+explicit `NEXT_PUBLIC_MAINNET_RPC_URL` overrides the proxy so the browser talks
+to it directly.
 
 ### Get Mainnet XLM
 
@@ -175,9 +214,10 @@ Mainnet has no Friendbot. You must buy XLM from an exchange:
 
 ```bash
 # Deploy Veil contract to Mainnet (REAL XLM WILL BE CHARGED)
+# $MAINNET_RPC_URL is your own paid provider endpoint — there is no public one.
 soroban contract deploy \
   --wasm target/wasm32-unknown-unknown/release/veil_wallet.wasm \
-  --rpc-url https://soroban-mainnet.stellar.org \
+  --rpc-url "$MAINNET_RPC_URL" \
   --network-passphrase "Public Global Stellar Network ; September 2015"
 
 # Initialize wallet on Mainnet
@@ -185,7 +225,7 @@ soroban contract invoke \
   --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABUFC \
   --function init \
   --arg-xdr-base64 "AAAAQQAAAAACc4fQYlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXl=" \
-  --rpc-url https://soroban-mainnet.stellar.org \
+  --rpc-url "$MAINNET_RPC_URL" \
   --network-passphrase "Public Global Stellar Network ; September 2015"
 ```
 
@@ -235,7 +275,7 @@ npm run test:integration
 # - Mainnet simulation ✓
 
 export STELLAR_NETWORK="mainnet"
-export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+export SOROBAN_RPC_HOST="$MAINNET_RPC_URL"   # your paid provider — no public host
 
 # Deploy with caution
 soroban contract deploy --network-passphrase "Public Global Stellar Network ; September 2015"
@@ -278,7 +318,8 @@ case "$1" in
     ;;
   mainnet)
     export STELLAR_NETWORK="mainnet"
-    export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+    # No public mainnet RPC — set MAINNET_RPC_URL to your paid provider endpoint.
+    export SOROBAN_RPC_HOST="$MAINNET_RPC_URL"
     export NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
     ;;
   *)
@@ -299,7 +340,7 @@ source ~/.stellar-network testnet
 
 source ~/.stellar-network mainnet
 # ✓ Network set to: mainnet
-# ✓ RPC: https://soroban-mainnet.stellar.org
+# ✓ RPC: $MAINNET_RPC_URL   (your paid provider — no public host)
 ```
 
 ## Network Status & Monitoring

@@ -69,8 +69,18 @@ jest.mock('@stellar/stellar-sdk', () => ({
 
 // ── ./utils mock ──────────────────────────────────────────────────────────────
 jest.mock('../src/utils', () => ({
-  bufferToHex:          jest.fn(() => 'aabbcc1122334455'),
-  hexToUint8Array:      jest.fn(() => new Uint8Array(65).fill(4)),
+  // Real round-tripping implementations (not fixed stubs): resolveUserId()
+  // persists via bufferToHex and reads back via hexToUint8Array, so the two
+  // must agree with each other across calls for the persistence test below.
+  bufferToHex: jest.fn((input: Uint8Array | ArrayBuffer) => {
+    const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }),
+  hexToUint8Array: jest.fn((hex: string) => {
+    const array = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) array[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    return array;
+  }),
   derToRawSignature:    jest.fn(() => new Uint8Array(64).fill(1)),
   extractP256PublicKey: jest.fn().mockResolvedValue(new Uint8Array(65).fill(4)),
   computeWalletAddress: jest.fn(() => 'CWALLET_ADDRESS_MOCK'),
@@ -168,7 +178,10 @@ describe('WebAuthn unicode normalization tests', () => {
       await result.current.register(nameNFD);
     });
 
-    // Check that both registrations resulted in the exact same `user.id` and `user.name` byte arrays / values
+    // user.name still converges via NFC normalization of the display name.
+    // user.id is independent of the username (persisted per-device, see
+    // resolveUserId in useInvisibleWallet.ts) — it converges here because
+    // both calls share the same storage, not because of Unicode normalization.
     expect(capturedUserOptions).toHaveLength(2);
     const [optionsNFC, optionsNFD] = capturedUserOptions;
 

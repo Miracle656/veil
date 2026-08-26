@@ -269,6 +269,52 @@ describe('useInvisibleWallet', () => {
         configurable: true,
       })
     })
+
+    it('does not derive user.id from the supplied username', async () => {
+      mockCredentialsCreate.mockResolvedValueOnce(makeMockRegistrationCredential())
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+      await act(async () => { await result.current.register('Veil wallet') })
+
+      const passedOptions = mockCredentialsCreate.mock.calls[0][0].publicKey
+      const userIdBytes = new Uint8Array(passedOptions.user.id)
+      const usernameBytes = new TextEncoder().encode('Veil wallet')
+
+      expect(userIdBytes).not.toEqual(usernameBytes)
+    })
+
+    it('omits excludeCredentials on a first-ever registration', async () => {
+      mockCredentialsCreate.mockResolvedValueOnce(makeMockRegistrationCredential())
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+      await act(async () => { await result.current.register('alice') })
+
+      const passedOptions = mockCredentialsCreate.mock.calls[0][0].publicKey
+      expect(passedOptions.excludeCredentials ?? []).toHaveLength(0)
+    })
+
+    it('passes the existing credential id as excludeCredentials on a repeat registration, guarding against silent overwrite', async () => {
+      mockCredentialsCreate.mockResolvedValueOnce(makeMockRegistrationCredential())
+      mockCredentialsCreate.mockResolvedValueOnce(makeMockRegistrationCredential())
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+
+      // First registration for this wallet/storage.
+      await act(async () => { await result.current.register('Veil wallet') })
+      const firstKeyId = localStorage.getItem('invisible_wallet_key_id')
+      expect(firstKeyId).not.toBeNull()
+
+      // A second registration attempt on the same device/storage — e.g. someone
+      // else typing the same display name — must exclude the credential already
+      // enrolled here so the authenticator refuses rather than silently
+      // replacing it (issue #627).
+      await act(async () => { await result.current.register('Veil wallet') })
+
+      const secondOptions = mockCredentialsCreate.mock.calls[1][0].publicKey
+      expect(secondOptions.excludeCredentials).toBeDefined()
+      const excludedIds = secondOptions.excludeCredentials.map((c: { id: ArrayBuffer }) => Buffer.from(c.id).toString('base64'))
+      expect(excludedIds.length).toBeGreaterThan(0)
+    })
   })
 
   // ── login() ────────────────────────────────────────────────────────────────

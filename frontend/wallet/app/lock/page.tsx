@@ -1,5 +1,6 @@
 'use client'
 
+import { NetworkSwitcher } from '@/components/NetworkSwitcher'
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { LockKeyhole, Fingerprint, AlertCircle } from 'lucide-react'
@@ -111,6 +112,10 @@ export default function LockPage() {
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
       <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem' }}>
+        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
+          <NetworkSwitcher />
+        </div>
+
         <header style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'center' }}>
            {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
         <span style={{ fontFamily: 'Anton, Impact, sans-serif', fontSize: '2rem', letterSpacing: '0.08em', color: 'var(--gold)', userSelect: 'none' }}>

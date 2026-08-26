@@ -11,6 +11,7 @@ import { StyleSheet } from 'react-native';
 import { fontAssets } from '../theme/typography';
 import { useTheme } from '../hooks/useTheme';
 import { useInactivityLock } from '../hooks/useInactivityLock';
+import { useOutboxReplay } from '../hooks/useOutboxReplay';
 import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
 import { hydrateLockSettings } from '../lib/appLock';
@@ -57,6 +58,7 @@ export default function RootLayout() {
           <ConnectivityProvider>
             <WalletProvider>
               <ConnectivityGate />
+              <OutboxReplayGate />
               <InactivityLockGate />
               <Stack
                 screenOptions={{
@@ -96,6 +98,20 @@ function InactivityLockGate() {
  * returns, so the route the user was on is preserved underneath. Rendered as a
  * sibling of the navigator rather than around it, so it can use the router.
  */
+/**
+ * Replays the SDK's Stellar transaction outbox when connectivity returns.
+ *
+ * The SDK only auto-replays off `window.addEventListener('online')`, which
+ * never fires under React Native, so without this mount a transaction queued
+ * while offline would sit in AsyncStorage until something replayed it by hand.
+ * It needs both ConnectivityProvider and WalletProvider in scope and renders
+ * nothing, so it belongs here with the other gates rather than in a screen.
+ */
+function OutboxReplayGate() {
+  useOutboxReplay();
+  return null;
+}
+
 function ConnectivityGate() {
   const { isOnline } = useConnectivity();
   const router = useRouter();

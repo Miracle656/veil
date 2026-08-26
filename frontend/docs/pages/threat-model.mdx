@@ -84,7 +84,7 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | E-1 | Rogue signer added without user consent | `add_signer` | `add_signer` requires a valid WebAuthn signature from an existing registered signer | ✅ Implemented |
 | E-2 | Cross-contract re-entrancy (malicious contract calls Veil) | `__check_auth` | Soroban's `require_auth` model prevents re-entrancy; each auth entry is bound to a specific invocation | ✅ By Soroban design |
 | E-3 | Replay of an old valid WebAuthn assertion | `__check_auth` | `signature_payload` is derived from the Soroban auth entry hash, which is unique per ledger sequence; Soroban ledger sequences prevent replay at the network level | ✅ Implemented |
-| E-4 | CI runner compromise exposes `NEXT_PUBLIC_*` env vars | GitHub Actions | `NEXT_PUBLIC_*` values are public testnet addresses (browser-exposed by design); no mainnet secrets in CI | ✅ Testnet only |
+| E-4 | CI runner compromise exposes `NEXT_PUBLIC_*` env vars | GitHub Actions | `NEXT_PUBLIC_*` values are public network addresses — testnet endpoints and the public mainnet factory ID — browser-exposed by design. The paid mainnet RPC key is held in a **server-only** `MAINNET_RPC_URL` (never `NEXT_PUBLIC_`), so it is not among the CI-exposed values | ✅ No mainnet secrets in `NEXT_PUBLIC_*` |
 | E-5 | Guardians recover to a key they control | Guardian recovery | 3-day timelock on `complete_recovery`; user can cancel during the window; guardian's own key must authorise | ⚠️ Timelock relies on user monitoring |
 
 ---

@@ -1,121 +1,11 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-    Account,
-    Asset,
-    Contract,
-    Keypair,
-    rpc as SorobanRpc,
-    Horizon,
-    TransactionBuilder,
-    BASE_FEE,
-    xdr,
-    nativeToScVal,
-    scValToNative,
-    Networks,
-    hash as stellarHash,
-} from '@stellar/stellar-sdk';
-
-const HorizonServer = Horizon.Server;
-import {
-    bufferToHex,
-    hexToUint8Array,
-    computeWalletAddress,
-} from './utils';
-import { webAuthnProvider } from './webauthn';
-import { TransactionOutbox, type ReplayOptions, type ReplayResult } from './outbox';
-import { verifyAttestation, AttestationError, type AttestationPolicy } from './webauthn/attestation';
-import { createLocalCipher, type LocalCipher } from './crypto/prf';
-import { deriveCounterfactualAddress as _deriveCounterfactualAddress } from './counterfactual';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
 /**
- * Minimal key–value storage interface compatible with both localStorage (web)
- * and async stores like AsyncStorage (React Native).
+ * React adapter for the Invisible Wallet SDK.
  *
- * Pass a custom adapter via WalletConfig.storage to override the default
- * (localStorage on web, no-op if localStorage is unavailable).
+ * All wallet behaviour lives in the framework-agnostic {@link InvisibleWalletCore}
+ * (see `./core`); this file only binds that core to React's rendering model.
+ * The Vue composable in `invisible-wallet-sdk/vue` binds the very same core, so
+ * both adapters expose an identical surface.
  */
-export type StorageAdapter = {
-    getItem(key: string): string | null | Promise<string | null>;
-    setItem(key: string, value: string): void | Promise<void>;
-    removeItem?(key: string): void | Promise<void>;
-};
-
-/**
- * Configuration passed when mounting the hook.
- * Keeping these at hook level (rather than per-method) lets the caller set them
- * once and have every method — deploy, sign, etc. — share the same network context.
- */
-export type WalletConfig = {
-    /** The factory contract's Stellar strkey (e.g. "CABC..."). */
-    factoryAddress: string;
-    /** Stellar Horizon-compatible RPC endpoint (e.g. "https://soroban-testnet.stellar.org"). */
-    rpcUrl: string;
-    /** Stellar network passphrase. Use Networks.TESTNET or Networks.PUBLIC. */
-    networkPassphrase: string;
-    /** The WebAuthn relying party ID (e.g. "localhost"). Required for React Native. */
-    rpId?: string;
-    /** The WebAuthn origin (e.g. "https://veil.app"). Required for React Native. */
-    origin?: string;
-    /**
-     * Optional storage adapter for persisting wallet credentials.
-     * Defaults to localStorage on web. Pass AsyncStorage (or a compatible adapter)
-     * when running in React Native.
-     *
-     * @example
-     * // React Native with @react-native-async-storage/async-storage:
-     * import AsyncStorage from '@react-native-async-storage/async-storage';
-     * const config = { ..., storage: AsyncStorage };
-     */
-    storage?: StorageAdapter;
-    /**
-     * When true (default), the hook replays any transactions persisted in the
-     * offline outbox automatically whenever the browser fires an `online`
-     * event. Set to false to drive replay manually via {@link replayOutbox}.
-     * Has no effect outside a DOM environment (e.g. React Native).
-     */
-    autoReplayOnReconnect?: boolean;
-    /**
-     * Optional WebAuthn attestation policy, run during register(). When set, the
-     * attestation statement returned by the authenticator is parsed and verified,
-     * and this hook decides whether to accept the credential (e.g. require a
-     * verified hardware authenticator, or gate on AAGUID). Returning false — or
-     * throwing — from the policy aborts registration.
-     *
-     * @example
-     * const config = { ..., attestationPolicy: (info) =>
-     *   info.verified && ALLOWED_AAGUIDS.has(info.aaguid) };
-     */
-    attestationPolicy?: AttestationPolicy;
-    /**
-     * When an attestationPolicy is set but the platform did not surface the raw
-     * attestationObject (so it cannot be verified), abort registration if this is
-     * true (default false — proceed without verification).
-     */
-    requireAttestation?: boolean;
-    /**
-     * Optional Stellar secret used to sponsor network fees. When set, mutating
-     * transactions are submitted as fee-bump envelopes paid by this account.
-     */
-    sponsorSecret?: string;
-    /** Base fee used by the outer fee-bump transaction. Defaults to BASE_FEE. */
-    feeBumpBaseFee?: string;
-};
-
-/**
- * The four pieces the contract's __check_auth needs to verify a WebAuthn assertion.
- */
-export type WebAuthnSignature = {
-    /** Uncompressed P-256 public key: 0x04 x y (65 bytes) */
-    publicKey: Uint8Array;
-    /** Raw authenticatorData bytes from the WebAuthn assertion response */
-    authData: Uint8Array;
-    /** Raw clientDataJSON bytes */
-    clientDataJSON: Uint8Array;
-    /** Raw P-256 ECDSA signature: r s (64 bytes) */
-    signature: Uint8Array;
-};
 
 /** A contract invocation executed by batch() under one wallet authorization. */
 export type BatchOperation = {
@@ -135,24 +25,45 @@ export type BatchOperation = {
  *                      that can sign from any device it is plugged into.
  */
 export type AuthenticatorAttachment = 'platform' | 'cross-platform';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { InvisibleWalletCore } from './core';
+import type { InvisibleWallet, StorageAdapter, WalletConfig } from './core';
 
-/** Optional knobs for register(). */
-export type RegisterOptions = {
-    /**
-     * Request a specific authenticator type. Pass `cross-platform` to enrol a
-     * roaming FIDO2 security key as a portable signer rather than a device-bound
-     * platform passkey. Defaults to letting the platform decide.
-     */
-    authenticatorAttachment?: AuthenticatorAttachment;
-};
+// The public type surface is owned by ./core and re-exported here so that
+// `invisible-wallet-sdk` keeps exporting it from the same module as before.
+export {
+    RecoveryTimelockActive,
+    NoGuardianSet,
+    RecoveryNotPending,
+} from './core';
+
+export type {
+    StorageAdapter,
+    WalletConfig,
+    WebAuthnSignature,
+    AuthenticatorAttachment,
+    RegisterOptions,
+    LoginOptions,
+    PortableSigner,
+    RegisterResult,
+    DeployResult,
+    AddSignerResult,
+    RotateSignerResult,
+    SignerInfo,
+    InitiateRecoveryResult,
+    WalletState,
+    WalletStateListener,
+    InvisibleWalletActions,
+    InvisibleWallet,
+} from './core';
+
+// ── Hook ──────────────────────────────────────────────────────────────────────
 
 /**
- * Options for the login() method.
+ * Mount a passkey wallet in a React component.
  *
- * On a device with no prior local state, pass a credentialId (base64url) so
- * the SDK can derive the deterministic wallet address from the passkey.
- * Alternatively, pass a walletAddress directly to skip derivation and only
- * verify on-chain existence.
+ * @param config Network and WebAuthn settings — see {@link WalletConfig}.
+ * @returns The wallet's live state plus every wallet action.
  */
 export type LoginOptions = {
     /**
@@ -2082,32 +1993,33 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     // ── Local PRF-derived encryption ──────────────────────────────────────────
     // Lazily derive (and cache) a passkey-bound cipher for the registered
     // credential, falling back to a stored random key when PRF is unsupported.
+export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
+    // One core per storage adapter: the outbox and the PRF cipher belong to the
+    // store the wallet was created with, so a different adapter is a different
+    // wallet. Every other config field is pushed into the live core below.
+    const coreRef    = useRef<InvisibleWalletCore | null>(null);
+    const storageRef = useRef<StorageAdapter | undefined>(config.storage);
 
-    const getCipher = useCallback(async (): Promise<LocalCipher> => {
-        if (cipherRef.current) return cipherRef.current;
-        const credentialId = await store.getItem('invisible_wallet_key_id');
-        if (!credentialId) throw new Error('No passkey credential found. Please register first.');
-        const cipher = await createLocalCipher({ credentialId, rpId, storage: store });
-        cipherRef.current = cipher;
-        return cipher;
-    }, [rpId, store]);
+    if (coreRef.current === null || storageRef.current !== config.storage) {
+        coreRef.current    = new InvisibleWalletCore(config);
+        storageRef.current = config.storage;
+    }
+    const core = coreRef.current;
 
-    const encryptLocal = useCallback(async (plaintext: string | Uint8Array): Promise<string> => {
-        const cipher = await getCipher();
-        return cipher.encrypt(plaintext);
-    }, [getCipher]);
+    const state = useSyncExternalStore(core.subscribe, core.getState, core.getState);
 
-    const decryptLocal = useCallback(async (payload: string): Promise<string> => {
-        const cipher = await getCipher();
-        return cipher.decryptString(payload);
-    }, [getCipher]);
+    // Keep the core on the latest config. Declared first so the effects below
+    // read the config this render was produced with.
+    useEffect(() => { core.setConfig(config); });
 
-    const encryptionMode = useCallback(async (): Promise<'prf' | 'fallback'> => {
-        const cipher = await getCipher();
-        return cipher.mode;
-    }, [getCipher]);
+    // Storage is a client-only concern — restore the persisted address after
+    // mount so server-rendered markup and the first client render agree.
+    useEffect(() => { core.hydrate(); }, [core]);
+
+    useEffect(() => core.watchConnectivity(), [core, config.autoReplayOnReconnect]);
 
     return useMemo(() => (
         { address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, batch, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode }
     ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, batch, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode]);
+    return useMemo(() => ({ ...state, ...core.actions }), [state, core]);
 }
