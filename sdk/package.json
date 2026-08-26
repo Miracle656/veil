@@ -85,7 +85,7 @@
     "@storybook/addon-essentials": "^8.6.0",
     "@storybook/react": "^8.6.0",
     "@storybook/react-vite": "^8.6.0",
-    "@stryker-mutator/core": "^8.7.0",
+    "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/jest-runner": "^8.7.0",
     "@stryker-mutator/typescript-checker": "^9.6.1",
     "@tanstack/react-query": "^5.0.0",
