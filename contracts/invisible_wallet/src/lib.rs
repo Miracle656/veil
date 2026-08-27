@@ -21,6 +21,7 @@ use storage::{DataKey, AllowanceKey, PendingRecovery};
 const RECOVERY_DELAY_SECONDS: u64 = 259_200;
 
 #[contracttype]
+#[derive(Clone)]
 pub struct BatchInvocation {
     pub target: Address,
     pub func: Symbol,
@@ -1597,5 +1598,73 @@ mod test {
         env.mock_all_auths();
         assert!(client.try_batch(&Vec::from_array(&env, [first, second])).is_err());
         assert!(client.get_allowance(&spender, &token).is_none());
+    }
+
+
+    // __check_auth multi-context test
+    //
+    // Verifies that __check_auth correctly processes multiple auth contexts in
+    // a single call -- the scenario that arises when batch() is invoked. The
+    // WebAuthn branch sums the i128 amount across all Contract contexts to
+    // enforce the per-key spend limit, so two contexts each spending 300 must
+    // be rejected against a 500 limit, even though each individually would pass.
+
+    #[test]
+    fn test_check_auth_multi_context_spend_limit_enforced() {
+        let env = Env::default();
+        let (signing_key, pub_bytes) = test_keypair();
+        let payload = [7u8; 32];
+
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+        let rp_id  = bytes_from_str(&env, "localhost");
+        let origin = bytes_from_str(&env, "https://test.example");
+        client.init(&BytesN::from_array(&env, &pub_bytes), &rp_id, &origin);
+
+        // Set a per-key spend limit of 500 for this signer.
+        env.mock_all_auths();
+        client.set_key_spend_limit(&BytesN::from_array(&env, &pub_bytes), &500);
+
+        // Build two contract-call contexts, each spending 300 (total 600 > 500).
+        let token = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let ctx1 = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                recipient.to_val(),
+                300i128.into_val(&env),
+            ]),
+        });
+        let ctx2 = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                recipient.to_val(),
+                300i128.into_val(&env),
+            ]),
+        });
+        let contexts = Vec::from_array(&env, [ctx1, ctx2]);
+
+        // Build a valid WebAuthn signature for this payload.
+        let (auth_data_raw, challenge_b64, sig_bytes) =
+            make_webauthn_fixture(&signing_key, &payload, b"localhost");
+        let signature = Vec::<Val>::from_array(&env, [
+            BytesN::from_array(&env, &pub_bytes).into_val(&env),
+            Bytes::from_array(&env, &auth_data_raw).into_val(&env),
+            build_client_data_json(&env, &challenge_b64).into_val(&env),
+            BytesN::from_array(&env, &sig_bytes).into_val(&env),
+            0u64.into_val(&env),
+        ]).into_val(&env);
+
+        // Two contexts at 300 each exceed the 500 limit -> rejected.
+        let res = client.try___check_auth(
+            &BytesN::from_array(&env, &payload),
+            &signature,
+            &contexts,
+        );
+        assert_eq!(res, Err(Ok(WalletError::SpendLimitExceeded)));
     }
 }
