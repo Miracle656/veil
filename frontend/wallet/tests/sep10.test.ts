@@ -56,12 +56,17 @@ function buildChallenge({
   // SEP-10 requires sequence 0 and the anchor's key as source.
   const account = new Account(anchorKeypair.publicKey(), '-1')
 
+  // When maxTimeOffsetSec is negative, place both bounds in the past
+  // (v17 enforces minTime <= maxTime inside TransactionBuilder).
+  const maxTime = nowSec + maxTimeOffsetSec
+  const minTime = maxTimeOffsetSec < 0 ? maxTime - 120 : nowSec
+
   const builder = new TransactionBuilder(account, {
     fee: '100',
     networkPassphrase,
     timebounds: {
-      minTime: nowSec,
-      maxTime: nowSec + maxTimeOffsetSec,
+      minTime,
+      maxTime,
     },
   })
 
