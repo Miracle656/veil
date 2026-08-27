@@ -1,46 +1,40 @@
-/**
- * React adapter for the Invisible Wallet SDK.
- *
- * All wallet behaviour lives in the framework-agnostic {@link InvisibleWalletCore}
- * (see `./core`); this file only binds that core to React's rendering model.
- * The Vue composable in `invisible-wallet-sdk/vue` binds the very same core, so
- * both adapters expose an identical surface.
- */
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+    Account,
+    Asset,
+    Contract,
+    Keypair,
+    rpc as SorobanRpc,
+    Horizon,
+    TransactionBuilder,
+    BASE_FEE,
+    xdr,
+    nativeToScVal,
+    scValToNative,
+    Networks,
+    hash as stellarHash,
+} from '@stellar/stellar-sdk';
 
-/** A contract invocation executed by batch() under one wallet authorization. */
-export type BatchOperation = {
-    /** Target contract address. */
-    target: string;
-    /** Target contract function name. */
-    functionName: string;
-    /** Arguments encoded as Soroban ScVals. */
-    args?: xdr.ScVal[];
-};
+const HorizonServer = Horizon.Server;
+import {
+    bufferToHex,
+    hexToUint8Array,
+    computeWalletAddress,
+} from './utils';
+import { webAuthnProvider } from './webauthn';
+import { TransactionOutbox, type ReplayOptions, type ReplayResult } from './outbox';
+import { verifyAttestation, AttestationError, type AttestationPolicy } from './webauthn/attestation';
+import { createLocalCipher, type LocalCipher } from './crypto/prf';
+import { deriveCounterfactualAddress as _deriveCounterfactualAddress } from './counterfactual';
 
-/**
- * Where the WebAuthn credential lives.
- *
- * - `platform`       — a device-bound passkey (Touch ID, Windows Hello, …).
- * - `cross-platform` — a roaming/portable FIDO2 security key (YubiKey, etc.)
- *                      that can sign from any device it is plugged into.
- */
-export type AuthenticatorAttachment = 'platform' | 'cross-platform';
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import { InvisibleWalletCore } from './core';
-import type { InvisibleWallet, StorageAdapter, WalletConfig } from './core';
-
-// The public type surface is owned by ./core and re-exported here so that
-// `invisible-wallet-sdk` keeps exporting it from the same module as before.
-export {
-    RecoveryTimelockActive,
-    NoGuardianSet,
-    RecoveryNotPending,
-} from './core';
-
+// ── Re-export shared types, errors, and helpers from core ──────────────────────
+// PR #662: these live in core.ts so React and Vue bindings share the same
+// canonical definitions and cannot drift apart.
 export type {
     StorageAdapter,
     WalletConfig,
     WebAuthnSignature,
+    BatchOperation,
     AuthenticatorAttachment,
     RegisterOptions,
     LoginOptions,
@@ -51,136 +45,41 @@ export type {
     RotateSignerResult,
     SignerInfo,
     InitiateRecoveryResult,
-    WalletState,
-    WalletStateListener,
-    InvisibleWalletActions,
-    InvisibleWallet,
+} from './core';
+export {
+    RecoveryTimelockActive,
+    NoGuardianSet,
+    RecoveryNotPending,
 } from './core';
 
-// ── Hook ──────────────────────────────────────────────────────────────────────
+// Re-import for internal use within this file
+import type {
+    WalletConfig,
+    WebAuthnSignature,
+    RegisterOptions,
+    LoginOptions,
+    PortableSigner,
+    RegisterResult,
+    DeployResult,
+    AddSignerResult,
+    RotateSignerResult,
+    SignerInfo,
+    InitiateRecoveryResult,
+    BatchOperation,
+} from './core';
+import {
+    RecoveryTimelockActive,
+    NoGuardianSet,
+    RecoveryNotPending,
+    waitForTransaction,
+    signForSubmission,
+    resolveStorage,
+    readPortableSigner,
+    PORTABLE_SIGNER_KEY,
+} from './core';
 
-/**
- * Mount a passkey wallet in a React component.
- *
- * @param config Network and WebAuthn settings — see {@link WalletConfig}.
- * @returns The wallet's live state plus every wallet action.
- */
-export type LoginOptions = {
-    /**
-     * Base64url-encoded credential ID of the passkey to authenticate with.
-     * When provided (and no local address is stored), the SDK triggers a
-     * WebAuthn assertion, extracts the P-256 public key, derives the
-     * deterministic wallet address, and verifies it exists on-chain.
-     */
-    credentialId?: string;
-    /**
-     * Known wallet contract address ("C..."). When provided, skips
-     * credential-based derivation and verifies on-chain existence directly.
-     */
-    walletAddress?: string;
-};
 
-/**
- * A roaming (cross-platform) credential, persisted independently of platform
- * passkeys so it can be identified and used as a portable signer across devices.
- */
-export type PortableSigner = {
-    /** Base64url-encoded credential ID of the roaming key. */
-    credentialId: string;
-    /** Hex-encoded uncompressed P-256 public key (65 bytes). */
-    publicKey: string;
-    /** Always `cross-platform` for a portable signer. */
-    authenticatorAttachment: 'cross-platform';
-    /** Transport hints (usb/nfc/ble/hybrid) used to prompt for the key. */
-    transports: string[];
-};
-
-/** Result returned by a successful register() call. */
-export type RegisterResult = {
-    /** The deterministically computed contract address of the new wallet ("C..."). */
-    walletAddress: string;
-    /** The uncompressed P-256 public key bytes (65 bytes). */
-    publicKeyBytes: Uint8Array;
-    /** The authenticator type the credential was created with, when reported. */
-    authenticatorAttachment?: AuthenticatorAttachment;
-    /**
-     * True when the credential is a roaming FIDO2 security key persisted as a
-     * portable signer (independent of platform passkeys). Optional so existing
-     * callers that don't enrol roaming keys remain source-compatible.
-     */
-    isPortableSigner?: boolean;
-};
-
-/** Result returned by a successful deploy() call. */
-export type DeployResult = {
-    /** The on-chain contract address of the deployed wallet ("C..."). */
-    walletAddress: string;
-    /**
-     * True if the wallet was already deployed before this call.
-     * When true, no transaction was submitted.
-     */
-    alreadyDeployed: boolean;
-};
-
-/** Result returned by a successful addSigner() call. */
-export type AddSignerResult = {
-    /** The index of the newly added signer in the wallet's signer list. */
-    signerIndex: number;
-};
-
-/** Result returned by a successful rotateSigner() call. */
-export type RotateSignerResult = {
-    /** The previous (rotated-out) P-256 public key bytes (65 bytes). */
-    oldPublicKeyBytes: Uint8Array;
-    /** The newly registered P-256 public key bytes (65 bytes). */
-    newPublicKeyBytes: Uint8Array;
-    /**
-     * The wallet's contract address — unchanged by the rotation. Returned so
-     * callers can assert that the address (and therefore balances) is preserved.
-     */
-    walletAddress: string;
-};
-
-/** Result returned by getSigners(). */
-export type SignerInfo = {
-    /** The index of the signer in the wallet's signer list. */
-    index: number;
-    /** The hex-encoded P-256 public key of the signer. */
-    publicKey: string;
-};
-
-/** Result returned by a successful initiateRecovery() call. */
-export type InitiateRecoveryResult = {
-    /** Unix timestamp (seconds) after which completeRecovery() can be called. */
-    unlockTime: number;
-};
-
-// ── Recovery Errors ───────────────────────────────────────────────────────────
-
-/** Thrown when completeRecovery() is called before the timelock has expired. */
-export class RecoveryTimelockActive extends Error {
-    constructor(public readonly unlockTime: number) {
-        super(`Recovery timelock active until ${unlockTime}`);
-        this.name = 'RecoveryTimelockActive';
-    }
-}
-
-/** Thrown when recovery methods are called but no guardian has been set. */
-export class NoGuardianSet extends Error {
-    constructor() {
-        super('No guardian set on this wallet');
-        this.name = 'NoGuardianSet';
-    }
-}
-
-/** Thrown when completeRecovery() is called but no recovery is in progress. */
-export class RecoveryNotPending extends Error {
-    constructor() {
-        super('No recovery is currently pending');
-        this.name = 'RecoveryNotPending';
-    }
-}
-
+// ── React hook return type ────────────────────────────────────────────────────
 
 export type InvisibleWallet = {
     /** Soroban contract address of the deployed wallet, or null if not yet registered. */
@@ -408,91 +307,6 @@ export type InvisibleWallet = {
      */
     encryptionMode: () => Promise<'prf' | 'fallback'>;
 };
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const POLL_INTERVAL_MS  = 1_000;
-const POLL_MAX_ATTEMPTS = 30;
-
-/** Storage key holding the roaming (cross-platform) credential as a portable signer. */
-const PORTABLE_SIGNER_KEY = 'invisible_wallet_portable_signer';
-
-/**
- * Poll server.getTransaction(hash) until the transaction leaves NOT_FOUND,
- * then return the final result. Throws if it fails or we exceed the attempt limit.
- */
-async function waitForTransaction(
-    server: SorobanRpc.Server,
-    hash: string
-): Promise<SorobanRpc.Api.GetTransactionResponse> {
-    for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
-        const result = await server.getTransaction(hash);
-        if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-            return result;
-        }
-        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-    }
-    throw new Error(`Transaction ${hash} not confirmed after ${POLL_MAX_ATTEMPTS} attempts`);
-}
-
-function resolveSponsorKeypair(config: WalletConfig): Keypair | null {
-    return config.sponsorSecret ? Keypair.fromSecret(config.sponsorSecret) : null;
-}
-
-function signForSubmission(
-    tx: any,
-    signerKeypair: Keypair,
-    config: WalletConfig,
-    extraInnerSigners: Keypair[] = []
-) {
-    tx.sign(signerKeypair);
-    for (const extraSigner of extraInnerSigners) {
-        if (extraSigner.publicKey() !== signerKeypair.publicKey()) {
-            tx.sign(extraSigner);
-        }
-    }
-
-    const sponsor = resolveSponsorKeypair(config);
-    if (!sponsor) return tx;
-
-    const feeBump = TransactionBuilder.buildFeeBumpTransaction(
-        sponsor.publicKey(),
-        config.feeBumpBaseFee ?? BASE_FEE,
-        tx,
-        config.networkPassphrase
-    );
-    feeBump.sign(sponsor);
-    return feeBump;
-}
-
-/** Build a storage adapter from the config, defaulting to localStorage on web. */
-function resolveStorage(storage?: StorageAdapter): StorageAdapter {
-    if (storage) return storage;
-    if (typeof localStorage !== 'undefined') {
-        return {
-            getItem:    (k) => localStorage.getItem(k),
-            setItem:    (k, v) => localStorage.setItem(k, v),
-            removeItem: (k) => localStorage.removeItem(k),
-        };
-    }
-    return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-}
-
-/** Read and parse the persisted portable-signer record, or null if none/invalid. */
-async function readPortableSigner(store: StorageAdapter): Promise<PortableSigner | null> {
-    const raw = await store.getItem(PORTABLE_SIGNER_KEY);
-    if (!raw) return null;
-    try {
-        const parsed = JSON.parse(raw) as PortableSigner;
-        if (parsed && parsed.authenticatorAttachment === 'cross-platform' && parsed.credentialId) {
-            return { ...parsed, transports: parsed.transports ?? [] };
-        }
-        return null;
-    } catch {
-        return null;
-    }
-}
-
 
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -1993,33 +1807,32 @@ export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
     // ── Local PRF-derived encryption ──────────────────────────────────────────
     // Lazily derive (and cache) a passkey-bound cipher for the registered
     // credential, falling back to a stored random key when PRF is unsupported.
-export function useInvisibleWallet(config: WalletConfig): InvisibleWallet {
-    // One core per storage adapter: the outbox and the PRF cipher belong to the
-    // store the wallet was created with, so a different adapter is a different
-    // wallet. Every other config field is pushed into the live core below.
-    const coreRef    = useRef<InvisibleWalletCore | null>(null);
-    const storageRef = useRef<StorageAdapter | undefined>(config.storage);
 
-    if (coreRef.current === null || storageRef.current !== config.storage) {
-        coreRef.current    = new InvisibleWalletCore(config);
-        storageRef.current = config.storage;
-    }
-    const core = coreRef.current;
+    const getCipher = useCallback(async (): Promise<LocalCipher> => {
+        if (cipherRef.current) return cipherRef.current;
+        const credentialId = await store.getItem('invisible_wallet_key_id');
+        if (!credentialId) throw new Error('No passkey credential found. Please register first.');
+        const cipher = await createLocalCipher({ credentialId, rpId, storage: store });
+        cipherRef.current = cipher;
+        return cipher;
+    }, [rpId, store]);
 
-    const state = useSyncExternalStore(core.subscribe, core.getState, core.getState);
+    const encryptLocal = useCallback(async (plaintext: string | Uint8Array): Promise<string> => {
+        const cipher = await getCipher();
+        return cipher.encrypt(plaintext);
+    }, [getCipher]);
 
-    // Keep the core on the latest config. Declared first so the effects below
-    // read the config this render was produced with.
-    useEffect(() => { core.setConfig(config); });
+    const decryptLocal = useCallback(async (payload: string): Promise<string> => {
+        const cipher = await getCipher();
+        return cipher.decryptString(payload);
+    }, [getCipher]);
 
-    // Storage is a client-only concern — restore the persisted address after
-    // mount so server-rendered markup and the first client render agree.
-    useEffect(() => { core.hydrate(); }, [core]);
-
-    useEffect(() => core.watchConnectivity(), [core, config.autoReplayOnReconnect]);
+    const encryptionMode = useCallback(async (): Promise<'prf' | 'fallback'> => {
+        const cipher = await getCipher();
+        return cipher.mode;
+    }, [getCipher]);
 
     return useMemo(() => (
         { address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, batch, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode }
     ), [address, isDeployed, isPending, error, register, deploy, signAuthEntry, deriveCounterfactualAddress, getPortableSigner, login, getNonce, addSigner, removeSigner, rotateSigner, getSigners, setGuardian, initiateRecovery, completeRecovery, approve, getAllowance, getBalance, sendPayment, batch, outbox, replayOutbox, encryptLocal, decryptLocal, encryptionMode]);
-    return useMemo(() => ({ ...state, ...core.actions }), [state, core]);
 }
