@@ -34,7 +34,7 @@ export default function MultisigPage() {
   return (
     <div className="wallet-shell">
       {/* Navigation */}
-      <nav className="wallet-nav" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem" }}>
+      <nav className="wallet-nav">
         <button
           onClick={() => router.push("/dashboard")}
           style={{

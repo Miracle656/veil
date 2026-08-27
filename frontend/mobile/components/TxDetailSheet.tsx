@@ -1,4 +1,4 @@
-import { forwardRef } from 'react';
+import { forwardRef, useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import {
   BottomSheetBackdrop,
@@ -7,6 +7,8 @@ import {
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
 import type { TxRecord } from '../lib/activityFeed';
 
 /** A history transaction — mirrors the web wallet's `TxRecord` (components/TxDetailSheet.tsx). */
@@ -33,6 +35,9 @@ type TxDetailSheetProps = { tx: TxRecord | null };
  */
 export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
   function TxDetailSheet({ tx }, ref) {
+    const { colors } = useTheme();
+    const styles = useMemo(() => createStyles(colors), [colors]);
+
     return (
       <BottomSheetModal
         ref={ref}
@@ -56,10 +61,16 @@ export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
               ) : null}
 
               <View style={styles.rows}>
-                <Row label="Counterparty" value={shorten(tx.counterparty)} mono />
-                <Row label="When" value={new Date(tx.timestamp * 1000).toLocaleString()} />
-                {tx.memo ? <Row label="Memo" value={tx.memo} /> : null}
-                {tx.hash ? <Row label="Tx hash" value={shorten(tx.hash)} mono /> : null}
+                <Row label="Counterparty" value={shorten(tx.counterparty)} mono styles={styles} />
+                <Row
+                  label="When"
+                  value={new Date(tx.timestamp * 1000).toLocaleString()}
+                  styles={styles}
+                />
+                {tx.memo ? <Row label="Memo" value={tx.memo} styles={styles} /> : null}
+                {tx.hash ? (
+                  <Row label="Tx hash" value={shorten(tx.hash)} mono styles={styles} />
+                ) : null}
               </View>
             </>
           )}
@@ -69,7 +80,19 @@ export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
   }
 );
 
-function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+type Styles = ReturnType<typeof createStyles>;
+
+function Row({
+  label,
+  value,
+  mono,
+  styles,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  styles: Styles;
+}) {
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -78,53 +101,54 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
   );
 }
 
-const styles = StyleSheet.create({
-  sheetBg: {
-    backgroundColor: '#141418',
-  },
-  handleIndicator: {
-    backgroundColor: 'rgba(246,247,248,0.3)',
-  },
-  content: {
-    paddingHorizontal: 20,
-    paddingBottom: 32,
-    gap: 6,
-  },
-  kind: {
-    color: 'rgba(246,247,248,0.4)',
-    fontSize: 12,
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  amount: {
-    color: '#F6F7F8',
-    fontSize: 26,
-    fontWeight: '700',
-  },
-  swapTo: {
-    color: '#FDDA24',
-    fontSize: 15,
-  },
-  rows: {
-    marginTop: 12,
-    gap: 10,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 16,
-  },
-  rowLabel: {
-    color: 'rgba(246,247,248,0.4)',
-    fontSize: 13,
-  },
-  rowValue: {
-    color: '#F6F7F8',
-    fontSize: 13,
-    flexShrink: 1,
-    textAlign: 'right',
-  },
-  mono: {
-    fontFamily: 'monospace',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    sheetBg: {
+      backgroundColor: colors.background,
+    },
+    handleIndicator: {
+      backgroundColor: colors.textFaint,
+    },
+    content: {
+      paddingHorizontal: 20,
+      paddingBottom: 32,
+      gap: 6,
+    },
+    kind: {
+      color: colors.textFaint,
+      fontSize: 12,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+    },
+    amount: {
+      color: colors.textStrong,
+      fontSize: 26,
+      fontWeight: '700',
+    },
+    swapTo: {
+      color: colors.accentText,
+      fontSize: 15,
+    },
+    rows: {
+      marginTop: 12,
+      gap: 10,
+    },
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 16,
+    },
+    rowLabel: {
+      color: colors.textFaint,
+      fontSize: 13,
+    },
+    rowValue: {
+      color: colors.textPrimary,
+      fontSize: 13,
+      flexShrink: 1,
+      textAlign: 'right',
+    },
+    mono: {
+      fontFamily: 'monospace',
+    },
+  });

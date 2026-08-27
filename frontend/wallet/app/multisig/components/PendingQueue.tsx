@@ -133,10 +133,10 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
             </div>
             <div style={{ display: "flex", gap: "0.5rem" }}>
               <button
-                className="btn-gold"
+                className="btn-secondary"
                 onClick={loadData}
                 disabled={loading}
-                style={{ fontSize: "0.75rem", padding: "0.5rem 1rem" }}
+                style={{ fontSize: "0.75rem", padding: "0.5rem 1rem", width: "auto" }}
               >
                 {loading ? "Refreshing..." : "Refresh"}
               </button>
@@ -353,7 +353,7 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
                         )}
 
                         <button
-                          className="btn-gold"
+                          className="btn-secondary"
                           onClick={() => handleSign(tx.id)}
                           disabled={signLoading[tx.id]}
                           style={{
