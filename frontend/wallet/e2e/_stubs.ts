@@ -34,7 +34,7 @@ const FAKE_TX_HASH = 'a'.repeat(64)
 /** Minimal-but-valid Soroban footprint, enough for `assembleTransaction`. */
 function transactionDataXdr(): string {
   return new xdr.SorobanTransactionData({
-    ext: new xdr.SorobanTransactionDataExt(0),
+    ext: xdr.SorobanTransactionDataExt.v0(),
     resources: new xdr.SorobanResources({
       footprint: new xdr.LedgerFootprint({ readOnly: [], readWrite: [] }),
       instructions: 0,
@@ -42,27 +42,26 @@ function transactionDataXdr(): string {
       writeBytes: 0,
     }),
     resourceFee: xdr.Int64.fromString('100'),
-  }).toXDR('base64')
+  }).toXdr('base64')
 }
 
 function successResultXdr(): string {
   return new xdr.TransactionResult({
     feeCharged: xdr.Int64.fromString('100'),
     result: xdr.TransactionResultResult.txSuccess([]),
-    ext: new xdr.TransactionResultExt(0),
-  }).toXDR('base64')
+    ext: xdr.TransactionResultExt.v0(),
+  }).toXdr('base64')
 }
 
 function successMetaXdr(): string {
-  return new xdr.TransactionMeta(
-    3,
+  return xdr.TransactionMeta.v3(
     new xdr.TransactionMetaV3({
-      ext: new xdr.ExtensionPoint(0),
+      ext: xdr.ExtensionPoint.v0(),
       txChangesBefore: [],
       operations: [],
       txChangesAfter: [],
       sorobanMeta: new xdr.SorobanTransactionMeta({
-        ext: new xdr.SorobanTransactionMetaExt(0),
+        ext: xdr.SorobanTransactionMetaExt.v0(),
         events: [],
         returnValue: xdr.ScVal.scvVoid(),
         diagnosticEvents: [],

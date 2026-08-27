@@ -56,12 +56,17 @@ function buildChallenge({
   // SEP-10 requires sequence 0 and the anchor's key as source.
   const account = new Account(anchorKeypair.publicKey(), '-1')
 
+  // When maxTimeOffsetSec is negative, place both bounds in the past
+  // (v17 enforces minTime <= maxTime inside TransactionBuilder).
+  const maxTime = nowSec + maxTimeOffsetSec
+  const minTime = maxTimeOffsetSec < 0 ? maxTime - 120 : nowSec
+
   const builder = new TransactionBuilder(account, {
     fee: '100',
     networkPassphrase,
     timebounds: {
-      minTime: nowSec,
-      maxTime: nowSec + maxTimeOffsetSec,
+      minTime,
+      maxTime,
     },
   })
 
@@ -98,7 +103,7 @@ function signersFromXdr(xdr: string, networkPassphrase: string): string[] {
   return tx.signatures.map(sig => {
     // Each DecoratedSignature contains a 4-byte hint.  We match against all
     // known keypairs in the fixture set to identify the actual signer.
-    return Buffer.from(sig.hint()).toString('hex')
+    return Array.from(sig.hint.toBytes()).map(b => b.toString(16).padStart(2, '0')).join('')
   })
 }
 
@@ -150,8 +155,8 @@ describe('signSep10Challenge', () => {
       // cloneFrom resets signatures on the rebuilt tx, then we add one
       expect(signed.signatures).toHaveLength(1)
       // The hint must match the user keypair's public key hint
-      const hint = Buffer.from(signed.signatures[0].hint()).toString('hex')
-      const expectedHint = Buffer.from(USER_KP.rawPublicKey().slice(28)).toString('hex')
+      const hint = Array.from(signed.signatures[0].hint.toBytes()).map(b => b.toString(16).padStart(2, '0')).join('')
+      const expectedHint = Array.from(USER_KP.rawPublicKey().slice(28)).map(b => b.toString(16).padStart(2, '0')).join('')
       expect(hint).toBe(expectedHint)
       // The original count is informational — we log it to confirm fixture shape
       expect(origSigCount).toBeGreaterThanOrEqual(1)
@@ -276,7 +281,7 @@ describe('signSep10Challenge', () => {
       const tx           = new Transaction(signedXdr, PASSPHRASE)
 
       const expectedHint = Buffer.from(USER_KP.rawPublicKey().slice(28)).toString('hex')
-      const hints        = tx.signatures.map(s => Buffer.from(s.hint()).toString('hex'))
+      const hints        = tx.signatures.map(s => Array.from(s.hint.toBytes()).map(b => b.toString(16).padStart(2, '0')).join(''))
       expect(hints).toContain(expectedHint)
     })
   })

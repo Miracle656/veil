@@ -126,7 +126,7 @@ export async function deployAndInitMultisig(params: {
   const multisigContract = new Contract(contractId);
   const initAccount = await server.getAccount(feePayer.publicKey());
 
-  const ownersScVal = nativeToScVal(params.owners.map(addr => nativeToScVal(addr, { type: 'address' })), { type: 'vec' });
+  const ownersScVal = nativeToScVal(params.owners.map(addr => nativeToScVal(addr, { type: 'address' })));
 
   const initTx = new TransactionBuilder(initAccount, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(multisigContract.call(

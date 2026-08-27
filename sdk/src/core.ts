@@ -1138,28 +1138,28 @@ export class InvisibleWalletCore {
         if (!authEntries) return;
 
         // stellarHash is a synchronous SHA-256 — avoids crypto.subtle (unavailable on some RN setups)
-        const networkIdBytes = new Uint8Array(
-            (stellarHash as (input: Buffer) => Buffer)(Buffer.from(this.config.networkPassphrase))
+        // In v17, stellarHash accepts Uint8Array and returns Uint8Array (no Buffer)
+        const networkIdBytes = stellarHash(
+            new TextEncoder().encode(this.config.networkPassphrase)
         );
 
         for (const parsed of authEntries) {
-            const cred = parsed.credentials();
-            if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+            const cred = parsed.credentials;
+            // v17: .switch() → .type (string literal)
+            if (cred.type !== 'sorobanCredentialsAddress') {
                 continue;
             }
 
-            const addrCred = cred.address();
+            const addrCred = cred.address;
             const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
                 new xdr.HashIdPreimageSorobanAuthorization({
-                    networkId: Buffer.from(networkIdBytes),
-                    nonce: addrCred.nonce(),
-                    invocation: parsed.rootInvocation(),
-                    signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                    networkId: networkIdBytes,
+                    nonce: addrCred.nonce,
+                    invocation: parsed.rootInvocation,
+                    signatureExpirationLedger: addrCred.signatureExpirationLedger,
                 })
             );
-            const payloadHash = new Uint8Array(
-                (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
-            );
+            const payloadHash = stellarHash(preimage.toXdr());
 
             const webAuthnSig = await this.signAuthEntry(payloadHash);
             if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
@@ -1171,16 +1171,18 @@ export class InvisibleWalletCore {
                 nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
             ]);
 
-            parsed.credentials(
-                xdr.SorobanCredentials.sorobanCredentialsAddress(
+            // v17: fields are readonly; construct a new entry with updated credentials
+            authEntries[authEntries.indexOf(parsed)] = new xdr.SorobanAuthorizationEntry({
+                credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
                     new xdr.SorobanAddressCredentials({
-                        address: addrCred.address(),
-                        nonce: addrCred.nonce(),
-                        signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                        address: addrCred.address,
+                        nonce: addrCred.nonce,
+                        signatureExpirationLedger: addrCred.signatureExpirationLedger,
                         signature: sigVec,
                     })
-                )
-            );
+                ),
+                rootInvocation: parsed.rootInvocation,
+            });
         }
     }
 
@@ -1934,7 +1936,7 @@ export class InvisibleWalletCore {
             const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
             if (!result || !result.retval) throw new Error('Simulation returned no result');
 
-            if (result.retval.switch() === xdr.ScValType.scvVoid()) {
+            if (result.retval.type === 'scvVoid') {
                 return null;
             }
 
@@ -1975,7 +1977,7 @@ export class InvisibleWalletCore {
 
             let expiryVal: xdr.ScVal;
             if (expiry !== undefined) {
-                expiryVal = nativeToScVal([nativeToScVal(BigInt(expiry), { type: 'u64' })], { type: 'Vec' });
+                expiryVal = nativeToScVal([nativeToScVal(BigInt(expiry), { type: 'u64' })]);
             } else {
                 expiryVal = xdr.ScVal.scvVoid();
             }
