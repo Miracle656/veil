@@ -13,7 +13,7 @@
     "release": "changeset publish"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^14.6.1"
+    "@stellar/stellar-sdk": "^17.0.1"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.9",
