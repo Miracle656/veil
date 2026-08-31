@@ -1,42 +1,21 @@
 import { Asset, Networks } from '@stellar/stellar-sdk'
 import type { WalletConfig } from '@veil/sdk'
+import {
+  type VeilNetworkName,
+  type VeilNetwork,
+  NETWORK_STORAGE_KEY,
+  WALLET_KEYS,
+  WALLET_KEY_SET,
+  MAINNET_KEY_SUFFIX,
+  namespaceKey as sdkNamespaceKey,
+  getNativeAssetContractId as sdkGetNativeAssetContractId,
+  getUsdcIssuer as sdkGetUsdcIssuer,
+  buildFriendbotUrl as sdkBuildFriendbotUrl,
+} from '@veil/sdk'
 
-export type VeilNetworkName = 'testnet' | 'mainnet'
+export type { VeilNetworkName, VeilNetwork }
+export { NETWORK_STORAGE_KEY, WALLET_KEYS, WALLET_KEY_SET, MAINNET_KEY_SUFFIX }
 
-export type VeilNetwork = {
-  name: VeilNetworkName
-  displayName: string
-  networkPassphrase: string
-  horizonUrl: string
-  rpcUrl: string
-  factoryContractId: string
-  friendbotUrl: string | null
-}
-
-/** localStorage key holding the user's chosen network. Mirrors `veil_theme`. */
-export const NETWORK_STORAGE_KEY = 'veil_network'
-
-/**
- * Wallet keys that are network-scoped: each identifies state belonging to one
- * network's wallet and must not be shared across networks. The wallet contract
- * is deployed per network (its own factory each), so one passkey resolves to a
- * different `C…` address on testnet vs mainnet — see `lib/walletStorage.ts` for
- * the full rationale. Any other key (theme, chosen network, …) is not namespaced.
- */
-export const WALLET_KEYS = [
-  'invisible_wallet_address',
-  'invisible_wallet_key_id',
-  'invisible_wallet_public_key',
-  'invisible_wallet_portable_signer',
-  'invisible_wallet_recovery_private_key',
-  'veil_signer_secret',
-  'veil_signer_public_key',
-] as const
-
-const WALLET_KEY_SET = new Set<string>(WALLET_KEYS)
-
-/** The suffix mainnet slots carry. Testnet uses the bare key (back-compat). */
-const MAINNET_KEY_SUFFIX = '_mainnet'
 
 /**
  * Build-time default. This used to be the *only* source of the active network,
@@ -132,8 +111,7 @@ export function getNetworkName(): VeilNetworkName {
  * `_mainnet` suffix, so the two networks never share a slot.
  */
 export function namespaceKey(key: string, network: VeilNetworkName = activeNetworkName): string {
-  if (!WALLET_KEY_SET.has(key)) return key
-  return network === 'mainnet' ? `${key}${MAINNET_KEY_SUFFIX}` : key
+  return sdkNamespaceKey(key, network)
 }
 
 /**
@@ -225,16 +203,11 @@ export const walletConfig: WalletConfig = {
 }
 
 export function getNativeAssetContractId(): string {
-  return Asset.native().contractId(getNetwork().networkPassphrase)
+  return sdkGetNativeAssetContractId(getNetwork().networkPassphrase)
 }
 
 export function buildFriendbotUrl(address: string): string | null {
-  const friendbotUrl = getNetwork().friendbotUrl
-  if (!friendbotUrl) return null
-
-  const url = new URL(friendbotUrl)
-  url.searchParams.set('addr', address)
-  return url.toString()
+  return sdkBuildFriendbotUrl(address, getNetwork().friendbotUrl)
 }
 
 /**
@@ -257,7 +230,6 @@ export function mainnetUsesProxy(): boolean {
  * exist and every price came back null).
  */
 export function getUsdcIssuer(): string {
-  return getNetwork().name === 'mainnet'
-    ? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
-    : 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
+  return sdkGetUsdcIssuer(getNetwork().name)
 }
+
