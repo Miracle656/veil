@@ -36,7 +36,7 @@ export async function deriveFeePayerKeypair(credentialIdBase64url: string): Prom
     throw new Error('WebCrypto subtle is required for fee-payer derivation');
   }
 
-  const keyMaterial = await subtle.importKey('raw', rawId, 'HKDF', false, ['deriveBits']);
+  const keyMaterial = await subtle.importKey('raw', rawId as unknown as BufferSource, 'HKDF', false, ['deriveBits']);
 
   const derived = await subtle.deriveBits(
     { name: 'HKDF', hash: 'SHA-256', salt: SALT, info: INFO },

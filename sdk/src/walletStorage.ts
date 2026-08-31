@@ -1,5 +1,5 @@
 import { WALLET_KEYS, namespaceKey } from './network';
-import type { StorageAdapter } from './types';
+import type { StorageAdapter } from './core';
 
 /**
  * Creates a namespaced storage wrapper over any given `StorageAdapter`

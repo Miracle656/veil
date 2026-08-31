@@ -1,5 +1,5 @@
 import { Asset, Networks } from '@stellar/stellar-sdk';
-import type { StorageAdapter } from './types';
+import type { StorageAdapter } from './core';
 
 export type VeilNetworkName = 'testnet' | 'mainnet';
 

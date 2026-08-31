@@ -10,7 +10,7 @@ import {
 import { inclusionFee } from '../fees';
 import { spendableNativeXlm } from '../reserves';
 import { createNamespacedStorage, clearNetworkWalletKeys } from '../walletStorage';
-import type { StorageAdapter } from '../types';
+import type { StorageAdapter } from '../core';
 
 describe('SDK Core Modules', () => {
   describe('network', () => {
