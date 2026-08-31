@@ -15,7 +15,7 @@
       "@/assets/*": [
         "./assets/*"
       ],
-      "@veil/sdk": ["../../sdk/src/useInvisibleWallet"],
+      "@veil/sdk": ["../../sdk/src/index"],
       "@veil/events": ["../../sdk/src/events"],
       "@veil/utils": ["../../sdk/src/utils"],
       "@veil/recovery": ["../../sdk/src/recovery/sep30"],
