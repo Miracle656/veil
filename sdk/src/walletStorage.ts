@@ -10,23 +10,23 @@ export function createNamespacedStorage(
   getNetwork: () => 'testnet' | 'mainnet' = () => 'testnet',
 ): StorageAdapter {
   return {
-    getItem(key: string): string | null {
+    getItem(key: string): string | null | Promise<string | null> {
       try {
         return storage.getItem(namespaceKey(key, getNetwork()));
       } catch {
         return null;
       }
     },
-    setItem(key: string, value: string): void {
+    setItem(key: string, value: string): void | Promise<void> {
       try {
-        storage.setItem(namespaceKey(key, getNetwork()), value);
+        return storage.setItem(namespaceKey(key, getNetwork()), value);
       } catch {
         /* blocked / quota */
       }
     },
-    removeItem(key: string): void {
+    removeItem(key: string): void | Promise<void> {
       try {
-        storage.removeItem(namespaceKey(key, getNetwork()));
+        return storage.removeItem?.(namespaceKey(key, getNetwork()));
       } catch {
         /* blocked */
       }
@@ -43,9 +43,10 @@ export function clearNetworkWalletKeys(
 ): void {
   for (const key of WALLET_KEYS) {
     try {
-      storage.removeItem(namespaceKey(key, network));
+      storage.removeItem?.(namespaceKey(key, network));
     } catch {
       /* ignore */
     }
   }
 }
+

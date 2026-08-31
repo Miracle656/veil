@@ -84,23 +84,23 @@ export function createNamespacedStorageAdapter(
   getNetwork: () => VeilNetworkName = () => 'testnet',
 ): StorageAdapter {
   return {
-    getItem(key: string): string | null {
+    getItem(key: string): string | null | Promise<string | null> {
       try {
         return storage.getItem(namespaceKey(key, getNetwork()));
       } catch {
         return null;
       }
     },
-    setItem(key: string, value: string): void {
+    setItem(key: string, value: string): void | Promise<void> {
       try {
-        storage.setItem(namespaceKey(key, getNetwork()), value);
+        return storage.setItem(namespaceKey(key, getNetwork()), value);
       } catch {
         /* quota / blocked */
       }
     },
-    removeItem(key: string): void {
+    removeItem(key: string): void | Promise<void> {
       try {
-        storage.removeItem(namespaceKey(key, getNetwork()));
+        return storage.removeItem?.(namespaceKey(key, getNetwork()));
       } catch {
         /* blocked */
       }
