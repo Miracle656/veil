@@ -9,6 +9,7 @@ import { ensureFeePayer } from '@/lib/feePayer'
 import { FEE_PAYER_PRF_SALT, type PrfEvaluator } from '@veil/prf'
 import { walletConfig } from '@/lib/network'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { passkeyErrorMessage } from '@/lib/passkeyAuth'
 
 // ── Lock screen ───────────────────────────────────────────────────────────────
 export default function LockPage() {
@@ -99,8 +100,7 @@ export default function LockPage() {
       router.replace('/dashboard')
 
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unlock failed. Please try again.'
-      setError(message)
+      setError(passkeyErrorMessage(err))
     } finally {
       setIsUnlocking(false)
     }

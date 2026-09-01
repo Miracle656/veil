@@ -12,6 +12,7 @@ import {
   EXTERNAL_LINKS,
   explorerAddressUrl,
   explorerNetworkSegment,
+  explorerTxUrl,
   getAppVersion,
   getContractEntries,
   getNetworkFacts,
@@ -155,6 +156,40 @@ describe('explorerAddressUrl', () => {
     expect(explorerAddressUrl(CONTRACT.slice(0, 55), TESTNET)).toBeNull();
     // Right length, neither a contract nor an account.
     expect(explorerAddressUrl(`M${CONTRACT.slice(1)}`, TESTNET)).toBeNull();
+  });
+});
+
+describe('explorerTxUrl', () => {
+  const HASH = 'a'.repeat(64);
+
+  it('links a transaction hash to the testnet explorer', () => {
+    expect(explorerTxUrl(HASH, TESTNET)).toBe(`https://stellar.expert/explorer/testnet/tx/${HASH}`);
+  });
+
+  it('uses the public network segment on mainnet', () => {
+    expect(explorerTxUrl(HASH, MAINNET)).toBe(`https://stellar.expert/explorer/public/tx/${HASH}`);
+  });
+
+  it('normalises an upper-case hash', () => {
+    expect(explorerTxUrl(HASH.toUpperCase(), TESTNET)).toBe(
+      `https://stellar.expert/explorer/testnet/tx/${HASH}`
+    );
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(explorerTxUrl(`  ${HASH}  `, TESTNET)).toBe(
+      `https://stellar.expert/explorer/testnet/tx/${HASH}`
+    );
+  });
+
+  it('returns null for anything that is not a 64-character hex hash', () => {
+    expect(explorerTxUrl(null, TESTNET)).toBeNull();
+    expect(explorerTxUrl(undefined, TESTNET)).toBeNull();
+    expect(explorerTxUrl('', TESTNET)).toBeNull();
+    // Too short, too long, and non-hex characters.
+    expect(explorerTxUrl(HASH.slice(0, 63), TESTNET)).toBeNull();
+    expect(explorerTxUrl(`${HASH}a`, TESTNET)).toBeNull();
+    expect(explorerTxUrl(`z${HASH.slice(1)}`, TESTNET)).toBeNull();
   });
 });
 

@@ -12,6 +12,15 @@ import { getNetwork, getNetworkName, setNetwork, subscribeToNetwork } from '../.
 import { getWalletAddress, clearWalletStore } from '../../lib/walletStore';
 import { getFeePayerAddress } from '../../lib/activity';
 import { fundWithFriendbot } from '../../lib/testnetWallet';
+import {
+  getNotifIncoming,
+  getNotifOutgoing,
+  isNotifPrefsHydrated,
+  subscribeToNotifPrefs,
+  setNotifIncoming,
+  setNotifOutgoing,
+} from '../../lib/notificationPrefs';
+import { requestNotificationPermissions } from '../../lib/notifications';
 
 type Row = {
   key: string;
@@ -52,6 +61,43 @@ export default function SettingsScreen() {
     { key: 'passkeys', title: 'Passkeys', subtitle: 'Devices registered on this wallet', onPress: () => {} },
     { key: 'recovery', title: 'Recovery', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
     { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
+  ];
+
+  // Live notification preferences.
+  const notifIncoming = useSyncExternalStore(subscribeToNotifPrefs, getNotifIncoming, getNotifIncoming);
+  const notifOutgoing = useSyncExternalStore(subscribeToNotifPrefs, getNotifOutgoing, getNotifOutgoing);
+
+  const notifications: Row[] = [
+    {
+      key: 'notif-incoming',
+      title: 'Incoming transfers',
+      subtitle: 'Notify when you receive a payment',
+      onPress: () => {
+        void requestNotificationPermissions().then((granted) => {
+          if (!granted) {
+            Alert.alert('Notifications off', 'Enable notifications in your device settings to receive alerts.');
+          } else {
+            void setNotifIncoming(!notifIncoming);
+          }
+        });
+      },
+      switch: { value: notifIncoming, onChange: (v) => {
+        void requestNotificationPermissions().then((granted) => {
+          if (!granted) {
+            Alert.alert('Notifications off', 'Enable notifications in your device settings to receive alerts.');
+          } else {
+            void setNotifIncoming(v);
+          }
+        });
+      } },
+    },
+    {
+      key: 'notif-outgoing',
+      title: 'Outgoing confirmations',
+      subtitle: 'Notify when a sent transaction confirms',
+      onPress: () => void setNotifOutgoing(!notifOutgoing),
+      switch: { value: notifOutgoing, onChange: (v) => void setNotifOutgoing(v) },
+    },
   ];
 
   // Live network name (re-renders when the override changes).
@@ -190,6 +236,7 @@ export default function SettingsScreen() {
         <Text style={styles.title}>Settings</Text>
 
         {group('Appearance', appearance)}
+        {group('Notifications', notifications)}
         {group('Security', security)}
         {group('General', general)}
         {onTestnet && group('Developer', developer)}

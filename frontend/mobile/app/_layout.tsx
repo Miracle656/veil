@@ -11,10 +11,16 @@ import { StyleSheet } from 'react-native';
 import { fontAssets } from '../theme/typography';
 import { useTheme } from '../hooks/useTheme';
 import { useInactivityLock } from '../hooks/useInactivityLock';
+import { useNotifications } from '../hooks/useNotifications';
 import { useOutboxReplay } from '../hooks/useOutboxReplay';
 import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
 import { hydrateLockSettings } from '../lib/appLock';
+import {
+  configureNotificationHandler,
+  requestNotificationPermissions,
+  setAppLocked,
+} from '../lib/notifications';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
 import { WalletProvider } from '../components/WalletProvider';
 
@@ -40,6 +46,10 @@ export default function RootLayout() {
     // Same reason as the network override: without this the app starts on the
     // defaults and a saved lock timeout only takes effect once re-picked.
     void hydrateLockSettings();
+    // Configure local notifications: the handler decides how they appear when
+    // the app is in the foreground; permissions are requested once per install.
+    configureNotificationHandler();
+    void requestNotificationPermissions();
   }, []);
 
   // Keep the splash screen up (render nothing) until the fonts resolve — either
@@ -60,6 +70,8 @@ export default function RootLayout() {
               <ConnectivityGate />
               <OutboxReplayGate />
               <InactivityLockGate />
+              <NotificationGate />
+              <LockStateTracker />
               <Stack
                 screenOptions={{
                   headerShown: false,
@@ -90,6 +102,28 @@ const styles = StyleSheet.create({
  */
 function InactivityLockGate() {
   useInactivityLock();
+  return null;
+}
+
+/**
+ * Monitors the activity feed and fires local notifications for new incoming
+ * transfers. Rendered at the root so it stays active regardless of which
+ * screen is visible.
+ */
+function NotificationGate() {
+  useNotifications();
+  return null;
+}
+
+/**
+ * Tracks the current route and updates the module-level lock flag in
+ * `notifications.ts` so that notification content respects the lock state.
+ */
+function LockStateTracker() {
+  const segments = useSegments();
+  useEffect(() => {
+    setAppLocked(segments[0] === 'lock');
+  }, [segments]);
   return null;
 }
 

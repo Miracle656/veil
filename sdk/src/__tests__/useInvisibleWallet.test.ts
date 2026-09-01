@@ -108,6 +108,19 @@ jest.mock('../utils', () => ({
 
 // ── WebAuthn mock ─────────────────────────────────────────────────────────────
 
+// The webauthn module mock must be at the top level so that core.ts picks up
+// the mocked webAuthnProvider when it first imports the module.
+jest.mock('../webauthn', () => {
+  const actual = jest.requireActual('../webauthn');
+  return {
+    ...actual,
+    webAuthnProvider: {
+      ...actual.webAuthnProvider,
+      authenticate: jest.fn(),
+    },
+  };
+});
+
 const mockCredentialsCreate = jest.fn()
 const mockCredentialsGet    = jest.fn()
 
@@ -409,17 +422,14 @@ describe('useInvisibleWallet', () => {
     })
 
     it('triggers a WebAuthn assertion when credentialId is provided and derives wallet address from public key', async () => {
-      // Mock webAuthnProvider.authenticate to return a result with publicKeyBytes
-      jest.mock('../webauthn', () => ({
-        webAuthnProvider: {
-          authenticate: jest.fn().mockResolvedValue({
-            authData: new Uint8Array(37),
-            clientDataJSON: new Uint8Array(64),
-            signature: new Uint8Array(64).fill(1),
-            publicKeyBytes: new Uint8Array(65).fill(4),
-          }),
-        },
-      }))
+      // Configure the top-level webauthn mock's authenticate method
+      const { webAuthnProvider } = require('../webauthn');
+      jest.mocked(webAuthnProvider.authenticate).mockResolvedValue({
+        authData: new Uint8Array(37),
+        clientDataJSON: new Uint8Array(64),
+        signature: new Uint8Array(64).fill(1),
+        publicKeyBytes: new Uint8Array(65).fill(4),
+      });
 
       // The computeWalletAddress mock returns 'CWALLET_ADDRESS_MOCK'
       jest.mocked(SorobanRpc.Server).mockImplementation(
