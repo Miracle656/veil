@@ -157,22 +157,22 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "1rem", background: "rgba(255,255,255,0.02)", padding: "1rem", borderRadius: "8px", border: "1px solid var(--border-dim)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "1rem", background: "var(--surface)", padding: "1rem", borderRadius: "8px", border: "1px solid var(--border-dim)" }}>
             <div>
-              <span style={{ fontSize: "0.6875rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase", display: "block" }}>Contract Balance</span>
+              <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", textTransform: "uppercase", display: "block" }}>Contract Balance</span>
               <span style={{ fontFamily: "Inconsolata, monospace", fontSize: "1.125rem", fontWeight: 600, color: "var(--teal)" }}>{details.balanceXlm} XLM</span>
             </div>
             <div>
-              <span style={{ fontSize: "0.6875rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase", display: "block" }}>Threshold</span>
+              <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", textTransform: "uppercase", display: "block" }}>Threshold</span>
               <span style={{ fontSize: "1.125rem", fontWeight: 600, color: "var(--off-white)" }}>{details.threshold} of {details.owners.length}</span>
             </div>
           </div>
 
           <div style={{ marginTop: "1rem" }}>
-            <span style={{ fontSize: "0.75rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase", display: "block", marginBottom: "0.375rem" }}>Registered Owners</span>
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", display: "block", marginBottom: "0.375rem" }}>Registered Owners</span>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem" }}>
               {details.owners.map((owner, i) => (
-                <div key={i} style={{ fontFamily: "Inconsolata, monospace", fontSize: "0.75rem", color: "rgba(246,247,248,0.7)", background: "rgba(255,255,255,0.01)", padding: "4px 8px", borderRadius: "4px" }}>
+                <div key={i} style={{ fontFamily: "Inconsolata, monospace", fontSize: "0.75rem", color: "var(--off-white)", background: "var(--surface)", padding: "4px 8px", borderRadius: "4px" }}>
                   #{i + 1}: {owner}
                 </div>
               ))}
@@ -196,7 +196,7 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
           </h3>
           <form onSubmit={handlePropose} style={{ display: "flex", flexDirection: "column", gap: "0.875rem" }}>
             <div>
-              <label style={{ display: "block", fontSize: "0.75rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+              <label style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>
                 To (Stellar Address)
               </label>
               <input
@@ -209,7 +209,7 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
             </div>
 
             <div>
-              <label style={{ display: "block", fontSize: "0.75rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase", marginBottom: "0.25rem" }}>
+              <label style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>
                 Amount (XLM)
               </label>
               <input
@@ -247,11 +247,11 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
           {loading ? (
             <div style={{ textAlign: "center", padding: "2rem" }}>
               <div className="spinner" style={{ display: "inline-block", width: "24px", height: "24px" }} />
-              <p style={{ fontSize: "0.875rem", color: "rgba(246,247,248,0.4)", marginTop: "0.5rem" }}>Fetching proposals...</p>
+              <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Fetching proposals...</p>
             </div>
           ) : proposals.length === 0 ? (
             <div className="card" style={{ padding: "2rem", textAlign: "center", border: "1px solid var(--border-dim)" }}>
-              <p style={{ fontSize: "0.875rem", color: "rgba(246,247,248,0.4)" }}>No proposed transactions yet.</p>
+              <p style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>No proposed transactions yet.</p>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
@@ -266,21 +266,21 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
                       padding: "1.25rem",
                       border: "1px solid var(--border-dim)",
                       background: tx.executed
-                        ? "rgba(0, 167, 181, 0.03)"
+                        ? "color-mix(in srgb, var(--teal) 8%, transparent)"
                         : "var(--surface)",
                       borderColor: tx.executed
-                        ? "rgba(0, 167, 181, 0.2)"
+                        ? "color-mix(in srgb, var(--teal) 28%, transparent)"
                         : "var(--border-dim)"
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.75rem", alignItems: "center" }}>
-                      <span style={{ fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "100px", background: "rgba(246,247,248,0.08)", color: "rgba(246,247,248,0.7)" }}>
+                      <span style={{ fontSize: "0.75rem", fontWeight: 600, padding: "2px 8px", borderRadius: "100px", background: "var(--surface-md)", color: "var(--off-white)" }}>
                         Proposal #{tx.id}
                       </span>
                       <span style={{
                         fontSize: "0.75rem",
                         fontWeight: 600,
-                        color: tx.executed ? "var(--teal)" : isApproved ? "var(--gold)" : "rgba(246,247,248,0.4)"
+                        color: tx.executed ? "var(--teal)" : isApproved ? "var(--gold)" : "var(--text-muted)"
                       }}>
                         {tx.executed ? "Executed" : isApproved ? "Awaiting Execution" : "Pending Signatures"}
                       </span>
@@ -288,25 +288,25 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
 
                     <div style={{ display: "flex", flexDirection: "column", gap: "0.375rem", marginBottom: "1rem" }}>
                       <div>
-                        <span style={{ fontSize: "0.6875rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase" }}>Destination</span>
+                        <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Destination</span>
                         <p style={{ fontFamily: "Inconsolata, monospace", fontSize: "0.8125rem", wordBreak: "break-all" }}>{tx.to}</p>
                       </div>
                       <div>
-                        <span style={{ fontSize: "0.6875rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase" }}>Amount</span>
+                        <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Amount</span>
                         <p style={{ fontSize: "1rem", fontWeight: 600 }}>{tx.amount} XLM</p>
                       </div>
                       <div>
-                        <span style={{ fontSize: "0.6875rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase" }}>Approvals ({tx.approvals.length}/{threshold})</span>
+                        <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)", textTransform: "uppercase" }}>Approvals ({tx.approvals.length}/{threshold})</span>
                         {tx.approvals.length > 0 ? (
                           <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "4px" }}>
                             {tx.approvals.map((app, idx) => (
-                              <div key={idx} style={{ fontSize: "0.6875rem", color: "rgba(246,247,248,0.5)", fontFamily: "Inconsolata, monospace", wordBreak: "break-all" }}>
+                              <div key={idx} style={{ fontSize: "0.6875rem", color: "var(--text-muted)", fontFamily: "Inconsolata, monospace", wordBreak: "break-all" }}>
                                 ✓ {app}
                               </div>
                             ))}
                           </div>
                         ) : (
-                          <p style={{ fontSize: "0.75rem", color: "rgba(246,247,248,0.3)" }}>None yet</p>
+                          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>None yet</p>
                         )}
                       </div>
                     </div>
@@ -326,7 +326,7 @@ export default function PendingQueue({ contractId, onReset }: PendingQueueProps)
                               padding: "0.5rem 0.75rem",
                               borderRadius: "6px",
                               border: "1px solid var(--border-dim)",
-                              background: "rgba(0,0,0,0.1)",
+                              background: "var(--surface)",
                               fontSize: "0.8125rem",
                               fontFamily: "Inconsolata, monospace"
                             }}

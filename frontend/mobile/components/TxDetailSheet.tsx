@@ -1,5 +1,5 @@
-import { forwardRef, useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { forwardRef, useCallback, useMemo } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
@@ -7,7 +7,9 @@ import {
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 
+import { useNetwork } from '../hooks/useNetwork';
 import { useTheme } from '../hooks/useTheme';
+import { explorerTxUrl, openExternalUrl } from '../lib/about';
 import type { ThemeColors } from '../lib/theme';
 import type { TxRecord } from '../lib/activityFeed';
 
@@ -36,7 +38,16 @@ type TxDetailSheetProps = { tx: TxRecord | null };
 export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
   function TxDetailSheet({ tx }, ref) {
     const { colors } = useTheme();
+    const { network } = useNetwork();
     const styles = useMemo(() => createStyles(colors), [colors]);
+
+    // Resolved against the *active* network: the app is dual-network at
+    // runtime, so hardcoding a segment would send half the links to a page
+    // reporting the transaction does not exist.
+    const explorerUrl = useMemo(() => explorerTxUrl(tx?.hash, network), [tx?.hash, network]);
+    const openExplorer = useCallback(() => {
+      if (explorerUrl) void openExternalUrl(explorerUrl);
+    }, [explorerUrl]);
 
     return (
       <BottomSheetModal
@@ -72,6 +83,17 @@ export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
                   <Row label="Tx hash" value={shorten(tx.hash)} mono styles={styles} />
                 ) : null}
               </View>
+
+              {explorerUrl ? (
+                <Pressable
+                  accessibilityRole="link"
+                  accessibilityLabel="View this transaction on stellar.expert"
+                  onPress={openExplorer}
+                  style={styles.explorerLink}
+                >
+                  <Text style={styles.explorerLinkText}>View on explorer</Text>
+                </Pressable>
+              ) : null}
             </>
           )}
         </BottomSheetView>
@@ -150,5 +172,18 @@ const createStyles = (colors: ThemeColors) =>
     },
     mono: {
       fontFamily: 'monospace',
+    },
+    explorerLink: {
+      marginTop: 18,
+      paddingVertical: 12,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.textFaint,
+      alignItems: 'center',
+    },
+    explorerLinkText: {
+      color: colors.accentText,
+      fontSize: 14,
+      fontWeight: '600',
     },
   });

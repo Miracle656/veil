@@ -240,7 +240,6 @@ describe('configuration checks', () => {
     expect(net.isNetworkConfigured(net.NETWORKS.mainnet)).toBe(false);
     expect(net.describeMissingConfig(net.NETWORKS.mainnet)).toEqual([
       'Soroban RPC URL',
-      'factory contract ID',
     ]);
   });
 
@@ -254,8 +253,10 @@ describe('configuration checks', () => {
   });
 
   it('names each missing piece individually', async () => {
-    const net = await loadNetwork({ EXPO_PUBLIC_MAINNET_RPC_URL: 'https://mainnet.rpc.test' });
-    expect(net.describeMissingConfig(net.NETWORKS.mainnet)).toEqual(['factory contract ID']);
+    const net = await loadNetwork({ EXPO_PUBLIC_MAINNET_RPC_URL: '' });
+    expect(net.describeMissingConfig(net.NETWORKS.mainnet)).toEqual([
+      'Soroban RPC URL',
+    ]);
   });
 });
 

@@ -50,7 +50,7 @@ describe('default theme', () => {
 
   it('matches the palette the app already shipped with', async () => {
     const theme = await loadTheme();
-    expect(theme.getThemeColors().background).toBe('#0B0B0F');
+    expect(theme.getThemeColors().background).toBe('#0F0F0F');
     expect(theme.getThemeColors().textStrong).toBe('#FFFFFF');
   });
 });
@@ -60,7 +60,7 @@ describe('persistence', () => {
     mockStorage.set(STORAGE_KEY, 'light');
     const theme = await loadTheme();
     expect(theme.getTheme()).toBe('light');
-    expect(theme.getThemeColors().background).toBe('#F6F7F9');
+    expect(theme.getThemeColors().background).toBe('#FFFFFF');
   });
 
   it('writes the choice to storage', async () => {

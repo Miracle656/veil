@@ -81,7 +81,7 @@ export default function Wizard({ onDeploySuccess }: WizardProps) {
         Step 1: Configure M-of-N Signers
       </h3>
       
-      <p style={{ fontSize: "0.8125rem", color: "rgba(246,247,248,0.5)", marginBottom: "1rem", lineHeight: 1.5 }}>
+      <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginBottom: "1rem", lineHeight: 1.5 }}>
         Specify the Stellar addresses (either contract wallets `C...` or public key addresses `G...`) that can collectively authorize transactions.
       </p>
 
@@ -134,7 +134,7 @@ export default function Wizard({ onDeploySuccess }: WizardProps) {
           onClick={addOwner}
           style={{
             background: "transparent",
-            border: "1px dashed rgba(246,247,248,0.2)",
+            border: "1px dashed var(--border-dim)",
             color: "var(--gold)",
             padding: "0.5rem 1rem",
             borderRadius: "100px",
@@ -152,7 +152,7 @@ export default function Wizard({ onDeploySuccess }: WizardProps) {
 
       <div style={{ display: "flex", gap: "1rem", marginBottom: "1.5rem", flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: "120px" }}>
-          <label style={{ display: "block", fontSize: "0.75rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase", marginBottom: "0.375rem" }}>
+          <label style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.375rem" }}>
             Threshold (M)
           </label>
           <input
@@ -175,7 +175,7 @@ export default function Wizard({ onDeploySuccess }: WizardProps) {
         </div>
 
         <div style={{ flex: 2, minWidth: "220px" }}>
-          <label style={{ display: "block", fontSize: "0.75rem", color: "rgba(246,247,248,0.4)", textTransform: "uppercase", marginBottom: "0.375rem" }}>
+          <label style={{ display: "block", fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.375rem" }}>
             Optional Custom Gas Secret (S...)
           </label>
           <input

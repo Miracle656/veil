@@ -111,6 +111,15 @@ const config: ExpoConfig = {
         cameraPermission: 'Veil uses the camera to scan WalletConnect QR codes.',
       },
     ],
+    [
+      'expo-notifications',
+      {
+        // Use the Veil drape mark as the Android notification small icon.
+        // The icon must be a white-on-transparent single-colour image.
+        icon: './assets/images/android-icon-monochrome.png',
+        color: '#FDDA24',
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,
