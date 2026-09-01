@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import type { BottomSheetModal } from '@gorhom/bottom-sheet';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { FlowHeader } from '../components/FlowHeader';
 import ActivityFeed from '../components/ActivityFeed';
-import { hydrateActivityFeed } from '../lib/activityFeed';
+import { TxDetailSheet } from '../components/TxDetailSheet';
+import { hydrateActivityFeed, type TxRecord } from '../lib/activityFeed';
 import { loadHorizonActivity } from '../lib/horizonActivity';
 import { getWalletAddress } from '../lib/walletStore';
 import { getNetwork } from '../lib/network';
@@ -21,6 +23,13 @@ export default function TransactionsScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
+  const detailSheetRef = useRef<BottomSheetModal>(null);
+
+  const handleSelectTx = useCallback((tx: TxRecord) => {
+    setSelectedTx(tx);
+    detailSheetRef.current?.present();
+  }, []);
 
   const load = useCallback(async () => {
     const addr = await getWalletAddress().catch(() => null);
@@ -53,8 +62,11 @@ export default function TransactionsScreen() {
         contentContainerStyle={styles.body}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
       >
-        <ActivityFeed filter="all" loading={loading} />
+        <ActivityFeed filter="all" loading={loading} onSelectTx={handleSelectTx} />
       </ScrollView>
+
+      {/* Opened by tapping a row in the activity feed. */}
+      <TxDetailSheet ref={detailSheetRef} tx={selectedTx} />
     </SafeAreaView>
   );
 }

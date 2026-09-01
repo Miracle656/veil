@@ -10,6 +10,7 @@ import type { BottomSheetModal } from '@gorhom/bottom-sheet';
 import { VeilLogo } from '../../components/VeilLogo';
 import { SilverBalanceCard } from '../../components/SilverBalanceCard';
 import { PayForGrid } from '../../components/PayForGrid';
+import { ServicesDrawer } from '../../components/ServicesDrawer';
 import { AssetsList } from '../../components/AssetsList';
 import { fontFamily } from '../../theme/typography';
 import { useTheme } from '../../hooks/useTheme';
@@ -53,6 +54,7 @@ export default function DashboardTab() {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
   const themedStyles = useMemo(() => createThemedStyles(themeColors), [themeColors]);
+  const [servicesOpen, setServicesOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string>(() => lastKnown.balance);
   const [price, setPrice] = useState<number | null>(() => lastKnown.price);
@@ -167,10 +169,16 @@ export default function DashboardTab() {
       >
       {/* Header — Drape logo + wordmark, and the wallet address chip */}
       <View style={themedStyles.homeHeader}>
-        <View style={themedStyles.brand}>
+        <Pressable
+          onPress={() => setServicesOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Open services menu"
+          hitSlop={10}
+          style={({ pressed }) => [themedStyles.brand, pressed && { opacity: 0.6 }]}
+        >
           <VeilLogo size={22} color={themeColors.accent} />
           <Text style={themedStyles.wordmark}>VEIL</Text>
-        </View>
+        </Pressable>
         {walletAddress ? (
           <View style={themedStyles.addrChip}>
             <Text style={themedStyles.addrText}>{shortAddress(walletAddress)}</Text>
@@ -185,7 +193,9 @@ export default function DashboardTab() {
         error={!!error}
       />
 
-      <PayForGrid />
+      <PayForGrid onMore={() => setServicesOpen(true)} />
+
+      <ServicesDrawer visible={servicesOpen} onClose={() => setServicesOpen(false)} />
 
       <AssetsList
         address={walletAddress}

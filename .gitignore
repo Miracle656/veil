@@ -23,6 +23,10 @@ frontend/mobile/.expo/
 frontend/mobile/ios/
 frontend/mobile/android/
 
+# Coverage reports
+sdk/coverage/
+frontend/wallet/coverage/
+
 # Misc
 *.env
 .DS_Store

@@ -95,6 +95,25 @@ export function explorerAddressUrl(
   return `https://stellar.expert/explorer/${explorerNetworkSegment(network.name)}/${path}/${trimmed}`;
 }
 
+/**
+ * Explorer URL for a transaction hash. Stellar transaction hashes are 32 bytes
+ * rendered as 64 hex characters; anything else returns null so the UI shows the
+ * hash without offering a link that would 404.
+ *
+ * The network segment comes from the active network rather than a constant —
+ * the app is dual-network at runtime, and a mainnet hash looked up on testnet
+ * reads as "this transaction does not exist".
+ */
+export function explorerTxUrl(
+  hash: string | null | undefined,
+  network: VeilNetwork = getNetwork()
+): string | null {
+  const trimmed = hash?.trim();
+  if (!trimmed || !/^[0-9a-fA-F]{64}$/.test(trimmed)) return null;
+
+  return `https://stellar.expert/explorer/${explorerNetworkSegment(network.name)}/tx/${trimmed.toLowerCase()}`;
+}
+
 export type ExternalLink = {
   key: string;
   label: string;

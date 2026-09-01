@@ -1,3 +1,4 @@
+import { getNetwork } from '../../lib/network';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -74,7 +75,7 @@ export default function Welcome() {
             <VeilLogo size={26} color={colors.accent} />
             <Text style={styles.wordmark}>VEIL</Text>
           </View>
-          <Text style={styles.network}>SOROBAN · TESTNET</Text>
+          <Text style={styles.network}>SOROBAN · {getNetwork().displayName.replace('Stellar ', '').toUpperCase()}</Text>
         </View>
 
         {/* Statement. Anton uppercase, as before — only the wording changed. */}

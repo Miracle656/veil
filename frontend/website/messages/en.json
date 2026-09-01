@@ -132,7 +132,7 @@
         "label": "Seed phrases"
       },
       {
-        "value": "₦0",
+        "value": "{sym}0",
         "label": "Network fees"
       },
       {
@@ -277,7 +277,7 @@
         "rest": "every rejection says why."
       }
     ],
-    "ask": "Swap ₦50,000 to XLM and send ₦5,000 airtime to my brother",
+    "ask": "Swap {largeAmount} to XLM and send {smallAmount} airtime to my brother",
     "reply": "Two transactions ready. Both built and unsigned — approve each with your passkey.",
     "queueLabel": "AWAITING YOUR APPROVAL",
     "sign": "SIGN",
@@ -287,7 +287,7 @@
         "sub": "Soroswap · fee sponsored"
       },
       {
-        "title": "MTN Airtime ₦5,000",
+        "title": "MTN Airtime {smallAmount}",
         "sub": "0805 991 2210 · 3.22 USDC"
       }
     ],
