@@ -110,6 +110,23 @@ function buildBody(
   }
 }
 
+/**
+ * How the counterparty relates to the user, for this kind of transfer.
+ *
+ * A sent payment showed "Payment sent — From GB3JS2…", which names the
+ * recipient as the sender. On a notification that is the only context there
+ * is, so it reads as money arriving from an address the user does not
+ * recognise — the opposite of what happened.
+ */
+export function counterpartyPreposition(type: 'received' | 'sent' | 'confirmed'): string {
+  return type === 'received' ? 'From' : 'To';
+}
+
+/** Middle-truncate an address so both ends stay checkable. */
+export function shortenAddress(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-6)}` : address;
+}
+
 // ── Notification scheduling ──────────────────────────────────────────────────
 
 /**
@@ -145,7 +162,7 @@ export async function fireTransferNotification(params: {
   const counterparty = params.counterparty;
   const subtitle =
     counterparty && !_isAppLocked
-      ? `From ${counterparty.length > 12 ? `${counterparty.slice(0, 6)}…${counterparty.slice(-6)}` : counterparty}`
+      ? `${counterpartyPreposition(params.type)} ${shortenAddress(counterparty)}`
       : undefined;
 
   await Notifications.scheduleNotificationAsync({
