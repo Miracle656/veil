@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -200,7 +201,7 @@ export default function SendScreen() {
       setHash(result.hash);
       setStep('done');
     } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
+      const raw = errorMessage(err);
       const name = err instanceof Error ? err.name : '';
       // Horizon's 404 for the source account surfaces as a bare "Not found".
       const friendly =

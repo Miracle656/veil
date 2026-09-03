@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { Keypair } from '@stellar/stellar-sdk';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -221,7 +222,7 @@ export default function SwapScreen() {
       setTxHash(hash);
       setStep('done');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       const name = err instanceof Error ? err.name : '';
       const friendly =
         name === 'NotFoundError' || /^not found$/i.test(msg.trim())

@@ -1,3 +1,4 @@
+import { errorMessage } from './errorMessage';
 import './polyfills';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -239,7 +240,7 @@ async function getWalletNonce(
         }
       } catch (err) {
         // Network-level flake (mobile data drops calls mid-burst) — retry too.
-        lastError = err instanceof Error ? err.message : String(err);
+        lastError = errorMessage(err);
       }
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -421,7 +422,7 @@ export async function approveWalletConnectRequest(request: WalletConnectRequest)
     const reason = isUserRejection(error) ? getSdkError('USER_REJECTED') : null;
     const response = reason
       ? buildWcError(id, reason.code, reason.message)
-      : buildWcError(id, 5000, error instanceof Error ? error.message : String(error));
+      : buildWcError(id, 5000, errorMessage(error));
 
     await client.respondSessionRequest({ topic, response }).catch(() => {});
     removePendingRequest(id, topic);

@@ -115,8 +115,16 @@ const config: ExpoConfig = {
       'expo-notifications',
       {
         // Use the Veil drape mark as the Android notification small icon.
-        // The icon must be a white-on-transparent single-colour image.
-        icon: './assets/images/android-icon-monochrome.png',
+        // The icon must be a white-on-transparent single-colour image — it is,
+        // and Android tints it with `color` below.
+        //
+        // A dedicated crop rather than the adaptive-icon monochrome asset:
+        // that one centres a 404px mark in a 1024px canvas, so only 39.5% of
+        // each dimension is artwork. Android scales the whole canvas into a
+        // 24dp frame, which left the drape rendering at roughly 9dp inside the
+        // tinted circle — a speck. This asset is the identical glyph cropped
+        // to 89% of its canvas, so it fills the frame.
+        icon: './assets/images/notification-icon.png',
         color: '#FDDA24',
       },
     ],

@@ -13,7 +13,10 @@
 import { useEffect, useRef } from 'react';
 
 import { subscribeActivityFeed, type TxRecord } from '../lib/activityFeed';
-import { fireTransferNotification } from '../lib/notifications';
+import * as Notifications from 'expo-notifications';
+import { useRouter } from 'expo-router';
+
+import { fireTransferNotification, routeForNotificationResponse } from '../lib/notifications';
 
 /**
  * Set of record ids from the previous activity-feed snapshot. On each new
@@ -30,8 +33,36 @@ const seenIds = new Set<string>();
 let initialised = false;
 
 export function useNotifications(): void {
+  const router = useRouter();
   const seenRef = useRef(seenIds);
   const initRef = useRef(initialised);
+
+  // Tapping a notification should open the transaction list. Two paths, and
+  // missing either one makes the tap appear to do nothing:
+  //
+  //   - the app is already running, so a response listener fires;
+  //   - the app was killed and the tap launched it, in which case no listener
+  //     exists yet and the response is only available from
+  //     getLastNotificationResponseAsync().
+  useEffect(() => {
+    let cancelled = false;
+
+    void Notifications.getLastNotificationResponseAsync().then((response) => {
+      if (cancelled || !response) return;
+      const route = routeForNotificationResponse(response);
+      if (route) router.push(route as never);
+    });
+
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const route = routeForNotificationResponse(response);
+      if (route) router.push(route as never);
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.remove();
+    };
+  }, [router]);
 
   useEffect(() => {
     const unsubscribe = subscribeActivityFeed((records) => {
@@ -54,6 +85,8 @@ export function useNotifications(): void {
             amount: tx.amount,
             asset: tx.asset,
             counterparty: tx.counterparty,
+            txId: tx.id,
+            hash: tx.hash,
           });
         } else if (tx.type === 'sent') {
           void fireTransferNotification({
@@ -61,6 +94,8 @@ export function useNotifications(): void {
             amount: tx.amount,
             asset: tx.asset,
             counterparty: tx.counterparty,
+            txId: tx.id,
+            hash: tx.hash,
           });
         }
         // 'swapped' records are intentionally not notified — they are
