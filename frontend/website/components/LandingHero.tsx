@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import type { Messages } from '@/lib/i18n'
+import { useRegionalCurrency, type RegionalAmounts } from '@/lib/regionalCurrency'
 
 /**
  * Landing hero — centred statement over a collage of the approved mobile screens.
@@ -53,7 +54,7 @@ function Phone({
 const LABEL = 'text-[9px] tracking-[0.14em] uppercase text-off-white/40 font-bold'
 const FIELD = 'bg-white/[0.04] border border-white/[0.08] rounded-[14px]'
 
-function SendScreen() {
+function SendScreen({ amounts }: { amounts: RegionalAmounts }) {
   return (
     <>
       <div className="flex items-center gap-[11px]">
@@ -79,15 +80,15 @@ function SendScreen() {
 
       <div className={`${LABEL} mt-4`}>Amount</div>
       <div className={`${FIELD} px-[13px] pt-[18px] pb-3 mt-[7px] flex flex-col items-center`}>
-        <span className="font-lora italic font-normal text-[38px] leading-none">₦25,000</span>
+        <span className="font-lora italic font-normal text-[38px] leading-none">{amounts.transfer}</span>
         <span className="font-mono text-[11px] text-off-white/50 mt-[7px]">≈ 16.08 USDC</span>
-        <span className="text-[10px] text-off-white/45 mt-[11px]">Balance ₦642,384</span>
+        <span className="text-[10px] text-off-white/45 mt-[11px]">Balance {amounts.balance}</span>
         <span className="flex gap-[5px] flex-wrap justify-center mt-2">
-          {['₦5,000', '₦10,000', '₦25,000', '₦50,000'].map((c) => (
+          {amounts.chips.map((c, i) => (
             <span
               key={c}
               className={`rounded-pill px-[9px] py-[4px] text-[9px] font-semibold border ${
-                c === '₦25,000'
+                i === 2
                   ? 'border-gold/40 bg-gold/[0.08] text-gold'
                   : 'border-white/10 text-off-white/60'
               }`}
@@ -126,7 +127,11 @@ function SendScreen() {
   )
 }
 
-function HomeScreen() {
+function HomeScreen({ amounts }: { amounts: RegionalAmounts }) {
+  const balanceDot = amounts.balance.lastIndexOf('.')
+  const balanceMain = balanceDot >= 0 ? amounts.balance.slice(0, balanceDot) : amounts.balance
+  const balanceDec = balanceDot >= 0 ? amounts.balance.slice(balanceDot) : null
+
   return (
     <>
       <div className="flex justify-between items-center px-[5px]">
@@ -157,12 +162,13 @@ function HomeScreen() {
           <Mark size={21} color="#0F0F0F" />
         </div>
         <div className="relative font-lora italic font-normal text-[35px] leading-[1.1] mt-[11px]">
-          ₦642,384<span className="text-[17px] text-near-black/45">.10</span>
+          {balanceMain}
+          {balanceDec && <span className="text-[17px] text-near-black/45">{balanceDec}</span>}
         </div>
         <div className="relative flex justify-between items-center mt-[13px] gap-2">
           <span className="font-mono text-[10px] text-near-black/60">412.98 USDC</span>
           <span className="bg-near-black/85 text-[#00e0f0] rounded-pill px-[9px] py-[3px] text-[9px] font-semibold shrink-0">
-            +₦109.32
+            +{amounts.dailyYield}
           </span>
         </div>
         <div className="relative flex gap-2 mt-[14px]">
@@ -253,16 +259,16 @@ function HomeScreen() {
   )
 }
 
-function ConfirmScreen() {
+function ConfirmScreen({ amounts }: { amounts: RegionalAmounts }) {
   return (
     <>
       <div className={LABEL}>Confirm transfer</div>
-      <div className="font-lora italic font-normal text-[42px] mt-[11px]">₦25,000</div>
+      <div className="font-lora italic font-normal text-[42px] mt-[11px]">{amounts.transfer}</div>
       <div className="font-mono text-[12px] text-off-white/50 mt-[5px]">To alice*veil.xyz</div>
 
       <div className="w-full mt-[30px] flex flex-col">
         {[
-          ['They receive', '₦25,000'],
+          ['They receive', amounts.transfer],
           ['Debited', '16.08 USDC'],
           ['Network fee', 'Sponsored'],
         ].map(([k, v], i) => (
@@ -293,6 +299,7 @@ function ConfirmScreen() {
 
 export function LandingHero({ t }: { t: Messages }) {
   const copy = t.heroNew
+  const amounts = useRegionalCurrency()
 
   return (
     <section className="relative bg-near-black overflow-hidden">
@@ -338,7 +345,7 @@ export function LandingHero({ t }: { t: Messages }) {
             <div key={m.label} className="flex flex-col gap-[6px]">
               <dt className="sr-only">{m.label}</dt>
               <dd className="font-lora italic font-normal text-[28px] sm:text-[32px] leading-none text-off-white">
-                {m.value}
+                {m.value.includes('{sym}') ? m.value.replace('{sym}', amounts.symbol) : m.value}
               </dd>
               <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-off-white/45 whitespace-nowrap">
                 {m.label}
@@ -351,13 +358,13 @@ export function LandingHero({ t }: { t: Messages }) {
       {/* Collage: devices appear as room allows rather than being scaled down. */}
       <div className="relative flex justify-center items-end gap-5 lg:gap-6 mt-16 sm:mt-20 px-5 sm:px-8 lg:px-14 pb-4">
         <Phone className="hidden xl:flex">
-          <SendScreen />
+          <SendScreen amounts={amounts} />
         </Phone>
         <Phone tall>
-          <HomeScreen />
+          <HomeScreen amounts={amounts} />
         </Phone>
         <Phone className="hidden md:flex">
-          <ConfirmScreen />
+          <ConfirmScreen amounts={amounts} />
         </Phone>
       </div>
     </section>

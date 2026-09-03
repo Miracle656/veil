@@ -37,7 +37,7 @@ jobs:
         run: |
           npm run build --workspace invisible-wallet-sdk --if-present
           npm run build --workspace @veil/agent --if-present
-          npm run build --workspace create-veil-app --if-present
+          npm run build --workspace create-veil-wallet --if-present
 
       # When changeset files exist, this opens/updates a "Version Packages" PR
       # that consumes them. When that PR is merged (versions already bumped, no
@@ -47,7 +47,7 @@ jobs:
         with:
           version: npm run version-packages
           # Publishing is gated until npm trusted publishing is set up for
-          # @veil/agent, invisible-wallet-sdk and create-veil-app. A brand-new
+          # invisible-wallet-sdk and create-veil-wallet. A brand-new
           # package's first publish can't be authorized by OIDC alone, so
           # `changeset publish` E404s. Until then only the version flow runs
           # (opens/updates the "Version Packages" PR). To enable real publishing,

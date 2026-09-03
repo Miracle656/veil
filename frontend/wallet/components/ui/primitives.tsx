@@ -309,7 +309,7 @@ export function Toggle({
       aria-label={label}
       onClick={() => onChange(!on)}
       className="relative w-[42px] h-6 rounded-pill shrink-0 transition-colors duration-200"
-      style={{ background: on ? '#FDDA24' : 'rgba(255,255,255,0.15)' }}
+      style={{ background: on ? 'var(--gold)' : 'rgba(255,255,255,0.15)' }}
     >
       <span
         className="absolute top-[3px] w-[18px] h-[18px] rounded-full bg-near-black transition-[left] duration-200"
@@ -415,7 +415,7 @@ export function Glyph({
 }) {
   const tones = {
     teal: { bg: 'rgba(0,167,181,0.14)', bd: 'rgba(0,167,181,0.35)', fg: '#00A7B5' },
-    gold: { bg: 'rgba(253,218,36,0.1)', bd: 'rgba(253,218,36,0.3)', fg: '#FDDA24' },
+    gold: { bg: 'var(--surface-md)', bd: 'var(--border-dim)', fg: 'var(--gold)' },
     lilac: { bg: 'rgba(183,172,232,0.14)', bd: 'rgba(183,172,232,0.35)', fg: '#B7ACE8' },
   } as const
   const t = tones[tone]

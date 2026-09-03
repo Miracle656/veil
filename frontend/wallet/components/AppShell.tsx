@@ -59,9 +59,9 @@ function NavRow({ item, active }: { item: NavItem; active: boolean }) {
       aria-current={active ? 'page' : undefined}
       className="flex items-center justify-between rounded-xl px-[14px] py-[11px] transition-colors duration-150"
       style={{
-        background: active ? 'rgba(253,218,36,0.08)' : 'transparent',
-        border: `1px solid ${active ? 'rgba(253,218,36,0.2)' : 'transparent'}`,
-        color: active ? '#FDDA24' : 'rgba(246,247,248,0.72)',
+        background: active ? 'var(--surface-md)' : 'transparent',
+        border: `1px solid ${active ? 'var(--gold)' : 'transparent'}`,
+        color: active ? 'var(--gold)' : 'rgba(246,247,248,0.72)',
         fontWeight: active ? 600 : 400,
       }}
     >
@@ -141,7 +141,7 @@ export function AppShell({
 
         <div className="bg-surface border border-border-dim rounded-2xl px-4 py-[14px] flex flex-col gap-[10px]">
           <div className="flex items-center gap-[10px]">
-            <div className="w-[30px] h-[30px] rounded-full bg-[rgba(253,218,36,0.1)] border border-[rgba(253,218,36,0.3)] flex items-center justify-center text-xs text-gold font-bold shrink-0">
+            <div className="w-[30px] h-[30px] rounded-full bg-surface-md border border-border-dim flex items-center justify-center text-xs text-gold font-bold shrink-0">
               {initial}
             </div>
             <div className="flex flex-col gap-px min-w-0">
@@ -174,8 +174,8 @@ export function AppShell({
               aria-label={item.label}
               className="px-3 py-2 rounded-lg text-[15px] shrink-0"
               style={{
-                color: isActive(item.href) ? '#FDDA24' : 'rgba(246,247,248,0.6)',
-                background: isActive(item.href) ? 'rgba(253,218,36,0.08)' : 'transparent',
+                color: isActive(item.href) ? 'var(--gold)' : 'rgba(246,247,248,0.6)',
+                background: isActive(item.href) ? 'var(--surface-md)' : 'transparent',
               }}
             >
               {item.icon}

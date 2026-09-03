@@ -18,6 +18,7 @@ import {
   getEncryptedMnemonic,
 } from '@/lib/recovery'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 
 type Section = 'overview' | 'add-signer' | 'guardian' | 'recovery-backup'
 
@@ -148,6 +149,7 @@ export default function SettingsPage() {
   const [section, setSection] = useState<Section>('overview')
   const [status, setStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [prfDowngraded, setPrfDowngraded] = useState(false)
 
   const [signers, setSigners] = useState<SignerInfo[]>([])
   const [localPublicKey, setLocalPublicKey] = useState<string | null>(null)
@@ -263,6 +265,9 @@ export default function SettingsPage() {
     const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
     setAddress(addr)
+    // Check fee-payer downgrade state so the card can show a warning dot
+    // without importing the full diagnostics into every render.
+    setPrfDowngraded(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
   }, [router])
 
   const fetchSigners = useCallback(async () => {
@@ -397,6 +402,42 @@ export default function SettingsPage() {
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
                     <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Fee Payer card */}
+              <button
+                id="settings-fee-payer"
+                className="card"
+                onClick={() => router.push('/settings/fee-payer')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: prfDowngraded ? '1px solid rgba(220,38,38,0.35)' : '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Fee Payer</p>
+                      {prfDowngraded && (
+                        <span
+                          title="PRF was requested but is unavailable on this device — fee payer may differ on other clients"
+                          style={{
+                            display: 'inline-block',
+                            width: '7px', height: '7px',
+                            borderRadius: '50%',
+                            background: 'rgba(220,38,38,0.85)',
+                            flexShrink: 0,
+                          }}
+                        />
+                      )}
+                    </div>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      {prfDowngraded
+                        ? 'PRF unavailable — using legacy derivation'
+                        : 'View active fee-payer address and derivation mode'}
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke={prfDowngraded ? 'rgba(220,38,38,0.5)' : 'rgba(246,247,248,0.3)'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>

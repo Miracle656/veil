@@ -27,7 +27,7 @@
         "./*"
       ],
       "@veil/sdk": [
-        "../../sdk/src/useInvisibleWallet"
+        "../../sdk/src/index"
       ],
       "@veil/events": [
         "../../sdk/src/events"
