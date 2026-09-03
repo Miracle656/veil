@@ -37,6 +37,8 @@ export type {
     WalletStateListener,
     InvisibleWalletActions,
     InvisibleWallet,
+    BatchOperation,
+    BatchResult,
 } from './core';
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
