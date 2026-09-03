@@ -8,6 +8,60 @@
 
 A passkey-powered smart wallet on the Stellar Soroban blockchain. Users authenticate with their device biometrics (Face ID, fingerprint, Windows Hello) instead of seed phrases or private keys.
 
+## Live on Stellar mainnet
+
+Veil's contracts are deployed and transacting on Stellar **mainnet**, not only testnet.
+
+| | |
+| --- | --- |
+| Factory contract | [`CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`](https://stellar.expert/explorer/public/contract/CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK) |
+| Passkey-authorized payment | [`626e110b61b709afb2d85c14517e7678b95b07e4d49c34a6caff8ee51148ebcc`](https://stellar.expert/explorer/public/tx/626e110b61b709afb2d85c14517e7678b95b07e4d49c34a6caff8ee51148ebcc) — a WebAuthn assertion verified on-chain by `__check_auth` |
+| Soroswap aggregator swap | [`5e29e3d8cdd27ba25f510e5dbf412e9e6592dabdf761508266a8752bfd096f4f`](https://stellar.expert/explorer/public/tx/5e29e3d8cdd27ba25f510e5dbf412e9e6592dabdf761508266a8752bfd096f4f) — 1 XLM to Circle USDC through a live third-party DEX |
+| Web wallet | [app.useveilapp.xyz](https://app.useveilapp.xyz) — passkeys bound to an owned domain, not a preview host |
+
+The first of those is the claim that matters: a payment on mainnet whose only
+authorization was a device biometric. No seed phrase, no exported key — the
+contract verified the challenge binding and the P-256 signature itself, in
+`__check_auth`, before the transfer moved.
+
+### Verify it yourself
+
+The deployed bytecode matches this repository byte for byte, and you do not have
+to take that on faith. `contracts/expected-hashes.json` records the SHA-256 of
+each artifact from a reproducible Docker build (`rust:1.85.0-bookworm`), and the
+same hash is readable from the ledger:
+
+```bash
+# 1. Pull the bytecode that is actually running on mainnet, and hash it.
+#    Mainnet has no free public Soroban RPC, so name a provider explicitly.
+stellar contract fetch \
+  --id CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK \
+  --rpc-url https://mainnet.sorobanrpc.com \
+  --network-passphrase "Public Global Stellar Network ; September 2015" \
+  --out-file factory.wasm
+
+sha256sum factory.wasm
+# 3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853
+
+# 2. Rebuild the same artifact from this repository, in Docker, and compare.
+./scripts/reproducible-build.sh
+```
+
+Both produce `3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853`
+— the value committed in `contracts/expected-hashes.json`. The wallet contract
+the factory deploys verifies the same way, as `b485f817…59ea5`.
+
+A source-verified contract is the difference between "here is our code" and
+"here is the code that is running."
+
+### What is and isn't live
+
+Being honest about the stage, because a deployed contract is not the same as a
+used one: **mainnet activity so far is our own verification transactions, not
+users.** The contracts, the web wallet and the mobile app are real and working;
+the traction is not there yet. Testnet remains the default for development —
+flip `NEXT_PUBLIC_NETWORK=mainnet` to point the wallet at production.
+
 ## How it works
 
 Veil combines WebAuthn (the browser passkey standard) with a Soroban custom account contract. When a user registers, a P-256 keypair is created on their device and the public key is stored in the wallet contract. To authorize a transaction, the user's device signs the Soroban authorization payload with their passkey. The contract verifies the full WebAuthn assertion on-chain — including the challenge binding and the ECDSA signature — before approving any action.
@@ -409,6 +463,7 @@ The contract's `__check_auth` expects the signature field to be a `Vec<Val>` wit
 - [x] Wraith indexer — Soroban SAC transfer history (combined endpoint PR #6 merged)
 - [x] Agent — Claude AI assistant: balance, prices, swaps, payments — all passkey-gated
 - [x] Marketing website — Products section with individual pages for all 4 products
+- [x] Mainnet — contracts deployed and source-verified; passkey-authorized payment and Soroswap swap settled on-chain
 
 ## Security
 
