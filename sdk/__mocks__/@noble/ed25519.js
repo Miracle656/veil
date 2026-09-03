@@ -6,8 +6,13 @@ const crypto = require('crypto');
 
 // Ed25519 PKCS8 DER prefix (30 2e 02 01 00 30 05 06 03 2b 65 70 04 22 04 20)
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
-// Ed25519 SPKI DER prefix for public key verification
-const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570042204', 'hex');
+// Ed25519 SPKI DER prefix: 30 2a 30 05 06 03 2b 65 70 03 21 00
+// The tail must be 03 21 00 -- BIT STRING, 33 bytes, 0 unused bits. The PKCS8
+// tail (04 22 04, OCTET STRING/34) produces DER that createPublicKey rejects,
+// and the catch in verify() would swallow that throw and return false for
+// every signature -- valid ones included. See __tests__/ed25519-shim.test.ts,
+// which pins the shim against Node's own Ed25519 implementation.
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
 function getPublicKey(privateKey) {
   const privKeyObj = crypto.createPrivateKey({
