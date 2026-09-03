@@ -99,9 +99,19 @@ const config: ExpoConfig = {
     [
       'expo-splash-screen',
       {
-        backgroundColor: '#0F0F0F',
+        // Light is the base and dark is the variant, matching THEMES in
+        // lib/theme.ts. The splash is drawn natively before any JavaScript
+        // runs, so it can only follow the OS scheme (via userInterfaceStyle:
+        // 'automatic' above) — it cannot see the in-app preference. A user who
+        // pins dark inside Veil on a light phone will still get a light splash,
+        // which is the platform's behaviour and not worth fighting.
+        backgroundColor: '#FFFFFF',
         image: './assets/images/splash-icon.png',
         imageWidth: 260,
+        dark: {
+          backgroundColor: '#0F0F0F',
+          image: './assets/images/splash-icon.png',
+        },
       },
     ],
     'expo-secure-store',
