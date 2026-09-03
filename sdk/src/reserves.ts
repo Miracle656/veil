@@ -4,6 +4,15 @@
  * A Stellar account cannot spend down to zero: it must retain (2 + subentries)
  * x the 0.5 XLM base reserve, plus anything already committed as selling
  * liabilities on the DEX.
+ *
+ * Ignoring that is invisible on testnet, where a Friendbot account holds
+ * 10,000 XLM and the reserve is noise. On mainnet, where balances are small and
+ * real, a "Max" that offers the full balance builds a transaction that cannot
+ * succeed (tx_insufficient_balance) — and the user only finds out after
+ * signing.
+ *
+ * Trustlines and data entries each add a subentry, so the reserve is read from
+ * the account rather than assumed.
  */
 export type HorizonAccountLike = {
   subentry_count?: number;
