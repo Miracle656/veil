@@ -13,9 +13,9 @@
     "test": "jest",
     "e2e": "maestro test .maestro",
     "e2e:device": "maestro test --include-tags device .maestro",
-    "build:android:dev": "eas build -p android --profile development",
-    "build:android:preview": "eas build -p android --profile preview",
-    "build:android:production": "eas build -p android --profile production"
+    "build:android:dev": "npx --yes eas-cli@latest build -p android --profile development",
+    "build:android:preview": "npx --yes eas-cli@latest build -p android --profile preview",
+    "build:android:production": "npx --yes eas-cli@latest build -p android --profile production"
   },
   "dependencies": {
     "@blend-capital/blend-sdk": "^3.3.0",
