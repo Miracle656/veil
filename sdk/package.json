@@ -1,6 +1,6 @@
 {
   "name": "invisible-wallet-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn) — supports Web and React Native",
   "main": "dist/index.js",
   "module": "dist/index.js",
