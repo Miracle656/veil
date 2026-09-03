@@ -221,6 +221,22 @@ export type DeployResult = {
     alreadyDeployed: boolean;
 };
 
+/** A contract invocation executed by batch() under one wallet authorization. */
+export type BatchOperation = {
+    /** Target contract address. */
+    target: string;
+    /** Target contract function name. */
+    functionName: string;
+    /** Arguments encoded as Soroban ScVals. */
+    args?: xdr.ScVal[];
+};
+
+/** Result of submitting a batch() transaction. */
+export type BatchResult = {
+    transactionHash: string;
+    status: 'PENDING' | 'SUCCESS' | 'FAILED';
+};
+
 /** Result returned by a successful addSigner() call. */
 export type AddSignerResult = {
     /** The index of the newly added signer in the wallet's signer list. */
@@ -370,6 +386,18 @@ export type InvisibleWalletActions = {
      * @returns The index of the newly added signer.
      */
     addSigner: (signerKeypair: Keypair, newPublicKeyBytes: Uint8Array) => Promise<AddSignerResult>;
+    /**
+     * Execute several contract invocations atomically under a single passkey
+     * authorization.
+     *
+     * The wallet contract's `batch` entrypoint calls `require_auth()` once on
+     * itself and then invokes each target in turn, so the whole list either
+     * applies or none of it does. Soroban binds the authorization to the
+     * function *and its arguments*, so the assertion covers this exact list of
+     * invocations — a different list cannot be substituted under the same
+     * signature.
+     */
+    batch: (signerKeypair: Keypair | string, operations: BatchOperation[]) => Promise<BatchResult>;
     /**
      * Remove a signer from the wallet contract by index.
      * Follows the simulate → build → sign → submit → poll pattern.
@@ -683,6 +711,7 @@ export class InvisibleWalletCore {
             login:                       this.login,
             getNonce:                    this.getNonce,
             addSigner:                   this.addSigner,
+            batch:                       this.batch,
             removeSigner:                this.removeSigner,
             rotateSigner:                this.rotateSigner,
             getSigners:                  this.getSigners,
@@ -1218,6 +1247,91 @@ export class InvisibleWalletCore {
 
             const nonce = scValToNative(result.retval) as bigint;
             return nonce;
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── batch ─────────────────────────────────────────────────────────────────
+
+    batch = async (
+        signerSecret: Keypair | string,
+        operations: BatchOperation[],
+    ): Promise<BatchResult> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+            if (operations.length === 0) {
+                throw new Error('At least one batch operation is required');
+            }
+
+            const signerKeypair = typeof signerSecret === 'string'
+                ? Keypair.fromSecret(signerSecret)
+                : signerSecret;
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(signerKeypair.publicKey());
+
+            // Mirrors the contract's BatchInvocation struct field-for-field. A
+            // #[contracttype] struct arrives as an ScMap keyed by symbol, so the
+            // keys must match `target` / `func` / `args` exactly — a mismatch
+            // fails at simulation with a conversion error rather than anything
+            // that names the wrong field.
+            const invocationValues = operations.map((operation) => xdr.ScVal.scvMap([
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol('target'),
+                    val: nativeToScVal(operation.target, { type: 'address' }),
+                }),
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol('func'),
+                    val: xdr.ScVal.scvSymbol(operation.functionName),
+                }),
+                new xdr.ScMapEntry({
+                    key: xdr.ScVal.scvSymbol('args'),
+                    val: xdr.ScVal.scvVec(operation.args ?? []),
+                }),
+            ]));
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(walletContract.call('batch', xdr.ScVal.scvVec(invocationValues)))
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+            const submissionTx = signForSubmission(assembled, signerKeypair, this.config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                // A batch is atomic on-chain, so a failure here means nothing in
+                // the list applied — report it rather than leaving the caller to
+                // guess which operations landed.
+                throw new Error(`Batch failed with status: ${txResult.status}`);
+            }
+
+            return { transactionHash: sendResult.hash, status: 'SUCCESS' };
 
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
