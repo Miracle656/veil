@@ -42,14 +42,33 @@ config.resolver.extraNodeModules = {
 };
 
 // Wire tsconfig `paths` into Metro so `@/components/*`, `@/*`, and
-// `@/assets/*` resolve at runtime. The Expo SDK 57 Babel pipeline also
-// honors `tsconfig.json` paths, but the alias guarantees the SSR/web
-// bundler sees the same resolutions.
+// `@/assets/*` resolve at runtime. The Babel pipeline also honors
+// `tsconfig.json` paths, but the alias guarantees the SSR/web bundler sees the
+// same resolutions.
+//
+// `@` maps to the project root, matching `tsconfig.json` since #586 widened
+// `@/*` from `./app/*` to `./*`. The two must agree: if Metro resolved `@` to
+// `app/` while TypeScript resolved it to the root, an `@/lib/foo` import would
+// typecheck cleanly and then fail to resolve at runtime — a break that CI
+// cannot see, because tsc is the only thing that looks at tsconfig.
 config.resolver.alias = {
   ...config.resolver.alias,
   '@/components': path.resolve(projectRoot, 'components'),
   '@/assets': path.resolve(projectRoot, 'assets'),
-  '@': path.resolve(projectRoot, 'app'),
+  '@': projectRoot,
+};
+
+// The SDK carries its own `react` in `sdk/node_modules` now that each package
+// installs independently (#670). Metro follows the symlink into `sdk/` to read
+// its TypeScript sources, so without this the SDK's components could resolve a
+// *second* copy of React while the app uses its own. Two Reacts in one bundle
+// means two independent hook dispatchers, which surfaces as
+// "Invalid hook call. Hooks can only be called inside the body of a function
+// component" from code that is perfectly correct. Pin both to the app's copy.
+config.resolver.alias = {
+  ...config.resolver.alias,
+  react: path.resolve(projectRoot, 'node_modules/react'),
+  'react-dom': path.resolve(projectRoot, 'node_modules/react-dom'),
 };
 
 // `@stellar/stellar-sdk`'s Horizon `call_builder` imports the Node-only
