@@ -1,3 +1,4 @@
+import { errorMessage } from './errorMessage';
 import {
   SoroswapSDK,
   SupportedNetworks,
@@ -91,11 +92,27 @@ export async function getSoroswapQuote(params: SwapParams): Promise<SwapQuote | 
  * Build an assembled Soroswap swap XDR ready for passkey signing.
  * Returns null on failure (caller should fall back to classic SDEX).
  */
-export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string | null> {
+/** A swap the router could not build, carrying the reason it gave. */
+export class SoroswapBuildError extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'SoroswapBuildError';
+    this.cause = cause;
+  }
+}
+
+export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string> {
   try {
     const client = getSoroswapClient();
     if (!client) {
-      return null;
+      // No API key configured, so the router is unreachable. Say that rather
+      // than reporting it as a failed build — it is a deployment gap, not
+      // something the user did.
+      throw new SoroswapBuildError(
+        'Swaps are unavailable: this build has no Soroswap API key configured.',
+      );
     }
 
     const quote = await client.quote({
@@ -121,7 +138,14 @@ export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string |
     return build.xdr;
   } catch (err) {
     console.warn('[soroswap] buildSwapXdr failed:', err);
-    return null;
+    // Rethrow with the underlying reason attached rather than returning null.
+    //
+    // Swallowing it meant every failure — no liquidity for the pair, an amount
+    // below the router's minimum, and most commonly an account with no funds —
+    // reached the user as the same "Failed to build swap transaction." That
+    // tells them nothing about what to do next, which is the only thing an
+    // error at this point is for.
+    throw new SoroswapBuildError(errorMessage(err), err);
   }
 }
 

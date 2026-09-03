@@ -6,9 +6,16 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../../hooks/useTheme';
 import { useCurrency } from '../../hooks/useCurrency';
 import { CURRENCIES, CURRENCY_CODES } from '../../lib/currency';
-import type { ThemeColors } from '../../lib/theme';
+import type { ThemeColors, ThemePreference } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
-import { getNetwork, getNetworkName, setNetwork, subscribeToNetwork } from '../../lib/network';
+import {
+  getNetwork,
+  getNetworkName,
+  setNetwork,
+  subscribeToNetwork,
+  type VeilNetworkName,
+} from '../../lib/network';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import { getWalletAddress, clearWalletStore } from '../../lib/walletStore';
 import { getFeePayerAddress } from '../../lib/activity';
 import { fundWithFriendbot } from '../../lib/testnetWallet';
@@ -32,21 +39,36 @@ type Row = {
   switch?: { value: boolean; onChange: (v: boolean) => void };
 };
 
+/** The three appearance choices, in the order they are offered. */
+const THEME_OPTIONS: { value: ThemePreference; label: string; glyph: string }[] = [
+  { value: 'system', label: 'Follow device', glyph: '◐' },
+  { value: 'light', label: 'Light', glyph: '☀' },
+  { value: 'dark', label: 'Dark', glyph: '☾' },
+];
+
 export default function SettingsScreen() {
   const router = useRouter();
-  const { colors, isDark, toggle } = useTheme();
+  const { colors, isDark, preference, systemTheme, select: selectTheme } = useTheme();
   const { currency, meta, select } = useCurrency();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false);
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
 
   const appearance: Row[] = [
     {
       key: 'theme',
       title: 'Appearance',
-      subtitle: 'Light or dark',
-      value: isDark ? 'Dark' : 'Light',
-      onPress: toggle,
+      subtitle: 'Light, dark, or follow your device',
+      // On 'system', show what it currently resolves to as well — "System"
+      // alone leaves the user guessing which one they are actually looking at.
+      value:
+        preference === 'system'
+          ? `System · ${systemTheme === 'dark' ? 'Dark' : 'Light'}`
+          : preference === 'dark'
+            ? 'Dark'
+            : 'Light',
+      onPress: () => setThemePickerOpen(true),
     },
     {
       key: 'currency',
@@ -104,26 +126,22 @@ export default function SettingsScreen() {
   const networkName = useSyncExternalStore(subscribeToNetwork, getNetworkName, getNetworkName);
   const onTestnet = networkName === 'testnet';
 
+  // Which network the user is being asked to switch to, or null when the
+  // sheet is closed. A themed sheet rather than Alert.alert: switching to
+  // mainnet puts real money at risk, and that warning deserves to look like
+  // part of the wallet rather than a grey OS box.
+  const [pendingNetwork, setPendingNetwork] = useState<VeilNetworkName | null>(null);
+  const [switchedTo, setSwitchedTo] = useState<VeilNetworkName | null>(null);
+
   const handleNetworkToggle = (toMainnet: boolean) => {
-    const target = toMainnet ? 'mainnet' : 'testnet';
-    Alert.alert(
-      toMainnet ? 'Switch to Mainnet?' : 'Switch to Testnet?',
-      toMainnet
-        ? 'Mainnet uses REAL funds. Your wallet, balances, and history are separate per network. Fully close and reopen the app after switching so every connection uses the new network.'
-        : 'Back to test funds. Fully close and reopen the app after switching.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Switch',
-          style: toMainnet ? 'destructive' : 'default',
-          onPress: () => {
-            void setNetwork(target).then(() =>
-              Alert.alert('Network switched', `Now on ${target}. Close and reopen the app to finish.`),
-            );
-          },
-        },
-      ],
-    );
+    setPendingNetwork(toMainnet ? 'mainnet' : 'testnet');
+  };
+
+  const confirmNetworkSwitch = () => {
+    const target = pendingNetwork;
+    setPendingNetwork(null);
+    if (!target) return;
+    void setNetwork(target).then(() => setSwitchedTo(target));
   };
 
   const general: Row[] = [
@@ -264,6 +282,70 @@ export default function SettingsScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal
+        visible={themePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setThemePickerOpen(false)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setThemePickerOpen(false)}>
+          <Pressable
+            style={[styles.sheet, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={styles.sheetTitle}>Appearance</Text>
+            {THEME_OPTIONS.map((option) => {
+              const selected = option.value === preference;
+              return (
+                <Pressable
+                  key={option.value}
+                  onPress={() => {
+                    selectTheme(option.value);
+                    setThemePickerOpen(false);
+                  }}
+                  style={({ pressed }) => [styles.sheetRow, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.sheetSymbol, selected && styles.sheetSelected]}>
+                    {option.glyph}
+                  </Text>
+                  <Text style={[styles.sheetName, selected && styles.sheetSelected]}>
+                    {option.label}
+                  </Text>
+                  <Text style={styles.sheetCode}>{selected ? '✓' : ''}</Text>
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Network switch confirmation. Mainnet is styled destructive because it
+          moves the wallet onto real funds — the one setting here that can cost
+          the user money if tapped by accident. */}
+      <ConfirmModal
+        isOpen={pendingNetwork !== null}
+        title={pendingNetwork === 'mainnet' ? 'Switch to Mainnet?' : 'Switch to Testnet?'}
+        message={
+          pendingNetwork === 'mainnet'
+            ? 'Mainnet uses REAL funds. Your wallet, balances and history are separate per network, so this is a different wallet — not the same one on another chain.'
+            : 'Back to test funds. Your mainnet wallet and its balances are kept, and switching back restores them.'
+        }
+        confirmLabel="Switch"
+        destructive={pendingNetwork === 'mainnet'}
+        onConfirm={confirmNetworkSwitch}
+        onCancel={() => setPendingNetwork(null)}
+      />
+
+      <ConfirmModal
+        isOpen={switchedTo !== null}
+        title="Network switched"
+        message={`You are now on ${switchedTo}. Fully close and reopen the app so every connection picks up the new network.`}
+        confirmLabel="Got it"
+        cancelLabel="Close"
+        onConfirm={() => setSwitchedTo(null)}
+        onCancel={() => setSwitchedTo(null)}
+      />
     </SafeAreaView>
   );
 }

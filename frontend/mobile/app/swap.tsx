@@ -199,6 +199,23 @@ export default function SwapScreen() {
       // trustline — open it first when missing (locks 0.5 XLM base reserve).
       await ensureSwapOutTrustline(signerSecret, tokenOut.code);
 
+      // Check the balance before asking the router to build anything. An
+      // account with nothing in it is the most common reason a build fails,
+      // and the router's own error does not say so — it just refuses. Telling
+      // the user here means they learn what is wrong instead of watching a
+      // spinner end in a generic failure.
+      const available = balanceOf(tokenIn.code);
+      if (available !== null && available <= 0) {
+        throw new Error(
+          `You have no ${tokenIn.code} to swap. Receive or buy some first, then try again.`,
+        );
+      }
+      if (available !== null && parsed > available) {
+        throw new Error(
+          `Not enough ${tokenIn.code}. You have ${fmtBal(available)} and tried to swap ${fmtBal(parsed)}.`,
+        );
+      }
+
       // Build against the spending account — the same key that signs below.
       const feePayer = Keypair.fromSecret(signerSecret).publicKey();
       const unsignedXdr = await buildSoroswapSwapXdr({
@@ -208,7 +225,6 @@ export default function SwapScreen() {
         slippageBps: SLIPPAGE_BPS,
         feePayerAddress: feePayer,
       });
-      if (!unsignedXdr) throw new Error('Failed to build swap transaction.');
 
       const network = getNetwork();
       // Testnet keypair mode: simulate → assemble → sign with the wallet key →
