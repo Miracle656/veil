@@ -1,3 +1,4 @@
+import { getNetwork } from '../../lib/network';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,6 +15,16 @@ import { setWalletAddress } from '../../lib/walletStore';
 const SEEN_WELCOME_KEY = 'veil_seen_welcome';
 
 // In the dev build (not Expo Go) the create screen leads with the passkey flow.
+// What the wallet does today, under the headline's three claims: agentic,
+// passkey, Stellar. Deliberately names no single currency — Veil targets
+// African markets broadly, not one country.
+const WALLET_NOTES = [
+  'Send and receive USDC — settles in seconds',
+  'Swap and earn without leaving the wallet',
+  'Ask the agent; approve with your fingerprint',
+  'Balances in your local currency',
+];
+
 const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
 /**
@@ -64,14 +75,23 @@ export default function Welcome() {
             <VeilLogo size={26} color={colors.accent} />
             <Text style={styles.wordmark}>VEIL</Text>
           </View>
-          <Text style={styles.network}>SOROBAN · TESTNET</Text>
+          <Text style={styles.network}>SOROBAN · {getNetwork().displayName.replace('Stellar ', '').toUpperCase()}</Text>
         </View>
 
-        {/* Statement — placeholder copy; headline still being decided. */}
+        {/* Statement. Anton uppercase, as before — only the wording changed. */}
         <Text style={styles.statement}>
-          Spend{'\n'}anywhere.{'\n'}Earn{'\n'}dollars.{'\n'}
-          <Text style={styles.statementGold}>No keys.</Text>
+          The agentic{'\n'}passkey wallet{'\n'}
+          <Text style={styles.statementGold}>for Stellar.</Text>
         </Text>
+
+        <View style={styles.notes}>
+          {WALLET_NOTES.map((note) => (
+            <View key={note} style={styles.note}>
+              <View style={styles.noteDot} />
+              <Text style={styles.noteText}>{note}</Text>
+            </View>
+          ))}
+        </View>
 
         <View style={styles.spacer} />
 
@@ -173,8 +193,8 @@ const createStyles = (colors: ThemeColors) =>
     },
     statement: {
       fontFamily: fontFamily.accent,
-      fontSize: 50,
-      lineHeight: 52,
+      fontSize: 44,
+      lineHeight: 47,
       letterSpacing: 0.5,
       textTransform: 'uppercase',
       color: colors.textPrimary,
@@ -183,26 +203,31 @@ const createStyles = (colors: ThemeColors) =>
     statementGold: {
       color: colors.accent,
     },
-    facts: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
+    notes: {
       borderTopWidth: 1,
       borderTopColor: colors.border,
-      marginTop: 22,
-      paddingTop: 14,
+      marginTop: 26,
+      paddingTop: 16,
     },
-    factAddr: {
-      fontFamily: fontFamily.address,
-      fontSize: 11,
-      letterSpacing: 1,
-      color: colors.textFaint,
+    note: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      marginBottom: 10,
     },
-    factYield: {
-      fontFamily: fontFamily.address,
-      fontSize: 11,
-      letterSpacing: 1,
-      color: colors.positive,
+    noteDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: colors.accent,
+      marginTop: 6,
+      marginRight: 10,
+    },
+    noteText: {
+      flex: 1,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 18,
+      color: colors.textSecondary,
     },
     spacer: {
       flex: 1,

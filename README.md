@@ -37,7 +37,7 @@ User device                        Stellar network
 graph TD
     subgraph Browser["Browser (WebAuthn)"]
         UA["User Agent\n(Face ID / Fingerprint)"]
-        SDK["invisible-wallet-sdk\n(React hook)"]
+        SDK["invisible-wallet-sdk\n(React hook / Vue composable)"]
     end
 
     subgraph Wallet["Veil Wallet PWA (Next.js)"]
@@ -97,7 +97,9 @@ veil/
 │       └── Cargo.toml
 ├── sdk/
 │   ├── src/
-│   │   ├── useInvisibleWallet.ts  # React hook — register, deploy, login, signAuthEntry, addSigner, removeSigner, setGuardian, initiateRecovery, completeRecovery
+│   │   ├── core.ts                # Framework-agnostic wallet core — register, deploy, login, signAuthEntry, sendPayment, addSigner, removeSigner, setGuardian, initiateRecovery, completeRecovery
+│   │   ├── useInvisibleWallet.ts  # React hook — binds the core to useSyncExternalStore
+│   │   ├── vue/                   # Vue 3 composable — binds the same core to refs (invisible-wallet-sdk/vue)
 │   │   ├── webauthn.ts            # WebAuthn provider interface + web/browser implementation
 │   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkey) — Metro auto-resolves
 │   │   ├── utils.ts               # Crypto utilities (DER→raw, pubkey extraction, SHA256, computeWalletAddress)
@@ -333,6 +335,33 @@ function App() {
   await wallet.completeRecovery(); // after 3-day timelock
 }
 ```
+
+### With Vue 3
+
+```vue
+<script setup lang="ts">
+import { useInvisibleWallet } from 'invisible-wallet-sdk/vue';
+
+// Same actions as the React hook — both wrap the same framework-agnostic core.
+// State comes back as refs instead of React state.
+const { address, isPending, error, register, deploy, login, sendPayment } =
+  useInvisibleWallet({
+    factoryAddress: FACTORY_CONTRACT_ID,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: Networks.TESTNET,
+  });
+</script>
+
+<template>
+  <p v-if="address">Wallet: {{ address }}</p>
+  <button v-else :disabled="isPending" @click="register('alice')">Create wallet</button>
+</template>
+```
+
+`vue` is an optional peer dependency, so React apps never install it — and the
+Vue entry point pulls in no React. See [`examples/vue/`](examples/vue/) for a
+Vite starter covering register, login and send, and [`examples/nuxt/`](examples/nuxt/)
+for the SSR flavour.
 
 ### Without a framework
 

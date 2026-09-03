@@ -192,7 +192,7 @@ function Hero({ t }: { t: Messages }) {
           className="font-lora font-semibold italic text-off-white text-4xl sm:text-5xl md:text-6xl lg:text-[72px] leading-[1.08] tracking-tight mb-6"
         >
           {t.hero.title1}{' '}
-          <H>{t.hero.title2}</H>,<br className="hidden sm:block" />
+          <H>{t.hero.title2}</H><br className="hidden sm:block" />
           {' '}{t.hero.title3}
         </motion.h1>
 
@@ -205,6 +205,22 @@ function Hero({ t }: { t: Messages }) {
         >
           {t.hero.subtitle}
         </motion.p>
+
+        {/* What the wallet actually does — kept tight so the CTAs stay
+            reachable on a phone: one column stacked, two from sm up. */}
+        <motion.ul
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.7 }}
+          className="grid sm:grid-cols-2 gap-x-8 gap-y-3 text-left max-w-2xl mx-auto mb-10"
+        >
+          {t.hero.notes.map((note) => (
+            <li key={note} className="flex items-start gap-2.5 font-inter text-warm-grey text-sm md:text-base leading-snug">
+              <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 rounded-full bg-gold shrink-0" />
+              <span>{note}</span>
+            </li>
+          ))}
+        </motion.ul>
 
         {/* CTAs */}
         <motion.div

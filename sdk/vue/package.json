@@ -1,0 +1,23 @@
+{
+  "name": "@veil/invisible-wallet-vue",
+  "version": "0.1.0",
+  "description": "Vue 3 composable for Invisible Wallet (Soroban + WebAuthn) — ships inside invisible-wallet-sdk as the `/vue` subpath",
+  "private": true,
+  "sideEffects": false,
+  "main": "../dist/vue/index.js",
+  "module": "../dist/vue/index.js",
+  "types": "../dist/vue/index.d.ts",
+  "peerDependencies": {
+    "vue": "^3.0.0"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "webauthn",
+    "passkeys",
+    "wallet",
+    "vue",
+    "nuxt"
+  ],
+  "license": "MIT"
+}

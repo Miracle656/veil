@@ -21,43 +21,61 @@ export type BillService = {
   label: string;
   hint: string;
   Icon: (props: IconProps) => React.JSX.Element;
-  /** Highlight in gold (used for the "More" affordance). */
+  /**
+   * Whether the flow behind this tile exists. Only 'live' services appear on
+   * the dashboard; the rest are listed in the drawer behind a "soon" badge.
+   */
+  status: 'live' | 'soon';
+  /** Highlight in gold. Reserved for a service we want to draw the eye to. */
   accent?: boolean;
 };
 
 /**
  * The everyday-money surface: airtime, data, bills, transfers — the things a
  * Nigerian user opens a wallet to do. Fiat on the face, USDC + sponsored fees
- * underneath. These are the destinations of the "spend / pay bills" half of the
- * product vision; the flows land in a later phase, so tapping a tile calls
- * `onSelect` (a no-op today) rather than routing to a screen that does not exist.
+ * underneath.
+ *
+ * None of these are live yet, so none render on the dashboard. They are listed
+ * in ServicesDrawer behind a "soon" badge instead, because a tile that does
+ * nothing when tapped is worse than one the user was told is not ready.
+ *
+ * Flip a service to status: 'live' when its flow ships and it moves onto the
+ * dashboard on its own — there is no second list to update.
  */
 export const BILL_SERVICES: BillService[] = [
-  { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon },
-  { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon },
-  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon },
-  { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon },
-  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon },
-  { id: 'transfer', label: 'Transfer', hint: 'To any bank', Icon: BankIcon },
-  { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon },
-  { id: 'more', label: 'More', hint: 'All services', Icon: GridIcon, accent: true },
+  { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'soon' },
+  { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
+  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'soon' },
+  { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
+  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'soon' },
+  { id: 'transfer', label: 'Transfer', hint: 'To any bank', Icon: BankIcon, status: 'soon' },
+  { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
 ];
 
 export function PayForGrid({
   services = BILL_SERVICES,
   onSelect,
+  onMore,
 }: {
   services?: BillService[];
   onSelect?: (service: BillService) => void;
+  /** Opens the services drawer. The "More" cell only renders when provided. */
+  onMore?: () => void;
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  const live = useMemo(() => services.filter((s) => s.status === 'live'), [services]);
+
+  // Nothing shipped yet means no card at all, rather than a grid of dead tiles.
+  // The drawer behind the drape mark is the way in until the first flow lands.
+  if (live.length === 0) return null;
 
   return (
     <View style={styles.card}>
       <Text style={styles.heading}>Pay for</Text>
       <View style={styles.grid}>
-        {services.map((service) => (
+        {live.map((service) => (
           <Pressable
             key={service.id}
             onPress={() => onSelect?.(service)}
@@ -74,6 +92,23 @@ export function PayForGrid({
             </Text>
           </Pressable>
         ))}
+
+        {onMore ? (
+          <Pressable
+            onPress={onMore}
+            accessibilityRole="button"
+            accessibilityLabel="More — all services"
+            style={({ pressed }) => [styles.cell, pressed && styles.pressed]}
+          >
+            <View style={[styles.iconWrap, styles.iconWrapAccent]}>
+              <GridIcon size={20} color={colors.accent} />
+            </View>
+            <Text style={[styles.cellLabel, styles.cellLabelAccent]}>More</Text>
+            <Text style={styles.cellHint} numberOfLines={1}>
+              All services
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
     </View>
   );

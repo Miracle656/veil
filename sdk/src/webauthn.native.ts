@@ -118,7 +118,7 @@ function spkiToP256Uncompressed(spki: Uint8Array): Uint8Array {
 // ── React Native provider ─────────────────────────────────────────────────────
 
 export const webAuthnProvider: WebAuthnProvider = {
-    async create({ challenge, rpId, rpName, userId, userName, authenticatorAttachment }): Promise<WebAuthnCreateResult> {
+    async create({ challenge, rpId, rpName, userId, userName, authenticatorAttachment, excludeCredentials }): Promise<WebAuthnCreateResult> {
         const roaming = authenticatorAttachment === 'cross-platform';
 
         const result = await passkey().create({
@@ -131,6 +131,15 @@ export const webAuthnProvider: WebAuthnProvider = {
             },
             pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
             timeout: 60_000,
+            ...(excludeCredentials && excludeCredentials.length
+                ? {
+                    excludeCredentials: excludeCredentials.map(({ id, transports }) => ({
+                        id,
+                        type: 'public-key',
+                        ...(transports && transports.length ? { transports } : {}),
+                    })),
+                }
+                : {}),
             authenticatorSelection: {
                 residentKey:      roaming ? 'required' : 'preferred',
                 userVerification: 'required',

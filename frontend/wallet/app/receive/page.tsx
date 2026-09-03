@@ -1,205 +1,252 @@
 'use client'
 
-import { useActivityFeed } from '@/lib/activityFeed'
 import { PageHeader } from '@/components/ui/primitives'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { QRCodeCanvas } from 'qrcode.react'
 import { buildSep7PayUri } from '@/lib/sep7'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { CURRENCIES, hydrateCurrency, useCurrency, type CurrencyCode } from '@/lib/currency'
+import { fetchPrice } from '@/lib/fetchPrice'
+import { downloadBrandedQr } from '@/lib/downloadBrandedQr'
 
-// ── Shared address card
-
-interface AddressCardProps {
-  label: string
-  description: string
-  address: string
-  isPrimary?: boolean
+const REQUEST_CHIPS: Record<CurrencyCode, number[]> = {
+  USD: [5, 10, 25, 50],
+  NGN: [2000, 5000, 10000, 20000],
+  KES: [500, 1000, 2500, 5000],
+  GHS: [50, 100, 250, 500],
+  ZAR: [50, 100, 250, 500],
+  GBP: [5, 10, 25, 50],
+  EUR: [5, 10, 25, 50],
 }
 
-function AddressCard({ label, description, address, isPrimary }: AddressCardProps) {
+function shorten(address: string, head = 12, tail = 12): string {
+  return address.length > head + tail + 1
+    ? `${address.slice(0, head)}…${address.slice(-tail)}`
+    : address
+}
+
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function CopyIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="2"/>
+      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" strokeWidth="2"/>
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )
+}
+
+function ShareIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )
+}
+
+function HexagonIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 2l8 4.5v11L12 22l-8-4.5v-11L12 2z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round"/>
+    </svg>
+  )
+}
+
+function CheckIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  )
+}
+
+function Tile({
+  label,
+  onClick,
+  disabled,
+  icon,
+  primary,
+}: {
+  label: string
+  onClick: () => void
+  disabled?: boolean
+  icon: ReactNode
+  primary?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      className={primary ? 'vw-recv-tile vw-recv-tile--gold' : 'vw-recv-tile'}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <span className="vw-recv-tile__face vw-recv-swap" key={label}>
+        {icon}
+        {label}
+      </span>
+    </button>
+  )
+}
+
+function SpendingCard({ address }: { address: string }) {
   const [copied, setCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
+  const [xlmUsd, setXlmUsd] = useState<number | null>(null)
+  const [requestFiat, setRequestFiat] = useState<number | null>(null)
   const qrRef = useRef<HTMLDivElement>(null)
+  const { code, rate } = useCurrency()
+  const chips = REQUEST_CHIPS[code]
+  const symbol = CURRENCIES[code].symbol
+
+  useEffect(() => {
+    hydrateCurrency()
+    void fetchPrice('XLM', null).then(setXlmUsd)
+  }, [])
+
+  const xlmAmount =
+    requestFiat != null && xlmUsd != null && xlmUsd > 0 && rate > 0
+      ? (requestFiat / rate / xlmUsd).toFixed(7).replace(/\.?0+$/, '')
+      : undefined
+  const payUri = buildSep7PayUri({ destination: address, amount: xlmAmount })
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(address)
+    if (!(await copyText(address))) return
     setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    window.setTimeout(() => setCopied(false), 2000)
   }
 
-  const handleDownload = () => {
+  const handleSaveQr = async () => {
     if (!qrRef.current) return
-    setDownloading(true)
     const canvas = qrRef.current.querySelector('canvas')
-    if (!canvas) { setDownloading(false); return }
-
-    const pad = 24
-    const out = document.createElement('canvas')
-    out.width  = canvas.width  + pad * 2
-    out.height = canvas.height + pad * 2
-    const ctx = out.getContext('2d')!
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, out.width, out.height)
-    ctx.drawImage(canvas, pad, pad)
-
-    const link = document.createElement('a')
-    link.download = `veil-${isPrimary ? 'spending' : 'contract'}-${address.slice(0, 8)}.png`
-    link.href = out.toDataURL('image/png')
-    link.click()
-    setDownloading(false)
+    if (!canvas) return
+    setDownloading(true)
+    try {
+      await downloadBrandedQr({
+        qrCanvas: canvas,
+        filename: `veil-spending-${address.slice(0, 8)}.png`,
+        address,
+      })
+    } finally {
+      setDownloading(false)
+    }
   }
 
   const handleShare = async () => {
-    if (navigator.share) {
+    const payload = xlmAmount ? payUri : address
+    if (typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title: 'My Veil Wallet Address', text: address })
+        await navigator.share({ title: 'My Veil Wallet Address', text: payload })
       } catch { /* user dismissed */ }
       return
     }
-    await navigator.clipboard.writeText(address)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    await handleCopy()
   }
 
-  const canShare = typeof navigator !== 'undefined' && !!navigator.share
-
   return (
-    <div style={{
-      marginBottom: '2rem',
-      border: isPrimary ? '1px solid rgba(253,218,36,0.3)' : '1px solid var(--border-dim)',
-      borderRadius: '16px',
-      padding: '1.25rem',
-      background: isPrimary ? 'rgba(253,218,36,0.04)' : 'var(--surface)',
-    }}>
-      {/* Label */}
-      <p style={{
-        fontSize: '0.6875rem',
-        fontFamily: 'Anton, Impact, sans-serif',
-        letterSpacing: '0.08em',
-        color: isPrimary ? 'var(--gold)' : 'var(--warm-grey)',
-        marginBottom: '0.375rem',
-      }}>
-        {label}
-      </p>
-      <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '1.25rem', lineHeight: 1.5 }}>
-        {description}
-      </p>
+    <div className="vw-spendcard">
+      <p className="vw-spendcard__label">Spending address</p>
+      <p className="vw-spendcard__sub">Use this for most senders &amp; exchanges</p>
 
-      {/* QR Code */}
-      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.25rem' }}>
-        <div
-          ref={qrRef}
-          style={{
-            background: '#ffffff',
-            borderRadius: '0.75rem',
-            padding: '1rem',
-            boxShadow: '0 0 0 1px var(--border-dim)',
-          }}
-        >
-          <QRCodeCanvas
-            value={buildSep7PayUri({ destination: address })}
-            size={isPrimary ? 200 : 160}
-
-            bgColor="#ffffff"
-            fgColor="#0F0F0F"
-            level="M"
-          />
-
-        </div>
+      <div className="vw-more" style={{ marginTop: 14, justifyContent: 'center' }}>
+        {chips.map((amount) => (
+          <button
+            key={amount}
+            type="button"
+            className={requestFiat === amount ? 'vw-chip vw-chip--active' : 'vw-chip'}
+            onClick={() => setRequestFiat((current) => current === amount ? null : amount)}
+          >
+            {symbol}{amount.toLocaleString('en-US')}
+          </button>
+        ))}
       </div>
-
-      {/* Address text */}
-      <div className="card" style={{ marginBottom: '1rem', textAlign: 'center', padding: '0.875rem 1rem' }}>
-        <p style={{
-          fontFamily: 'Inconsolata, monospace',
-          fontSize: '0.75rem',
-          color: 'var(--off-white)',
-          wordBreak: 'break-all',
-          lineHeight: 1.6,
-        }}>
-          {address}
+      {xlmAmount && (
+        <p className="vw-spendcard__sub" style={{ marginTop: 8 }}>
+          QR asks for {xlmAmount} XLM
         </p>
+      )}
+
+      <div ref={qrRef} className="vw-qrframe">
+        <QRCodeCanvas
+          value={payUri}
+          size={200}
+          bgColor="#ffffff"
+          fgColor="#0F0F0F"
+          level="M"
+        />
       </div>
 
-      {/* Action buttons */}
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button
-          className={isPrimary ? 'btn-gold' : 'btn-secondary'}
-          onClick={handleCopy}
-          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem', ...(isPrimary ? {} : { border: '1.5px solid var(--border-dim)', background: 'transparent', color: 'var(--off-white)', borderRadius: '0.75rem', padding: '0.625rem', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }) }}
-        >
-          {copied ? (
-            <>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Copied!
-            </>
-          ) : (
-            <>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="2"/>
-                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" strokeWidth="2"/>
-              </svg>
-              Copy
-            </>
-          )}
-        </button>
+      <p className="vw-spendcard__addr">{address}</p>
 
-        <button
-          onClick={handleDownload}
-          disabled={downloading}
-          style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem',
-            border: '1.5px solid var(--border-dim)', background: 'transparent',
-            color: 'var(--off-white)', borderRadius: '0.75rem', padding: '0.625rem',
-            fontSize: '0.875rem', fontWeight: 600, cursor: downloading ? 'not-allowed' : 'pointer',
-            opacity: downloading ? 0.6 : 1,
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          {downloading ? 'Saving…' : 'QR'}
-        </button>
-
-        <button
-          onClick={handleShare}
-          style={{
-            flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem',
-            border: '1.5px solid var(--border-dim)', background: 'transparent',
-            color: 'var(--off-white)', borderRadius: '0.75rem', padding: '0.625rem',
-            fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer',
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-            <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          {canShare ? 'Share' : 'Copy'}
-        </button>
+      <div className="vw-recv-tiles">
+        <Tile primary label={copied ? 'Copied' : 'Copy'} onClick={handleCopy} icon={copied ? <CheckIcon /> : <CopyIcon />} />
+        <Tile label={downloading ? 'Saving…' : 'Save QR'} onClick={handleSaveQr} disabled={downloading} icon={<DownloadIcon />} />
+        <Tile label="Share" onClick={handleShare} icon={<ShareIcon />} />
       </div>
     </div>
   )
 }
 
-// ── Receive page ──────────────────────────────────────────────────────────────
+function ContractRow({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    if (!(await copyText(address))) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <button
+      type="button"
+      className="vw-contract-row"
+      onClick={handleCopy}
+      aria-label={copied ? 'Contract address copied' : 'Copy contract address'}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+        <span className="vw-contract-row__badge"><HexagonIcon /></span>
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: 'block', fontSize: 14, fontWeight: 600 }}>Contract address</span>
+          <span className="vw-meta" style={{ display: 'block', marginTop: 1 }}>
+            {copied ? 'Copied' : `${shorten(address, 6, 6)} · Soroban wallets only`}
+          </span>
+        </span>
+      </span>
+      <span className="vw-contract-row__copy" aria-hidden="true">
+        <span className="vw-recv-swap" key={copied ? 'copied' : 'copy'}>
+          {copied ? <CheckIcon /> : <CopyIcon />}
+        </span>
+      </span>
+    </button>
+  )
+}
 
 export default function ReceivePage() {
   const router = useRouter()
   const [contractAddress, setContractAddress] = useState<string | null>(null)
   const [feePayerAddress, setFeePayerAddress] = useState<string | null>(null)
 
-  // Real incoming transfers, newest first — the same feed the dashboard shows.
-  const deposits = useActivityFeed().filter((t) => t.type === 'received').slice(0, 4)
-
   useEffect(() => {
     const stored = walletSession.getItem('invisible_wallet_address')
     if (!stored) { router.replace('/lock'); return }
     setContractAddress(stored)
 
-    // Derive the G... fee-payer address from session/local storage
     const signerSecret = walletSession.getItem('veil_signer_secret')
       || walletLocal.getItem('veil_signer_secret')
     if (signerSecret) {
@@ -235,83 +282,31 @@ export default function ReceivePage() {
         </span>
       </header>
 
-      <main className="wallet-main wallet-main--wide" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
-
+      <main className="wallet-main" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
         <div style={{ marginBottom: '2rem' }}>
           <PageHeader eyebrow="Deposit" title="Receive" />
           <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.5)', marginTop: '0.5rem' }}>
-            Share the right address for where the sender is sending from.
+            Share the spending address with most senders. The contract address is for Soroban wallets only.
           </p>
         </div>
 
         {!ready ? (
           <div className="spinner spinner-light" style={{ width: '2rem', height: '2rem', margin: '4rem auto' }} />
         ) : (
-          <div className="vw-row vw-row--first" style={{ alignItems: 'flex-start' }}>
-            <div className="vw-receivecol">
-            {/* G... fee-payer address — primary, works with all senders */}
-            {feePayerAddress ? (
-              <AddressCard
-                label="SPENDING ADDRESS (G…) — USE FOR MOST SENDERS"
-                description="Use this address to receive XLM from exchanges, classic wallets, and most apps. Works with Coinbase, Lobstr, and any Stellar wallet."
-                address={feePayerAddress}
-                isPrimary
-              />
-            ) : (
-              <div style={{
-                marginBottom: '2rem', padding: '1rem 1.25rem',
-                background: 'rgba(253,218,36,0.05)', border: '1px solid rgba(253,218,36,0.2)',
-                borderRadius: '12px',
-              }}>
-                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', lineHeight: 1.5 }}>
-                  Your spending address (G…) will appear here after you tap <strong style={{ color: 'var(--off-white)' }}>Fund wallet</strong> on the dashboard.
-                </p>
-              </div>
-            )}
-
-            </div>
-
-            <div className="vw-swapside">
-              {/* C... contract address — secondary, for Soroban-native senders */}
-              {contractAddress && (
-                <AddressCard
-                  label="CONTRACT ADDRESS (C…) — SOROBAN / VEIL WALLETS ONLY"
-                  description="Use this address only when sending from another Veil wallet or a Soroban-compatible app. Classic wallets cannot send to C… addresses."
-                  address={contractAddress}
-                />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {feePayerAddress ? (
+                <SpendingCard address={feePayerAddress} />
+              ) : (
+                <div className="vw-spendcard" style={{ alignItems: 'flex-start' }}>
+                  <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', lineHeight: 1.5 }}>
+                    Your spending address (G…) will appear here after you tap <strong style={{ color: 'var(--off-white)' }}>Fund wallet</strong> on the dashboard.
+                  </p>
+                </div>
               )}
 
-              {/* The design puts a "funds start earning automatically" panel
-                  here. That is not true of this wallet — nothing is staked
-                  without an explicit, passkey-signed deposit — so it says what
-                  actually happens instead of making a promise the code does
-                  not keep. */}
-              <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
-                <div className="vw-label" style={{ padding: '18px 0 4px' }}>Recent deposits</div>
-                {deposits.length === 0 ? (
-                  <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '12px 0' }}>
-                    Nothing received yet.
-                  </p>
-                ) : deposits.map((tx) => (
-                  <div key={tx.id} className="vw-listrow" style={{ padding: '14px 0', cursor: 'default' }}>
-                    <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                      <span style={{ fontSize: '14px', fontWeight: 500 }}>Received</span>
-                      <span className="vw-meta">
-                        {tx.counterparty.length > 14
-                          ? `${tx.counterparty.slice(0, 6)}…${tx.counterparty.slice(-6)}`
-                          : tx.counterparty}
-                      </span>
-                    </span>
-                    <span className="font-mono" style={{ fontSize: '14px', fontWeight: 600, color: 'var(--teal)', flexShrink: 0 }}>
-                      +{tx.amount} {tx.asset}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+              {contractAddress && <ContractRow address={contractAddress} />}
           </div>
         )}
-
       </main>
     </div>
   )

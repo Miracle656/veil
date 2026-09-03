@@ -1,0 +1,75 @@
+name: Uptime probe (backends)
+
+# The alert half of docs/MONITORING.md.
+#
+# Runs every 30 minutes and fails the job when a critical backend is down or
+# serving stale data. A failed scheduled run notifies the repo watchers, which
+# is the whole point: the last outage was found by a human noticing the wallet
+# had gone blank.
+#
+# 30 minutes, not 5. Two reasons: GitHub throttles and can drop scheduled runs
+# on busy repos, so a tighter cron buys less than it looks like; and this probe
+# wakes free-tier Render instances, which burns the very instance-hours whose
+# exhaustion is the leading suspect for the current suspension. Detection
+# within half an hour is enough for a pre-production wallet.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      warn_only:
+        description: 'Report without failing the job'
+        type: boolean
+        default: false
+  # Run on changes to the probe itself so a broken probe is caught at review
+  # time rather than by a silent scheduled run nobody reads.
+  pull_request:
+    paths:
+      - 'scripts/uptime-probe.mjs'
+      - '.github/workflows/uptime.yml'
+
+# A backed-up queue of identical probes tells us nothing extra.
+concurrency:
+  group: uptime-probe
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe wraith, lens and agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Probe public endpoints
+        id: probe
+        # On a pull request the services' health is not the PR's fault, so the
+        # probe reports without failing; the point there is only that it runs.
+        run: |
+          node scripts/uptime-probe.mjs \
+            ${{ (github.event_name == 'pull_request' || inputs.warn_only) && '--warn-only' || '' }} \
+            | tee probe.txt
+        env:
+          MAX_STALENESS_MINUTES: '60'
+
+      - name: Publish result to the run summary
+        if: always()
+        run: |
+          {
+            echo '## Backend uptime probe'
+            echo
+            echo '```'
+            cat probe.txt 2>/dev/null || echo 'probe produced no output'
+            echo '```'
+            echo
+            echo 'Runbook: [docs/MONITORING.md](../blob/main/docs/MONITORING.md)'
+          } >> "$GITHUB_STEP_SUMMARY"

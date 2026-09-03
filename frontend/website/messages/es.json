@@ -18,13 +18,19 @@
   },
   "hero": {
     "tagline": "Sin frase semilla. Sin compromisos.",
-    "title1": "La billetera inteligente",
-    "title2": "que nunca ves",
-    "title3": "pero siempre confías.",
+    "title1": "La billetera passkey",
+    "title2": "con agente",
+    "title3": "para Stellar.",
     "subtitle": "Cuentas inteligentes con passkey en Stellar Soroban. Tu biometría es la clave — sin frase que anotar, sin clave que perder.",
     "cta1": "Obtener Acceso Anticipado",
     "cta2": "Leer la Documentación",
-    "builtOn": "Construido en Stellar Soroban"
+    "builtOn": "Construido en Stellar Soroban",
+    "notes": [
+      "Envía y recibe USDC y XLM, liquidado en segundos.",
+      "Intercambia con Soroswap y gana con Blend, sin salir de la billetera.",
+      "Pide un pago al agente; apruébalo con tu huella.",
+      "Consulta cada saldo en tu moneda local."
+    ]
   },
   "howItWorks": {
     "sectionLabel": "El Apretón de Manos Invisible",
@@ -179,7 +185,7 @@
       },
       {
         "name": "Moneda local",
-        "blurb": "Lee tu saldo en naira, cedi, chelín o dólares."
+        "blurb": "Lee tu saldo en naira, cedi, chelín, rand o dólares."
       },
       {
         "name": "Agente de IA",

@@ -15,13 +15,14 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useInvisibleWallet } from 'invisible-wallet-sdk';
 import { Networks } from '@stellar/stellar-sdk';
@@ -102,76 +103,79 @@ export default function App() {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <SafeAreaView style={styles.root}>
-      <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Veil Invisible Wallet</Text>
-        <Text style={styles.subtitle}>React Native / Expo demo</Text>
+    <SafeAreaProvider>
+      <StatusBar style="light" backgroundColor="#0f172a" translucent={false} />
+      <SafeAreaView style={styles.root}>
+        <ScrollView contentContainerStyle={styles.container}>
+          <Text style={styles.title}>Veil Invisible Wallet</Text>
+          <Text style={styles.subtitle}>React Native / Expo demo</Text>
 
-        {wallet.address ? (
-          <View style={styles.pill}>
-            <Text style={styles.pillText} numberOfLines={1}>
-              {wallet.address}
-            </Text>
-            <Text style={styles.pillLabel}>
-              {wallet.isDeployed ? 'Deployed on-chain' : 'Not yet deployed'}
-            </Text>
-          </View>
-        ) : null}
+          {wallet.address ? (
+            <View style={styles.pill}>
+              <Text style={styles.pillText} numberOfLines={1}>
+                {wallet.address}
+              </Text>
+              <Text style={styles.pillLabel}>
+                {wallet.isDeployed ? 'Deployed on-chain' : 'Not yet deployed'}
+              </Text>
+            </View>
+          ) : null}
 
-        <TextInput
-          style={styles.input}
-          placeholder="Username (optional)"
-          placeholderTextColor="#64748b"
-          value={username}
-          onChangeText={setUsername}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
+          <TextInput
+            style={styles.input}
+            placeholder="Username (optional)"
+            placeholderTextColor="#64748b"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
 
-        <Pressable
-          style={[styles.btn, styles.btnPrimary]}
-          onPress={handleRegister}
-          disabled={wallet.isPending}
-        >
-          <Text style={styles.btnText}>Register passkey</Text>
-        </Pressable>
+          <Pressable
+            style={[styles.btn, styles.btnPrimary]}
+            onPress={handleRegister}
+            disabled={wallet.isPending}
+          >
+            <Text style={styles.btnText}>Register passkey</Text>
+          </Pressable>
 
-        <Pressable
-          style={[styles.btn, styles.btnSecondary]}
-          onPress={handleLogin}
-          disabled={wallet.isPending}
-        >
-          <Text style={styles.btnText}>Login / restore session</Text>
-        </Pressable>
+          <Pressable
+            style={[styles.btn, styles.btnSecondary]}
+            onPress={handleLogin}
+            disabled={wallet.isPending}
+          >
+            <Text style={styles.btnText}>Login / restore session</Text>
+          </Pressable>
 
-        <Pressable
-          style={[styles.btn, styles.btnAccent, !wallet.address && styles.btnDisabled]}
-          onPress={handleSignTest}
-          disabled={wallet.isPending || !wallet.address}
-        >
-          <Text style={styles.btnText}>Sign test payload</Text>
-        </Pressable>
+          <Pressable
+            style={[styles.btn, styles.btnAccent, !wallet.address && styles.btnDisabled]}
+            onPress={handleSignTest}
+            disabled={wallet.isPending || !wallet.address}
+          >
+            <Text style={styles.btnText}>Sign test payload</Text>
+          </Pressable>
 
-        {wallet.isPending && (
-          <ActivityIndicator style={styles.spinner} color="#6366f1" />
-        )}
-
-        {wallet.error ? (
-          <Text style={styles.error}>{wallet.error}</Text>
-        ) : null}
-
-        <View style={styles.logBox}>
-          <Text style={styles.logTitle}>Event log</Text>
-          {log.length === 0 ? (
-            <Text style={styles.logEmpty}>No events yet</Text>
-          ) : (
-            log.map((entry, i) => (
-              <Text key={i} style={styles.logEntry}>{entry}</Text>
-            ))
+          {wallet.isPending && (
+            <ActivityIndicator style={styles.spinner} color="#6366f1" />
           )}
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+
+          {wallet.error ? (
+            <Text style={styles.error}>{wallet.error}</Text>
+          ) : null}
+
+          <View style={styles.logBox}>
+            <Text style={styles.logTitle}>Event log</Text>
+            {log.length === 0 ? (
+              <Text style={styles.logEmpty}>No events yet</Text>
+            ) : (
+              log.map((entry, i) => (
+                <Text key={i} style={styles.logEntry}>{entry}</Text>
+              ))
+            )}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }
 

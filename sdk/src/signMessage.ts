@@ -1,5 +1,5 @@
 import { bufferToHex, hexToUint8Array } from './utils';
-import type { WebAuthnSignature } from './useInvisibleWallet';
+import type { WebAuthnSignature } from './core';
 
 export type SignedMessage = {
     version: 1;
