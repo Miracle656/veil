@@ -58,18 +58,32 @@ config.resolver.alias = {
   '@': projectRoot,
 };
 
-// The SDK carries its own `react` in `sdk/node_modules` now that each package
-// installs independently (#670). Metro follows the symlink into `sdk/` to read
-// its TypeScript sources, so without this the SDK's components could resolve a
-// *second* copy of React while the app uses its own. Two Reacts in one bundle
-// means two independent hook dispatchers, which surfaces as
-// "Invalid hook call. Hooks can only be called inside the body of a function
-// component" from code that is perfectly correct. Pin both to the app's copy.
-config.resolver.alias = {
-  ...config.resolver.alias,
-  react: path.resolve(projectRoot, 'node_modules/react'),
-  'react-dom': path.resolve(projectRoot, 'node_modules/react-dom'),
-};
+// Packages that must exist exactly once in the bundle.
+//
+// Since #670 each package installs independently, `sdk/node_modules` carries
+// its own `react` (19.2.8) alongside the app's (19.1.0). Metro follows the
+// `file:../../sdk` symlink to read the SDK's TypeScript sources, and Node
+// resolution from a file inside `sdk/` finds `sdk/node_modules/react` first.
+// The result is two React copies with two independent hook dispatchers, and
+// the SDK's hooks call into the one the renderer is not using:
+//
+//   Invalid hook call. Hooks can only be called inside of the body of a
+//   function component.
+//     at exports.useRef (../../sdk/node_modules/react/cjs/react.development.js)
+//     at useInvisibleWallet (../../sdk/src/useInvisibleWallet.ts)
+//
+// `resolver.alias` does not fix this — it is not consulted for a bare specifier
+// that ordinary node resolution can already satisfy locally. Redirecting inside
+// `resolveRequest` does, because Metro calls it for every request no matter
+// which file asked.
+const SINGLETON_PACKAGES = new Set(['react', 'react-dom']);
+const APP_NODE_MODULES = path.resolve(projectRoot, 'node_modules');
+
+/** The package name for a specifier, handling scopes and subpaths. */
+function packageNameOf(moduleName) {
+  const parts = moduleName.split('/');
+  return moduleName.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
 
 // `@stellar/stellar-sdk`'s Horizon `call_builder` imports the Node-only
 // `eventsource` package for `.stream()`, which drags in `url`/`http`/`https` —
@@ -84,6 +98,20 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       filePath: path.resolve(projectRoot, 'shims/eventsource.js'),
     };
   }
+
+  if (SINGLETON_PACKAGES.has(packageNameOf(moduleName))) {
+    // Resolve from the app's node_modules regardless of the requesting file,
+    // so a subpath like `react/jsx-runtime` still lands on the app's copy.
+    try {
+      return {
+        type: 'sourceFile',
+        filePath: require.resolve(moduleName, { paths: [APP_NODE_MODULES] }),
+      };
+    } catch {
+      // Fall through to normal resolution rather than hard-failing the build.
+    }
+  }
+
   const resolve = upstreamResolveRequest ?? context.resolveRequest;
   return resolve(context, moduleName, platform);
 };
