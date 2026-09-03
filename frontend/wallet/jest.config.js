@@ -23,7 +23,7 @@ const config = {
   moduleNameMapper: {
     '^@/(.*)$':         '<rootDir>/$1',
     '^@veil/utils$':    '<rootDir>/../../sdk/src/utils',
-    '^@veil/sdk$':      '<rootDir>/../../sdk/src/useInvisibleWallet',
+    '^@veil/sdk$':      '<rootDir>/../../sdk/src/index',
     '^@veil/events$':   '<rootDir>/../../sdk/src/events',
     '^@veil/recovery$': '<rootDir>/../../sdk/src/recovery/sep30',
     '^@veil/backup$':   '<rootDir>/../../sdk/src/backup',

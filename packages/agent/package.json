@@ -1,7 +1,8 @@
 {
   "name": "@veil/agent",
   "version": "0.2.0",
-  "description": "Veil AI agent — Claude-powered wallet assistant with x402 Stellar payments",
+  "private": true,
+  "description": "Veil AI agent \u2014 Claude-powered wallet assistant with x402 Stellar payments",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
