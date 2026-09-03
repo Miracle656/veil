@@ -8,6 +8,7 @@ import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
+import { isMultisigAvailable } from '@/lib/multisigConfig'
 import { useWalletConnect } from '@/lib/walletConnect'
 import {
   generateMnemonicPhrase,
@@ -261,10 +262,14 @@ export default function SettingsPage() {
     }
   }
 
+  const [multisigAvailable, setMultisigAvailable] = useState(false)
+
   useEffect(() => {
     const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
     setAddress(addr)
+    // Active network is read from localStorage, so this waits for mount (#672).
+    setMultisigAvailable(isMultisigAvailable())
     // Check fee-payer downgrade state so the card can show a warning dot
     // without importing the full diagnostics into every render.
     setPrfDowngraded(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
@@ -575,24 +580,27 @@ export default function SettingsPage() {
                 </div>
               </button>
 
-              {/* DAO Multisig Wallet Card */}
-              <button
-                className="card"
-                onClick={() => router.push('/multisig')}
-                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>DAO Multisig Wallet</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
-                      Configure M-of-N signers, deploy wallet contract, and track pending tx approvals
-                    </p>
+              {/* DAO Multisig Wallet Card — only where the contract exists (#672);
+                  /multisig redirects away on networks without it. */}
+              {multisigAvailable ? (
+                <button
+                  className="card"
+                  onClick={() => router.push('/multisig')}
+                  style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>DAO Multisig Wallet</p>
+                      <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                        Configure M-of-N signers, deploy wallet contract, and track pending tx approvals
+                      </p>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                      <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
                   </div>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </div>
-              </button>
+                </button>
+              ) : null}
 
               <button
                 className="card"
