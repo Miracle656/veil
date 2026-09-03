@@ -22,7 +22,7 @@
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.108.2",
     "@vitest/coverage-v8": "^1.3.0",
-    "@walletconnect/utils": "2.17.1",
+    "@walletconnect/utils": "2.23.10",
     "@walletconnect/web3wallet": "^1.16.1",
     "framer-motion": "^12.42.2",
     "invisible-wallet-sdk": "file:../../sdk",
