@@ -17,7 +17,12 @@ const config = {
     '^.+\\.jsx?$': 'babel-jest',
   },
   transformIgnorePatterns: [
-    '/node_modules/(?!(@stellar/js-xdr|@exodus|@noble)/)',
+    // `.*` before the group so a NESTED copy is still transformed. Without it
+    // the pattern matches at the first `/node_modules/`, sees `@stellar/
+    // stellar-sdk` rather than an allowed name, and skips everything beneath —
+    // including `@stellar/stellar-sdk/node_modules/@noble/hashes`, which v17
+    // installs separately and which fails to parse as CommonJS.
+    'node_modules/(?!.*(@stellar/js-xdr|@exodus|@noble)/)',
   ],
   modulePaths: ['<rootDir>/node_modules'],
   moduleNameMapper: {

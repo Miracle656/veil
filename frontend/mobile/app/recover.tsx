@@ -32,6 +32,7 @@ import {
   type ResolvedRecoveryServers,
 } from '../lib/recovery';
 import { hexToUint8Array } from '../lib/webauthn';
+import { setPasskeyCredential, setWalletAddress } from '../lib/walletStore';
 import { colors } from '../theme/colors';
 import { fontFamily, typography } from '../theme/typography';
 
@@ -238,6 +239,13 @@ export default function RecoverScreen() {
           'The transaction succeeded but the wallet does not list the new signer yet. Wait a moment and check again.'
         );
       }
+
+      // Adopt the recovered wallet as this device's wallet. Without this the
+      // rebind is real on-chain but invisible to the app: the entry route reads
+      // the address and passkey out of the secure store, finds neither, and
+      // sends a user who has just recovered back to the welcome screen.
+      await setWalletAddress(pending.walletAddress);
+      await setPasskeyCredential(pending.credentialId, pending.publicKeyHex);
 
       setFinalizedHash(result.hash);
       setPending(null);

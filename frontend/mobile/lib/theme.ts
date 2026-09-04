@@ -17,8 +17,20 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Appearance } from 'react-native';
 
 export type Theme = 'dark' | 'light';
+
+/**
+ * What the user chose, which is not the same thing as what is on screen.
+ *
+ * 'system' resolves to whichever scheme the OS reports, and follows it while
+ * the app is open — so a phone on an automatic day/night schedule changes the
+ * wallet with it. `Theme` stays the *resolved* value, so every screen keeps
+ * styling from two concrete palettes and none of them has to know a preference
+ * exists.
+ */
+export type ThemePreference = Theme | 'system';
 
 /** AsyncStorage key holding the user's theme preference. */
 export const THEME_STORAGE_KEY = 'veil_theme';
@@ -32,8 +44,21 @@ export const THEME_STORAGE_KEY = 'veil_theme';
 export type ThemeColors = {
   /** Screen background. */
   background: string;
-  /** Cards, inputs, and list containers sitting on the background. */
+  /**
+   * Cards, inputs, and list containers sitting on the background.
+   *
+   * Translucent by design — it tints whatever is behind it. That only reads as
+   * a surface when `background` is what is behind it, so anything floating over
+   * a scrim (a modal, a sheet) needs {@link surfaceRaised} instead.
+   */
   surface: string;
+  /**
+   * Opaque fill for surfaces that float over arbitrary content: modals, sheets,
+   * popovers. Distinct from `surface` because those cannot borrow the page's
+   * background to sit on, and distinct from `background` so a modal reads as
+   * lifted off the page rather than flush with it.
+   */
+  surfaceRaised: string;
   /** Raised surface — quick-action tiles, tx icon chips (artboard `surface-md`). */
   surfaceMd: string;
   /** Borders, dividers, and secondary button fills. */
@@ -78,6 +103,7 @@ export const THEMES: Record<Theme, ThemeColors> = {
   dark: {
     background: '#0F0F0F',
     surface: 'rgba(255,255,255,0.03)',
+    surfaceRaised: '#1C1C1E',
     surfaceMd: 'rgba(255,255,255,0.06)',
     border: 'rgba(255,255,255,0.08)',
     textStrong: '#FFFFFF',
@@ -98,6 +124,7 @@ export const THEMES: Record<Theme, ThemeColors> = {
   light: {
     background: '#FFFFFF',
     surface: 'rgba(0,0,0,0.02)',
+    surfaceRaised: '#FFFFFF',
     surfaceMd: 'rgba(0,0,0,0.04)',
     border: 'rgba(0,0,0,0.10)',
     textStrong: '#0F0F0F',
@@ -125,11 +152,41 @@ export function isTheme(value: unknown): value is Theme {
   return value === 'dark' || value === 'light';
 }
 
+export function isThemePreference(value: unknown): value is ThemePreference {
+  return isTheme(value) || value === 'system';
+}
+
+/** The default preference: follow the device unless the user says otherwise. */
+export const DEFAULT_PREFERENCE: ThemePreference = 'system';
+
 // ── Active theme ─────────────────────────────────────────────────────────────────
 
-let activeTheme: Theme = DEFAULT_THEME;
+let activePreference: ThemePreference = DEFAULT_PREFERENCE;
+let systemTheme: Theme = Appearance.getColorScheme() === 'light' ? 'light' : 'dark';
 let hydrated = false;
 const listeners = new Set<() => void>();
+
+/**
+ * Follow the OS while the preference is 'system'.
+ *
+ * The listener stays attached regardless of the current preference: the user
+ * can switch to 'system' at any point, and re-subscribing on every preference
+ * change is more moving parts than simply keeping `systemTheme` current. It
+ * only notifies when the resolved theme actually moves, so an OS change while
+ * pinned to light or dark costs nothing.
+ */
+Appearance.addChangeListener(({ colorScheme }) => {
+  const next: Theme = colorScheme === 'light' ? 'light' : 'dark';
+  if (next === systemTheme) return;
+  const before = resolveTheme();
+  systemTheme = next;
+  if (resolveTheme() !== before) notify();
+});
+
+/** The theme actually in effect, given the preference and the OS. */
+function resolveTheme(): Theme {
+  return activePreference === 'system' ? systemTheme : activePreference;
+}
 
 function notify(): void {
   for (const listener of listeners) listener();
@@ -147,14 +204,24 @@ export function subscribeToTheme(listener: () => void): () => void {
   };
 }
 
-/** The active theme. Cheap enough to call in a render. */
+/** The active theme — resolved, never 'system'. Cheap enough to call in a render. */
 export function getTheme(): Theme {
-  return activeTheme;
+  return resolveTheme();
+}
+
+/** What the user chose: 'light', 'dark' or 'system'. */
+export function getThemePreference(): ThemePreference {
+  return activePreference;
+}
+
+/** The scheme the OS is currently reporting. */
+export function getSystemTheme(): Theme {
+  return systemTheme;
 }
 
 /** The active theme's colours. */
 export function getThemeColors(): ThemeColors {
-  return THEMES[activeTheme];
+  return THEMES[resolveTheme()];
 }
 
 /** Whether the stored preference has been read yet. */
@@ -175,13 +242,16 @@ export function hydrateTheme(): Promise<Theme> {
     .catch(() => null)
     .then((stored) => {
       hydrated = true;
-      if (isTheme(stored) && stored !== activeTheme) {
-        activeTheme = stored;
+      // Accepts a bare 'light'/'dark' too: that is what older builds wrote, and
+      // a stored preference from before 'system' existed is still a valid
+      // choice rather than something to discard.
+      if (isThemePreference(stored) && stored !== activePreference) {
+        activePreference = stored;
       }
       // Notify unconditionally: a component that rendered pre-hydration needs to
       // know the preference has settled even when it settled on the default.
       notify();
-      return activeTheme;
+      return resolveTheme();
     });
   return hydration;
 }
@@ -199,22 +269,33 @@ void hydrateTheme();
  * tapping a toggle should see it move, and a failed write costs them the
  * preference on next launch rather than the interaction now.
  */
-export async function setTheme(theme: Theme): Promise<void> {
-  if (!isTheme(theme)) throw new Error(`Unknown theme: ${theme}`);
+export async function setTheme(preference: ThemePreference): Promise<void> {
+  if (!isThemePreference(preference)) throw new Error(`Unknown theme: ${preference}`);
 
-  if (theme !== activeTheme) {
-    activeTheme = theme;
+  if (preference !== activePreference) {
+    activePreference = preference;
+    // Notify on any preference change, including one where the resolved theme
+    // does not move. Picking "Follow device" on a phone that is already dark
+    // changes no pixel of the palette, but the settings list shows which
+    // option is ticked — and that has to update.
     notify();
   }
-  hydration = Promise.resolve(theme);
+  hydration = Promise.resolve(resolveTheme());
   hydrated = true;
 
-  await AsyncStorage.setItem(THEME_STORAGE_KEY, theme);
+  await AsyncStorage.setItem(THEME_STORAGE_KEY, preference);
 }
 
-/** Flip between light and dark, persisting the result. */
+/**
+ * Flip between light and dark, persisting the result.
+ *
+ * Flips away from whatever is currently *on screen*, so toggling while on
+ * 'system' pins the opposite of what the OS is giving — which is what a user
+ * pressing a toggle means. Selecting 'system' again is done through
+ * {@link setTheme}.
+ */
 export async function toggleTheme(): Promise<Theme> {
-  const next: Theme = activeTheme === 'dark' ? 'light' : 'dark';
+  const next: Theme = resolveTheme() === 'dark' ? 'light' : 'dark';
   await setTheme(next);
   return next;
 }

@@ -1,7 +1,5 @@
 {
   "name": "invisible-wallet-sdk",
-  "version": "0.1.0",
-  "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn) \u2014 supports Web and React Native",
   "version": "0.2.0",
   "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn) — supports Web and React Native",
   "main": "dist/index.js",
@@ -26,12 +24,22 @@
     "./vue": {
       "types": "./dist/vue/index.d.ts",
       "default": "./dist/vue/index.js"
+    },
+    "./svelte": {
+      "types": "./dist/svelte/index.d.ts",
+      "default": "./dist/svelte/index.js"
+    },
+    "./solid": {
+      "types": "./dist/solid/index.d.ts",
+      "default": "./dist/solid/index.js"
     }
   },
   "files": [
     "dist",
     "src",
-    "vue"
+    "vue",
+    "svelte",
+    "solid"
   ],
   "scripts": {
     "build": "tsc && node scripts/flatten-dist.js",
@@ -64,7 +72,9 @@
     "react-dom": ">=18.0.0",
     "react-native": ">=0.72.0",
     "react-native-passkey": ">=3.0.0",
-    "vue": "^3.0.0"
+    "vue": "^3.0.0",
+    "svelte": ">=4.0.0",
+    "solid-js": "^1.8.0"
   },
   "peerDependenciesMeta": {
     "react-dom": {
@@ -77,6 +87,12 @@
       "optional": true
     },
     "vue": {
+      "optional": true
+    },
+    "svelte": {
+      "optional": true
+    },
+    "solid-js": {
       "optional": true
     }
   },
@@ -106,7 +122,9 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "size-limit": "^12.1.0",
+    "solid-js": "^1.8.0",
     "storybook": "^8.6.0",
+    "svelte": "^4.2.19",
     "ts-jest": "^29.2.0",
     "tsd": "^0.33.0",
     "typescript": "^6.0.3",
@@ -126,13 +144,13 @@
       "**/tests/**/*.test.ts"
     ],
     "moduleNameMapper": {
-      "^@stellar/stellar-sdk$": "<rootDir>/../node_modules/@stellar/stellar-sdk",
+      "^@stellar/stellar-sdk$": "<rootDir>/node_modules/@stellar/stellar-sdk",
       "^uint8array-extras$": "<rootDir>/__mocks__/uint8array-extras.js",
       "^@exodus/bytes/(.*)$": "<rootDir>/__mocks__/@exodus/bytes/$1",
       "^@noble/ed25519$": "<rootDir>/__mocks__/@noble/ed25519.js",
+      "^smol-toml$": "<rootDir>/__mocks__/smol-toml.js",
       "^@noble/hashes/sha2\\.js$": "<rootDir>/__mocks__/@noble/hashes/sha2.js",
-      "^@noble/hashes/(.*)$": "<rootDir>/__mocks__/@noble/hashes/$1",
-      "^smol-toml$": "<rootDir>/__mocks__/smol-toml.js"
+      "^@noble/hashes/utils\\.js$": "<rootDir>/__mocks__/@noble/hashes/utils.js"
     },
     "transformIgnorePatterns": [
       "/node_modules/"

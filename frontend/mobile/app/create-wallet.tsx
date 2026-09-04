@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -47,7 +48,7 @@ export default function CreateWallet() {
       setResult(await fn());
       setStatus('created');
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setStatus('error');
     }
   }

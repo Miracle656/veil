@@ -20,6 +20,7 @@ import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '
 import { fetchPrices } from '@/lib/fetchPrice'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
 import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName } from '@/lib/network'
+import { isMultisigAvailable } from '@/lib/multisigConfig'
 import { sweepContractBalance } from '@/lib/sweepContractBalance'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import type { WebAuthnSignature } from '@veil/sdk'
@@ -209,12 +210,20 @@ function DashboardPageContent() {
 
   const recent = transactions.slice(0, 4)
 
+  const [multisigAvailable, setMultisigAvailable] = useState(false)
+
   const horizonNextRef = useRef<(() => Promise<any>) | null>(null)
 
   useEffect(() => {
     const stored = walletSession.getItem('invisible_wallet_address')
     if (!stored) { router.replace('/lock'); return }
     setWalletAddress(stored)
+
+    // The chip is the main way into /multisig, and that route is gated on
+    // networks where the contract is not installed (#672) — so offering the
+    // chip there would just bounce the user straight back here. Resolved after
+    // mount because the active network lives in localStorage.
+    setMultisigAvailable(isMultisigAvailable())
 
     // Establish the fee-payer for this session (idempotent, fire-and-forget).
     // PRF wallets keep the seed in sessionStorage only — never copied to
@@ -727,7 +736,10 @@ function DashboardPageContent() {
           <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
           <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
           <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
-          <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
+          <button className="vw-chip" onClick={() => router.push('/nfts')}>NFTs</button>
+          {multisigAvailable ? (
+            <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
+          ) : null}
           <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>Connect dApp</button>
         </div>
 

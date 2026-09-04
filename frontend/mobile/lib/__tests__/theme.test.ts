@@ -141,13 +141,30 @@ describe('subscribeToTheme', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it('does not notify when the theme is unchanged', async () => {
+  it('does not notify when the preference is unchanged', async () => {
     const theme = await loadTheme();
     const listener = jest.fn();
     theme.subscribeToTheme(listener);
 
-    await theme.setTheme('dark');
+    // Re-selecting what is already chosen is a no-op.
+    await theme.setTheme(theme.getThemePreference());
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('notifies on a preference change even when the resolved theme is the same', async () => {
+    // Selecting "Follow device" on a phone already showing dark moves no
+    // pixel of the palette, but the settings list has to re-tick the chosen
+    // row — so the store notifies on the preference, not just the colours.
+    const theme = await loadTheme();
+    await theme.setTheme('dark');
+
+    const listener = jest.fn();
+    theme.subscribeToTheme(listener);
+
+    await theme.setTheme('system');
+
+    expect(listener).toHaveBeenCalled();
+    expect(theme.getThemePreference()).toBe('system');
   });
 
   it('notifies once hydration settles, so a pre-hydration render updates', async () => {
@@ -193,5 +210,101 @@ describe('palette', () => {
     );
     // onAccent is white in both: it sits on the accent fill, not the background.
     expect(shared).toEqual(['onAccent']);
+  });
+});
+
+/**
+ * Load theme.ts with the device reporting a given colour scheme.
+ *
+ * The spy has to be installed AFTER `jest.resetModules()` and before requiring
+ * theme.ts: resetting the registry hands out a fresh `react-native`, so a spy
+ * placed on the previous copy of `Appearance` is not the one theme.ts reads.
+ */
+async function loadThemeWithScheme(scheme: 'light' | 'dark'): Promise<ThemeModule> {
+  jest.resetModules();
+  const rn = require('react-native');
+  jest.spyOn(rn.Appearance, 'getColorScheme').mockReturnValue(scheme);
+  const mod: ThemeModule = require('../theme');
+  await mod.hydrateTheme();
+  return mod;
+}
+
+describe('system preference', () => {
+  it('follows the device scheme when set to system', async () => {
+    const theme = await loadThemeWithScheme('light');
+    await theme.setTheme('system');
+
+    expect(theme.getThemePreference()).toBe('system');
+    expect(theme.getTheme()).toBe('light');
+    expect(theme.getThemeColors().background).toBe('#FFFFFF');
+  });
+
+  it('ignores the device once the user pins a theme', async () => {
+    const theme = await loadThemeWithScheme('light');
+    await theme.setTheme('dark');
+
+    // The device says light; the user said dark, and the user wins.
+    expect(theme.getTheme()).toBe('dark');
+    expect(theme.getSystemTheme()).toBe('light');
+  });
+
+  it('persists "system" rather than the colour it happened to resolve to', async () => {
+    // Storing the resolved value would freeze the choice: a user who picked
+    // "follow device" on a dark evening would be pinned to dark next morning.
+    const theme = await loadTheme();
+    await theme.setTheme('system');
+
+    expect(mockStorage.get(STORAGE_KEY)).toBe('system');
+
+    const reloaded = await loadTheme();
+    expect(reloaded.getThemePreference()).toBe('system');
+  });
+
+  it('still accepts a bare light/dark written by an older build', async () => {
+    mockStorage.set(STORAGE_KEY, 'light');
+    const theme = await loadTheme();
+
+    expect(theme.getThemePreference()).toBe('light');
+    expect(theme.getTheme()).toBe('light');
+  });
+
+  it('toggles away from what is on screen, not from the preference', async () => {
+    const theme = await loadThemeWithScheme('light');
+    await theme.setTheme('system'); // resolves to light
+
+    await theme.toggleTheme();
+
+    // Pressing a toggle means "give me the other one to what I can see".
+    expect(theme.getTheme()).toBe('dark');
+    expect(theme.getThemePreference()).toBe('dark');
+  });
+});
+
+describe('surface tokens', () => {
+  /**
+   * `surface` is a translucent tint; `surfaceRaised` is an opaque fill.
+   * Confusing the two is invisible in review — it compiles, it type-checks, and
+   * it looks right on any screen where the page happens to sit behind it. It
+   * only shows up as a modal you can read the settings list through.
+   */
+  it('surfaceRaised is fully opaque in both themes', async () => {
+    const { THEMES } = await loadTheme();
+    for (const name of ['dark', 'light'] as const) {
+      expect(THEMES[name].surfaceRaised).toMatch(/^#[0-9a-fA-F]{6}$/);
+    }
+  });
+
+  it('surface is translucent, and so cannot be a fill over a scrim', async () => {
+    const { THEMES } = await loadTheme();
+    for (const name of ['dark', 'light'] as const) {
+      expect(THEMES[name].surface).toMatch(/^rgba\(/);
+    }
+  });
+
+  it('background is opaque in both themes', async () => {
+    const { THEMES } = await loadTheme();
+    for (const name of ['dark', 'light'] as const) {
+      expect(THEMES[name].background).toMatch(/^#[0-9a-fA-F]{6}$/);
+    }
   });
 });

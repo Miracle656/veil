@@ -1,6 +1,7 @@
 import { Transaction, TransactionBuilder, Keypair, rpc as SorobanRpc } from '@stellar/stellar-sdk';
 
 import './polyfills';
+import { assertRoundTrips, simulationErrorMessage } from './simulationError';
 import { inclusionFee } from './fees';
 
 /**
@@ -38,7 +39,15 @@ export async function signAndSubmitSorobanXdr(params: {
   });
   // Copy the raw XDR operations — this preserves the invocation and its auth
   // entries (source-account credentials stay valid: same source account).
-  for (const op of upstream.toEnvelope().v1().tx().operations()) {
+  // v17: TransactionEnvelope is a discriminated union, so the v1 arm is a
+  // property reached after narrowing rather than an accessor. A fee-bump
+  // envelope was already rejected above, and a v0 envelope cannot carry a
+  // Soroban invocation, so anything else here is not something to copy.
+  const envelope = upstream.toEnvelope();
+  if (envelope.type !== 'envelopeTypeTx') {
+    throw new Error(`Unsupported transaction envelope: ${envelope.type}`);
+  }
+  for (const op of envelope.v1.tx.operations) {
     builder.addOperation(op);
   }
   builder.addMemo(upstream.memo);
@@ -47,9 +56,20 @@ export async function signAndSubmitSorobanXdr(params: {
 
   // The footprint and resource fees have to be assembled before submit; the
   // simulation also revalidates the invocation against the current ledger.
+  const encoded = built.toXDR();
+  assertRoundTrips(encoded, params.networkPassphrase, 'Swap');
+
   const sim = await rpc.simulateTransaction(built);
   if (SorobanRpc.Api.isSimulationError(sim)) {
-    throw new Error(`Simulation failed: ${sim.error}`);
+    throw new Error(
+      simulationErrorMessage({
+        error: sim.error,
+        flow: 'Swap',
+        rpcUrl: params.rpcUrl,
+        network: params.networkPassphrase.includes('Test') ? 'testnet' : 'mainnet',
+        xdrLength: encoded.length,
+      }),
+    );
   }
 
   const assembled = SorobanRpc.assembleTransaction(built, sim).build();

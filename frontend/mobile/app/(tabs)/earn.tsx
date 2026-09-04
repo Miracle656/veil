@@ -1,3 +1,4 @@
+import { errorMessage } from '../../lib/errorMessage';
 import { ScreenScaffold } from '@/components/ScreenScaffold';
 import { Keypair } from '@stellar/stellar-sdk';
 import { useRouter } from 'expo-router';
@@ -49,7 +50,7 @@ function toUnits(stroops: string, fractionDigits: number): string {
 
 /** Map a raw failure onto something the user can act on. */
 function describeFailure(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   const lower = message.toLowerCase();
   if (lower.includes('cancel') || lower.includes('abort')) {
     return 'Passkey cancelled. Please try again.';

@@ -1,4 +1,6 @@
+import { errorMessage } from './errorMessage';
 import './polyfills';
+import { assertRoundTrips, simulationErrorMessage } from './simulationError';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -239,7 +241,7 @@ async function getWalletNonce(
         }
       } catch (err) {
         // Network-level flake (mobile data drops calls mid-burst) — retry too.
-        lastError = err instanceof Error ? err.message : String(err);
+        lastError = errorMessage(err);
       }
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -275,9 +277,22 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
 
   // Small CPU leeway for host-function ECDSA verification not modeled by
   // recording-mode simulation.
+  // Encode once and check it here: a truncated or empty envelope reads at the
+  // RPC as "could not unmarshal", which looks like a server-side problem.
+  const encoded = tx.toXDR();
+  assertRoundTrips(encoded, network.networkPassphrase, 'Smart-wallet transaction');
+
   const sim = await rpc.simulateTransaction(tx, { cpuInstructions: 5_000_000 } as any);
   if (SorobanRpc.Api.isSimulationError(sim)) {
-    throw new Error(`Simulation failed: ${sim.error}`);
+    throw new Error(
+      simulationErrorMessage({
+        error: sim.error,
+        flow: 'Smart-wallet transaction',
+        rpcUrl: network.rpcUrl,
+        network: network.name,
+        xdrLength: encoded.length,
+      }),
+    );
   }
 
   // Recording-mode simulation returns auth entries with
@@ -293,23 +308,27 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   if (authEntries) {
     const networkIdBytes = await sha256(new TextEncoder().encode(network.networkPassphrase));
 
-    for (const parsed of authEntries) {
-      const credentials = parsed.credentials();
-      if (
-        credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
-      ) {
+    // v17 models the XDR unions as discriminated types: `.credentials` is a
+    // property rather than an accessor, the arm is chosen by `.type`, and the
+    // payload objects are frozen — so a signed entry replaces its slot instead
+    // of being mutated in place. The final transaction below is built from this
+    // array afterwards, so replacing an element is what reaches the network.
+    for (let i = 0; i < authEntries.length; i++) {
+      const parsed = authEntries[i]!;
+      const credentials = parsed.credentials;
+      if (credentials.type !== 'sorobanCredentialsAddress') {
         continue;
       }
 
-      const addressCredentials = credentials.address();
-      const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
+      const addressCredentials = credentials.address;
+      const contractAddress = Address.fromScAddress(addressCredentials.address).toString();
       const currentNonce = await getWalletNonce(rpc, contractAddress, network.networkPassphrase, feePayerKeypair.publicKey());
 
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addressCredentials.nonce(),
-          invocation: parsed.rootInvocation(),
+          networkId: networkIdBytes,
+          nonce: addressCredentials.nonce,
+          invocation: parsed.rootInvocation,
           signatureExpirationLedger: validUntilLedger,
         })
       );
@@ -330,16 +349,17 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
         sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
       }
 
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
+      authEntries[i] = new xdr.SorobanAuthorizationEntry({
+        credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
           new xdr.SorobanAddressCredentials({
-            address: addressCredentials.address(),
-            nonce: addressCredentials.nonce(),
+            address: addressCredentials.address,
+            nonce: addressCredentials.nonce,
             signatureExpirationLedger: validUntilLedger,
             signature: xdr.ScVal.scvVec(sigElements),
           })
-        )
-      );
+        ),
+        rootInvocation: parsed.rootInvocation,
+      });
     }
   }
 
@@ -421,7 +441,7 @@ export async function approveWalletConnectRequest(request: WalletConnectRequest)
     const reason = isUserRejection(error) ? getSdkError('USER_REJECTED') : null;
     const response = reason
       ? buildWcError(id, reason.code, reason.message)
-      : buildWcError(id, 5000, error instanceof Error ? error.message : String(error));
+      : buildWcError(id, 5000, errorMessage(error));
 
     await client.respondSessionRequest({ topic, response }).catch(() => {});
     removePendingRequest(id, topic);

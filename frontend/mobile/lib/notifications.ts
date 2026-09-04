@@ -67,7 +67,8 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 export function configureNotificationHandler(): void {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
-      shouldShowAlert: true,
+      // shouldShowAlert was the old name for the two flags below. Expo warns on
+      // it now and it carried no extra meaning, so it is simply gone.
       shouldShowBanner: true,
       shouldShowList: true,
       shouldPlaySound: false,
@@ -110,6 +111,23 @@ function buildBody(
   }
 }
 
+/**
+ * How the counterparty relates to the user, for this kind of transfer.
+ *
+ * A sent payment showed "Payment sent — From GB3JS2…", which names the
+ * recipient as the sender. On a notification that is the only context there
+ * is, so it reads as money arriving from an address the user does not
+ * recognise — the opposite of what happened.
+ */
+export function counterpartyPreposition(type: 'received' | 'sent' | 'confirmed'): string {
+  return type === 'received' ? 'From' : 'To';
+}
+
+/** Middle-truncate an address so both ends stay checkable. */
+export function shortenAddress(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-6)}` : address;
+}
+
 // ── Notification scheduling ──────────────────────────────────────────────────
 
 /**
@@ -123,6 +141,10 @@ export async function fireTransferNotification(params: {
   amount: string;
   asset: string;
   counterparty?: string;
+  /** Activity-feed record id, so a tap can open the right place. */
+  txId?: string;
+  /** Stellar transaction hash, for a future per-transaction screen. */
+  hash?: string;
 }): Promise<void> {
   await hydrateNotifPrefs();
 
@@ -141,7 +163,7 @@ export async function fireTransferNotification(params: {
   const counterparty = params.counterparty;
   const subtitle =
     counterparty && !_isAppLocked
-      ? `From ${counterparty.length > 12 ? `${counterparty.slice(0, 6)}…${counterparty.slice(-6)}` : counterparty}`
+      ? `${counterpartyPreposition(params.type)} ${shortenAddress(counterparty)}`
       : undefined;
 
   await Notifications.scheduleNotificationAsync({
@@ -152,7 +174,34 @@ export async function fireTransferNotification(params: {
       // The Veil drape mark is configured as the Android small icon in
       // app.config.ts; iOS uses the app icon automatically.
       sound: false,
+      // Carried so tapping the notification can open the transaction rather
+      // than dumping the user on whatever screen they last had open. Without
+      // this the tap is indistinguishable from opening the app normally.
+      data: {
+        route: NOTIFICATION_ROUTE,
+        txId: params.txId,
+        hash: params.hash,
+        type: params.type,
+      },
     },
     trigger: null, // fire immediately
   });
+}
+
+/** Where a tapped transfer notification should land. */
+export const NOTIFICATION_ROUTE = '/transactions';
+
+/**
+ * The route a notification response should open, or null when it carries none.
+ *
+ * Kept pure and exported so the routing rule is testable without Expo's
+ * notification runtime: the tap path is impossible to exercise in a unit test
+ * otherwise, and it is the half most likely to silently do nothing.
+ */
+export function routeForNotificationResponse(response: unknown): string | null {
+  const data = (response as { notification?: { request?: { content?: { data?: unknown } } } })
+    ?.notification?.request?.content?.data;
+  if (!data || typeof data !== 'object') return null;
+  const route = (data as { route?: unknown }).route;
+  return typeof route === 'string' && route.startsWith('/') ? route : null;
 }

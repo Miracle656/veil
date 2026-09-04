@@ -13,9 +13,9 @@
     "test": "jest",
     "e2e": "maestro test .maestro",
     "e2e:device": "maestro test --include-tags device .maestro",
-    "build:android:dev": "eas build -p android --profile development",
-    "build:android:preview": "eas build -p android --profile preview",
-    "build:android:production": "eas build -p android --profile production"
+    "build:android:dev": "npx --yes eas-cli@latest build -p android --profile development",
+    "build:android:preview": "npx --yes eas-cli@latest build -p android --profile preview",
+    "build:android:production": "npx --yes eas-cli@latest build -p android --profile production"
   },
   "dependencies": {
     "@blend-capital/blend-sdk": "^3.3.0",
@@ -49,7 +49,7 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-local-authentication": "~17.0.9",
-    "expo-notifications": "^57.0.15",
+    "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.24",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",

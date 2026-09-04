@@ -1,16 +1,14 @@
 {
+  "name": "veil",
   "private": true,
   "description": "Root scripts — smoke tests and tooling for Veil",
-  "workspaces": [
-    "sdk",
-    "packages/*"
-  ],
   "scripts": {
     "smoke": "npx ts-node scripts/smoke_test.ts",
     "release-notes": "conventional-changelog -p angular -i CHANGELOG.md -s",
     "changeset": "changeset",
-    "version-packages": "changeset version",
-    "release": "changeset publish"
+    "version-packages": "changeset version && node scripts/sync-package-lockfiles.mjs",
+    "release": "changeset publish",
+    "verify:lockfile": "node scripts/verify-root-lockfile.mjs"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^17.0.1"

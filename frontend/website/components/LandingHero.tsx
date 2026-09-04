@@ -271,20 +271,51 @@ function ConfirmScreen({ amounts }: { amounts: RegionalAmounts }) {
           ['They receive', amounts.transfer],
           ['Debited', '16.08 USDC'],
           ['Network fee', 'Sponsored'],
-        ].map(([k, v], i) => (
+          ['Arrives', '~5 seconds'],
+        ].map(([k, v], i, all) => (
           <div
             key={k}
-            className={`flex justify-between py-3 border-t border-white/[0.08] ${i === 2 ? 'border-b' : ''}`}
+            className={`flex justify-between py-[13px] border-t border-white/[0.08] ${
+              i === all.length - 1 ? 'border-b' : ''
+            }`}
           >
             <span className="text-[11px] text-off-white/45">{k}</span>
-            <span className={`text-[11px] ${v === 'Sponsored' ? 'text-teal' : 'font-mono'}`}>{v}</span>
+            <span
+              className={`text-[11px] ${
+                v === 'Sponsored' ? 'text-teal' : v === '~5 seconds' ? 'text-off-white/70' : 'font-mono'
+              }`}
+            >
+              {v}
+            </span>
           </div>
         ))}
       </div>
 
-      <div className="flex-1" />
-      <div className="relative w-full h-[54px] rounded-pill border border-gold/35 bg-gold/[0.05] flex items-center justify-center overflow-hidden">
-        <span className="absolute left-0 top-0 bottom-0 w-[112px] bg-gold/[0.13]" />
+      {/* The void this fills was the screen's real problem: a confirm screen with
+          four rows and a button reads as unfinished. This says the thing the
+          whole page is about, at the moment it matters most. */}
+      <div className="flex-1 flex items-center">
+        <div className="w-full rounded-[16px] border border-white/[0.08] bg-white/[0.03] px-[14px] py-[13px] flex items-center gap-[11px]">
+          <span className="shrink-0 w-[30px] h-[30px] rounded-full bg-gold/[0.12] border border-gold/25 flex items-center justify-center">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FDDA24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="4" y="10" width="16" height="10" rx="2.5" />
+              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+            </svg>
+          </span>
+          <span className="leading-[1.35]">
+            <span className="block text-[11px] text-off-white/80">No seed phrase to enter</span>
+            <span className="block text-[10px] text-off-white/40">This device&rsquo;s passkey signs it</span>
+          </span>
+        </div>
+      </div>
+
+      {/* pl-[54px] clears the knob (4px inset + 46px wide + 4px of air): the knob
+          is absolutely positioned and paints over the label, so centring the
+          label in the whole track hides its first word — "SLIDE TO CONFIRM"
+          reads as "TO CONFIRM". Padding does not move an absolutely-positioned
+          child, so the knob and the fill stay put. */}
+      <div className="relative w-full h-[54px] rounded-pill border border-gold/35 bg-gold/[0.05] flex items-center justify-center overflow-hidden pl-[54px] pr-[4px]">
+        <span className="absolute left-0 top-0 bottom-0 w-[54px] bg-gold/[0.13]" />
         <span className="absolute left-[4px] top-[3px] w-[46px] h-[46px] rounded-full bg-gold text-near-black flex items-center justify-center text-[18px] font-bold">
           »
         </span>
@@ -292,7 +323,6 @@ function ConfirmScreen({ amounts }: { amounts: RegionalAmounts }) {
           SLIDE TO CONFIRM
         </span>
       </div>
-      <div className="text-[10px] text-off-white/40 mt-3 text-center">Then confirm with your passkey.</div>
     </>
   )
 }

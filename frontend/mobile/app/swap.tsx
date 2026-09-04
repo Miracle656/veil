@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { Keypair } from '@stellar/stellar-sdk';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -14,6 +15,7 @@ import { SuccessAnimation } from '../components/SuccessAnimation';
 import { getSoroswapQuote, buildSoroswapSwapXdr, ensureSwapOutTrustline, resolveTokenAddress, type SwapQuote } from '../lib/soroswap';
 import { getSdexQuote, sdexSwap, sdexSupported } from '../lib/sdexSwap';
 import { getFeePayerAddress } from '../lib/activity';
+import { getFeePayerSpendableXlm } from '../lib/contractSpend';
 import { getNetwork } from '../lib/network';
 import { signAndSubmitSorobanXdr } from '../lib/sorobanTx';
 import { requirePasskey } from '../lib/passkey';
@@ -194,9 +196,58 @@ export default function SwapScreen() {
         const missing = !tokenInAddr ? tokenIn.code : tokenOut.code;
         throw new Error(`${missing} isn't listed on Soroswap for this network — swaps use Soroswap liquidity (mainnet).`);
       }
+      // Everything from here runs on the fee-payer G-account, which is NOT the
+      // account whose balance this screen shows — the screen sums the smart
+      // wallet and the spending account, and swaps only ever touch the latter.
+      // So a wallet showing 3 XLM can hold 2 of them somewhere this code path
+      // cannot reach, and the first sign of it was Horizon rejecting the
+      // trustline with tx_insufficient_balance.
+      //
+      // Stellar locks 1 XLM per account plus 0.5 per trustline, and the balance
+      // may not fall below that, so a freshly funded 1 XLM fee-payer has
+      // nothing spendable at all.
+      const spendable = await getFeePayerSpendableXlm();
+      const TRUSTLINE_RESERVE_XLM = 0.5;
+      const needsTrustline =
+        tokenOut.code.toUpperCase() !== 'XLM' && balanceOf(tokenOut.code) === null;
+
+      if (needsTrustline && spendable < TRUSTLINE_RESERVE_XLM) {
+        throw new Error(
+          `Holding ${tokenOut.code} for the first time locks 0.5 XLM of network reserve, and the account that pays for swaps has ${fmtBal(spendable)} XLM spare. It is funded separately from your wallet balance — send it a little XLM and try again.`,
+        );
+      }
+
       // The router refuses to pay out to an account without the destination
       // trustline — open it first when missing (locks 0.5 XLM base reserve).
       await ensureSwapOutTrustline(signerSecret, tokenOut.code);
+
+      // Paying in XLM comes out of that same account, so measure it against
+      // what is spendable there rather than the balance on screen.
+      if (tokenIn.code.toUpperCase() === 'XLM') {
+        const left = needsTrustline ? spendable - TRUSTLINE_RESERVE_XLM : spendable;
+        if (parsed > left) {
+          throw new Error(
+            `The account that pays for swaps has ${fmtBal(Math.max(0, left))} XLM available and you asked to swap ${fmtBal(parsed)}. It is funded separately from your wallet balance.`,
+          );
+        }
+      }
+
+      // Check the balance before asking the router to build anything. An
+      // account with nothing in it is the most common reason a build fails,
+      // and the router's own error does not say so — it just refuses. Telling
+      // the user here means they learn what is wrong instead of watching a
+      // spinner end in a generic failure.
+      const available = balanceOf(tokenIn.code);
+      if (available !== null && available <= 0) {
+        throw new Error(
+          `You have no ${tokenIn.code} to swap. Receive or buy some first, then try again.`,
+        );
+      }
+      if (available !== null && parsed > available) {
+        throw new Error(
+          `Not enough ${tokenIn.code}. You have ${fmtBal(available)} and tried to swap ${fmtBal(parsed)}.`,
+        );
+      }
 
       // Build against the spending account — the same key that signs below.
       const feePayer = Keypair.fromSecret(signerSecret).publicKey();
@@ -207,7 +258,6 @@ export default function SwapScreen() {
         slippageBps: SLIPPAGE_BPS,
         feePayerAddress: feePayer,
       });
-      if (!unsignedXdr) throw new Error('Failed to build swap transaction.');
 
       const network = getNetwork();
       // Testnet keypair mode: simulate → assemble → sign with the wallet key →
@@ -221,7 +271,7 @@ export default function SwapScreen() {
       setTxHash(hash);
       setStep('done');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       const name = err instanceof Error ? err.name : '';
       const friendly =
         name === 'NotFoundError' || /^not found$/i.test(msg.trim())

@@ -97,7 +97,39 @@ const { address, isConnected, isDeploying, connect, deploy, error } = useInvisib
 
 ---
 
-### 3. Vanilla / Framework-Agnostic
+### 3. Solid.js
+
+Import the primitive from the `/solid` subpath. State arrives as accessors:
+
+```tsx
+import { Show } from 'solid-js';
+import { useInvisibleWallet } from 'invisible-wallet-sdk/solid';
+
+function App() {
+  const wallet = useInvisibleWallet({
+    factoryAddress: 'CA...',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+  });
+
+  return (
+    <Show when={wallet.address()} fallback={
+      <button disabled={wallet.isPending()} onClick={() => wallet.register('alice')}>
+        Create wallet
+      </button>
+    }>
+      <p>Connected: {wallet.address()}</p>
+    </Show>
+  );
+}
+```
+
+`solid-js` is an optional peer dependency, so apps on other frameworks never
+install it.
+
+---
+
+### 4. Vanilla / Framework-Agnostic
 
 Use `createInvisibleWallet` for direct programmatic control without UI framework bindings:
 
@@ -129,6 +161,8 @@ The package provides verified export subpaths:
 | `invisible-wallet-sdk` | Default entry point (Core API + React `useInvisibleWallet`) |
 | `invisible-wallet-sdk/react` | React provider and specialized hooks (`useBalance`, `useHistory`, `useSendTransaction`) |
 | `invisible-wallet-sdk/vue` | Vue 3 composable (`useInvisibleWallet`) |
+| `invisible-wallet-sdk/svelte` | Svelte store (`createWalletStore`) |
+| `invisible-wallet-sdk/solid` | Solid.js primitive (`useInvisibleWallet`) |
 | `invisible-wallet-sdk/vanilla` | Framework-agnostic client (`createInvisibleWallet`) |
 
 ---

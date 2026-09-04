@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -50,7 +51,7 @@ export default function ContactsScreen() {
       }
       resetForm();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   };
 

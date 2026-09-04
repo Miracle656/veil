@@ -5,6 +5,8 @@
  * unit-tested without booting Expo, WalletConnect or the Stellar SDK.
  */
 
+import { errorMessage } from './errorMessage';
+
 export type WalletConnectPeer = {
   name?: string;
   description?: string;
@@ -155,7 +157,10 @@ export function buildWcError(id: number, code: number, message: string) {
  * genuinely failing — those two cases get different JSON-RPC error codes.
  */
 export function isUserRejection(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  // errorMessage, not String(error): native modules reject with plain objects,
+  // and String({}) is "[object Object]" — which matches none of the markers
+  // below, so a deliberate cancellation was reported to the user as a failure.
+  const message = errorMessage(error);
   return (
     message.includes('USER_REJECTED') ||
     message.includes('NotAllowedError') ||
