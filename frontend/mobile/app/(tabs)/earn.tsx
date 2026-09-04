@@ -154,6 +154,7 @@ export default function EarnRoute() {
         signerSecret,
         rpcUrl: network.rpcUrl,
         networkPassphrase: network.networkPassphrase,
+        horizonUrl: network.horizonUrl,
       });
 
       setTxHash(hash);
@@ -191,6 +192,7 @@ export default function EarnRoute() {
         signerSecret,
         rpcUrl: network.rpcUrl,
         networkPassphrase: network.networkPassphrase,
+        horizonUrl: network.horizonUrl,
       });
 
       setTxHash(hash);

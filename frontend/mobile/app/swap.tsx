@@ -267,6 +267,9 @@ export default function SwapScreen() {
         signerSecret,
         rpcUrl: network.rpcUrl,
         networkPassphrase: network.networkPassphrase,
+        // The router can route through the classic order book, which submits
+        // to Horizon rather than the Soroban RPC.
+        horizonUrl: network.horizonUrl,
       });
       setTxHash(hash);
       setStep('done');

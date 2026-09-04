@@ -1,8 +1,43 @@
-import { Transaction, TransactionBuilder, Keypair, rpc as SorobanRpc } from '@stellar/stellar-sdk';
+import { Horizon, Transaction, TransactionBuilder, Keypair, rpc as SorobanRpc } from '@stellar/stellar-sdk';
 
 import './polyfills';
 import { assertRoundTrips, simulationErrorMessage } from './simulationError';
 import { inclusionFee } from './fees';
+
+/**
+ * Sign and submit a classic (non-Soroban) transaction through Horizon.
+ *
+ * Rebuilt rather than submitted as received, for the same reason the Soroban
+ * path rebuilds: the router's sequence number can be stale seconds after
+ * another transaction from the same account, and its fee bid is a guess at
+ * whatever the network wanted when the quote was made. The memo is carried
+ * over — on the classic side it is allowed, and it is how the aggregator marks
+ * its own trades.
+ */
+async function submitClassic(
+  upstream: Transaction,
+  signer: Keypair,
+  horizonUrl: string,
+): Promise<string> {
+  const server = new Horizon.Server(horizonUrl);
+  const account = await server.loadAccount(upstream.source);
+
+  const builder = new TransactionBuilder(account, {
+    fee: inclusionFee(),
+    networkPassphrase: upstream.networkPassphrase,
+  });
+  for (const op of upstream.toEnvelope().v1().tx().operations()) {
+    builder.addOperation(op);
+  }
+  builder.addMemo(upstream.memo);
+  builder.setTimeout(120);
+
+  const tx = builder.build();
+  tx.sign(signer);
+
+  const result = await server.submitTransaction(tx);
+  return (result as { hash: string }).hash;
+}
 
 /**
  * Sign a Soroban transaction XDR with the fee-payer key and submit it over RPC.
@@ -23,6 +58,7 @@ export async function signAndSubmitSorobanXdr(params: {
   signerSecret: string;
   rpcUrl: string;
   networkPassphrase: string;
+  horizonUrl: string;
 }): Promise<string> {
   const rpc = new SorobanRpc.Server(params.rpcUrl);
   const signer = Keypair.fromSecret(params.signerSecret);
@@ -30,6 +66,25 @@ export async function signAndSubmitSorobanXdr(params: {
   const upstream = TransactionBuilder.fromXDR(params.xdr, params.networkPassphrase);
   if (!(upstream instanceof Transaction)) {
     throw new Error('Fee-bump envelopes are not supported here.');
+  }
+
+  // Soroswap does not always hand back a Soroban transaction. With SDEX among
+  // the quoted protocols the router may route through the classic order book
+  // instead, and then `build` returns an ordinary pathPaymentStrictSend — with
+  // a memo on it ("SoroswapAggregator-…"), which Soroban forbids outright:
+  //
+  //   Transaction contains a memo. Soroban transactions do not support memos.
+  //
+  // A classic transaction has nothing to simulate and no footprint to assemble.
+  // It is signed and posted to Horizon, memo intact.
+  const isSoroban = upstream.operations.every(
+    (op) =>
+      op.type === 'invokeHostFunction' ||
+      op.type === 'extendFootprintTtl' ||
+      op.type === 'restoreFootprint',
+  );
+  if (!isSoroban) {
+    return submitClassic(upstream, signer, params.horizonUrl);
   }
 
   const source = await rpc.getAccount(upstream.source);
@@ -42,7 +97,6 @@ export async function signAndSubmitSorobanXdr(params: {
   for (const op of upstream.toEnvelope().v1().tx().operations()) {
     builder.addOperation(op);
   }
-  builder.addMemo(upstream.memo);
   builder.setTimeout(120);
   const built = builder.build();
 
