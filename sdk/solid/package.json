@@ -1,7 +1,7 @@
 {
   "name": "@veil/invisible-wallet-solid",
   "version": "0.1.0",
-  "description": "Solid.js adapter for Invisible Wallet (Soroban + WebAuthn) \u2014 ships inside invisible-wallet-sdk as the `/solid` subpath",
+  "description": "Solid.js adapter for Invisible Wallet (Soroban + WebAuthn) — ships inside invisible-wallet-sdk as the `/solid` subpath",
   "private": true,
   "sideEffects": false,
   "main": "../dist/solid/index.js",

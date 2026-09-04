@@ -1,7 +1,7 @@
 # Veil Wallet — SvelteKit Starter
 
 A minimal [SvelteKit](https://kit.svelte.dev) example showing how to integrate
-`invisible-wallet-sdk` via the `@veil/invisible-wallet-svelte` adapter. It
+`invisible-wallet-sdk` via its `/svelte` subpath. It
 covers passkey registration, wallet deployment, balance display, and sending a
 payment authorized with a passkey.
 
@@ -16,7 +16,7 @@ payment authorized with a passkey.
 ## The Svelte adapter
 
 `$lib/wallet.ts` creates a single `createWalletStore` instance (from
-[`@veil/invisible-wallet-svelte`](../../sdk/svelte)) shared across routes:
+[`invisible-wallet-sdk/svelte`](../../sdk/src/svelte)) shared across routes:
 
 ```ts
 import { wallet } from '$lib/wallet';

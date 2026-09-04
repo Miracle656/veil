@@ -1,7 +1,7 @@
 {
   "name": "@veil/invisible-wallet-svelte",
   "version": "0.1.0",
-  "description": "Svelte store for Invisible Wallet (Soroban + WebAuthn) \u2014 ships inside invisible-wallet-sdk as the `/svelte` subpath",
+  "description": "Svelte store for Invisible Wallet (Soroban + WebAuthn) — ships inside invisible-wallet-sdk as the `/svelte` subpath",
   "private": true,
   "sideEffects": false,
   "main": "../dist/svelte/index.js",

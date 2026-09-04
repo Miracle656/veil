@@ -1,5 +1,5 @@
 import { Asset, Networks } from '@stellar/stellar-sdk';
-import type { WalletConfig } from '@veil/invisible-wallet-svelte';
+import type { WalletConfig } from 'invisible-wallet-sdk/svelte';
 import {
   PUBLIC_NETWORK,
   PUBLIC_SOROBAN_RPC_URL,
