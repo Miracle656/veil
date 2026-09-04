@@ -22,6 +22,8 @@
  *   - anything else: JSON, so at least the fields are legible
  */
 
+import { horizonErrorMessage } from './horizonError';
+
 /** Keys that carry a human-readable message, most specific first. */
 const MESSAGE_KEYS = ['message', 'error', 'description', 'reason', 'error_description'] as const;
 
@@ -49,6 +51,11 @@ function httpBodyMessage(error: unknown, depth: number): string | null {
   if (typeof data === 'string' && data.trim() !== '') return data.trim();
 
   if (data && typeof data === 'object') {
+    // Horizon first: its prose is a paragraph pointing at documentation, while
+    // the reason is a short code elsewhere in the document.
+    const horizon = horizonErrorMessage(data);
+    if (horizon) return horizon;
+
     const message = errorMessage(data, depth + 1);
     if (message !== FALLBACK) return message;
   }
@@ -80,6 +87,10 @@ export function errorMessage(error: unknown, depth = 0): string {
 
   if (error && typeof error === 'object' && depth < 3) {
     const source = error as Record<string, unknown>;
+
+    // The stellar-sdk rejects with the failure document itself in some paths.
+    const horizon = horizonErrorMessage(source);
+    if (horizon) return horizon;
 
     const prose = firstString(source, MESSAGE_KEYS);
     if (prose) return prose;
