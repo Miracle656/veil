@@ -736,6 +736,7 @@ function DashboardPageContent() {
           <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
           <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
           <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
+          <button className="vw-chip" onClick={() => router.push('/nfts')}>NFTs</button>
           {multisigAvailable ? (
             <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
           ) : null}
