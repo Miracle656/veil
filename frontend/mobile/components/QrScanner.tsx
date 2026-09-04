@@ -107,16 +107,18 @@ export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
             </TouchableOpacity>
           </View>
         ) : (
-          <CameraView
-            style={StyleSheet.absoluteFill}
-            facing="back"
-            barcodeScannerSettings={{
-              barcodeTypes: ['qr'],
-            }}
-            onBarcodeScanned={handleBarcodeScanned}
-          >
-            {/* Viewfinder overlay */}
-            <View style={styles.overlay}>
+          <>
+            <CameraView
+              style={StyleSheet.absoluteFill}
+              facing="back"
+              barcodeScannerSettings={{
+                barcodeTypes: ['qr'],
+              }}
+              onBarcodeScanned={handleBarcodeScanned}
+            />
+            {/* Viewfinder overlay — CameraView doesn't support children, so this
+                sits above it as an absolutely-positioned sibling. */}
+            <View style={[StyleSheet.absoluteFill, styles.overlay]} pointerEvents="none">
               <View style={styles.viewfinder}>
                 {(['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as const).map(
                   (corner) => (
@@ -137,7 +139,7 @@ export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
                 Point camera at a Stellar address QR code (G... or C...)
               </Text>
             </View>
-          </CameraView>
+          </>
         )}
 
         {/* Overlay UI */}
@@ -325,6 +327,16 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   bottomSheet: {
+    // The camera fills the screen absolutely, so this must be pinned to the
+    // bottom explicitly — as a flow child it would land at the TOP of the
+    // container (over the header), which is exactly the bug it had.
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(11,11,15,0.96)',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     paddingHorizontal: 24,
     paddingBottom: Platform.OS === 'ios' ? 40 : 24,
     paddingTop: 16,

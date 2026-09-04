@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import {
@@ -18,19 +19,20 @@ import {
   isSep24Complete,
   type Sep24TransactionStatus,
 } from '../lib/sep24';
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, StrKey } from '@stellar/stellar-sdk';
 
+import { getFeePayerAddress } from '../lib/activity';
+import { getNetwork } from '../lib/network';
 import { sweepContractBalance } from '../lib/sweepContractBalance';
 import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 
+// The anchor domain is the only thing that legitimately comes from env — every
+// other network value is read live from getNetwork() at call time. Reading RPC
+// URLs and passphrases into module constants freezes them to whatever the build
+// shipped (testnet), which is the same defect that previously derived a wallet
+// address against the wrong network and stranded real funds.
 const DEFAULT_ANCHOR =
   process.env['EXPO_PUBLIC_SEP24_ANCHORS']?.split(',')[0]?.trim() || 'testanchor.stellar.org';
-const FALLBACK_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
-const WALLET_CONTRACT_ID = process.env['EXPO_PUBLIC_WALLET_CONTRACT_ID']?.trim() || '';
-const RPC_URL = process.env['EXPO_PUBLIC_RPC_URL']?.trim() || 'https://soroban-testnet.stellar.org';
-const NETWORK_PASSPHRASE =
-  process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim()
-  || 'Test SDF Network ; September 2015';
 
 const POLL_INTERVAL_MS = 4_000;
 
@@ -104,9 +106,18 @@ export default function WithdrawScreen() {
   };
 
   const startWithdraw = async () => {
-    const account = (await getWalletAddress()) || FALLBACK_ADDRESS;
+    // SEP-10 authenticates a CLASSIC account with an ed25519 signature, and a
+    // SEP-24 withdrawal is settled by a classic payment to the anchor. Both
+    // are the fee-payer's job — a C-address can do neither, so authenticating
+    // as the contract would fail at the anchor.
+    //
+    // This is a workaround, not the design: SEP-45 (contract-account auth,
+    // live on testanchor.stellar.org) is the right primitive for a passkey
+    // smart wallet and would let the contract authenticate as itself. No NGN
+    // anchor declares it yet. See docs/NGN_RAILS.md.
+    const account = await getFeePayerAddress();
     if (!account) {
-      setError('Spending wallet not set up yet.');
+      setError('Spending account not set up yet.');
       setStep('error');
       return;
     }
@@ -151,16 +162,20 @@ export default function WithdrawScreen() {
       await WebBrowser.openBrowserAsync(result.url);
       startPolling(result.id);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       setError(msg);
       setStep('error');
     }
   };
 
   const sweepAndPay = async (tx: Sep24TransactionStatus) => {
-    if (!WALLET_CONTRACT_ID) {
-      // Nothing to sweep from — fall through to polling and let the user
-      // pay the anchor's deposit address through some other flow.
+    const [contractAddress, feePayer] = await Promise.all([
+      getWalletAddress().catch(() => null),
+      getFeePayerAddress(),
+    ]);
+    if (!contractAddress || !StrKey.isValidContract(contractAddress) || !feePayer) {
+      // Classic-only wallet, or nothing to sweep from — fall through to
+      // polling and let the classic account settle the withdrawal directly.
       setStep('polling');
       return;
     }
@@ -168,17 +183,17 @@ export default function WithdrawScreen() {
     setStep('sweeping');
     setError(null);
     try {
-      const account = (await getWalletAddress()) || FALLBACK_ADDRESS;
+      const network = getNetwork();
       // Signing a Soroban auth entry needs lib/passkey.ts wired into this
       // screen; until it is, refuse rather than return a hash for a transfer
       // that never happened. The catch below already treats a failed sweep as
       // non-fatal, so the withdrawal keeps polling.
       const result = await sweepContractBalance(
         {
-          contractAddress: WALLET_CONTRACT_ID,
-          feePayerPublicKey: account,
-          rpcUrl: RPC_URL,
-          networkPassphrase: NETWORK_PASSPHRASE,
+          contractAddress,
+          feePayerPublicKey: feePayer,
+          rpcUrl: network.rpcUrl,
+          networkPassphrase: network.networkPassphrase,
         },
         async () => {
           throw new Error(
@@ -190,7 +205,7 @@ export default function WithdrawScreen() {
       setSweepHash(result.hash);
       setStep('polling');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       // A sweep failure doesn't necessarily abort the withdrawal — the user
       // may already hold enough on the classic account. Keep polling so
       // completion can still be observed, but surface the problem.
@@ -281,7 +296,7 @@ export default function WithdrawScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
       <Text style={styles.title}>Cash out</Text>
       <Text style={styles.subtitle}>Withdraw to a bank account or mobile money via a Stellar anchor.</Text>
 

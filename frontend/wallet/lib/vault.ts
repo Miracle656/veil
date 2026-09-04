@@ -1,3 +1,4 @@
+import { inclusionFee } from './fees'
 import {
   Account,
   Address,
@@ -15,6 +16,7 @@ import {
 } from '@stellar/stellar-sdk'
 
 import { getNetwork } from './network'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const STROOPS_PER_XLM = 10_000_000n
 
@@ -83,8 +85,8 @@ function getSigner(secret?: string): Keypair {
   const stored = typeof window === 'undefined'
     ? null
     : (
-      sessionStorage.getItem('veil_signer_secret')
-      || localStorage.getItem('veil_signer_secret')
+      walletSession.getItem('veil_signer_secret')
+      || walletLocal.getItem('veil_signer_secret')
     )
   const resolved = secret?.trim() || stored
 
@@ -172,7 +174,7 @@ async function submitOperation(
   const server = new SorobanRpc.Server(network.rpcUrl)
   const account = await server.getAccount(signer.publicKey())
   const transaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(operation)
@@ -207,7 +209,7 @@ async function simulateCall(
   const server = new SorobanRpc.Server(network.rpcUrl)
   const account = new Account(Keypair.random().publicKey(), '0')
   const transaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(contract.call(method, ...args))
@@ -256,7 +258,7 @@ export async function deployAndInitializeVault(params: {
   const salt = crypto.getRandomValues(new Uint8Array(32))
 
   const deployTransaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(Operation.createCustomContract({

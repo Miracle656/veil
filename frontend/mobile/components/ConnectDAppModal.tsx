@@ -170,7 +170,7 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
             </Pressable>
           </View>
 
-          <ScrollView keyboardShouldPersistTaps="handled">
+          <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             {!pendingProposal ? (
               <>
                 <View style={styles.tabs}>

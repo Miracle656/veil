@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -73,7 +74,7 @@ export default function BulkPayoutScreen() {
       setTxHash(result.txHash);
       setStep('done');
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorMessage(e);
       Alert.alert('Payout failed', msg);
       setStep('form');
     }
@@ -101,7 +102,7 @@ export default function BulkPayoutScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Bulk payout</Text>
         <ThemeToggle />

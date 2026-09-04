@@ -10,10 +10,19 @@ import { StyleSheet } from 'react-native';
 
 import { fontAssets } from '../theme/typography';
 import { useTheme } from '../hooks/useTheme';
+import { useInactivityLock } from '../hooks/useInactivityLock';
+import { useNotifications } from '../hooks/useNotifications';
+import { useOutboxReplay } from '../hooks/useOutboxReplay';
 import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
 import { hydrateLockSettings } from '../lib/appLock';
+import {
+  configureNotificationHandler,
+  requestNotificationPermissions,
+  setAppLocked,
+} from '../lib/notifications';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
+import { WalletProvider } from '../components/WalletProvider';
 
 // Hold the native splash screen until the brand fonts are ready, so the UI
 // never flashes a system font on first paint.
@@ -37,6 +46,10 @@ export default function RootLayout() {
     // Same reason as the network override: without this the app starts on the
     // defaults and a saved lock timeout only takes effect once re-picked.
     void hydrateLockSettings();
+    // Configure local notifications: the handler decides how they appear when
+    // the app is in the foreground; permissions are requested once per install.
+    configureNotificationHandler();
+    void requestNotificationPermissions();
   }, []);
 
   // Keep the splash screen up (render nothing) until the fonts resolve — either
@@ -53,19 +66,25 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <BottomSheetModalProvider>
           <ConnectivityProvider>
-            <ConnectivityGate />
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                // Painted behind every route, so a screen that is still loading (or
-                // shorter than the viewport) never shows the opposite theme.
-                contentStyle: { backgroundColor: colors.background },
-              }}
-            />
-            {/* Mounted once at the root so a dApp request is presented for approval
-            no matter which screen the user is on. */}
-            <WalletConnectApprovalModal />
-            <StatusBar style={isDark ? 'light' : 'dark'} />
+            <WalletProvider>
+              <ConnectivityGate />
+              <OutboxReplayGate />
+              <InactivityLockGate />
+              <NotificationGate />
+              <LockStateTracker />
+              <Stack
+                screenOptions={{
+                  headerShown: false,
+                  // Painted behind every route, so a screen that is still loading (or
+                  // shorter than the viewport) never shows the opposite theme.
+                  contentStyle: { backgroundColor: colors.background },
+                }}
+              />
+              {/* Mounted once at the root so a dApp request is presented for approval
+              no matter which screen the user is on. */}
+              <WalletConnectApprovalModal />
+              <StatusBar style={isDark ? 'light' : 'dark'} />
+            </WalletProvider>
           </ConnectivityProvider>
         </BottomSheetModalProvider>
       </SafeAreaProvider>
@@ -78,10 +97,55 @@ const styles = StyleSheet.create({
 });
 
 /**
+ * Arms the inactivity/background auto-lock. Rendered as a sibling of the
+ * navigator, like {@link ConnectivityGate}, so the hook can use the router.
+ */
+function InactivityLockGate() {
+  useInactivityLock();
+  return null;
+}
+
+/**
+ * Monitors the activity feed and fires local notifications for new incoming
+ * transfers. Rendered at the root so it stays active regardless of which
+ * screen is visible.
+ */
+function NotificationGate() {
+  useNotifications();
+  return null;
+}
+
+/**
+ * Tracks the current route and updates the module-level lock flag in
+ * `notifications.ts` so that notification content respects the lock state.
+ */
+function LockStateTracker() {
+  const segments = useSegments();
+  useEffect(() => {
+    setAppLocked(segments[0] === 'lock');
+  }, [segments]);
+  return null;
+}
+
+/**
  * Pushes the offline screen when connectivity drops and pops it again when it
  * returns, so the route the user was on is preserved underneath. Rendered as a
  * sibling of the navigator rather than around it, so it can use the router.
  */
+/**
+ * Replays the SDK's Stellar transaction outbox when connectivity returns.
+ *
+ * The SDK only auto-replays off `window.addEventListener('online')`, which
+ * never fires under React Native, so without this mount a transaction queued
+ * while offline would sit in AsyncStorage until something replayed it by hand.
+ * It needs both ConnectivityProvider and WalletProvider in scope and renders
+ * nothing, so it belongs here with the other gates rather than in a screen.
+ */
+function OutboxReplayGate() {
+  useOutboxReplay();
+  return null;
+}
+
 function ConnectivityGate() {
   const { isOnline } = useConnectivity();
   const router = useRouter();

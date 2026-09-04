@@ -1,11 +1,29 @@
 {
   "generators": {
-    "address": 1,
+    "address": 2,
     "nonce": 0
   },
   "auth": [
     [],
-    [],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "function_name": "init",
+              "args": [
+                {
+                  "bytes": "c86f7ccbdcc54674c0d428eed7bce81699d946fe3af21e78ca4d22e88ed73f1a"
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
     [],
     []
   ],
@@ -23,6 +41,39 @@
         {
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "ledger_key_nonce": {
+                "nonce": 801925984706572462
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 801925984706572462
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -33,7 +84,7 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
                 "key": "ledger_key_contract_instance",
                 "durability": "persistent",
                 "val": {
@@ -42,6 +93,18 @@
                       "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     },
                     "storage": [
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Admin"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                        }
+                      },
                       {
                         "key": {
                           "vec": [
@@ -80,7 +143,7 @@
       [
         {
           "contract_data": {
-            "contract": "CDD3RZPYKN5IKF2B7D5RD4EBCT6KE6M7SMY7PI2DDXP5CW7DB5NYDR7Z",
+            "contract": "CBZNKQHMRYM74XNWKLB5Z6S26BUPFSELBXWQMMVZVFTLLOBQTBCDV67P",
             "key": {
               "vec": [
                 {
@@ -100,7 +163,7 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CDD3RZPYKN5IKF2B7D5RD4EBCT6KE6M7SMY7PI2DDXP5CW7DB5NYDR7Z",
+                "contract": "CBZNKQHMRYM74XNWKLB5Z6S26BUPFSELBXWQMMVZVFTLLOBQTBCDV67P",
                 "key": {
                   "vec": [
                     {
@@ -123,7 +186,7 @@
       [
         {
           "contract_data": {
-            "contract": "CDD3RZPYKN5IKF2B7D5RD4EBCT6KE6M7SMY7PI2DDXP5CW7DB5NYDR7Z",
+            "contract": "CBZNKQHMRYM74XNWKLB5Z6S26BUPFSELBXWQMMVZVFTLLOBQTBCDV67P",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -134,7 +197,7 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-                "contract": "CDD3RZPYKN5IKF2B7D5RD4EBCT6KE6M7SMY7PI2DDXP5CW7DB5NYDR7Z",
+                "contract": "CBZNKQHMRYM74XNWKLB5Z6S26BUPFSELBXWQMMVZVFTLLOBQTBCDV67P",
                 "key": "ledger_key_contract_instance",
                 "durability": "persistent",
                 "val": {

@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useState } from 'react';
 import {
   ActivityIndicator,
@@ -50,7 +51,7 @@ export default function ContactsScreen() {
       }
       resetForm();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   };
 
@@ -71,7 +72,7 @@ export default function ContactsScreen() {
   const isFormOpen = showAddForm || editingId !== null;
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Contacts</Text>

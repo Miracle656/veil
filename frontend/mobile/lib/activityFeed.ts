@@ -137,9 +137,28 @@ async function fetchTransfers(
 /**
  * Replace the store with a batch of pre-fetched records (e.g. initial load).
  * Notifies all subscribers.
+ *
+ * Pass `{ merge: true }` for a refresh. The feed is rebuilt from sources that
+ * can each degrade independently — a rate-limited RPC event scan, a Horizon
+ * page that times out — so a refresh that returns fewer rows usually means one
+ * source blinked, not that history vanished. Replacing wholesale made the feed
+ * visibly empty and refill every few polls; merging keeps the union, newest
+ * first, with the incoming (fresher) version of a row winning on id collision.
+ *
+ * Wiping still has to be possible, so the default stays replace: switching
+ * wallets must not leave the previous wallet's rows on screen.
  */
-export function hydrateActivityFeed(records: TxRecord[]): void {
-  _records = records;
+export function hydrateActivityFeed(records: TxRecord[], options?: { merge?: boolean }): void {
+  if (!options?.merge) {
+    _records = records;
+    notify();
+    return;
+  }
+
+  const byId = new Map<string, TxRecord>();
+  for (const r of _records) byId.set(r.id, r);
+  for (const r of records) byId.set(r.id, r);
+  _records = [...byId.values()].sort((a, b) => b.timestamp - a.timestamp);
   notify();
 }
 
@@ -235,7 +254,7 @@ export function useActivityFeed(): TxRecord[] {
 export function useInitActivityFeed(
   address: string | null,
   wraithUrl: string | null,
-): { loading: boolean; error: string | null } {
+): { loading: boolean; error: string | null; refresh: () => Promise<void> } {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const initiatedRef = useRef<string | null>(null);
@@ -287,5 +306,5 @@ export function useInitActivityFeed(
     };
   }, [address, wraithUrl, load]);
 
-  return { loading, error };
+  return { loading, error, refresh: load };
 }

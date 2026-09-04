@@ -1,10 +1,22 @@
 [
   {
-    "relation": ["delegate_permission/common.handle_all_urls"],
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
     "target": {
       "namespace": "android_app",
       "package_name": "xyz.veil.wallet",
-      "sha256_cert_fingerprints": ["ANDROID_RELEASE_CERT_SHA256_FINGERPRINT"]
+      "sha256_cert_fingerprints": [
+        "0F:DA:A5:8B:55:55:CD:F2:FB:6F:95:F4:A5:D7:50:71:41:B5:B4:1E:B6:F7:C8:3B:54:16:F1:BC:99:09:57:44"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.get_login_creds"],
+    "target": {
+      "namespace": "web",
+      "site": "https://veil-ezry.vercel.app"
     }
   }
 ]

@@ -20,7 +20,7 @@ import type { ExpoConfig } from 'expo/config';
 const DEEP_LINK_SCHEME = 'veil';
 
 /** Hosts claimed as universal / app links. Mirrors `ASSOCIATED_DOMAINS`. */
-const ASSOCIATED_DOMAINS = ['app.veil.xyz'];
+const ASSOCIATED_DOMAINS = ['app.useveilapp.xyz'];
 
 /** SEP-7 URI scheme, without the trailing colon. Mirrors `SEP7_SCHEME`. */
 const SEP7_SCHEME = 'web+stellar';
@@ -61,7 +61,7 @@ const config: ExpoConfig = {
   android: {
     package: BUNDLE_IDENTIFIER,
     adaptiveIcon: {
-      backgroundColor: '#E6F4FE',
+      backgroundColor: '#0F0F0F',
       foregroundImage: './assets/images/android-icon-foreground.png',
       backgroundImage: './assets/images/android-icon-background.png',
       monochromeImage: './assets/images/android-icon-monochrome.png',
@@ -83,7 +83,12 @@ const config: ExpoConfig = {
     ],
   },
   web: {
-    output: 'static',
+    // 'single' (SPA) not 'static': the wallet renders client-side (localStorage,
+    // WebAuthn, secure storage) and has ~30 routes. Static output pre-renders
+    // every route on the server, which OOMs Node (4 GB heap) pulling the full
+    // stellar-sdk/WalletConnect graph per route. A client-rendered SPA is the
+    // correct model here and avoids the server-render pass entirely.
+    output: 'single',
     favicon: './assets/images/favicon.png',
   },
   plugins: [
@@ -94,9 +99,19 @@ const config: ExpoConfig = {
     [
       'expo-splash-screen',
       {
-        backgroundColor: '#208AEF',
-        image: './assets/images/splash-icon.png',
-        imageWidth: 76,
+        // Light is the base and dark is the variant, matching THEMES in
+        // lib/theme.ts. The splash is drawn natively before any JavaScript
+        // runs, so it can only follow the OS scheme (via userInterfaceStyle:
+        // 'automatic' above) — it cannot see the in-app preference. A user who
+        // pins dark inside Veil on a light phone will still get a light splash,
+        // which is the platform's behaviour and not worth fighting.
+        backgroundColor: '#FFFFFF',
+        image: './assets/images/splash-icon-light.png',
+        imageWidth: 260,
+        dark: {
+          backgroundColor: '#0F0F0F',
+          image: './assets/images/splash-icon-dark.png',
+        },
       },
     ],
     'expo-secure-store',
@@ -106,10 +121,32 @@ const config: ExpoConfig = {
         cameraPermission: 'Veil uses the camera to scan WalletConnect QR codes.',
       },
     ],
+    [
+      'expo-notifications',
+      {
+        // Use the Veil drape mark as the Android notification small icon.
+        // The icon must be a white-on-transparent single-colour image — it is,
+        // and Android tints it with `color` below.
+        //
+        // A dedicated crop rather than the adaptive-icon monochrome asset:
+        // that one centres a 404px mark in a 1024px canvas, so only 39.5% of
+        // each dimension is artwork. Android scales the whole canvas into a
+        // 24dp frame, which left the drape rendering at roughly 9dp inside the
+        // tinted circle — a speck. This asset is the identical glyph cropped
+        // to 89% of its canvas, so it fills the frame.
+        icon: './assets/images/notification-icon.png',
+        color: '#FDDA24',
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,
     reactCompiler: true,
+  },
+  extra: {
+    eas: {
+      projectId: '829ef278-f408-43ee-baf7-e0022a6e6736',
+    },
   },
 };
 

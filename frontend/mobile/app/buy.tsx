@@ -1,4 +1,3 @@
-import React from "react";
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
@@ -11,7 +10,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Stack } from "expo-router";
 import { Keypair } from '@stellar/stellar-sdk';
 
 import {
@@ -191,7 +189,6 @@ export default function BuyScreen() {
   if (step === 'success') {
     return (
       <View style={styles.container}>
-        <Stack.Screen options={{ title: "Buy", headerShown: true }} />
         <Text style={styles.title}>Deposit confirmed</Text>
         <Text style={styles.subtitle}>
           Your funds are on their way. It may take a few minutes for the balance to appear.
@@ -211,7 +208,6 @@ export default function BuyScreen() {
   if (step === 'pending') {
     return (
       <View style={styles.container}>
-        <Stack.Screen options={{ title: "Buy", headerShown: true }} />
         <Text style={styles.title}>Waiting for the anchor</Text>
         <Text style={styles.subtitle}>
           Complete the deposit in the browser window. Come back here when you&apos;re done.
@@ -234,8 +230,7 @@ export default function BuyScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Stack.Screen options={{ title: "Buy", headerShown: true }} />
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
       <Text style={styles.title}>Buy</Text>
       <Text style={styles.subtitle}>Bring fiat into your wallet through a SEP-24 anchor.</Text>
 
@@ -305,128 +300,122 @@ export default function BuyScreen() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
-    backgroundColor: '#0f172a',
+    flexGrow: 1,
+    backgroundColor: '#0B0B0F',
     padding: 24,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#f8fafc',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#94a3b8',
-    marginBottom: 32,
-    lineHeight: 22,
-  },
-  form: {
     gap: 16,
   },
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748b',
-    letterSpacing: 0.5,
-    marginBottom: 6,
+  title: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    fontWeight: '700',
   },
-  input: {
+  subtitle: {
+    color: '#9BA1A6',
+    fontSize: 15,
+  },
+  notice: {
     backgroundColor: '#1e293b',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: '#f8fafc',
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: '#334155',
+    padding: 14,
+  },
+  noticeText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  form: {
+    gap: 10,
+  },
+  label: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   row: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   rowFieldFlex: {
-    flex: 1,
+    flex: 2,
+    gap: 6,
   },
   rowFieldAsset: {
-    width: 100,
+    flex: 1,
+    gap: 6,
+  },
+  input: {
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    padding: 14,
+    color: '#f1f5f9',
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   btn: {
-    borderRadius: 12,
-    paddingVertical: 16,
+    borderRadius: 10,
+    paddingVertical: 14,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
   },
   btnPrimary: {
     backgroundColor: '#6366f1',
   },
   btnSecondary: {
     backgroundColor: '#334155',
-    marginTop: 16,
   },
   btnDisabled: {
-    opacity: 0.6,
+    opacity: 0.4,
   },
   btnText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
-  error: {
-    color: '#f87171',
-    marginTop: 16,
-    textAlign: 'center',
-  },
-  notice: {
-    backgroundColor: '#312e81',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-    borderLeftWidth: 4,
-    borderLeftColor: '#818cf8',
-  },
-  noticeText: {
-    color: '#c7d2fe',
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  rowLabel: {
-    fontSize: 12,
-    color: '#64748b',
-    marginBottom: 4,
-  },
-  rowValue: {
-    fontSize: 16,
-    color: '#f8fafc',
-    fontWeight: '500',
-  },
-  spinner: {
-    marginVertical: 24,
-  },
   linkBtn: {
-    marginTop: 16,
     alignItems: 'center',
+    paddingVertical: 8,
   },
   linkText: {
     color: '#94a3b8',
-    fontSize: 15,
+    fontSize: 14,
+  },
+  card: {
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    padding: 14,
+    gap: 4,
+  },
+  rowLabel: {
+    color: '#64748b',
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  rowValue: {
+    color: '#f1f5f9',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  spinner: {
+    marginVertical: 4,
   },
   amount: {
-    fontSize: 24,
+    color: '#a5b4fc',
+    fontFamily: 'monospace',
+    fontSize: 20,
     fontWeight: '700',
-    color: '#34d399',
-    marginVertical: 16,
-    textAlign: 'center',
+  },
+  error: {
+    color: '#f87171',
+    fontSize: 13,
+    backgroundColor: '#450a0a',
+    borderRadius: 8,
+    padding: 10,
   },
 });
-
-

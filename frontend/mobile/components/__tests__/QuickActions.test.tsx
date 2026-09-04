@@ -21,10 +21,10 @@ describe("QuickActions component definitions", () => {
     });
   });
 
-  it("provides non-empty labels, icon symbols, and accessibility labels for each action", () => {
+  it("provides non-empty labels, an icon component, and accessibility labels for each action", () => {
     QUICK_ACTIONS.forEach((action) => {
       expect(action.label.length).toBeGreaterThan(0);
-      expect(action.iconSymbol.length).toBeGreaterThan(0);
+      expect(typeof action.Icon).toBe("function");
       expect(action.accessibilityLabel.length).toBeGreaterThan(0);
     });
   });

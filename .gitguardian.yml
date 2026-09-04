@@ -3,7 +3,7 @@
 
 matches:
   - name: Testnet Contract ID
-    match: CAGFEJM4FBYZMMZ364MINCEZO6MT7U7VMJSXQLR6UDYT7ICDLJUXWJIR
+    match: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
     reason: Public testnet contract address (NEXT_PUBLIC_FACTORY_CONTRACT_ID)
     ignore_on:
       - path: .github/workflows/ci.yml

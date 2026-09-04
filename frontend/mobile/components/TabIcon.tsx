@@ -1,38 +1,23 @@
-import { Text, type ColorValue } from 'react-native';
-import { colors } from './ScreenScaffold';
+import type { ColorValue } from 'react-native';
+
+import { HomeIcon, ReceiveIcon, SendIcon, SettingsIcon, type IconProps } from './icons';
 
 /**
- * Tab bar icon set built from Unicode glyphs.
- *
- * The mobile app doesn't depend on react-native-svg or any icon library yet,
- * so we use cross-platform Unicode symbols from the Geometric Shapes and
- * Miscellaneous Symbols blocks. Glyphs (not emoji) are picked so rendering
- * stays consistent across iOS, Android, and web.
+ * Tab-bar icons, drawn with `react-native-svg` to match the redesign artboard's
+ * line-icon set (replacing the earlier Unicode glyphs). The tab navigator passes
+ * the focused/unfocused colour, so the icon just renders in that colour.
  */
 
 export type TabIconName = 'dashboard' | 'send' | 'receive' | 'settings';
 
-const GLYPHS: Record<TabIconName, string> = {
-  dashboard: '⊞', // grid
-  send: '↑',      // up arrow
-  receive: '↓',   // down arrow
-  settings: '⚙',  // gear (miscellaneous symbol, non-emoji variant)
+const ICONS: Record<TabIconName, (props: IconProps) => React.JSX.Element> = {
+  dashboard: HomeIcon,
+  send: SendIcon,
+  receive: ReceiveIcon,
+  settings: SettingsIcon,
 };
 
 export function TabIcon({ name, color }: { name: TabIconName; color: ColorValue }) {
-  return (
-    <Text
-      accessibilityElementsHidden
-      importantForAccessibility="no"
-      style={{
-        color,
-        fontSize: 22,
-        lineHeight: 24,
-        // Match the focused / unfocused tone used by the tab bar
-        opacity: color === colors.gold ? 1 : 0.85,
-      }}
-    >
-      {GLYPHS[name]}
-    </Text>
-  );
+  const Icon = ICONS[name];
+  return <Icon size={22} color={String(color)} />;
 }

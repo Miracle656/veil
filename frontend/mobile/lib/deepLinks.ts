@@ -23,7 +23,7 @@
 export const DEEP_LINK_SCHEME = 'veil';
 
 /** Hosts whose `https://` links are claimed as universal / app links. */
-export const ASSOCIATED_DOMAINS = ['app.veil.xyz'] as const;
+export const ASSOCIATED_DOMAINS = ['app.useveilapp.xyz'] as const;
 
 /** SEP-7 URI scheme, without the trailing colon. */
 export const SEP7_SCHEME = 'web+stellar';

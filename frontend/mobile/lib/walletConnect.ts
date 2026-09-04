@@ -1,3 +1,4 @@
+import { errorMessage } from './errorMessage';
 import './polyfills';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -21,6 +22,7 @@ import { Buffer } from 'buffer';
 import * as Crypto from 'expo-crypto';
 
 import { getNetwork } from './network';
+import { inclusionFee } from './fees';
 import {
   WALLET_CONNECT_EVENTS,
   WALLET_CONNECT_METHODS,
@@ -201,27 +203,51 @@ function getRpcServer(): SorobanRpc.Server {
 async function getWalletNonce(
   rpc: SorobanRpc.Server,
   contractAddress: string,
-  networkPassphrase: string
+  networkPassphrase: string,
+  sourceAccountId?: string,
 ): Promise<bigint | null> {
   try {
-    const dummyKeypair = Keypair.random();
-    const dummyAccount = new Account(dummyKeypair.publicKey(), '0');
-    const probeTx = new TransactionBuilder(dummyAccount, {
-      fee: BASE_FEE,
+    // Simulate from a REAL account when one is known: some mainnet RPC
+    // providers reject simulations sourced from non-existent accounts, which
+    // made this probe fail deterministically (SDF's testnet RPC tolerates it).
+    const probeSource = new Account(sourceAccountId ?? Keypair.random().publicKey(), '0');
+    const probeTx = new TransactionBuilder(probeSource, {
+      fee: inclusionFee(),
       networkPassphrase,
     })
       .addOperation(new Contract(contractAddress).call('get_nonce'))
       .setTimeout(30)
       .build();
 
-    const sim = await rpc.simulateTransaction(probeTx);
-    if (SorobanRpc.Api.isSimulationError(sim)) return null;
-
-    const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
-    if (!result?.retval) return null;
-    return scValToNative(result.retval) as bigint;
-  } catch {
-    return null;
+    // Returning null means "legacy wallet without get_nonce → omit the nonce
+    // from the signature vec". A TRANSIENT failure must never take that branch:
+    // the contract then rejects the 4-element vec as InvalidSignatureFormat
+    // (#2) — which is exactly what happened on the first mainnet spend, right
+    // after the fresh deploy. Retry, and only treat a definitive
+    // missing-function error as legacy.
+    let lastError = '';
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const sim = await rpc.simulateTransaction(probeTx);
+        if (!SorobanRpc.Api.isSimulationError(sim)) {
+          const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+          if (!result?.retval) return 0n; // successful call, no value → fresh wallet
+          return scValToNative(result.retval) as bigint;
+        }
+        lastError = sim.error;
+        if (/MissingValue|not found|does not exist|no such|UnexpectedType|Symbol/i.test(lastError)) {
+          return null; // genuinely no get_nonce → legacy signature format
+        }
+      } catch (err) {
+        // Network-level flake (mobile data drops calls mid-burst) — retry too.
+        lastError = errorMessage(err);
+      }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    throw new Error(`Could not read the wallet nonce (needed to sign) after retries: ${lastError.slice(0, 140)}`);
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('Could not read the wallet nonce')) throw err;
+    throw new Error('Could not reach the network to read the wallet nonce. Check your connection and try again.');
   }
 }
 
@@ -242,7 +268,7 @@ async function signAuthEntry(payloadHash: Uint8Array): Promise<WebAuthnSignature
  * footprint covers the wallet contract storage that `__check_auth` reads, then
  * assemble and sign with the fee payer.
  */
-async function signXdrPayload(xdrString: string): Promise<string> {
+export async function signXdrPayload(xdrString: string): Promise<string> {
   const network = getNetwork();
   const rpc = getRpcServer();
   const feePayerKeypair = await getFeePayerKeypair();
@@ -278,7 +304,7 @@ async function signXdrPayload(xdrString: string): Promise<string> {
 
       const addressCredentials = credentials.address();
       const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
-      const currentNonce = await getWalletNonce(rpc, contractAddress, network.networkPassphrase);
+      const currentNonce = await getWalletNonce(rpc, contractAddress, network.networkPassphrase, feePayerKeypair.publicKey());
 
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
@@ -321,7 +347,7 @@ async function signXdrPayload(xdrString: string): Promise<string> {
   const invokeOp = tx.operations[0] as Operation.InvokeHostFunction;
   const feePayerAccount = await rpc.getAccount(feePayerKeypair.publicKey());
   const signedTx = new TransactionBuilder(feePayerAccount, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(
@@ -396,7 +422,7 @@ export async function approveWalletConnectRequest(request: WalletConnectRequest)
     const reason = isUserRejection(error) ? getSdkError('USER_REJECTED') : null;
     const response = reason
       ? buildWcError(id, reason.code, reason.message)
-      : buildWcError(id, 5000, error instanceof Error ? error.message : String(error));
+      : buildWcError(id, 5000, errorMessage(error));
 
     await client.respondSessionRequest({ topic, response }).catch(() => {});
     removePendingRequest(id, topic);

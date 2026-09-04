@@ -1,6 +1,7 @@
-import { ReactNode } from 'react';
+import { ReactElement, ReactNode, useMemo } from 'react';
 import {
   Pressable,
+  RefreshControlProps,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,8 +10,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, type Href } from 'expo-router';
 
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
 
-// ── Design tokens (match web wallet dark theme) ───────────────────────────
+// ── Design tokens (legacy static export kept for back-compat) ─────────────
+// Prefer `useTheme()` in new code; the scaffold itself is now theme-aware.
 export const colors = {
   bg: '#0B0B0F',
   surface: '#15161B',
@@ -42,6 +46,10 @@ export type ScreenScaffoldProps = {
   children?: ReactNode;
   /** When true, content scrolls; defaults to true */
   scrollable?: boolean;
+  /** Forwarded to the root view so e2e flows can identify the screen. */
+  testID?: string;
+  /** Optional refresh control for pull-to-refresh. */
+  refreshControl?: ReactElement<RefreshControlProps>;
 };
 
 // ── Scaffold ────────────────────────────────────────────────────────────
@@ -55,8 +63,12 @@ export function ScreenScaffold({
   hideBack = false,
   children,
   scrollable = true,
+  testID,
+  refreshControl,
 }: ScreenScaffoldProps) {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const handleBack = () => {
     if (backHref) {
@@ -77,7 +89,7 @@ export function ScreenScaffold({
   );
 
   return (
-    <SafeAreaView style={styles.root} edges={['top']}>
+    <SafeAreaView style={styles.root} edges={['top']} testID={testID}>
       <View style={styles.header}>
         {hideBack ? (
           <View style={styles.headerSide} />
@@ -102,6 +114,7 @@ export function ScreenScaffold({
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          refreshControl={refreshControl}
         >
           <View style={styles.body}>{ContentInner}</View>
         </ScrollView>
@@ -114,6 +127,8 @@ export function ScreenScaffold({
 
 // ── Coming-soon badge ────────────────────────────────────────────────────
 export function ComingSoonBadge({ note }: { note?: string }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.comingSoon}>
       <Text style={styles.comingSoonDot}>•</Text>
@@ -134,6 +149,8 @@ export function NavRow({
   hint?: string;
 }) {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <Pressable
       accessibilityRole="link"
@@ -148,128 +165,129 @@ export function NavRow({
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  headerSide: {
-    minWidth: 72,
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 4,
-    minWidth: 72,
-  },
-  backChevron: {
-    color: colors.offWhite,
-    fontSize: 18,
-    marginTop: -2,
-  },
-  backLabel: {
-    color: colors.offWhite,
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  logo: {
-    color: colors.gold,
-    fontSize: 18,
-    fontWeight: '900',
-    letterSpacing: 2,
-  },
-  pressed: { opacity: 0.6 },
-  scroll: { flex: 1 },
-  scrollContent: { flexGrow: 1, paddingBottom: 32 },
-  body: {
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    gap: 12,
-  },
-  eyebrow: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.6,
-    textTransform: 'uppercase',
-  },
-  title: {
-    color: colors.offWhite,
-    fontSize: 30,
-    fontWeight: '700',
-    letterSpacing: -0.4,
-  },
-  description: {
-    color: colors.muted,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  comingSoon: {
-    marginTop: 24,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    alignSelf: 'flex-start',
-  },
-  comingSoonDot: {
-    color: colors.gold,
-    fontSize: 22,
-    marginTop: -4,
-  },
-  comingSoonLabel: {
-    color: colors.gold,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-  },
-  comingSoonNote: {
-    color: colors.muted,
-    fontSize: 12,
-  },
-  navRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 12,
-  },
-  navRowPressed: { opacity: 0.7 },
-  navRowLabel: {
-    color: colors.offWhite,
-    fontSize: 15,
-    fontWeight: '600',
-    flex: 1,
-  },
-  navRowHint: {
-    color: colors.muted,
-    fontSize: 12,
-    maxWidth: 180,
-    textAlign: 'right',
-  },
-  navRowChevron: {
-    color: colors.muted,
-    fontSize: 22,
-    lineHeight: 22,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    root: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+    },
+    headerSide: {
+      minWidth: 72,
+    },
+    backButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 4,
+      minWidth: 72,
+    },
+    backChevron: {
+      color: colors.textPrimary,
+      fontSize: 18,
+      marginTop: -2,
+    },
+    backLabel: {
+      color: colors.textPrimary,
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    logo: {
+      color: colors.accent,
+      fontSize: 18,
+      fontWeight: '900',
+      letterSpacing: 2,
+    },
+    pressed: { opacity: 0.6 },
+    scroll: { flex: 1 },
+    scrollContent: { flexGrow: 1, paddingBottom: 32 },
+    body: {
+      paddingHorizontal: 24,
+      paddingTop: 20,
+      gap: 12,
+    },
+    eyebrow: {
+      color: colors.textMuted,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 30,
+      fontWeight: '700',
+      letterSpacing: -0.4,
+    },
+    description: {
+      color: colors.textMuted,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    comingSoon: {
+      marginTop: 24,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 999,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      alignSelf: 'flex-start',
+    },
+    comingSoonDot: {
+      color: colors.accent,
+      fontSize: 22,
+      marginTop: -4,
+    },
+    comingSoonLabel: {
+      color: colors.accent,
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+    },
+    comingSoonNote: {
+      color: colors.textMuted,
+      fontSize: 12,
+    },
+    navRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 12,
+    },
+    navRowPressed: { opacity: 0.7 },
+    navRowLabel: {
+      color: colors.textPrimary,
+      fontSize: 15,
+      fontWeight: '600',
+      flex: 1,
+    },
+    navRowHint: {
+      color: colors.textMuted,
+      fontSize: 12,
+      maxWidth: 180,
+      textAlign: 'right',
+    },
+    navRowChevron: {
+      color: colors.textMuted,
+      fontSize: 22,
+      lineHeight: 22,
+    },
+  });

@@ -16,7 +16,7 @@ export default function NetworkScreen() {
   const missing = describeMissingConfig(network);
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
       <Text style={styles.title}>Network</Text>
       <Text style={styles.subtitle}>
         Choose which Stellar network this app talks to. The choice is remembered across restarts.

@@ -23,8 +23,17 @@ frontend/mobile/.expo/
 frontend/mobile/ios/
 frontend/mobile/android/
 
+# Coverage reports
+sdk/coverage/
+frontend/wallet/coverage/
+
 # Misc
 *.env
 .DS_Store
 build_error.txt
 TODO.md
+
+# Throwaway SEP-10/SEP-45 probe scripts
+frontend/wallet/__sep*probe*.mjs
+frontend/wallet/__sep45probe.mjs
+frontend/wallet/__shot.mjs

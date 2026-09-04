@@ -2,148 +2,273 @@
 
 import {
   FIXTURE_NFTS,
+  IndexerNotConfiguredError,
+  currentHoldings,
   fetchWalletNFTs,
   formatTokenId,
   truncateAddress,
-  NFTItem,
+  type NFTItem,
 } from '../nfts'
 
-describe('Soroban CAP-46 NFT Module', () => {
-  describe('FIXTURE_NFTS', () => {
-    it('contains at least one fixture NFT', () => {
-      expect(FIXTURE_NFTS.length).toBeGreaterThanOrEqual(1)
-    })
+const WALLET = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWLT'
+const OTHER  = 'GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBOTHR'
+const NFT_C  = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANFT'
 
-    it('each fixture has required CAP-46 fields (name, image, attributes, standard)', () => {
-      for (const item of FIXTURE_NFTS) {
-        expect(item.name).toBeTruthy()
-        expect(item.image).toBeTruthy()
-        expect(item.standard).toBe('CAP-46')
-        expect(Array.isArray(item.attributes)).toBe(true)
-        expect(item.attributes.length).toBeGreaterThan(0)
-        expect(item.isFixture).toBe(true)
-      }
-    })
-  })
+function transfer(over: Partial<Record<string, unknown>> = {}) {
+  return {
+    id: 1,
+    contractId: NFT_C,
+    tokenId: '1',
+    fromAddress: null,
+    toAddress: WALLET,
+    ledger: 100,
+    ledgerClosedAt: '2026-01-01T00:00:00Z',
+    txHash: 'abc123',
+    ...over,
+  } as never
+}
 
+/** Routes a mocked fetch by URL path, so one test can serve both endpoints. */
+function mockIndexer(routes: Record<string, unknown>, opts: { fail?: number } = {}) {
+  return jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    if (opts.fail) {
+      return { ok: false, status: opts.fail, statusText: 'Server Error' } as Response
+    }
+    const key = Object.keys(routes).find((k) => url.includes(k))
+    if (!key) return { ok: false, status: 404, statusText: 'Not Found' } as Response
+    return { ok: true, json: async () => routes[key] } as Response
+  }) as unknown as typeof fetch
+}
+
+const BASE = { wraithUrl: 'https://indexer.test', network: 'testnet' as const }
+
+describe('nfts', () => {
   describe('truncateAddress', () => {
-    it('truncates a long Soroban contract address correctly', () => {
-      const address = 'CBY3K4GENESISCAP46NFTX7V2QZP3M9L0K8J1H5G2F4D6S8A'
-      const truncated = truncateAddress(address, 6, 6)
-      expect(truncated).toBe('CBY3K4…4D6S8A')
+    it('elides the middle of a contract address', () => {
+      expect(truncateAddress(NFT_C, 6, 6)).toBe('CAAAAA…AAANFT')
     })
 
-    it('returns short addresses unchanged', () => {
+    it('leaves an address shorter than the elision alone', () => {
       expect(truncateAddress('C123')).toBe('C123')
       expect(truncateAddress('')).toBe('')
     })
   })
 
   describe('formatTokenId', () => {
-    it('formats numeric token IDs with leading hash', () => {
-      expect(formatTokenId(1)).toBe('#1')
+    it('prefixes a bare id', () => {
       expect(formatTokenId(42)).toBe('#42')
+      expect(formatTokenId('777')).toBe('#777')
     })
 
-    it('handles string token IDs correctly', () => {
-      expect(formatTokenId('777')).toBe('#777')
+    it('does not double an existing prefix', () => {
       expect(formatTokenId('#100')).toBe('#100')
     })
   })
 
+  describe('currentHoldings', () => {
+    it('keeps a token whose latest transfer landed in the wallet', () => {
+      const held = currentHoldings([transfer()], WALLET)
+      expect(held).toHaveLength(1)
+      expect(held[0].tokenId).toBe('1')
+    })
+
+    it('drops a token that was later sent away', () => {
+      // Received at ledger 100, sent on at ledger 200. The wallet appears in
+      // both rows, which is exactly why a raw transfer feed cannot be read as
+      // a holdings list.
+      const held = currentHoldings(
+        [
+          transfer({ id: 1, ledger: 100, toAddress: WALLET }),
+          transfer({ id: 2, ledger: 200, fromAddress: WALLET, toAddress: OTHER }),
+        ],
+        WALLET,
+      )
+      expect(held).toEqual([])
+    })
+
+    it('keeps a token that came back', () => {
+      const held = currentHoldings(
+        [
+          transfer({ id: 1, ledger: 100, toAddress: WALLET }),
+          transfer({ id: 2, ledger: 200, fromAddress: WALLET, toAddress: OTHER }),
+          transfer({ id: 3, ledger: 300, fromAddress: OTHER, toAddress: WALLET }),
+        ],
+        WALLET,
+      )
+      expect(held).toHaveLength(1)
+    })
+
+    it('breaks a same-ledger tie by row id', () => {
+      const held = currentHoldings(
+        [
+          transfer({ id: 9, ledger: 100, fromAddress: WALLET, toAddress: OTHER }),
+          transfer({ id: 4, ledger: 100, toAddress: WALLET }),
+        ],
+        WALLET,
+      )
+      expect(held).toEqual([])
+    })
+
+    it('tracks tokens from one contract independently', () => {
+      const held = currentHoldings(
+        [
+          transfer({ id: 1, tokenId: '1', toAddress: WALLET }),
+          transfer({ id: 2, tokenId: '2', ledger: 200, fromAddress: WALLET, toAddress: OTHER }),
+          transfer({ id: 3, tokenId: '2', ledger: 100, toAddress: WALLET }),
+        ],
+        WALLET,
+      )
+      expect(held.map((t) => t.tokenId)).toEqual(['1'])
+    })
+
+    it('returns nothing for a wallet that appears only as a sender', () => {
+      expect(currentHoldings([transfer({ fromAddress: WALLET, toAddress: OTHER })], WALLET)).toEqual([])
+    })
+  })
+
   describe('fetchWalletNFTs', () => {
-    it('throws error when indexer fetch fails and fixtures are not enabled', async () => {
-      const originalFetch = global.fetch
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-      } as Response)
-
+    it('reports a missing indexer distinctly from an empty wallet', async () => {
       await expect(
-        fetchWalletNFTs('GTESTWALLETADDRESS12345', { includeFixtures: false })
-      ).rejects.toThrow('Indexer HTTP 500: Internal Server Error')
-
-      global.fetch = originalFetch
+        fetchWalletNFTs(WALLET, { wraithUrl: undefined, network: 'testnet', fetchImpl: mockIndexer({}) }),
+      ).rejects.toBeInstanceOf(IndexerNotConfiguredError)
     })
 
-    it('returns fixture NFTs when includeFixtures is explicitly true', async () => {
-      const originalFetch = global.fetch
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        json: async () => [],
-      } as Response)
-
-      const nfts = await fetchWalletNFTs('GTESTWALLETADDRESS12345', { includeFixtures: true })
-      expect(nfts.length).toBeGreaterThanOrEqual(1)
-      expect(nfts.some((n: NFTItem) => n.isFixture)).toBe(true)
-
-      global.fetch = originalFetch
+    it('propagates an indexer failure rather than returning empty', async () => {
+      await expect(
+        fetchWalletNFTs(WALLET, { ...BASE, fetchImpl: mockIndexer({}, { fail: 500 }) }),
+      ).rejects.toThrow('Indexer returned HTTP 500')
     })
 
-    it('never overwrites fixture owner with connected wallet address', async () => {
-      const originalFetch = global.fetch
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        json: async () => [],
-      } as Response)
-
-      const connectedWallet = 'GCONNECTED_WALLET_ADDRESS_999'
-      const nfts = await fetchWalletNFTs(connectedWallet, { includeFixtures: true })
-      const fixture = nfts.find(n => n.id === FIXTURE_NFTS[0].id)
-      expect(fixture?.owner).toBe(FIXTURE_NFTS[0].owner)
-      expect(fixture?.owner).not.toBe(connectedWallet)
-
-      global.fetch = originalFetch
-    })
-
-    it('filters CAP-46 transfers when Wraith responds with token transfers', async () => {
-      const mockTransfers = [
-        {
-          id: 101,
-          contractId: 'CCAP46CONTRACTADDRESS12345',
-          tokenId: '888',
-          name: 'Test On-Chain CAP-46 NFT',
-          standard: 'CAP-46',
-          image: 'https://example.com/nft.png',
-          attributes: [{ trait_type: 'Rarity', value: 'Epic' }],
-          owner: 'GTESTWALLETADDRESS12345',
-        },
-        {
-          id: 102,
-          contractId: 'CSACCONTRACTNONNFT',
-          amount: '1000',
-          type: 'sac_transfer',
-        },
-      ]
-
-      const originalFetch = global.fetch
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        json: async () => mockTransfers,
-      } as Response)
-
-      const nfts = await fetchWalletNFTs('GTESTWALLETADDRESS12345', { includeFixtures: false })
-      expect(nfts.length).toBe(1)
-      expect(nfts[0].name).toBe('Test On-Chain CAP-46 NFT')
-      expect(nfts[0].standard).toBe('CAP-46')
-      expect(nfts[0].tokenId).toBe('888')
-      expect(nfts[0].owner).toBe('GTESTWALLETADDRESS12345')
-
-      global.fetch = originalFetch
-    })
-
-    it('returns empty list if includeFixtures is false and no on-chain NFTs exist (Empty State test)', async () => {
-      const originalFetch = global.fetch
-      global.fetch = jest.fn().mockResolvedValue({
-        ok: true,
-        json: async () => [],
-      } as Response)
-
-      const nfts = await fetchWalletNFTs('GTESTWALLETADDRESS12345', { includeFixtures: false })
+    it('returns an empty list when the wallet holds nothing', async () => {
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: false,
+        fetchImpl: mockIndexer({ '/nfts/transfers': { transfers: [] } }),
+      })
       expect(nfts).toEqual([])
+    })
 
-      global.fetch = originalFetch
+    it('builds an item from a held token and its metadata', async () => {
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: false,
+        fetchImpl: mockIndexer({
+          '/nfts/transfers': { transfers: [transfer({ tokenId: '888' })] },
+          '/nfts/owners':    { owner: WALLET, metadata: { name: 'Indexed Name', tokenUri: 'https://meta.test/888' } },
+          'meta.test':       { name: 'Metadata Name', image: 'https://img.test/888.png', attributes: [{ trait_type: 'Rarity', value: 'Epic' }] },
+        }),
+      })
+
+      expect(nfts).toHaveLength(1)
+      expect(nfts[0]).toMatchObject({
+        id: `${NFT_C}:888`,
+        tokenId: '888',
+        name: 'Metadata Name',
+        image: 'https://img.test/888.png',
+        owner: WALLET,
+        standard: 'CAP-46',
+        isFixture: false,
+        txHash: 'abc123',
+      })
+      expect(nfts[0].attributes).toEqual([{ trait_type: 'Rarity', value: 'Epic' }])
+    })
+
+    it('drops a token the indexer says belongs to someone else', async () => {
+      // The transfer feed can lag the owner index; the owner index wins.
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: false,
+        fetchImpl: mockIndexer({
+          '/nfts/transfers': { transfers: [transfer()] },
+          '/nfts/owners':    { owner: OTHER, metadata: null },
+        }),
+      })
+      expect(nfts).toEqual([])
+    })
+
+    it('renders a token whose metadata is unreachable, without inventing any', async () => {
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: false,
+        fetchImpl: mockIndexer({
+          '/nfts/transfers': { transfers: [transfer({ tokenId: '5' })] },
+          '/nfts/owners':    { owner: WALLET, metadata: { name: null, tokenUri: 'https://dead.example/5' } },
+        }),
+      })
+
+      expect(nfts).toHaveLength(1)
+      expect(nfts[0].image).toBeNull()
+      expect(nfts[0].description).toBeUndefined()
+      expect(nfts[0].attributes).toEqual([])
+      // Falls back to an identifier that is true, rather than a placeholder title.
+      expect(nfts[0].name).toBe('CAAAAA…AAANFT #5')
+    })
+
+    it('resolves an ipfs:// image through a gateway', async () => {
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: false,
+        fetchImpl: mockIndexer({
+          '/nfts/transfers': { transfers: [transfer()] },
+          '/nfts/owners':    { owner: WALLET, metadata: { name: 'X', tokenUri: 'ipfs://QmMeta' } },
+          'ipfs.io':         { name: 'X', image: 'ipfs://QmImage' },
+        }),
+      })
+      expect(nfts[0].image).toBe('https://ipfs.io/ipfs/QmImage')
+    })
+
+    it('paginates until the feed is exhausted', async () => {
+      const page1 = Array.from({ length: 200 }, (_, i) => transfer({ id: i + 1, tokenId: String(i + 1) }))
+      const page2 = [transfer({ id: 201, tokenId: '201' })]
+      let call = 0
+
+      const fetchImpl = jest.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/nfts/transfers')) {
+          return { ok: true, json: async () => ({ transfers: call++ === 0 ? page1 : page2 }) } as Response
+        }
+        return { ok: true, json: async () => ({ owner: WALLET, metadata: null }) } as Response
+      }) as unknown as typeof fetch
+
+      const nfts = await fetchWalletNFTs(WALLET, { ...BASE, includeFixtures: false, fetchImpl })
+      expect(nfts).toHaveLength(201)
+    })
+
+    it('omits fixtures unless asked', async () => {
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: false,
+        fetchImpl: mockIndexer({ '/nfts/transfers': { transfers: [] } }),
+      })
+      expect(nfts.some((n: NFTItem) => n.isFixture)).toBe(false)
+    })
+
+    it('includes fixtures when explicitly opted in', async () => {
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: true,
+        fetchImpl: mockIndexer({ '/nfts/transfers': { transfers: [] } }),
+      })
+      expect(nfts).toHaveLength(FIXTURE_NFTS.length)
+      expect(nfts.every((n) => n.isFixture)).toBe(true)
+    })
+
+    it('never presents fixtures as belonging to the connected wallet', async () => {
+      const nfts = await fetchWalletNFTs(WALLET, {
+        ...BASE,
+        includeFixtures: true,
+        fetchImpl: mockIndexer({ '/nfts/transfers': { transfers: [] } }),
+      })
+      for (const fixture of nfts) expect(fixture.owner).not.toBe(WALLET)
+    })
+
+    it('does not fall back to fixtures when the indexer fails', async () => {
+      // The failure mode that matters: a gallery that invents holdings when the
+      // network is down tells the user something false about their own wallet.
+      await expect(
+        fetchWalletNFTs(WALLET, { ...BASE, includeFixtures: true, fetchImpl: mockIndexer({}, { fail: 503 }) }),
+      ).rejects.toThrow('Indexer returned HTTP 503')
     })
   })
 })

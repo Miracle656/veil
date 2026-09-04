@@ -4,13 +4,18 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 import {
   fetchWalletNFTs,
   formatTokenId,
   truncateAddress,
   FIXTURE_NFTS,
+  IndexerNotConfiguredError,
   type NFTItem,
 } from '@/lib/nfts'
+
+/** State simulators help while building the gallery; users should never see them. */
+const IS_DEV = process.env.NODE_ENV !== 'production'
 
 export default function NFTGalleryPage() {
   const router = useRouter()
@@ -20,6 +25,9 @@ export default function NFTGalleryPage() {
   const [nfts, setNfts] = useState<NFTItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // A missing indexer and an unreachable one need different words and a
+  // different button: retrying a URL that was never set will never succeed.
+  const [errorKind, setErrorKind] = useState<'unconfigured' | 'fetch'>('fetch')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState<'all' | 'fixtures' | 'onchain'>('all')
   const [simulateEmpty, setSimulateEmpty] = useState(false)
@@ -31,9 +39,11 @@ export default function NFTGalleryPage() {
 
   // Load wallet session
   useEffect(() => {
+    // Namespaced per network: testnet and mainnet must not read each other's
+    // wallet, which raw localStorage would let them do.
     const stored =
-      sessionStorage.getItem('invisible_wallet_address') ||
-      localStorage.getItem('invisible_wallet_address')
+      walletSession.getItem('invisible_wallet_address') ||
+      walletLocal.getItem('invisible_wallet_address')
     if (stored) {
       setWalletAddress(stored)
     }
@@ -43,6 +53,7 @@ export default function NFTGalleryPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
+    setErrorKind('fetch')
     try {
       if (simulateError) {
         throw new Error('Wraith Indexer API request failed (503 Service Unavailable)')
@@ -53,8 +64,9 @@ export default function NFTGalleryPage() {
       }
       const items = await fetchWalletNFTs(walletAddress)
       setNfts(items)
-    } catch (err: any) {
-      setError(err.message || 'Failed to query CAP-46 token balances from Wraith indexer.')
+    } catch (err: unknown) {
+      if (err instanceof IndexerNotConfiguredError) setErrorKind('unconfigured')
+      setError(err instanceof Error ? err.message : 'Failed to query CAP-46 token balances from Wraith indexer.')
       setNfts([])
     } finally {
       setLoading(false)
@@ -85,7 +97,7 @@ export default function NFTGalleryPage() {
       if (!searchQuery.trim()) return true
       const q = searchQuery.toLowerCase().trim()
       const matchName = nft.name.toLowerCase().includes(q)
-      const matchSymbol = nft.symbol.toLowerCase().includes(q)
+      const matchSymbol = (nft.symbol || '').toLowerCase().includes(q)
       const matchCollection = (nft.collectionName || '').toLowerCase().includes(q)
       const matchContract = nft.contractId.toLowerCase().includes(q)
       const matchTokenId = String(nft.tokenId).toLowerCase().includes(q)
@@ -158,9 +170,9 @@ export default function NFTGalleryPage() {
             </p>
           </div>
 
-          {/* Quick controls for testing */}
+          {/* Retry, plus state simulators that exist only in development. */}
           <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <button
+            {IS_DEV && <button
               onClick={() => {
                 const nextState = !simulateError
                 setSimulateError(nextState)
@@ -180,8 +192,8 @@ export default function NFTGalleryPage() {
               title="Toggle error state for testing AC"
             >
               {simulateError ? '⚠ Error Mode Active' : 'Simulate Error State'}
-            </button>
-            <button
+            </button>}
+            {IS_DEV && <button
               onClick={() => {
                 const nextState = !simulateEmpty
                 setSimulateEmpty(nextState)
@@ -201,7 +213,7 @@ export default function NFTGalleryPage() {
               title="Toggle empty state mode for testing"
             >
               {simulateEmpty ? '✦ Empty Mode Active' : 'Simulate Empty State'}
-            </button>
+            </button>}
             <button
               onClick={loadData}
               disabled={loading}
@@ -334,13 +346,13 @@ export default function NFTGalleryPage() {
               </svg>
             </div>
             <h3 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontSize: '1.375rem', marginBottom: '0.5rem', color: '#FCA5A5' }}>
-              Unable to Fetch CAP-46 NFTs
+              {errorKind === 'unconfigured' ? 'No NFT indexer configured' : 'Unable to Fetch CAP-46 NFTs'}
             </h3>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.75rem', lineHeight: 1.6 }}>
               {error}
             </p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-              <button
+              {errorKind === 'fetch' && <button
                 onClick={() => {
                   setSimulateError(false)
                   loadData()
@@ -364,11 +376,10 @@ export default function NFTGalleryPage() {
                   <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
                 </svg>
                 Retry Fetching
-              </button>
+              </button>}
             </div>
           </div>
         ) : filteredNFTs.length === 0 ? (
-          /* ── Empty State ── */
           /* ── Empty State ── */
           <div
             style={{
@@ -463,7 +474,7 @@ export default function NFTGalleryPage() {
               >
                 {/* Image Media Box */}
                 <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1', background: 'rgba(255,255,255,0.02)', overflow: 'hidden' }}>
-                  {!failedImages[nft.id] ? (
+                  {nft.image && !failedImages[nft.id] ? (
                     <Image
                       src={nft.image}
                       alt={nft.name}
@@ -605,13 +616,24 @@ export default function NFTGalleryPage() {
               {/* Media Preview */}
               <div>
                 <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border-dim)' }}>
-                  <Image
-                    src={selectedNFT.image}
-                    alt={selectedNFT.name}
-                    fill
-                    unoptimized
-                    style={{ objectFit: 'cover' }}
-                  />
+                  {selectedNFT.image ? (
+                    <Image
+                      src={selectedNFT.image}
+                      alt={selectedNFT.name}
+                      fill
+                      unoptimized
+                      style={{ objectFit: 'cover' }}
+                    />
+                  ) : (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', background: 'var(--surface-md)', padding: '1rem', textAlign: 'center' }}>
+                      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="1.5">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                      <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                        This token publishes no image.
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -668,7 +690,7 @@ export default function NFTGalleryPage() {
 
                   {showRawJson && (
                     <pre style={{ background: '#000', padding: '1rem', borderRadius: '8px', fontSize: '0.75rem', color: '#00FFC8', overflowX: 'auto', maxHeight: '150px', marginBottom: '1rem', border: '1px solid var(--border-dim)' }}>
-                      {JSON.stringify(selectedNFT.rawMetadata || selectedNFT, null, 2)}
+                      {JSON.stringify(selectedNFT, null, 2)}
                     </pre>
                   )}
 

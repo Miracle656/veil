@@ -98,6 +98,78 @@ outbox, so a reply interrupted by a drop is gone, and the screen says so instead
 of spinning forever. Every external dependency (socket constructor, timers,
 jitter) is injectable, which is how the reconnect paths are tested.
 
+## Recovery (SEP-30)
+
+`/recover` is the way back in after losing the device that held the wallet's
+passkey. There is no seed phrase, so nothing on a new device can authorize a
+signer change on its own — the SEP-30 recovery servers registered while the wallet
+was healthy do it instead:
+
+```bash
+# frontend/mobile/.env.local
+EXPO_PUBLIC_RECOVERY_SERVERS=https://recovery.example.com,https://recovery2.example.com
+EXPO_PUBLIC_RECOVERY_KEY_ADDRESS=G...   # only for the multi-server case, see below
+```
+
+The screen walks four steps: confirm the wallet address (read on-chain, so a wrong
+address fails immediately), contact each recovery server, create a fresh passkey on
+this device, and finalize once the contract's timelock expires.
+
+On-chain this is the wallet contract's two-step rotation. `request_recovery` is
+authorized by the wallet's recovery-key address and starts a 7-day timelock;
+`finalize_recovery` is permissionless afterwards and installs the new signer. Both
+transactions are sourced from the recovery-key address, so the servers' envelope
+signatures are what satisfy the contract's `require_auth`. With one server that
+address is simply the signer it contributes, discovered from the server itself;
+with several it is the multisig account they are all signers on, which
+`EXPO_PUBLIC_RECOVERY_KEY_ADDRESS` names.
+
+The wait is the safety property, not an inconvenience: it is the window in which an
+owner who still holds their key can cancel a recovery they did not start. The
+pending recovery — including the new credential — is persisted to `AsyncStorage`
+so the user can close the app and come back, and the new passkey is only written to
+the keychain as this device's wallet credential after the contract confirms the
+rotation.
+
+SEP-10 authentication is out of scope here, as it is in `sdk/src/recovery`: each
+server's session token is pasted into the screen and kept in memory only.
+## Agent
+
+`/agent` is the chat surface for the Claude-powered agent in `packages/agent`. Point
+it at the service before running:
+
+```bash
+# frontend/mobile/.env.local
+EXPO_PUBLIC_AGENT_WS_URL=ws://localhost:3001
+```
+
+The agent can read, explain, and propose — it cannot move funds. Each message type
+renders differently: prose from the agent (with `**bold**` and `` `code` `` shown as
+styled text, never as interpreted markup), the user's own messages, service errors,
+app notices, and transaction proposals.
+
+A proposal is decoded from its XDR here, so the amounts and destinations on screen
+come from the transaction itself; the agent's own summary is shown beneath them,
+labelled as the agent's words. An operation the app cannot describe is called out
+rather than passed over, and a proposal whose XDR will not decode cannot be
+approved at all.
+
+Approving requires the device passkey. The prompt is over the transaction's own
+hash, so the biometric is bound to the transaction being approved; only after it
+clears is the fee-payer key read from the keychain and the transaction signed and
+submitted. Dismissing the prompt is a decline, not an error. A transaction sourced
+from any account other than this wallet's fee payer is refused before the prompt
+is ever raised.
+
+## Branded assets
+
+`assets/images/` holds the app icon, Android adaptive icon layers (foreground /
+background / monochrome), splash image, and web favicon — near-black
+(`#0F0F0F`) background, gold (`#FDDA24`) fingerprint mark and "VEIL" wordmark,
+matching `frontend/wallet/components/VeilLogo.tsx`. Wired in `app.json`'s
+`icon`, `android.adaptiveIcon`, `web.favicon`, and the `expo-splash-screen`
+plugin config.
+
 ## Structure
 
 - `app/_layout.tsx` — root Stack navigator (expo-router) wrapped in the connectivity provider.
@@ -119,6 +191,10 @@ jitter) is injectable, which is how the reconnect paths are tested.
 - `hooks/useWalletConnect.ts` — React binding over the WalletConnect store.
 - `lib/walletConnect.ts` — WalletConnect client, pairing, sessions and signing.
 - `lib/walletConnectHelpers.ts` — pure parsing/validation helpers (unit-tested).
+- `app/recover.tsx` — SEP-30 recovery screen.
+- `lib/recovery.ts` — SEP-30 client, recovery transactions, pending-recovery state (unit-tested).
+- `app/agent.tsx` — agent chat, with passkey-gated transaction proposals.
+- `lib/agentMessages.ts` — agent frame parsing and transaction review (unit-tested).
 - `lib/passkey.ts` — device passkey signer for dApp requests.
 - `lib/webauthn.ts` — WebAuthn encoding and DER signature conversion (unit-tested).
 - `lib/polyfills.ts` — React Native shims WalletConnect and the Stellar SDK need.

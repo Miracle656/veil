@@ -205,7 +205,7 @@ export default function MultisigScreen() {
   // ── No wallet connected yet ──────────────────────────────────────────────────
   if (!contractId) {
     return (
-      <ScrollView
+      <ScrollView showsVerticalScrollIndicator={false}
         style={styles.screen}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -246,7 +246,7 @@ export default function MultisigScreen() {
     (details === null || details.owners.includes(signerAddress));
 
   return (
-    <ScrollView
+    <ScrollView showsVerticalScrollIndicator={false}
       style={styles.screen}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"

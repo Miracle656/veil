@@ -1,5 +1,9 @@
 'use client'
 
+import { LandingAgent } from './LandingAgent'
+import { FlowShowcase } from './LandingFlow'
+import { Capabilities, Faq, Trust } from './LandingSections'
+import { LandingHero } from './LandingHero'
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
@@ -54,8 +58,13 @@ function Navbar({ t, locale }: { t: Messages; locale: Locale }) {
     <nav className="fixed top-0 left-0 right-0 z-50 bg-near-black/80 backdrop-blur-md border-b border-white/[0.06]">
       <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
         {/* Wordmark */}
-        <a href={localePath(locale, '/')} className="font-lora font-semibold italic text-gold text-xl tracking-tight select-none">
-          Veil
+        <a href={localePath(locale, '/')} className="flex items-center gap-2.5 select-none">
+          <svg width="22" height="22" viewBox="0 0 96 96" aria-hidden="true" className="shrink-0">
+            <rect x="22" y="26" width="52" height="12" rx="6" fill="#FDDA24" />
+            <rect x="28" y="44" width="40" height="12" rx="6" fill="#FDDA24" opacity="0.5" />
+            <rect x="34" y="62" width="28" height="12" rx="6" fill="#FDDA24" opacity="0.22" />
+          </svg>
+          <span className="font-lora font-semibold italic text-gold text-xl tracking-tight">Veil</span>
         </a>
 
         {/* Desktop nav */}
@@ -84,7 +93,7 @@ function Navbar({ t, locale }: { t: Messages; locale: Locale }) {
         {/* Desktop CTAs */}
         <div className="hidden md:flex items-center gap-2.5">
           <LocaleSwitcher locale={locale} />
-          <a href="https://veil-2ap8.vercel.app" className="font-inter text-sm text-warm-grey hover:text-off-white transition-colors px-3 py-1.5">
+          <a href="https://docs.useveilapp.xyz" className="font-inter text-sm text-warm-grey hover:text-off-white transition-colors px-3 py-1.5">
             {t.nav.docs}
           </a>
           <a href="#early-access" className="btn-gold !py-2 !px-5 !text-sm">
@@ -183,7 +192,7 @@ function Hero({ t }: { t: Messages }) {
           className="font-lora font-semibold italic text-off-white text-4xl sm:text-5xl md:text-6xl lg:text-[72px] leading-[1.08] tracking-tight mb-6"
         >
           {t.hero.title1}{' '}
-          <H>{t.hero.title2}</H>,<br className="hidden sm:block" />
+          <H>{t.hero.title2}</H><br className="hidden sm:block" />
           {' '}{t.hero.title3}
         </motion.h1>
 
@@ -197,6 +206,22 @@ function Hero({ t }: { t: Messages }) {
           {t.hero.subtitle}
         </motion.p>
 
+        {/* What the wallet actually does — kept tight so the CTAs stay
+            reachable on a phone: one column stacked, two from sm up. */}
+        <motion.ul
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.7 }}
+          className="grid sm:grid-cols-2 gap-x-8 gap-y-3 text-left max-w-2xl mx-auto mb-10"
+        >
+          {t.hero.notes.map((note) => (
+            <li key={note} className="flex items-start gap-2.5 font-inter text-warm-grey text-sm md:text-base leading-snug">
+              <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 rounded-full bg-gold shrink-0" />
+              <span>{note}</span>
+            </li>
+          ))}
+        </motion.ul>
+
         {/* CTAs */}
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -205,7 +230,7 @@ function Hero({ t }: { t: Messages }) {
           className="flex flex-col sm:flex-row gap-3 justify-center items-center"
         >
           <a href="#early-access" className="btn-gold">{t.hero.cta1}</a>
-          <a href="https://veil-2ap8.vercel.app" className="btn-ghost">{t.hero.cta2}</a>
+          <a href="https://docs.useveilapp.xyz" className="btn-ghost">{t.hero.cta2}</a>
         </motion.div>
 
         {/* Built-on-Stellar badge */}
@@ -345,7 +370,7 @@ function DevQuickstart({ t }: { t: Messages }) {
           {/* Gold doc link */}
           <motion.a
             variants={fadeUp}
-            href="https://veil-2ap8.vercel.app"
+            href="https://docs.useveilapp.xyz"
             className="inline-flex items-center gap-2 mt-8 font-inter font-semibold text-near-black text-sm hover:text-navy transition-colors"
           >
             <span className="hl-dark">{t.devQuickstart.viewDocs}</span>
@@ -526,9 +551,9 @@ function EarlyAccess({ t }: { t: Messages }) {
 ════════════════════════════════════════════════════════════════════════ */
 function Footer({ t, locale }: { t: Messages; locale: Locale }) {
   const links = [
-    { label: t.footer.docs,    href: 'https://veil-2ap8.vercel.app' },
+    { label: t.footer.docs,    href: 'https://docs.useveilapp.xyz' },
     { label: t.footer.github,  href: 'https://github.com/Miracle656/veil' },
-    { label: t.footer.twitter, href: '#' },
+    { label: t.footer.twitter, href: 'https://x.com/veilonstellar' },
     { label: t.footer.stellar, href: 'https://stellar.org' },
   ]
 
@@ -539,10 +564,15 @@ function Footer({ t, locale }: { t: Messages; locale: Locale }) {
         {/* Wordmark — Lora, Gold */}
         <a
           href={localePath(locale, '/')}
-          className="font-lora font-semibold italic text-gold text-2xl tracking-tight select-none"
+          className="flex items-center gap-3 select-none"
           style={{ minWidth: 'max-content' }}
         >
-          Veil
+          <svg width="26" height="26" viewBox="0 0 96 96" aria-hidden="true" className="shrink-0">
+            <rect x="22" y="26" width="52" height="12" rx="6" fill="#FDDA24" />
+            <rect x="28" y="44" width="40" height="12" rx="6" fill="#FDDA24" opacity="0.5" />
+            <rect x="34" y="62" width="28" height="12" rx="6" fill="#FDDA24" opacity="0.22" />
+          </svg>
+          <span className="font-lora font-semibold italic text-gold text-2xl tracking-tight">Veil</span>
         </a>
 
         {/* Nav links */}
@@ -580,11 +610,19 @@ export default function LandingPage({ locale }: { locale: Locale }) {
       <HtmlLang locale={locale} />
       <Navbar t={t} locale={locale} />
       <main>
-        <Hero t={t} />
+        <LandingHero t={t} />
         <HowItWorks t={t} />
         <WhyVeil t={t} />
-        <DevQuickstart t={t} />
+        <FlowShowcase t={t} />
+        <Capabilities t={t} />
+        <Trust t={t} />
+        <LandingAgent t={t} />
+        {/* Consumer story first: the product vision is a fiat-facing neobank,
+            so the developer quickstart sits below the ecosystem proof rather
+            than fourth from the top. */}
         <BuiltOnStellar t={t} />
+        <DevQuickstart t={t} />
+        <Faq t={t} />
         <EarlyAccess t={t} />
       </main>
       <Footer t={t} locale={locale} />

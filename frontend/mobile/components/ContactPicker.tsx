@@ -58,7 +58,7 @@ export function ContactPicker({ visible, onSelect, onClose }: ContactPickerProps
             autoCorrect={false}
           />
 
-          <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+          <ScrollView showsVerticalScrollIndicator={false} style={styles.list} contentContainerStyle={styles.listContent}>
             {!isLoaded ? (
               <ActivityIndicator style={styles.loader} color="#f1f5f9" />
             ) : filteredContacts.length === 0 ? (

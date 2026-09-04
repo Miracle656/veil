@@ -1,0 +1,60 @@
+appId: xyz.veil.wallet
+name: Create wallet
+tags:
+  - core
+  - onboarding
+---
+# Ports the web suite's onboarding scenarios (frontend/wallet/e2e/onboarding.spec.ts):
+# the landing screen offers both entry points, starting creation shows the
+# biometric wait state, and the flow ends on a created wallet.
+- runFlow: ../subflows/launch-fresh.yaml
+
+# The web suite asserts both buttons are on the landing page before using either.
+- assertVisible:
+    id: "welcome-get-started-button"
+- assertVisible:
+    id: "welcome-recover-button"
+
+- tapOn:
+    id: "welcome-get-started-button"
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-screen"
+    timeout: 20000
+- assertVisible: "Create your wallet"
+
+- tapOn:
+    id: "create-wallet-button"
+
+# "Waiting for biometric…" is what the web suite asserts on, and it is the only
+# window in which a passkey prompt can appear. It is brief, so assert on the
+# outcome rather than racing the intermediate frame; the prompt itself is
+# covered by passkey-smoke.yaml on a device that can satisfy it.
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-success"
+    timeout: 20000
+
+# Continue returns to `/`, which re-runs the entry routing in app/index.tsx.
+# The placeholder screen persists no wallet address (backlog #25), so the router
+# sends us back here rather than to the dashboard. That is the current, correct
+# behaviour of an unfinished flow — once registration writes an address to
+# secure storage this assertion becomes `dashboard-screen`, and it failing is
+# precisely the signal that the wallet is now being persisted.
+- tapOn:
+    id: "create-wallet-continue-button"
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-screen"
+    timeout: 20000
+
+# Onboarding is not repeated on a warm resume: `veil_seen_welcome` is set, so the
+# entry router skips the welcome screen.
+- launchApp
+- runFlow: ../subflows/dismiss-offline.yaml
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-screen"
+    timeout: 30000
+- assertNotVisible:
+    id: "welcome-screen"

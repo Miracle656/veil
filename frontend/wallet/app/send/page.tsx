@@ -1,5 +1,8 @@
 'use client'
 
+import { useActivityFeed } from '@/lib/activityFeed'
+import { inclusionFee } from '@/lib/fees'
+import { Nav, PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
@@ -7,15 +10,18 @@ import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation,
   Contract, rpc as SorobanRpc, nativeToScVal, Horizon,
 } from '@stellar/stellar-sdk'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
-import { VeilLogo } from '@/components/VeilLogo'
 import { ContactPicker } from '@/components/ContactPicker'
 import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { parseQrValue } from '@/lib/sep7'
+import { passkeyErrorMessage } from '@/lib/passkeyAuth'
 
 import { getNativeAssetContractId, getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
+import { fetchPrices } from '@/lib/fetchPrice'
+import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 
 const network = getNetwork()
 
@@ -25,6 +31,20 @@ interface WalletAsset {
   code: string
   issuer: string | null
   contractId: string | null
+  /** Decimal string from Horizon. '0' when the account could not be loaded. */
+  balance: string
+}
+
+function assetKey(a: WalletAsset): string {
+  return a.issuer ? `${a.code}:${a.issuer}` : a.code
+}
+
+/** Spendable amount: native XLM keeps the base reserve + a fee cushion. */
+function maxSendable(asset: WalletAsset): number {
+  const bal = parseFloat(asset.balance)
+  if (!Number.isFinite(bal)) return 0
+  if (asset.code === 'XLM' && !asset.issuer) return Math.max(0, bal - 1.5)
+  return Math.max(0, bal)
 }
 
 export default function SendPage() {
@@ -37,6 +57,14 @@ export default function SendPage() {
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
   const [showPicker, setShowPicker]   = useState(false)
+
+  // Who this wallet has actually paid, newest first. Derived from the activity
+  // feed rather than the contact book: a contact you have never paid is not a
+  // "recent recipient", and this needs no extra storage.
+  const transactions = useActivityFeed()
+  const recentRecipients = Array.from(
+    new Set(transactions.filter((t) => t.type === 'sent').map((t) => t.counterparty)),
+  ).slice(0, 3)
   const [showScanner, setShowScanner] = useState(false)
   const [hasCamera, setHasCamera]     = useState(false)
   const [imgError, setImgError]       = useState<string | null>(null)
@@ -46,20 +74,23 @@ export default function SendPage() {
 
   const [assets, setAssets]               = useState<WalletAsset[]>([])
   const [selectedAsset, setSelectedAsset] = useState<WalletAsset | null>(null)
+  const [showAssets, setShowAssets]       = useState(false)
+  const [prices, setPrices]               = useState<Record<string, number | null>>({})
+  const { code: currencyCode, rate: fxRate } = useCurrency()
 
   useEffect(() => {
-    const addr = sessionStorage.getItem('invisible_wallet_address')
+    const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
 
     if (typeof (window as unknown as { BarcodeDetector?: unknown }).BarcodeDetector !== 'undefined' || !!navigator.mediaDevices?.getUserMedia) {
       setHasCamera(true)
     }
 
-    const signerPublicKey = sessionStorage.getItem('veil_signer_secret')
-      ? Keypair.fromSecret(sessionStorage.getItem('veil_signer_secret')!).publicKey()
-      : localStorage.getItem('veil_signer_public_key') || null
+    const signerPublicKey = walletSession.getItem('veil_signer_secret')
+      ? Keypair.fromSecret(walletSession.getItem('veil_signer_secret')!).publicKey()
+      : walletLocal.getItem('veil_signer_public_key') || null
     if (!signerPublicKey || !signerPublicKey.startsWith('G')) {
-      const xlm: WalletAsset = { code: 'XLM', issuer: null, contractId: getNativeAssetContractId() }
+      const xlm: WalletAsset = { code: 'XLM', issuer: null, contractId: getNativeAssetContractId(), balance: '0' }
       setAssets([xlm])
       setSelectedAsset(xlm)
       return
@@ -68,20 +99,31 @@ export default function SendPage() {
     server.loadAccount(signerPublicKey).then(account => {
       const list: WalletAsset[] = account.balances.map(b => {
         if (b.asset_type === 'native') {
-          return { code: 'XLM', issuer: null, contractId: getNativeAssetContractId() }
+          return { code: 'XLM', issuer: null, contractId: getNativeAssetContractId(), balance: b.balance }
         }
-        const issued = b as { asset_code: string; asset_issuer: string }
+        const issued = b as { asset_code: string; asset_issuer: string; balance: string }
         const asset  = new Asset(issued.asset_code, issued.asset_issuer)
-        return { code: issued.asset_code, issuer: issued.asset_issuer, contractId: asset.contractId(network.networkPassphrase) }
+        return {
+          code: issued.asset_code,
+          issuer: issued.asset_issuer,
+          contractId: asset.contractId(network.networkPassphrase),
+          balance: issued.balance,
+        }
       })
       setAssets(list)
       if (list.length > 0) setSelectedAsset(list[0])
     }).catch(() => {
-      const xlm: WalletAsset = { code: 'XLM', issuer: null, contractId: getNativeAssetContractId() }
+      const xlm: WalletAsset = { code: 'XLM', issuer: null, contractId: getNativeAssetContractId(), balance: '0' }
       setAssets([xlm])
       setSelectedAsset(xlm)
     })
   }, [router])
+
+  useEffect(() => { hydrateCurrency() }, [])
+  useEffect(() => {
+    if (assets.length === 0) return
+    void fetchPrices(assets).then(setPrices)
+  }, [assets])
 
   // ── QR image upload ─────────────────────────────────────────────────────────
   // Reads an image file, draws it to an offscreen canvas, and passes the
@@ -151,8 +193,8 @@ export default function SendPage() {
     setStep('signing')
     setErrorMsg(null)
     try {
-      const signerSecret = sessionStorage.getItem('veil_signer_secret')
-        || localStorage.getItem('veil_signer_secret')
+      const signerSecret = walletSession.getItem('veil_signer_secret')
+        || walletLocal.getItem('veil_signer_secret')
       if (!signerSecret) {
         setErrorMsg('Signing key not found. Return to dashboard and tap "Fund wallet" to set up a fee-payer.')
         setStep('error')
@@ -160,7 +202,7 @@ export default function SendPage() {
       }
       const feePayerKp = Keypair.fromSecret(signerSecret)
 
-      const keyId = localStorage.getItem('invisible_wallet_key_id')
+      const keyId = walletLocal.getItem('invisible_wallet_key_id')
       if (!keyId) throw new Error('No passkey found. Please register the wallet first.')
       if (keyId !== 'recovery') {
         const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
@@ -183,7 +225,7 @@ export default function SendPage() {
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
         const tx = new TransactionBuilder(account, {
-          fee: BASE_FEE,
+          fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
           .addOperation(Operation.payment({
@@ -203,7 +245,7 @@ export default function SendPage() {
         const amountStroops = BigInt(Math.round(parseFloat(amount) * 10_000_000))
 
         const tx = new TransactionBuilder(feePayerAcct, {
-          fee: BASE_FEE,
+          fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
           .addOperation(sacContract.call(
@@ -241,99 +283,159 @@ export default function SendPage() {
 
       setStep('done')
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setErrorMsg(
-        msg.includes('NotAllowedError') || msg.includes('not allowed')
-          ? 'Biometric verification was cancelled. Please try again.'
-          : msg
-      )
+      setErrorMsg(passkeyErrorMessage(err))
       setStep('error')
     } finally {
       endTx()
     }
   }
 
+  const amtNum = parseFloat(amount)
+  const unitUsd = selectedAsset ? (prices[assetKey(selectedAsset)] ?? null) : null
+  const fiatLabel =
+    unitUsd != null && Number.isFinite(amtNum) && amtNum > 0
+      ? `≈ ${formatFiat(amtNum * unitUsd, currencyCode, fxRate)}`
+      : '\u00a0'
+  const feeXlm = (Number(inclusionFee()) / 10_000_000).toFixed(7)
+
   return (
     <div className="wallet-shell">
-      <nav className="wallet-nav">
-        <button
-          onClick={() => router.back()}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--off-white)', display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.875rem' }}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          Back
-        </button>
-        <VeilLogo size={22} />
-        <div style={{ width: 40 }} />
-      </nav>
+      <Nav onBack={() => router.back()} title="VEIL" />
 
-      <main className="wallet-main">
-        <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '1.75rem' }}>
-          Send
-        </h2>
+      <main className="wallet-main wallet-main--wide">
+        <div style={{ marginBottom: '1.75rem' }}>
+          <PageHeader eyebrow="Transfer" title="Send money" />
+        </div>
 
         {step === 'form' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="vw-send-stage vw-row vw-row--first" style={{ alignItems: 'flex-start' }}>
+            <div className="vw-sendcol">
 
-            {assets.length > 1 && (
-              <div>
-                <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  ASSET
-                </label>
-                <select
-                  value={selectedAsset?.code ?? ''}
-                  onChange={e => setSelectedAsset(assets.find(a => a.code === e.target.value) ?? null)}
-                  className="input-field"
-                  style={{ fontFamily: 'Inconsolata, monospace', color: 'var(--off-white)', background: 'var(--surface)' }}
-                >
-                  {assets.map(a => (
-                    <option key={`${a.code}-${a.issuer ?? 'native'}`} value={a.code}>
-                      {a.code}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
-            {/* Recipient address */}
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <label htmlFor="send-recipient" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  RECIPIENT ADDRESS
-                </label>
-                <button
-                  onClick={() => setShowPicker(true)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--gold)', fontSize: '0.75rem' }}
-                >
-                  Choose from contacts
-                </button>
-              </div>
+              <div className="vw-fieldlabel">Asset</div>
+              <button
+                type="button"
+                className="vw-assetcard"
+                onClick={() => assets.length > 1 && setShowAssets((open) => !open)}
+                aria-expanded={assets.length > 1 ? showAssets : undefined}
+                aria-haspopup={assets.length > 1 ? 'listbox' : undefined}
+              >
+                <span className="vw-assetcard__left">
+                  <span className="vw-send-swap" key={selectedAsset ? assetKey(selectedAsset) : 'none'}>
+                    <span className="vw-avatar">{selectedAsset?.code.slice(0, 1) ?? '?'}</span>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                      <span style={{ fontSize: 15, fontWeight: 600 }}>{selectedAsset?.code ?? '—'}</span>
+                      <span className="vw-meta">
+                        {selectedAsset
+                          ? `${parseFloat(selectedAsset.balance).toFixed(4)} available`
+                          : 'Loading…'}
+                      </span>
+                    </span>
+                  </span>
+                </span>
+                {assets.length > 1 && (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ color: 'rgba(246,247,248,0.4)' }}>
+                    <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                )}
+              </button>
+              {showAssets && assets.length > 1 && (
+                <div className="vw-assetlist" role="listbox" aria-label="Select asset">
+                  {assets.map((a) => (
+                    <button
+                      key={assetKey(a)}
+                      type="button"
+                      role="option"
+                      aria-selected={selectedAsset ? assetKey(a) === assetKey(selectedAsset) : false}
+                      onClick={() => { setSelectedAsset(a); setShowAssets(false) }}
+                    >
+                      <span className="vw-assetcard__left">
+                        <span className="vw-avatar">{a.code.slice(0, 1)}</span>
+                        <span>
+                          <span style={{ display: 'block', fontSize: 15, fontWeight: 600 }}>{a.code}</span>
+                          <span className="vw-meta">{parseFloat(a.balance).toFixed(4)}</span>
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'stretch' }}>
+            <div>
+              <label htmlFor="send-amount" className="vw-fieldlabel">Amount</label>
+              <div className="vw-amountcard">
+                <input
+                  id="send-amount"
+                  className="vw-amountinput"
+                  type="number"
+                  placeholder="0"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  min="0"
+                  step="0.0000001"
+                  aria-label={`Amount in ${selectedAsset?.code ?? 'asset'}`}
+                />
+                <div className="vw-amountsub">{fiatLabel}</div>
+                <div className="vw-amountfoot">
+                  <span className="vw-amountbal">
+                    {selectedAsset ? `Balance ${parseFloat(selectedAsset.balance).toFixed(2)} ${selectedAsset.code}` : ''}
+                  </span>
+                  <span className="vw-chips">
+                    {[0.25, 0.5, 0.75].map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        className="vw-amountchip"
+                        onClick={() => {
+                          if (!selectedAsset) return
+                          const bal = parseFloat(selectedAsset.balance)
+                          if (!Number.isFinite(bal)) return
+                          setAmount((Math.floor(bal * f * 1e7) / 1e7).toString())
+                        }}
+                      >
+                        {f * 100}%
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="vw-amountchip"
+                      onClick={() => {
+                        if (!selectedAsset) return
+                        const max = maxSendable(selectedAsset)
+                        setAmount((Math.floor(max * 1e7) / 1e7).toString())
+                      }}
+                    >
+                      Max
+                    </button>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="send-recipient" className="vw-fieldlabel">To</label>
+              <div className="vw-recipientcard">
                 <input
                   id="send-recipient"
                   className="input-field mono"
                   type="text"
-                  placeholder="G... or C..."
+                  placeholder="G… or C…"
                   value={recipient}
                   onChange={e => { setRecipient(e.target.value.trim()); setImgError(null) }}
                   autoComplete="off"
                   spellCheck={false}
                   style={{ flex: 1 }}
                 />
-
-                {/* Camera QR scan */}
                 {hasCamera && (
                   <button
                     type="button"
+                    className="vw-roundbtn"
                     onClick={() => setShowScanner(true)}
                     aria-label="Scan QR code with camera"
                     title="Scan QR code with camera"
-                    style={iconBtnStyle}
                   >
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                       <rect x="2" y="2" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5"/>
                       <rect x="12" y="2" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5"/>
                       <rect x="2" y="12" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.5"/>
@@ -344,27 +446,38 @@ export default function SendPage() {
                     </svg>
                   </button>
                 )}
-
-                {/* Upload QR image */}
                 <button
                   type="button"
+                  className="vw-roundbtn"
+                  onClick={() => setShowPicker(true)}
+                  aria-label="Choose from contacts"
+                  title="Choose from contacts"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
+                    <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="1.75"/>
+                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="vw-roundbtn"
                   onClick={() => fileInputRef.current?.click()}
                   aria-label="Upload QR code image"
                   title="Upload a QR code image from your device"
                   disabled={imgDecoding}
-                  style={{ ...iconBtnStyle, opacity: imgDecoding ? 0.5 : 1 }}
                 >
-                  {imgDecoding ? (
-                    <div className="spinner spinner-light" style={{ width: 16, height: 16 }} />
-                  ) : (
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                      <path d="M3 13v3a1 1 0 001 1h12a1 1 0 001-1v-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-                      <path d="M10 3v9M7 6l3-3 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                    </svg>
-                  )}
+                  <span className="vw-send-swap" key={imgDecoding ? 'busy' : 'idle'}>
+                    {imgDecoding ? (
+                      <div className="spinner spinner-light" style={{ width: 16, height: 16 }} />
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                        <path d="M3 13v3a1 1 0 001 1h12a1 1 0 001-1v-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                        <path d="M10 3v9M7 6l3-3 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    )}
+                  </span>
                 </button>
-
-                {/* Hidden file input — accepts images only */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -376,8 +489,6 @@ export default function SendPage() {
                   }}
                 />
               </div>
-
-              {/* Inline error for image decode failures */}
               {imgError && (
                 <p style={{ fontSize: '0.75rem', color: 'var(--teal)', marginTop: '0.375rem', lineHeight: 1.4 }}>
                   {imgError}
@@ -386,57 +497,88 @@ export default function SendPage() {
             </div>
 
             <div>
-              <label htmlFor="send-amount" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                AMOUNT{selectedAsset ? ` (${selectedAsset.code})` : ''}
-              </label>
-              <input
-                id="send-amount"
-                className="input-field"
-                type="number"
-                placeholder="0.00"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                min="0"
-                step="0.0000001"
-                style={{ fontFamily: 'Inconsolata, monospace', fontSize: '1.25rem' }}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="send-memo" style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                MEMO (OPTIONAL)
-              </label>
+              <label htmlFor="send-memo" className="vw-fieldlabel">Memo · optional</label>
               <input
                 id="send-memo"
                 className="input-field"
                 type="text"
-                placeholder="Add a note..."
+                placeholder="Add a note for the recipient"
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
                 maxLength={28}
               />
             </div>
 
-            <div style={{ marginTop: '0.5rem' }}>
+            <div className="vw-feerow">
+              <span className="vw-feerow__label">Network fee</span>
+              <span className="vw-feerow__value">{feeXlm} XLM · paid by fee-payer</span>
+            </div>
+
+            <div className="vw-sendcta">
               <button
                 className="btn-gold"
                 onClick={() => setStep('confirm')}
                 disabled={!validateForm()}
               >
-                Review
+                Review &amp; sign with passkey
               </button>
+            </div>
+            </div>
+
+            <div className="vw-swapside">
+              <div className="vw-panel" style={{ padding: '24px 26px' }}>
+                <div className="vw-label">Summary</div>
+                <div className="vw-sumrow">
+                  <span>They receive</span>
+                  <strong>{amount ? `${amount} ${selectedAsset?.code ?? ''}` : '—'}</strong>
+                </div>
+                <div className="vw-sumrow">
+                  <span>Debited</span>
+                  <strong className="font-mono">{amount ? `${amount} ${selectedAsset?.code ?? ''}` : '—'}</strong>
+                </div>
+                <div className="vw-sumrow vw-sumrow--last">
+                  <span>Remaining</span>
+                  <strong className="font-mono">
+                    {selectedAsset && amount && Number.isFinite(parseFloat(amount))
+                      ? `${Math.max(0, parseFloat(selectedAsset.balance) - parseFloat(amount)).toFixed(4)} ${selectedAsset.code}`
+                      : '—'}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
+                <div className="vw-label" style={{ padding: '18px 0 4px' }}>Recent recipients</div>
+                {recentRecipients.length === 0 ? (
+                  <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '12px 0' }}>
+                    Nobody yet. People you send to will appear here.
+                  </p>
+                ) : recentRecipients.map((addr) => (
+                  <button
+                    key={addr}
+                    type="button"
+                    className="vw-listrow"
+                    style={{ padding: '13px 0' }}
+                    onClick={() => setRecipient(addr)}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '13px', minWidth: 0 }}>
+                      <span className="vw-avatar">{addr.slice(0, 1)}</span>
+                      <span className="vw-meta">{addr.slice(0, 6)}…{addr.slice(-6)}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}
 
         {step === 'confirm' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div className="vw-send-stage" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
             <div className="card">
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <Row label="To"      value={`${recipient.slice(0, 8)}...${recipient.slice(-8)}`} mono />
-                <Row label="Amount"  value={`${amount} ${selectedAsset?.code ?? 'XLM'}`} />
+                <Row label="Amount"  value={`${amount} ${selectedAsset?.code ?? 'XLM'}`} mono />
                 {memo && <Row label="Memo" value={memo} />}
-                <Row label="Network" value="Stellar Testnet" />
+                <Row label="Network" value={network.displayName} />
                 <Row label="Auth"    value="Passkey (WebAuthn)" />
               </div>
             </div>
@@ -452,7 +594,7 @@ export default function SendPage() {
         )}
 
         {step === 'signing' && (
-          <div className="card" style={{ textAlign: 'center' }}>
+          <div className="card vw-send-stage" style={{ textAlign: 'center' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
               <div className="spinner spinner-light" />
             </div>
@@ -464,7 +606,7 @@ export default function SendPage() {
         )}
 
         {step === 'done' && (
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}>
+          <div className="card vw-send-stage" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}>
             <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style={{ margin: '0 auto' }}>
               <circle cx="20" cy="20" r="19" stroke="var(--teal)" strokeWidth="1.5"/>
               <path d="M13 20.5l5 5 9-9" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -486,7 +628,7 @@ export default function SendPage() {
         )}
 
         {step === 'error' && (
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}>
+          <div className="card vw-send-stage" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}>
             <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style={{ margin: '0 auto' }}>
               <circle cx="20" cy="20" r="19" stroke="var(--teal)" strokeWidth="1.5" opacity="0.5"/>
               <path d="M14 14l12 12M26 14l-12 12" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round"/>
@@ -541,22 +683,6 @@ export default function SendPage() {
   )
 }
 
-// Shared style for the small icon buttons next to the address field
-const iconBtnStyle: Record<string, any> = {
-
-  background: 'var(--surface-md)',
-  border: '1px solid var(--border-dim)',
-  borderRadius: '0.5rem',
-  cursor: 'pointer',
-  color: 'var(--off-white)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: 44,
-  flexShrink: 0,
-  transition: 'opacity 0.15s',
-}
-
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
@@ -564,6 +690,7 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
       <span style={{
         fontSize: '0.875rem',
         fontFamily: mono ? 'Inconsolata, monospace' : 'Inter, sans-serif',
+        fontVariantNumeric: 'tabular-nums',
         textAlign: 'right',
         wordBreak: 'break-all',
       }}>

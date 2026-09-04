@@ -1,5 +1,6 @@
 'use client'
 
+import { inclusionFee } from '@/lib/fees'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -15,6 +16,7 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -145,13 +147,13 @@ function createPoolView(record: HorizonPoolRecord): PoolView | null {
 }
 
 function getSignerPublicKey(): string | null {
-  const signerSecret = sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
+  const signerSecret = walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
   if (signerSecret) return Keypair.fromSecret(signerSecret).publicKey()
-  return localStorage.getItem('veil_signer_public_key')
+  return walletLocal.getItem('veil_signer_public_key')
 }
 
 function getSignerSecret(): string | null {
-  return sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
+  return walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
 }
 
 function makePoolShareAsset(pool: PoolView): LiquidityPoolAsset {
@@ -189,7 +191,7 @@ export default function PoolsPage() {
   const server = useMemo(() => new Server(network.horizonUrl), [])
 
   useEffect(() => {
-    const storedWallet = sessionStorage.getItem('invisible_wallet_address')
+    const storedWallet = walletSession.getItem('invisible_wallet_address')
     if (!storedWallet) {
       router.replace('/lock')
       return
@@ -369,7 +371,7 @@ export default function PoolsPage() {
       const signerPubKey = signerKeypair.publicKey()
       const account = await server.loadAccount(signerPubKey)
       const txBuilder = new TransactionBuilder(account, {
-        fee: BASE_FEE,
+        fee: inclusionFee(),
         networkPassphrase: network.networkPassphrase,
       })
 
@@ -562,8 +564,8 @@ export default function PoolsPage() {
                       width: '100%',
                       textAlign: 'left',
                       cursor: 'pointer',
-                      borderColor: isSelected ? 'rgba(253,218,36,0.35)' : 'var(--border-dim)',
-                      background: isSelected ? 'rgba(253,218,36,0.05)' : 'var(--surface)',
+                      borderColor: isSelected ? 'var(--gold)' : 'var(--border-dim)',
+                      background: isSelected ? 'var(--surface-md)' : 'var(--surface)',
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.65rem' }}>
@@ -638,9 +640,9 @@ export default function PoolsPage() {
                       borderRadius: 999,
                       border: '1px solid',
                       cursor: 'pointer',
-                      background: mode === item ? 'var(--gold)' : 'transparent',
-                      borderColor: mode === item ? 'var(--gold)' : 'rgba(246,247,248,0.12)',
-                      color: mode === item ? 'var(--near-black)' : 'var(--off-white)',
+                      background: mode === item ? 'var(--surface-md)' : 'transparent',
+                      borderColor: mode === item ? 'var(--gold)' : 'var(--border-dim)',
+                      color: mode === item ? 'var(--gold)' : 'var(--off-white)',
                       fontSize: '0.875rem',
                       fontWeight: 600,
                     }}

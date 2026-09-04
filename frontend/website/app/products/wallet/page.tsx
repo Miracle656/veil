@@ -79,8 +79,8 @@ export default function WalletProductPage() {
             <ArrowLeft size={15} />
             All Products
           </Link>
-          <a href="https://veil-ezry.vercel.app" target="_blank" rel="noopener noreferrer"
-            className="btn-gold !py-2 !px-5 !text-sm hidden md:inline-flex">
+          <a href="https://app.useveilapp.xyz" target="_blank" rel="noopener noreferrer"
+            className="btn-gold !py-2 !px-4 !text-[13px] md:!px-5 md:!text-sm inline-flex whitespace-nowrap">
             Try the Wallet
           </a>
         </div>
@@ -115,11 +115,11 @@ export default function WalletProductPage() {
                 and password that cryptocurrency has ever demanded from you.
               </motion.p>
               <motion.div variants={fadeUp} className="flex flex-wrap gap-3">
-                <a href="https://veil-ezry.vercel.app" target="_blank" rel="noopener noreferrer"
+                <a href="https://app.useveilapp.xyz" target="_blank" rel="noopener noreferrer"
                   className="btn-gold">
                   Try the Wallet
                 </a>
-                <a href="https://veil-2ap8.vercel.app" className="btn-ghost">
+                <a href="https://docs.useveilapp.xyz" className="btn-ghost">
                   Read the Docs
                 </a>
               </motion.div>
@@ -199,7 +199,7 @@ export default function WalletProductPage() {
                 Veil is live on Stellar testnet. Try it now — no install, no extension, no seed phrase.
               </motion.p>
               <motion.div variants={fadeUp} className="flex flex-col sm:flex-row gap-3 justify-center">
-                <a href="https://veil-ezry.vercel.app" target="_blank" rel="noopener noreferrer"
+                <a href="https://app.useveilapp.xyz" target="_blank" rel="noopener noreferrer"
                   className="btn-navy">
                   Launch Wallet
                 </a>
@@ -219,7 +219,7 @@ export default function WalletProductPage() {
               {[
                 { label: 'Home', href: '/' },
                 { label: 'Products', href: '/products' },
-                { label: 'Docs', href: 'https://veil-2ap8.vercel.app' },
+                { label: 'Docs', href: 'https://docs.useveilapp.xyz' },
                 { label: 'GitHub', href: 'https://github.com/Miracle656/veil' },
               ].map(({ label, href }) => (
                 <a key={label} href={href}

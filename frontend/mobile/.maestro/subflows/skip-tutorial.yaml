@@ -1,0 +1,26 @@
+appId: xyz.veil.wallet
+---
+# Dismiss the first-run tutorial overlay if it is present.
+#
+# `FirstRunTutorial` (components/OnboardingTutorial.tsx, backlog #27) mounts on
+# the dashboard and shows a full-screen modal until `veil_seen_tutorial` is set.
+# Every flow starts from wiped state, so on the first visit to the dashboard the
+# overlay is there and would swallow the next tap — the same trap the web suite
+# avoids by pre-seeding `veil_seen_tutorial` in localStorage.
+#
+# The component's `setE2eSkipTutorial()` escape hatch is a module-level flag, so
+# it is reachable from Jest but not from a device test. Dismissing the overlay
+# through its own Skip button is, and it has the side benefit of asserting that
+# the button works. Guarded by `when`, so this is a no-op on any later visit
+# once the flag is persisted.
+- runFlow:
+    when:
+      visible:
+        id: "tutorial-overlay"
+    commands:
+      - tapOn:
+          id: "tutorial-skip-button"
+      - extendedWaitUntil:
+          notVisible:
+            id: "tutorial-overlay"
+          timeout: 10000

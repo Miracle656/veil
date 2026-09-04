@@ -8,6 +8,60 @@
 
 A passkey-powered smart wallet on the Stellar Soroban blockchain. Users authenticate with their device biometrics (Face ID, fingerprint, Windows Hello) instead of seed phrases or private keys.
 
+## Live on Stellar mainnet
+
+Veil's contracts are deployed and transacting on Stellar **mainnet**, not only testnet.
+
+| | |
+| --- | --- |
+| Factory contract | [`CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`](https://stellar.expert/explorer/public/contract/CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK) |
+| Passkey-authorized payment | [`626e110b61b709afb2d85c14517e7678b95b07e4d49c34a6caff8ee51148ebcc`](https://stellar.expert/explorer/public/tx/626e110b61b709afb2d85c14517e7678b95b07e4d49c34a6caff8ee51148ebcc) — a WebAuthn assertion verified on-chain by `__check_auth` |
+| Soroswap aggregator swap | [`5e29e3d8cdd27ba25f510e5dbf412e9e6592dabdf761508266a8752bfd096f4f`](https://stellar.expert/explorer/public/tx/5e29e3d8cdd27ba25f510e5dbf412e9e6592dabdf761508266a8752bfd096f4f) — 1 XLM to Circle USDC through a live third-party DEX |
+| Web wallet | [app.useveilapp.xyz](https://app.useveilapp.xyz) — passkeys bound to an owned domain, not a preview host |
+
+The first of those is the claim that matters: a payment on mainnet whose only
+authorization was a device biometric. No seed phrase, no exported key — the
+contract verified the challenge binding and the P-256 signature itself, in
+`__check_auth`, before the transfer moved.
+
+### Verify it yourself
+
+The deployed bytecode matches this repository byte for byte, and you do not have
+to take that on faith. `contracts/expected-hashes.json` records the SHA-256 of
+each artifact from a reproducible Docker build (`rust:1.85.0-bookworm`), and the
+same hash is readable from the ledger:
+
+```bash
+# 1. Pull the bytecode that is actually running on mainnet, and hash it.
+#    Mainnet has no free public Soroban RPC, so name a provider explicitly.
+stellar contract fetch \
+  --id CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK \
+  --rpc-url https://mainnet.sorobanrpc.com \
+  --network-passphrase "Public Global Stellar Network ; September 2015" \
+  --out-file factory.wasm
+
+sha256sum factory.wasm
+# 3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853
+
+# 2. Rebuild the same artifact from this repository, in Docker, and compare.
+./scripts/reproducible-build.sh
+```
+
+Both produce `3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853`
+— the value committed in `contracts/expected-hashes.json`. The wallet contract
+the factory deploys verifies the same way, as `b485f817…59ea5`.
+
+A source-verified contract is the difference between "here is our code" and
+"here is the code that is running."
+
+### What is and isn't live
+
+Being honest about the stage, because a deployed contract is not the same as a
+used one: **mainnet activity so far is our own verification transactions, not
+users.** The contracts, the web wallet and the mobile app are real and working;
+the traction is not there yet. Testnet remains the default for development —
+flip `NEXT_PUBLIC_NETWORK=mainnet` to point the wallet at production.
+
 ## How it works
 
 Veil combines WebAuthn (the browser passkey standard) with a Soroban custom account contract. When a user registers, a P-256 keypair is created on their device and the public key is stored in the wallet contract. To authorize a transaction, the user's device signs the Soroban authorization payload with their passkey. The contract verifies the full WebAuthn assertion on-chain — including the challenge binding and the ECDSA signature — before approving any action.
@@ -37,7 +91,7 @@ User device                        Stellar network
 graph TD
     subgraph Browser["Browser (WebAuthn)"]
         UA["User Agent\n(Face ID / Fingerprint)"]
-        SDK["invisible-wallet-sdk\n(React hook)"]
+        SDK["invisible-wallet-sdk\n(React hook / Vue composable)"]
     end
 
     subgraph Wallet["Veil Wallet PWA (Next.js)"]
@@ -97,7 +151,9 @@ veil/
 │       └── Cargo.toml
 ├── sdk/
 │   ├── src/
-│   │   ├── useInvisibleWallet.ts  # React hook — register, deploy, login, signAuthEntry, addSigner, removeSigner, setGuardian, initiateRecovery, completeRecovery
+│   │   ├── core.ts                # Framework-agnostic wallet core — register, deploy, login, signAuthEntry, sendPayment, addSigner, removeSigner, setGuardian, initiateRecovery, completeRecovery
+│   │   ├── useInvisibleWallet.ts  # React hook — binds the core to useSyncExternalStore
+│   │   ├── vue/                   # Vue 3 composable — binds the same core to refs (invisible-wallet-sdk/vue)
 │   │   ├── webauthn.ts            # WebAuthn provider interface + web/browser implementation
 │   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkey) — Metro auto-resolves
 │   │   ├── utils.ts               # Crypto utilities (DER→raw, pubkey extraction, SHA256, computeWalletAddress)
@@ -111,12 +167,12 @@ veil/
 │           ├── txBuilder.ts       # Builds unsigned Stellar XDR transactions (swap, payment)
 │           └── x402Client.ts      # x402 micropayment client — auto-pays Lens price endpoint calls
 └── frontend/
-    ├── website/                   # Next.js 14 marketing site (veil-mocha.vercel.app)
+    ├── website/                   # Next.js 14 marketing site (useveilapp.xyz)
     │   └── app/
     │       ├── page.tsx           # Homepage — Hero, HowItWorks, WhyVeil, DevQuickstart
     │       └── products/          # /products listing + /wallet /lens /wraith /agent detail pages
-    ├── docs/                      # Nextra 3 documentation (veil-2ap8.vercel.app)
-    └── wallet/                    # Veil wallet app (Next.js 14, veil-ezry.vercel.app)
+    ├── docs/                      # Nextra 3 documentation (docs.useveilapp.xyz)
+    └── wallet/                    # Veil wallet app (Next.js 14, app.useveilapp.xyz)
         ├── app/
         │   ├── dashboard/         # Balance, all token assets with logos, activity feed + filters (All/Transfers/Swaps)
         │   ├── send/              # Send XLM or tokens — passkey-gated
@@ -334,6 +390,92 @@ function App() {
 }
 ```
 
+### With Vue 3
+
+```vue
+<script setup lang="ts">
+import { useInvisibleWallet } from 'invisible-wallet-sdk/vue';
+
+// Same actions as the React hook — both wrap the same framework-agnostic core.
+// State comes back as refs instead of React state.
+const { address, isPending, error, register, deploy, login, sendPayment } =
+  useInvisibleWallet({
+    factoryAddress: FACTORY_CONTRACT_ID,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: Networks.TESTNET,
+  });
+</script>
+
+<template>
+  <p v-if="address">Wallet: {{ address }}</p>
+  <button v-else :disabled="isPending" @click="register('alice')">Create wallet</button>
+</template>
+```
+
+`vue` is an optional peer dependency, so React apps never install it — and the
+Vue entry point pulls in no React. See [`examples/vue/`](examples/vue/) for a
+Vite starter covering register, login and send, and [`examples/nuxt/`](examples/nuxt/)
+for the SSR flavour.
+
+### With Svelte
+
+```ts
+import { createWalletStore } from 'invisible-wallet-sdk/svelte';
+
+const wallet = createWalletStore({
+  factoryAddress: FACTORY_CONTRACT_ID,
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+});
+
+// $wallet reactively reflects { address, isDeployed, isPending, error }
+await wallet.register('alice');
+await wallet.deploy(feePayerSecret);
+const sig = await wallet.signAuthEntry(signaturePayload);
+await wallet.sendPayment(feePayerSecret, to, amountInStroops);
+```
+
+The store binds the same `InvisibleWalletCore` the React hook and the Vue
+composable do, so all three adapters expose an identical set of actions.
+
+See [`sdk/src/svelte`](sdk/src/svelte) for the adapter and
+[`examples/sveltekit`](examples/sveltekit) for a full register/dashboard/send
+example.
+
+### With Solid
+
+```tsx
+import { useInvisibleWallet } from 'invisible-wallet-sdk/solid';
+
+function App() {
+  const wallet = useInvisibleWallet({
+    factoryAddress: FACTORY_CONTRACT_ID,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+  });
+
+  return (
+    <Show when={wallet.address()} fallback={
+      <button disabled={wallet.isPending()} onClick={() => wallet.register('alice')}>
+        Create wallet
+      </button>
+    }>
+      <p>Wallet: {wallet.address()}</p>
+    </Show>
+  );
+}
+```
+
+State arrives as Solid accessors — `wallet.address()`, `wallet.isDeployed()`,
+`wallet.isPending()`, `wallet.error()` — over the same `InvisibleWalletCore`
+the React, Vue and Svelte adapters bind, so the actions are identical across
+all four. Called inside a component it hydrates on mount and detaches on
+cleanup, which keeps it safe through a solid-start server render.
+
+See [`sdk/src/solid`](sdk/src/solid) for the adapter and
+[`examples/solid`](examples/solid) for a Vite starter covering register,
+dashboard and send.
+
 ### Without a framework
 
 ```js
@@ -380,10 +522,11 @@ The contract's `__check_auth` expects the signature field to be a `Vec<Val>` wit
 - [x] Wraith indexer — Soroban SAC transfer history (combined endpoint PR #6 merged)
 - [x] Agent — Claude AI assistant: balance, prices, swaps, payments — all passkey-gated
 - [x] Marketing website — Products section with individual pages for all 4 products
+- [x] Mainnet — contracts deployed and source-verified; passkey-authorized payment and Soroswap swap settled on-chain
 
 ## Security
 
-See the [Security docs](https://veil-2ap8.vercel.app/security) and the [Threat Model](https://veil-2ap8.vercel.app/threat-model) for the full STRIDE analysis, trust assumptions, and residual risks.
+See the [Security docs](https://docs.useveilapp.xyz/security) and the [Threat Model](https://docs.useveilapp.xyz/threat-model) for the full STRIDE analysis, trust assumptions, and residual risks.
 
 ### Verifying contract builds
 

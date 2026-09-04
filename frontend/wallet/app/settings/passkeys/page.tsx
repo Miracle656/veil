@@ -7,6 +7,7 @@ import { ChevronLeft, KeyRound, Plus, Trash2 } from 'lucide-react'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 export default function PasskeysPage() {
   const router = useRouter()
@@ -20,7 +21,7 @@ export default function PasskeysPage() {
   const wallet = useInvisibleWallet(walletConfig)
 
   function getSignerKeypair(): Keypair {
-    const secret = sessionStorage.getItem('veil_signer_secret')
+    const secret = walletSession.getItem('veil_signer_secret')
     if (!secret) throw new Error('No signer key in session')
     return Keypair.fromSecret(secret)
   }
@@ -35,11 +36,11 @@ export default function PasskeysPage() {
   }, [wallet.getSigners])
 
   useEffect(() => {
-    const addr = sessionStorage.getItem('invisible_wallet_address')
+    const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
     fetchSigners()
     if (typeof window !== 'undefined') {
-      setLocalPublicKey(localStorage.getItem('invisible_wallet_public_key'))
+      setLocalPublicKey(walletLocal.getItem('invisible_wallet_public_key'))
     }
   }, [router, fetchSigners])
 

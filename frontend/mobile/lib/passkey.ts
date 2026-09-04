@@ -1,4 +1,33 @@
-import * as Passkeys from 'react-native-passkeys';
+import * as Crypto from 'expo-crypto';
+// react-native-passkeys is a NATIVE module absent in Expo Go: a top-level import
+// crashes the app at startup (this file loads via _layout → WalletConnectApprovalModal
+// → registerPasskeySigner). Load it lazily so the app boots in Expo Go; a passkey
+// ceremony throws a clear "use a dev build" error only when actually invoked. The
+// type-only import is erased at compile time and never triggers the native require.
+import type * as PasskeysModule from 'react-native-passkeys';
+
+let cachedPasskeys: typeof PasskeysModule | null | undefined;
+function loadPasskeys(): typeof PasskeysModule | null {
+  if (cachedPasskeys !== undefined) return cachedPasskeys;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    cachedPasskeys = require('react-native-passkeys') as typeof PasskeysModule;
+  } catch {
+    cachedPasskeys = null;
+  }
+  return cachedPasskeys;
+}
+
+function passkeys(): typeof PasskeysModule {
+  const m = loadPasskeys();
+  if (!m) {
+    throw new Error(
+      'Native passkeys are unavailable in this build. Expo Go cannot load the ' +
+        'react-native-passkeys native module — use a development build.',
+    );
+  }
+  return m;
+}
 
 import {
   registerAuthEntrySigner,
@@ -6,7 +35,7 @@ import {
   type WebAuthnSignature,
 } from './walletConnect';
 import { isUserRejection } from './walletConnectHelpers';
-import { getPasskeyId, getPasskeyPublicKey } from './walletStore';
+import { getPasskeyId, getPasskeyPublicKey, getSignerSecret } from './walletStore';
 import { base64UrlToUint8Array, derToRawSignature, hexToUint8Array, uint8ArrayToBase64Url } from './webauthn';
 
 /**
@@ -22,14 +51,12 @@ import { base64UrlToUint8Array, derToRawSignature, hexToUint8Array, uint8ArrayTo
  * payload the wallet contract will verify.
  */
 
-/** Relying-party id the passkey was registered against. */
-function getRelyingPartyId(): string | undefined {
-  return process.env['EXPO_PUBLIC_PASSKEY_RP_ID']?.trim() || undefined;
-}
+export { getRelyingPartyId } from './relyingParty';
+import { getRelyingPartyId } from './relyingParty';
 
 export function isPasskeySupported(): boolean {
   try {
-    return Passkeys.isSupported();
+    return passkeys().isSupported();
   } catch {
     return false;
   }
@@ -54,9 +81,9 @@ export async function signPayloadWithPasskey(
     throw new Error('Passkeys are not supported on this device.');
   }
 
-  let assertion: Awaited<ReturnType<typeof Passkeys.get>>;
+  let assertion: Awaited<ReturnType<typeof PasskeysModule.get>>;
   try {
-    assertion = await Passkeys.get({
+    assertion = await passkeys().get({
       challenge: uint8ArrayToBase64Url(payloadHash),
       rpId: getRelyingPartyId(),
       allowCredentials: [{ id: keyId, type: 'public-key' }],
@@ -86,4 +113,103 @@ export async function signPayloadWithPasskey(
 export function registerPasskeySigner(): () => void {
   const signer: AuthEntrySigner = (payloadHash) => signPayloadWithPasskey(payloadHash);
   return registerAuthEntrySigner(signer);
+}
+
+/**
+ * Gate a sensitive action behind the device passkey.
+ *
+ * Mirrors `requirePasskey` in the web wallet: assert over a fresh random
+ * challenge so the user proves presence before anything is built or submitted.
+ * Throws when the sheet is dismissed, so a caller can abort rather than sign.
+ */
+export async function requirePasskey(): Promise<void> {
+  const keyId = await getPasskeyId();
+
+  if (!keyId) {
+    // Plain testnet-keypair mode (no passkey registered): the stored signer
+    // secret authorises directly — nothing to assert against.
+    if (await getSignerSecret()) return;
+    throw new Error('No passkey found on this device. Register the wallet first.');
+  }
+
+  // A passkey exists → every sensitive action demands user presence, even
+  // though the classic transaction is signed by the fee-payer keypair. The
+  // assertion is over a fresh random challenge (presence gate, not an
+  // on-chain signature), so it needs only the credential id.
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      allowCredentials: [{ id: keyId, type: 'public-key' }],
+      userVerification: 'required',
+      timeout: 60_000,
+    });
+    if (!assertion) throw new Error('Passkey cancelled. Please try again.');
+  } catch (error: unknown) {
+    if (isUserRejection(error)) throw new Error('Passkey cancelled. Please try again.');
+    throw error;
+  }
+}
+
+/**
+ * A native `PrfEvaluator` (SDK shape: `(salt) => Promise<Uint8Array | null>`)
+ * backed by the WebAuthn PRF extension via react-native-passkeys. Runs a passkey
+ * assertion requesting `prf.eval.first = salt` and returns the PRF output, or
+ * null when PRF is unsupported / the user declines. Used to derive the fee-payer
+ * key deterministically from the passkey.
+ */
+function parsePrfOutput(assertion: unknown): Uint8Array | null {
+  const results = (assertion as { clientExtensionResults?: { prf?: { results?: { first?: unknown } } } })
+    ?.clientExtensionResults?.prf?.results?.first;
+  if (!results) return null;
+  if (typeof results === 'string') return base64UrlToUint8Array(results);
+  if (results instanceof ArrayBuffer) return new Uint8Array(results);
+  if (ArrayBuffer.isView(results)) return new Uint8Array(results.buffer as ArrayBuffer);
+  return null;
+}
+
+export function nativePrfEvaluator(credentialId: string): (salt: Uint8Array) => Promise<Uint8Array | null> {
+  return async (salt: Uint8Array) => {
+    try {
+      const assertion = await passkeys().get({
+        challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+        rpId: getRelyingPartyId(),
+        allowCredentials: [{ id: credentialId, type: 'public-key' }],
+        userVerification: 'required',
+        timeout: 60_000,
+        extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
+      });
+      return parsePrfOutput(assertion);
+    } catch {
+      return null;
+    }
+  };
+}
+
+/**
+ * Discoverable assertion + PRF in ONE user gesture: no allowCredentials, so the
+ * platform sheet lists every passkey for the relying party and the user picks.
+ * Returns the chosen credential id and the PRF output for `salt` — the two
+ * facts "sign in with passkey" needs to re-derive the wallet on a fresh device.
+ */
+export async function discoverWithPrf(
+  salt: Uint8Array,
+): Promise<{ credentialId: string; prf: Uint8Array | null } | null> {
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      userVerification: 'required',
+      timeout: 60_000,
+      extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
+    });
+    if (!assertion) return null;
+    const credentialId = (assertion as { id?: string; rawId?: string }).id
+      ?? (assertion as { id?: string; rawId?: string }).rawId;
+    if (!credentialId) return null;
+    return { credentialId, prf: parsePrfOutput(assertion) };
+  } catch (error: unknown) {
+    if (isUserRejection(error)) return null;
+    throw error;
+  }
 }

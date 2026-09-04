@@ -72,7 +72,7 @@ export default function PoolsScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <Text style={styles.title}>Pools</Text>
         <Text style={styles.subtitle}>Provide liquidity and earn a share of swap fees.</Text>
 

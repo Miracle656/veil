@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Wizard from "./components/Wizard";
 import PendingQueue from "./components/PendingQueue";
-import { VeilLogo } from "@/components/VeilLogo";
+import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function MultisigPage() {
@@ -32,9 +32,9 @@ export default function MultisigPage() {
   };
 
   return (
-    <div className="wallet-shell">
+    <div className="wallet-shell" style={{ background: "var(--near-black)", color: "var(--off-white)" }}>
       {/* Navigation */}
-      <nav className="wallet-nav" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1rem" }}>
+      <nav className="wallet-nav">
         <button
           onClick={() => router.push("/dashboard")}
           style={{
@@ -53,26 +53,29 @@ export default function MultisigPage() {
           </svg>
           Dashboard
         </button>
-        <VeilLogo size={22} />
+        <VeilMark size={22} />
         <ThemeToggle />
       </nav>
 
       {/* Main Content */}
       <main className="wallet-main" style={{ paddingTop: "3rem", paddingBottom: "3rem" }}>
-        <div style={{ marginBottom: "2rem" }}>
-          <h1 style={{
-            fontFamily: "Lora, Georgia, serif",
-            fontWeight: 600,
-            fontStyle: "italic",
-            fontSize: "1.75rem",
-            color: "var(--off-white)",
-            marginBottom: "0.25rem"
-          }}>
-            DAO Multisig Hub
-          </h1>
-          <p style={{ fontSize: "0.875rem", color: "rgba(246,247,248,0.5)", lineHeight: 1.5 }}>
-            Create M-of-N multisig wallets programmatically, propose native XLM token transfers, and collect signatures completely on-chain.
-          </p>
+        <div style={{ marginBottom: "2rem", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
+          <div>
+            <h1 style={{
+              fontFamily: "Lora, Georgia, serif",
+              fontWeight: 600,
+              fontStyle: "italic",
+              fontSize: "1.75rem",
+              color: "var(--off-white)",
+              marginBottom: "0.25rem"
+            }}>
+              DAO Multisig Hub
+            </h1>
+            <p style={{ fontSize: "0.875rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
+              Create M-of-N multisig wallets programmatically, propose native XLM token transfers, and collect signatures completely on-chain.
+            </p>
+          </div>
+          <ThemeToggle />
         </div>
 
         {contractAddress ? (

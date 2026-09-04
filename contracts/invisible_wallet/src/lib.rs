@@ -66,6 +66,16 @@ pub enum WalletError {
     NoRecoveryKeySet            = 22,
     /// The per-key 24-hour spend limit has been reached.
     SpendLimitExceeded          = 23,
+    // authenticatorData shorter than rpIdHash(32)+flags(1)+signCount(4).
+    InvalidAuthData             = 24,
+    // The authenticator did not report User Present (UP) and User Verified (UV);
+    // the frontend requests `userVerification: 'required'`, so a legitimate
+    // assertion always sets both. Enforces "biometrics gate every transaction".
+    UserVerificationRequired    = 25,
+    // clientDataJSON is not a `webauthn.get` assertion (cross-ceremony confusion).
+    InvalidCeremonyType         = 26,
+    // A negative transfer amount was presented against an allowance.
+    NegativeAmount              = 27,
 }
 
 #[contract]
@@ -245,6 +255,13 @@ impl InvisibleWallet {
                         expiry,
                         WalletError::AllowanceExpired,
                     )?;
+                }
+
+                // A negative amount would pass the `>` check below and then
+                // *inflate* the allowance via `-= amount`. The SAC rejects
+                // negative transfers in practice, but the guard belongs here.
+                if amount < 0 {
+                    return Err(WalletError::NegativeAmount);
                 }
 
                 if amount > allowance.amount {
@@ -752,6 +769,10 @@ mod test {
         };
         let mut auth_data = [0u8; 37];
         auth_data[..32].copy_from_slice(&rp_id_hash);
+        // flags byte: User Present (0x01) + User Verified (0x04), as a real
+        // `userVerification: 'required'` assertion reports. Set before the
+        // signature is computed over auth_data below.
+        auth_data[32] = 0x05;
 
         let challenge_b64 = crate::auth::base64url_encode_32(payload);
 

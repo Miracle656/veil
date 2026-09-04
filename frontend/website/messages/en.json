@@ -18,13 +18,19 @@
   },
   "hero": {
     "tagline": "No seed phrase. No compromise.",
-    "title1": "The smart wallet",
-    "title2": "you never see",
-    "title3": "but always trust.",
+    "title1": "The agentic",
+    "title2": "passkey wallet",
+    "title3": "for Stellar.",
     "subtitle": "Passkey-powered smart accounts on Stellar Soroban. Your biometric is the key — no phrase to write down, no key to lose.",
     "cta1": "Get Early Access",
     "cta2": "Read the Docs",
-    "builtOn": "Built on Stellar Soroban"
+    "builtOn": "Built on Stellar Soroban",
+    "notes": [
+      "Send and receive USDC and XLM, settled in seconds.",
+      "Swap through Soroswap and earn through Blend, in-wallet.",
+      "Ask the agent for a payment; approve it with your fingerprint.",
+      "See every balance in your local currency."
+    ]
   },
   "howItWorks": {
     "sectionLabel": "The Invisible Handshake",
@@ -112,5 +118,179 @@
     "twitter": "Twitter / X",
     "stellar": "Stellar.org",
     "poweredBy": "Powered by Stellar Soroban · WebAuthn / FIDO2"
+  },
+  "heroNew": {
+    "line1": "The agentic",
+    "line2": "passkey wallet",
+    "line3": "for Stellar.",
+    "body": "Hold dollars, spend in your local currency. The balance earns yield underneath, and nothing moves without your passkey — face, fingerprint, your device, your call.",
+    "cta1": "Create wallet",
+    "cta2": "Read the docs",
+    "metrics": [
+      {
+        "value": "0",
+        "label": "Seed phrases"
+      },
+      {
+        "value": "{sym}0",
+        "label": "Network fees"
+      },
+      {
+        "value": "~5s",
+        "label": "Settlement"
+      }
+    ]
+  },
+  "flow": {
+    "label": "Sending money",
+    "title1": "Three taps. No fee.",
+    "title2": "No seed phrase.",
+    "body": "Every money action is a flow with a review step and a real outcome — never a form that swallows your money and hopes. You approve the exact amount and recipient with your face or fingerprint, and Veil covers the network fee.",
+    "cards": [
+      {
+        "title": "Hold & earn",
+        "body": "Keep a balance in dollars that quietly earns yield in the Blend pool, and withdraw whenever you want."
+      },
+      {
+        "title": "Sign with your face",
+        "body": "Approve the exact amount and recipient with a passkey. No seed phrase, and Veil covers the network fee."
+      },
+      {
+        "title": "Swap in one step",
+        "body": "Best route across pools through the Soroswap aggregator, settled on Stellar in about five seconds."
+      }
+    ]
+  },
+  "capabilities": {
+    "label": "Everything it does",
+    "title": "One balance. Every way you actually use money.",
+    "live": "Live",
+    "coming": "Coming",
+    "items": [
+      {
+        "name": "Passkey sign-in",
+        "blurb": "Face or fingerprint. No seed phrase exists to lose."
+      },
+      {
+        "name": "Sponsored fees",
+        "blurb": "You never hold a gas token. Veil pays the network."
+      },
+      {
+        "name": "Send & receive",
+        "blurb": "To any Stellar address, settled in about five seconds."
+      },
+      {
+        "name": "Swap",
+        "blurb": "Best route across pools through the Soroswap aggregator."
+      },
+      {
+        "name": "Local currency",
+        "blurb": "Read your balance in naira, cedi, shilling, rand or dollars."
+      },
+      {
+        "name": "AI agent",
+        "blurb": "Ask for a transfer; it builds it, you sign it."
+      },
+      {
+        "name": "Earn",
+        "blurb": "Put idle USDC to work in the Blend pool."
+      },
+      {
+        "name": "Bills & airtime",
+        "blurb": "Airtime, data, power and TV, paid from your balance."
+      }
+    ]
+  },
+  "trust": {
+    "label": "Security",
+    "title": "You should not have to trust us. So we built it so you don’t have to.",
+    "link": "Read the threat model",
+    "items": [
+      {
+        "title": "Non-custodial by construction",
+        "body": "Your wallet is a contract only your passkey can authorise. Veil cannot move your money, freeze it, or sign on your behalf — there is no key on our side to do it with."
+      },
+      {
+        "title": "Builds you can verify",
+        "body": "The contracts are compiled reproducibly in a pinned container. The bytecode running on Stellar mainnet matches our published hashes byte for byte, and you can rebuild it yourself to check."
+      },
+      {
+        "title": "A published threat model",
+        "body": "We wrote down how Veil could be attacked, using STRIDE, and shipped it in the docs rather than keeping it internal. Known limitations are listed alongside the mitigations."
+      },
+      {
+        "title": "Open source, MIT",
+        "body": "The wallet, the contracts, the oracle and the indexer are all public and permissively licensed. Nothing about how your money moves is hidden from you."
+      }
+    ]
+  },
+  "faq": {
+    "label": "Questions",
+    "title": "The things people ask first.",
+    "items": [
+      {
+        "q": "Do I need to know anything about crypto?",
+        "a": "No. You sign in with your face or fingerprint, and your balance is shown in your own currency. There is no seed phrase to write down, no gas token to buy, and no wallet address to memorise before you can be paid."
+      },
+      {
+        "q": "Is the money actually mine?",
+        "a": "Yes, and provably. Your funds sit in a smart contract that only your passkey can authorise. Veil holds no key that can move them, so there is nothing for us to freeze, lend out or lose. The trade-off is real: self-custody means no support line can reverse a transaction you signed."
+      },
+      {
+        "q": "What happens if I lose my phone?",
+        "a": "Your passkey lives in your device’s keychain and, for most people, syncs through Apple or Google. Signing in on a new device uses that same passkey. Keep a copy of your wallet address somewhere outside the app — recovery is fastest when you have it."
+      },
+      {
+        "q": "What does it cost?",
+        "a": "Nothing to open, and network fees are sponsored, so a transfer costs you zero. Stellar itself charges a fraction of a cent, which Veil covers. Where a third party is involved — a swap venue, an anchor — their fee is shown before you sign, never after."
+      },
+      {
+        "q": "Where does the yield come from?",
+        "a": "From Blend, a lending pool on Stellar: your USDC is borrowed by others who post collateral, and they pay interest. It is not a Veil product and not a guaranteed rate. It is DeFi, the rate moves, and pools carry smart-contract risk. Nothing is deposited unless you approve it with your passkey."
+      },
+      {
+        "q": "Is this actually live, or a prototype?",
+        "a": "Live on Stellar mainnet. The contracts are deployed and source-verified, and the core flows have real transactions behind them — a passkey-authorised spend and a live DEX swap among them. Bills and airtime are the exception: those need a licensed partner in each market and are not switched on yet."
+      }
+    ]
+  },
+  "agent": {
+    "badge": "AGENT · LIVE",
+    "title1": "Tell it what to do.",
+    "title2": "Then approve it.",
+    "body": "Ask in plain words and the agent builds the transaction — a swap, a transfer, a recurring bill. It hands you an unsigned payload every time. Your passkey is the only thing that can send it.",
+    "bullets": [
+      {
+        "strong": "Never holds your keys",
+        "rest": "it can build, it cannot sign."
+      },
+      {
+        "strong": "Shows the whole payload",
+        "rest": "amount, recipient, route, fee."
+      },
+      {
+        "strong": "One approval each",
+        "rest": "nothing is batched behind a single tap."
+      },
+      {
+        "strong": "Refuses silently never",
+        "rest": "every rejection says why."
+      }
+    ],
+    "ask": "Swap {largeAmount} to XLM and send {smallAmount} airtime to my brother",
+    "reply": "Two transactions ready. Both built and unsigned — approve each with your passkey.",
+    "queueLabel": "AWAITING YOUR APPROVAL",
+    "sign": "SIGN",
+    "queue": [
+      {
+        "title": "Swap 32.15 USDC → 253.4 XLM",
+        "sub": "Soroswap · fee sponsored"
+      },
+      {
+        "title": "MTN Airtime {smallAmount}",
+        "sub": "0805 991 2210 · 3.22 USDC"
+      }
+    ],
+    "index": "[ 04 OF 06 ] · THE AGENT"
   }
 }

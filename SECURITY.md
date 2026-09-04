@@ -100,4 +100,4 @@ The following will not be accepted as valid reports:
 
 ## Audit Status
 
-No third-party audit has been completed. Veil is testnet-only. A full audit is planned before any Mainnet deployment. See the [Security](https://veil-2ap8.vercel.app/security) docs page for the current audit roadmap.
+No third-party audit has been completed. Veil is testnet-only. A full audit is planned before any Mainnet deployment. See the [Security](https://docs.useveilapp.xyz/security) docs page for the current audit roadmap.

@@ -1,8 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
-import { ArrowRight, Wallet, Eye, Activity, Bot } from 'lucide-react'
+import { ArrowRight, Wallet, Eye, Activity, Bot, Menu, X } from 'lucide-react'
 
 const fadeUp = {
   hidden: { opacity: 0, y: 28 },
@@ -22,7 +23,7 @@ const PRODUCTS = [
     desc: 'A seedless, biometric-native smart wallet on Stellar Soroban. No seed phrases, no private keys — just your fingerprint or face.',
     highlights: ['WebAuthn / FIDO2 passkeys', 'On-chain P-256 verification', 'AI-powered assistant', 'Instant Stellar finality'],
     cta: 'Try the Wallet',
-    ctaHref: 'https://veil-ezry.vercel.app',
+    ctaHref: 'https://app.useveilapp.xyz',
     external: true,
   },
   {
@@ -66,21 +67,26 @@ const PRODUCTS = [
   },
 ]
 
+const PRODUCT_NAV = [
+  { label: 'How It Works', href: '/#how-it-works' },
+  { label: 'Features',     href: '/#features' },
+  { label: 'Developers',   href: '/#developers' },
+  { label: 'Products',     href: '/products' },
+  { label: 'Ecosystem',    href: '/#ecosystem' },
+]
+
 function Navbar() {
+  const [mobileOpen, setMobileOpen] = useState(false)
+
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-near-black/80 backdrop-blur-md border-b border-white/[0.06]">
       <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
         <Link href="/" className="font-lora font-semibold italic text-gold text-xl tracking-tight select-none">
           Veil
         </Link>
+
         <div className="hidden md:flex items-center gap-7">
-          {[
-            { label: 'How It Works', href: '/#how-it-works' },
-            { label: 'Features',     href: '/#features' },
-            { label: 'Developers',   href: '/#developers' },
-            { label: 'Products',     href: '/products' },
-            { label: 'Ecosystem',    href: '/#ecosystem' },
-          ].map(({ label, href }) => (
+          {PRODUCT_NAV.map(({ label, href }) => (
             <Link key={label} href={href}
               className={`font-inter text-sm transition-colors ${
                 label === 'Products' ? 'text-off-white' : 'text-warm-grey hover:text-off-white'
@@ -90,15 +96,57 @@ function Navbar() {
             </Link>
           ))}
         </div>
+
         <div className="hidden md:flex items-center gap-2.5">
-          <a href="https://veil-2ap8.vercel.app" className="font-inter text-sm text-warm-grey hover:text-off-white transition-colors px-3 py-1.5">
+          <a href="https://docs.useveilapp.xyz" className="font-inter text-sm text-warm-grey hover:text-off-white transition-colors px-3 py-1.5">
             Docs
           </a>
           <a href="/#early-access" className="btn-gold !py-2 !px-5 !text-sm">
             Get Early Access
           </a>
         </div>
+
+        <button
+          type="button"
+          aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={mobileOpen}
+          onClick={() => setMobileOpen((v) => !v)}
+          className="md:hidden text-warm-grey hover:text-off-white p-1.5 transition-colors"
+        >
+          {mobileOpen ? <X size={22} strokeWidth={1.5} /> : <Menu size={22} strokeWidth={1.5} />}
+        </button>
       </div>
+
+      {mobileOpen && (
+        <div className="md:hidden border-t border-white/[0.06] bg-near-black/95 px-6 py-5 flex flex-col gap-4">
+          {PRODUCT_NAV.map(({ label, href }) => (
+            <Link
+              key={label}
+              href={href}
+              onClick={() => setMobileOpen(false)}
+              className={`font-inter text-[15px] ${
+                label === 'Products' ? 'text-off-white' : 'text-warm-grey'
+              }`}
+            >
+              {label}
+            </Link>
+          ))}
+          <a
+            href="https://docs.useveilapp.xyz"
+            onClick={() => setMobileOpen(false)}
+            className="font-inter text-[15px] text-warm-grey"
+          >
+            Docs
+          </a>
+          <a
+            href="/#early-access"
+            onClick={() => setMobileOpen(false)}
+            className="btn-gold mt-1 justify-center"
+          >
+            Get Early Access
+          </a>
+        </div>
+      )}
     </nav>
   )
 }
@@ -231,7 +279,7 @@ export default function ProductsPage() {
             <nav className="flex flex-wrap justify-center gap-6">
               {[
                 { label: 'Home', href: '/' },
-                { label: 'Docs', href: 'https://veil-2ap8.vercel.app' },
+                { label: 'Docs', href: 'https://docs.useveilapp.xyz' },
                 { label: 'GitHub', href: 'https://github.com/Miracle656/veil' },
                 { label: 'Stellar.org', href: 'https://stellar.org' },
               ].map(({ label, href }) => (

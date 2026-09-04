@@ -34,7 +34,7 @@ export default function SecuritySettingsScreen() {
   const { timeout, requireBiometrics, selectTimeout, selectRequireBiometrics } = useAppLock();
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView showsVerticalScrollIndicator={false} style={styles.screen} contentContainerStyle={styles.content}>
       <Text style={styles.title}>Security</Text>
 
       <Text style={styles.sectionLabel}>AUTO-LOCK</Text>
