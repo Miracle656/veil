@@ -67,7 +67,8 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 export function configureNotificationHandler(): void {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
-      shouldShowAlert: true,
+      // shouldShowAlert was the old name for the two flags below. Expo warns on
+      // it now and it carried no extra meaning, so it is simply gone.
       shouldShowBanner: true,
       shouldShowList: true,
       shouldPlaySound: false,
