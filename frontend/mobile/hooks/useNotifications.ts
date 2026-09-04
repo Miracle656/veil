@@ -12,7 +12,7 @@
 
 import { useEffect, useRef } from 'react';
 
-import { subscribeActivityFeed, type TxRecord } from '../lib/activityFeed';
+import { movementKey, subscribeActivityFeed, type TxRecord } from '../lib/activityFeed';
 import * as Notifications from 'expo-notifications';
 import { useRouter, useSegments } from 'expo-router';
 
@@ -20,9 +20,14 @@ import { fireTransferNotification, routeForNotificationResponse } from '../lib/n
 import { consumePendingRoute, setPendingRoute } from '../lib/pendingRoute';
 
 /**
- * Set of record ids from the previous activity-feed snapshot. On each new
- * snapshot, any id not in this set is treated as a freshly-arrived record
- * and may trigger a notification.
+ * Movements already accounted for. On each new snapshot, anything not in this
+ * set is treated as freshly arrived and may trigger a notification.
+ *
+ * Keyed by movement rather than by row id, because one payment can arrive
+ * under two different ids — the contract's transfer event first, the
+ * fee-payer's classic Horizon operation once it is indexed. Keyed by id, the
+ * second arrival looks like a new payment and notifies about a transfer the
+ * user was already told about.
  */
 const seenIds = new Set<string>();
 
@@ -87,15 +92,20 @@ export function useNotifications(): void {
     const unsubscribe = subscribeActivityFeed((records) => {
       if (!initRef.current) {
         // First snapshot: seed the seen set without firing notifications.
-        for (const r of records) seenRef.current.add(r.id);
+        for (const r of records) seenRef.current.add(movementKey(r));
         initRef.current = true;
+        // Write through to the module-level flag as well. `useRef` copied the
+        // value at first render, so without this the hook re-seeds on every
+        // remount — and a transfer landing during one would be swallowed.
+        initialised = true;
         return;
       }
 
       // Look for records we haven't seen before.
       for (const tx of records) {
-        if (seenRef.current.has(tx.id)) continue;
-        seenRef.current.add(tx.id);
+        const key = movementKey(tx);
+        if (seenRef.current.has(key)) continue;
+        seenRef.current.add(key);
 
         // Fire a notification for the new record.
         if (tx.type === 'received') {
