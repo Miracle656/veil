@@ -76,7 +76,22 @@ config.resolver.alias = {
 // that ordinary node resolution can already satisfy locally. Redirecting inside
 // `resolveRequest` does, because Metro calls it for every request no matter
 // which file asked.
-const SINGLETON_PACKAGES = new Set(['react', 'react-dom']);
+//
+// `@stellar/stellar-sdk` is here for a related but separate reason: the SDK
+// declares ^15.1.0 (dependabot #143) while this app declares ^14.6.1, so both
+// majors were being bundled — SDK code ran v15, app code ran v14. XDR types are
+// classes, so an object built by one major and read by the other is not the
+// same type, and `wallet.deploy()` produced an envelope the same bundle could
+// not decode:
+//
+//   Deploy: this device produced a transaction it cannot read back.
+//
+// while every app-side flow, on v14 throughout, worked. Pin both to the app's
+// copy so there is one XDR implementation in the bundle.
+//
+// The real fix is agreeing one version across the repo — PR #676 — after which
+// this entry is belt and braces rather than load-bearing.
+const SINGLETON_PACKAGES = new Set(['react', 'react-dom', '@stellar/stellar-sdk']);
 const APP_NODE_MODULES = path.resolve(projectRoot, 'node_modules');
 
 /** The package name for a specifier, handling scopes and subpaths. */
@@ -99,20 +114,28 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     };
   }
 
+  const resolve = upstreamResolveRequest ?? context.resolveRequest;
+
   if (SINGLETON_PACKAGES.has(packageNameOf(moduleName))) {
-    // Resolve from the app's node_modules regardless of the requesting file,
-    // so a subpath like `react/jsx-runtime` still lands on the app's copy.
+    // Re-ask Metro for the same specifier, but as though an app file had asked.
+    //
+    // Deliberately not `require.resolve` here: that returns a package's Node
+    // entry point, and `@stellar/stellar-sdk` ships a separate browser build
+    // that is the one usable under Hermes — its Node entry reaches for `http`
+    // and `url`, which do not exist here. Rewriting the origin keeps Metro's
+    // own `browser` / `react-native` field handling and only changes which
+    // copy it finds.
     try {
-      return {
-        type: 'sourceFile',
-        filePath: require.resolve(moduleName, { paths: [APP_NODE_MODULES] }),
-      };
+      return resolve(
+        { ...context, originModulePath: path.join(APP_NODE_MODULES, '.metro-singleton.js') },
+        moduleName,
+        platform,
+      );
     } catch {
       // Fall through to normal resolution rather than hard-failing the build.
     }
   }
 
-  const resolve = upstreamResolveRequest ?? context.resolveRequest;
   return resolve(context, moduleName, platform);
 };
 
