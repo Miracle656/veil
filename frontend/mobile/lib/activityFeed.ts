@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { AppState, type NativeEventSubscription } from 'react-native';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ type ActivityListener = (records: TxRecord[]) => void;
 let _records: TxRecord[] = [];
 let _listeners = new Set<ActivityListener>();
 let _pollInterval: ReturnType<typeof setInterval> | null = null;
+let _appStateSub: NativeEventSubscription | null = null;
 let _currentAddress: string | null = null;
 let _wraithUrl: string | null = null;
 
@@ -229,19 +231,44 @@ export function startPolling(address: string, wraithUrl: string | null): void {
 
   if (!wraithUrl) return;
 
-  // Poll on an interval
-  _pollInterval = setInterval(async () => {
+  const tick = async () => {
     const fresh = await fetchTransfers(wraithUrl, address);
     if (fresh.length > 0) {
       appendActivityFeed(fresh);
     }
-  }, POLL_MS);
+  };
+
+  const start = () => {
+    if (_pollInterval === null) _pollInterval = setInterval(() => void tick(), POLL_MS);
+  };
+  const stop = () => {
+    if (_pollInterval !== null) {
+      clearInterval(_pollInterval);
+      _pollInterval = null;
+    }
+  };
+
+  if (AppState.currentState === 'active') start();
+
+  // Backgrounded, this stops. Nothing reads the feed behind a locked screen,
+  // and every tick is an indexer request; a phone left in a pocket would
+  // otherwise spend the hour making them.
+  _appStateSub = AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      void tick();
+      start();
+    } else {
+      stop();
+    }
+  });
 }
 
 /**
  * Stop the polling loop and clear the current address.
  */
 export function stopPolling(): void {
+  _appStateSub?.remove();
+  _appStateSub = null;
   if (_pollInterval !== null) {
     clearInterval(_pollInterval);
     _pollInterval = null;
