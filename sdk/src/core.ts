@@ -946,9 +946,41 @@ export class InvisibleWalletCore {
 
             const tx = txBuilder.setTimeout(30).build();
 
+            // Decode the envelope here before asking the RPC to.
+            //
+            // "Could not unmarshal transaction" is returned for an empty
+            // parameter, for something that is not base64, and for base64 that
+            // is not an envelope — so it cannot distinguish a server-side
+            // problem from a transaction this device encoded wrongly. XDR is
+            // built through `Buffer.toString('base64')`, which is a polyfill on
+            // React Native rather than a built-in, and one that emits the wrong
+            // alphabet or drops padding produces a string of entirely plausible
+            // length that no decoder accepts.
+            // A diagnostic must never become the failure it was added to explain,
+            // so anything unexpected here is skipped rather than thrown on.
+            const encoded: string = typeof tx.toXDR === 'function' ? (tx.toXDR() ?? '') : '';
+            if (encoded.length > 0) {
+                try {
+                    TransactionBuilder.fromXDR(encoded, networkPassphrase);
+                } catch (cause) {
+                    throw new Error(
+                        `Deploy: this device produced a transaction it cannot read back ` +
+                        `(${encoded.length} characters). The XDR encoding is broken in this ` +
+                        `build, so the network would reject it too. Cause: ` +
+                        `${cause instanceof Error ? cause.message : String(cause)}`
+                    );
+                }
+            }
+
             const sim = await server.simulateTransaction(tx);
             if (SorobanRpc.Api.isSimulationError(sim)) {
-                throw new Error(`Simulation failed: ${sim.error}`);
+                let host = 'unknown host';
+                try { host = new URL(rpcUrl).host; } catch { host = rpcUrl ? 'unparseable URL' : 'no RPC URL configured'; }
+                throw new Error(
+                    `Deploy failed to simulate: ${sim.error} ` +
+                    `(factory ${factoryAddress.slice(0, 8)}…, via ${host}, ` +
+                    `${encoded.length || 'unknown'}-character envelope)`
+                );
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
