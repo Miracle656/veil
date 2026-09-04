@@ -28,13 +28,18 @@
     "./svelte": {
       "types": "./dist/svelte/index.d.ts",
       "default": "./dist/svelte/index.js"
+    },
+    "./solid": {
+      "types": "./dist/solid/index.d.ts",
+      "default": "./dist/solid/index.js"
     }
   },
   "files": [
     "dist",
     "src",
     "vue",
-    "svelte"
+    "svelte",
+    "solid"
   ],
   "scripts": {
     "build": "tsc && node scripts/flatten-dist.js",
@@ -69,7 +74,8 @@
     "react-native": ">=0.72.0",
     "react-native-passkey": ">=3.0.0",
     "vue": "^3.0.0",
-    "svelte": ">=4.0.0"
+    "svelte": ">=4.0.0",
+    "solid-js": "^1.8.0"
   },
   "peerDependenciesMeta": {
     "react-dom": {
@@ -85,6 +91,9 @@
       "optional": true
     },
     "svelte": {
+      "optional": true
+    },
+    "solid-js": {
       "optional": true
     }
   },
@@ -113,6 +122,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "size-limit": "^12.1.0",
+    "solid-js": "^1.8.0",
     "storybook": "^8.6.0",
     "svelte": "^4.2.19",
     "ts-jest": "^29.2.0",

@@ -442,6 +442,40 @@ See [`sdk/src/svelte`](sdk/src/svelte) for the adapter and
 [`examples/sveltekit`](examples/sveltekit) for a full register/dashboard/send
 example.
 
+### With Solid
+
+```tsx
+import { useInvisibleWallet } from 'invisible-wallet-sdk/solid';
+
+function App() {
+  const wallet = useInvisibleWallet({
+    factoryAddress: FACTORY_CONTRACT_ID,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+  });
+
+  return (
+    <Show when={wallet.address()} fallback={
+      <button disabled={wallet.isPending()} onClick={() => wallet.register('alice')}>
+        Create wallet
+      </button>
+    }>
+      <p>Wallet: {wallet.address()}</p>
+    </Show>
+  );
+}
+```
+
+State arrives as Solid accessors — `wallet.address()`, `wallet.isDeployed()`,
+`wallet.isPending()`, `wallet.error()` — over the same `InvisibleWalletCore`
+the React, Vue and Svelte adapters bind, so the actions are identical across
+all four. Called inside a component it hydrates on mount and detaches on
+cleanup, which keeps it safe through a solid-start server render.
+
+See [`sdk/src/solid`](sdk/src/solid) for the adapter and
+[`examples/solid`](examples/solid) for a Vite starter covering register,
+dashboard and send.
+
 ### Without a framework
 
 ```js
