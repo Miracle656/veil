@@ -106,11 +106,11 @@ const config: ExpoConfig = {
         // pins dark inside Veil on a light phone will still get a light splash,
         // which is the platform's behaviour and not worth fighting.
         backgroundColor: '#FFFFFF',
-        image: './assets/images/splash-icon.png',
+        image: './assets/images/splash-icon-light.png',
         imageWidth: 260,
         dark: {
           backgroundColor: '#0F0F0F',
-          image: './assets/images/splash-icon.png',
+          image: './assets/images/splash-icon-dark.png',
         },
       },
     ],
