@@ -12,6 +12,8 @@
  * alone cannot distinguish them either.
  */
 
+import { TransactionBuilder } from '@stellar/stellar-sdk';
+
 /** A well-formed base64 envelope is never this short; empty is the failure we can name locally. */
 const MIN_PLAUSIBLE_XDR = 80;
 
@@ -28,6 +30,44 @@ export function assertEncodable(xdr: string, flow: string): void {
     throw new Error(
       `${flow}: the transaction did not encode on this device ` +
         `(${xdr ? `${xdr.length} characters` : 'empty'}). This is a problem before the network, not on it.`,
+    );
+  }
+}
+
+/**
+ * Decode the envelope again, here, before asking a server to.
+ *
+ * The RPC's "could not unmarshal transaction" is indistinguishable from a
+ * transaction the device encoded wrongly, and base64 is exactly where that
+ * happens: it comes from `Buffer.toString('base64')`, which on Hermes is a
+ * polyfill rather than a built-in. A polyfill that emits the wrong alphabet or
+ * drops its padding produces a string of entirely plausible length that no
+ * decoder will accept — so a length check alone cannot see it, and the blame
+ * lands on the network.
+ *
+ * Decoding it locally settles which side is at fault before the request is
+ * made. If this passes and the RPC still refuses, the encoding is sound and the
+ * problem is in transport or in what the server was asked.
+ */
+export function assertRoundTrips(xdr: string, networkPassphrase: string, flow: string): void {
+  assertEncodable(xdr, flow);
+
+  let reencoded: string;
+  try {
+    reencoded = TransactionBuilder.fromXDR(xdr, networkPassphrase).toXDR();
+  } catch (cause) {
+    throw new Error(
+      `${flow}: this device produced a transaction it cannot read back ` +
+        `(${xdr.length} characters). Base64 encoding is broken in this build, so the ` +
+        `network would reject it too. Cause: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+
+  if (reencoded !== xdr) {
+    throw new Error(
+      `${flow}: this device encoded a transaction that does not survive a round trip ` +
+        `(${xdr.length} characters out, ${reencoded.length} back). Base64 encoding is ` +
+        `unreliable in this build.`,
     );
   }
 }

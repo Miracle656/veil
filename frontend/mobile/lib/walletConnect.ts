@@ -1,6 +1,6 @@
 import { errorMessage } from './errorMessage';
 import './polyfills';
-import { assertEncodable, simulationErrorMessage } from './simulationError';
+import { assertRoundTrips, simulationErrorMessage } from './simulationError';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -280,7 +280,7 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   // Encode once and check it here: a truncated or empty envelope reads at the
   // RPC as "could not unmarshal", which looks like a server-side problem.
   const encoded = tx.toXDR();
-  assertEncodable(encoded, 'Smart-wallet transaction');
+  assertRoundTrips(encoded, network.networkPassphrase, 'Smart-wallet transaction');
 
   const sim = await rpc.simulateTransaction(tx, { cpuInstructions: 5_000_000 } as any);
   if (SorobanRpc.Api.isSimulationError(sim)) {
