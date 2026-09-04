@@ -60,6 +60,18 @@ export default function SwapScreen() {
     };
   }, []);
 
+  // What the account that pays for swaps can actually spend. The holdings above
+  // sum the smart wallet and the spending account, but a swap only ever touches
+  // the latter — and most of what it holds can be locked as network reserve.
+  const [spendableXlm, setSpendableXlm] = useState<number | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getFeePayerSpendableXlm()
+      .then((v) => { if (alive) setSpendableXlm(v); })
+      .catch(() => { if (alive) setSpendableXlm(null); });
+    return () => { alive = false; };
+  }, []);
+
   const balanceOf = (code: string): number | null => {
     const h = holdings.find((x) => x.code.toUpperCase() === code.toUpperCase());
     return h ? Number(h.balance) : null;
@@ -317,6 +329,17 @@ export default function SwapScreen() {
   const rate =
     quote && Number(amountIn) > 0 ? (Number(quote.amountOut) / 1e7 / Number(amountIn)).toFixed(4) : null;
 
+  // Paying in XLM comes out of the fee payer, so that is the number that
+  // governs — not the wallet total. A hardcoded reserve guess used to stand in
+  // for this and was wrong whenever the account held anything extra: every
+  // trustline and data entry locks a further 0.5, and the recovery breadcrumbs
+  // alone are three entries.
+  const isXlmIn = tokenIn.code.toUpperCase() === 'XLM';
+  const payableIn = isXlmIn ? spendableXlm : balanceOf(tokenIn.code);
+  const heldXlm = balanceOf('XLM');
+  const lockedXlm =
+    heldXlm !== null && spendableXlm !== null ? Math.max(0, heldXlm - spendableXlm) : null;
+
   // ── Done / status ──────────────────────────────────────────────────────────
   if (step === 'done') {
     return (
@@ -351,19 +374,20 @@ export default function SwapScreen() {
           <View style={[styles.leg, styles.legTop]}>
             <View style={styles.legHead}>
               <Text style={styles.legLabel}>You pay</Text>
-              {balanceOf(tokenIn.code) !== null && (
+              {payableIn !== null && (
                 <Pressable
                   hitSlop={6}
-                  onPress={() => {
-                    const b = balanceOf(tokenIn.code) ?? 0;
-                    const usable = tokenIn.code.toUpperCase() === 'XLM' ? Math.max(0, b - 1.5) : b;
-                    setAmountIn(usable.toFixed(usable >= 1 ? 2 : 4));
-                  }}
+                  onPress={() => setAmountIn(payableIn.toFixed(payableIn >= 1 ? 2 : 4))}
                 >
-                  <Text style={styles.legBalance}>Balance {fmtBal(balanceOf(tokenIn.code)!)} · Max</Text>
+                  <Text style={styles.legBalance}>Balance {fmtBal(payableIn)} · Max</Text>
                 </Pressable>
               )}
             </View>
+            {lockedXlm !== null && lockedXlm > 0.01 && tokenIn.code.toUpperCase() === 'XLM' && (
+              <Text style={styles.legHint}>
+                {fmtBal(lockedXlm)} XLM is locked as network reserve and cannot be swapped
+              </Text>
+            )}
             <View style={styles.legRow}>
               <TextInput
                 style={styles.legAmount}
@@ -518,6 +542,12 @@ const createStyles = (colors: ThemeColors) =>
       textTransform: 'uppercase',
     },
     legBalance: { color: colors.accent, fontFamily: fontFamily.bodyMedium, fontSize: 11.5 },
+    legHint: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 11,
+      marginTop: 6,
+    },
     doneWrap: { alignItems: 'center', marginTop: 52, gap: 20 },
     doneCta: { alignSelf: 'stretch', marginTop: 16 },
     legRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 12, gap: 12 },
