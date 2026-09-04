@@ -283,7 +283,12 @@ function ConfirmScreen({ amounts }: { amounts: RegionalAmounts }) {
       </div>
 
       <div className="flex-1" />
-      <div className="relative w-full h-[54px] rounded-pill border border-gold/35 bg-gold/[0.05] flex items-center justify-center overflow-hidden">
+      {/* pl-[54px] clears the knob (4px inset + 46px wide + 4px of air): the knob
+          is absolutely positioned and paints over the label, so centring the
+          label in the whole track hides its first word — "SLIDE TO CONFIRM"
+          reads as "TO CONFIRM". Padding does not move an absolutely-positioned
+          child, so the knob and the fill stay put. */}
+      <div className="relative w-full h-[54px] rounded-pill border border-gold/35 bg-gold/[0.05] flex items-center justify-center overflow-hidden pl-[54px] pr-[4px]">
         <span className="absolute left-0 top-0 bottom-0 w-[112px] bg-gold/[0.13]" />
         <span className="absolute left-[4px] top-[3px] w-[46px] h-[46px] rounded-full bg-gold text-near-black flex items-center justify-center text-[18px] font-bold">
           »
