@@ -15,7 +15,7 @@ import { SuccessAnimation } from '../components/SuccessAnimation';
 import { getSoroswapQuote, buildSoroswapSwapXdr, ensureSwapOutTrustline, resolveTokenAddress, type SwapQuote } from '../lib/soroswap';
 import { getSdexQuote, sdexSwap, sdexSupported } from '../lib/sdexSwap';
 import { getFeePayerAddress } from '../lib/activity';
-import { getFeePayerSpendableXlm } from '../lib/contractSpend';
+import { getFeePayerXlm, type FeePayerXlm } from '../lib/contractSpend';
 import { getNetwork } from '../lib/network';
 import { signAndSubmitSorobanXdr } from '../lib/sorobanTx';
 import { requirePasskey } from '../lib/passkey';
@@ -63,12 +63,12 @@ export default function SwapScreen() {
   // What the account that pays for swaps can actually spend. The holdings above
   // sum the smart wallet and the spending account, but a swap only ever touches
   // the latter — and most of what it holds can be locked as network reserve.
-  const [spendableXlm, setSpendableXlm] = useState<number | null>(null);
+  const [feePayerXlm, setFeePayerXlm] = useState<FeePayerXlm | null>(null);
   useEffect(() => {
     let alive = true;
-    getFeePayerSpendableXlm()
-      .then((v) => { if (alive) setSpendableXlm(v); })
-      .catch(() => { if (alive) setSpendableXlm(null); });
+    getFeePayerXlm()
+      .then((v) => { if (alive) setFeePayerXlm(v); })
+      .catch(() => { if (alive) setFeePayerXlm(null); });
     return () => { alive = false; };
   }, []);
 
@@ -218,7 +218,7 @@ export default function SwapScreen() {
       // Stellar locks 1 XLM per account plus 0.5 per trustline, and the balance
       // may not fall below that, so a freshly funded 1 XLM fee-payer has
       // nothing spendable at all.
-      const spendable = await getFeePayerSpendableXlm();
+      const spendable = (await getFeePayerXlm()).spendable;
       const TRUSTLINE_RESERVE_XLM = 0.5;
       const needsTrustline =
         tokenOut.code.toUpperCase() !== 'XLM' && balanceOf(tokenOut.code) === null;
@@ -335,10 +335,11 @@ export default function SwapScreen() {
   // trustline and data entry locks a further 0.5, and the recovery breadcrumbs
   // alone are three entries.
   const isXlmIn = tokenIn.code.toUpperCase() === 'XLM';
-  const payableIn = isXlmIn ? spendableXlm : balanceOf(tokenIn.code);
-  const heldXlm = balanceOf('XLM');
-  const lockedXlm =
-    heldXlm !== null && spendableXlm !== null ? Math.max(0, heldXlm - spendableXlm) : null;
+  const payableIn = isXlmIn ? (feePayerXlm?.spendable ?? null) : balanceOf(tokenIn.code);
+  // Measured against the fee payer's OWN balance. Comparing it to the wallet
+  // total — which sums the smart wallet as well — reported more locked than the
+  // account even holds.
+  const lockedXlm = feePayerXlm ? Math.max(0, feePayerXlm.balance - feePayerXlm.spendable) : null;
 
   // ── Done / status ──────────────────────────────────────────────────────────
   if (step === 'done') {
@@ -385,7 +386,9 @@ export default function SwapScreen() {
             </View>
             {lockedXlm !== null && lockedXlm > 0.01 && tokenIn.code.toUpperCase() === 'XLM' && (
               <Text style={styles.legHint}>
-                {fmtBal(lockedXlm)} XLM is locked as network reserve and cannot be swapped
+                {fmtBal(lockedXlm)} of the spending account&rsquo;s {fmtBal(feePayerXlm?.balance ?? 0)} XLM
+                is held as network reserve ({feePayerXlm?.subentries ?? 0}{' '}
+                {feePayerXlm?.subentries === 1 ? 'subentry' : 'subentries'}). It is refundable, not spent.
               </Text>
             )}
             <View style={styles.legRow}>

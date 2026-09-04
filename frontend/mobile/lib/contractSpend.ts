@@ -49,10 +49,33 @@ export async function isWalletDeployed(contractAddress: string): Promise<boolean
  * each lock 0.5; the wallet's recovery breadcrumbs alone are 3 entries) minus
  * selling liabilities, minus a small fee buffer. 0 when missing/unreachable.
  */
-export async function getFeePayerSpendableXlm(): Promise<number> {
+export type FeePayerXlm = {
+  /** Everything the fee payer holds. */
+  balance: number;
+  /** Subentries on the account; each locks a further 0.5 XLM. */
+  subentries: number;
+  /** Minimum the account must keep: (2 + subentries) x 0.5. */
+  reserve: number;
+  /** Held minus reserve, liabilities and a small fee buffer. Never negative. */
+  spendable: number;
+};
+
+/**
+ * The fee payer's XLM, split into what it holds and what it may actually spend.
+ *
+ * Returned as a breakdown rather than a single number because the difference
+ * needs explaining wherever it is shown. An account holding 4 XLM with four
+ * subentries can spend 0.95 of it, and a screen that reports the shortfall
+ * without the reason reads as a bug.
+ *
+ * Zeroed on any failure, so a caller treats an unreachable Horizon the same as
+ * an empty account: refuse the spend rather than let it fail on-chain.
+ */
+export async function getFeePayerXlm(): Promise<FeePayerXlm> {
+  const empty = { balance: 0, subentries: 0, reserve: 0, spendable: 0 };
   try {
     const feePayer = await getFeePayerAddress();
-    if (!feePayer) return 0;
+    if (!feePayer) return empty;
     const server = new Horizon.Server(getNetwork().horizonUrl);
     const account = await server.loadAccount(feePayer);
     const native = (account.balances as Array<{ asset_type: string; balance: string; selling_liabilities?: string }>).find(
@@ -63,10 +86,20 @@ export async function getFeePayerSpendableXlm(): Promise<number> {
     const reserve = (2 + subentries) * 0.5;
     const liabilities = Number(native?.selling_liabilities ?? '0');
     const feeBuffer = 0.05;
-    return Math.max(0, balance - reserve - liabilities - feeBuffer);
+    return {
+      balance,
+      subentries,
+      reserve,
+      spendable: Math.max(0, balance - reserve - liabilities - feeBuffer),
+    };
   } catch {
-    return 0;
+    return empty;
   }
+}
+
+/** Just the spendable figure, for callers that only gate on it. */
+export async function getFeePayerSpendableXlm(): Promise<number> {
+  return (await getFeePayerXlm()).spendable;
 }
 
 /**
