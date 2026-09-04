@@ -17,6 +17,8 @@
  *   - an `Error` with a message
  *   - `{ message }`, `{ error }`, `{ description }`, `{ reason }` — including
  *     when the value under that key is itself an error-like object
+ *   - an HTTP client error, whose useful text is in the response body rather
+ *     than in `.message`
  *   - anything else: JSON, so at least the fields are legible
  */
 
@@ -27,6 +29,32 @@ const MESSAGE_KEYS = ['message', 'error', 'description', 'reason', 'error_descri
 const CODE_KEYS = ['code', 'name', 'status'] as const;
 
 const FALLBACK = 'Something went wrong. Please try again.';
+
+/**
+ * The message an HTTP API put in its response body.
+ *
+ * Checked before an `Error`'s own `message`, because an axios rejection is an
+ * `Error` whose message is only ever the status line — "Request failed with
+ * status code 400". The reason for the 400 is in `response.data`, and dropping
+ * it is the difference between an error a user can act on ("Missing trustline
+ * in G… for asset: USDC") and one nobody can diagnose.
+ */
+function httpBodyMessage(error: unknown, depth: number): string | null {
+  if (!error || typeof error !== 'object' || depth >= 3) return null;
+
+  const response = (error as { response?: unknown }).response;
+  if (!response || typeof response !== 'object') return null;
+
+  const data = (response as { data?: unknown }).data;
+  if (typeof data === 'string' && data.trim() !== '') return data.trim();
+
+  if (data && typeof data === 'object') {
+    const message = errorMessage(data, depth + 1);
+    if (message !== FALLBACK) return message;
+  }
+
+  return null;
+}
 
 function firstString(source: Record<string, unknown>, keys: readonly string[]): string | null {
   for (const key of keys) {
@@ -43,6 +71,10 @@ function firstString(source: Record<string, unknown>, keys: readonly string[]): 
  */
 export function errorMessage(error: unknown, depth = 0): string {
   if (typeof error === 'string' && error.trim() !== '') return error.trim();
+
+  // Before the Error's own message: an HTTP body says why, a status line does not.
+  const fromBody = httpBodyMessage(error, depth);
+  if (fromBody) return fromBody;
 
   if (error instanceof Error && error.message) return error.message;
 

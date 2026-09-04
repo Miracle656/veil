@@ -72,3 +72,44 @@ describe('isUserRejection with object-shaped rejections', () => {
     expect(isUserRejection({ message: 'insufficient balance' })).toBe(false);
   });
 });
+
+describe('HTTP client errors', () => {
+  /**
+   * An axios rejection is an Error whose message is only the status line, so
+   * reading `.message` reports "Request failed with status code 400" and throws
+   * away the body, which is the only part that says what to do about it. This
+   * is how a Soroswap swap failure reached the user as a bare 400.
+   */
+  function axiosLike(status: number, data: unknown): Error {
+    const error = new Error(`Request failed with status code ${status}`);
+    Object.assign(error, { isAxiosError: true, response: { status, data } });
+    return error;
+  }
+
+  it('prefers the response body over the status line', () => {
+    expect(
+      errorMessage(axiosLike(400, { message: 'Missing trustline in GABC for asset: USDC' })),
+    ).toBe('Missing trustline in GABC for asset: USDC');
+  });
+
+  it('reads a body that is a bare string', () => {
+    expect(errorMessage(axiosLike(400, 'Insufficient liquidity for this pair'))).toBe(
+      'Insufficient liquidity for this pair',
+    );
+  });
+
+  it('reads a body that nests its message under error', () => {
+    expect(errorMessage(axiosLike(422, { error: { message: 'amount below minimum' } }))).toBe(
+      'amount below minimum',
+    );
+  });
+
+  it('falls back to the status line when the body says nothing useful', () => {
+    expect(errorMessage(axiosLike(500, {}))).toBe('Request failed with status code 500');
+    expect(errorMessage(axiosLike(502, undefined))).toBe('Request failed with status code 502');
+  });
+
+  it('leaves ordinary errors alone', () => {
+    expect(errorMessage(new Error('Account not found: GABC'))).toBe('Account not found: GABC');
+  });
+});
