@@ -1,0 +1,34 @@
+{
+  // Typecheck-only config. Metro/Expo reads `tsconfig.json` (and honors its
+  // `paths` at bundle time), so the two mappings below MUST NOT live there:
+  // routing `react` to `@types/react` at runtime would resolve the bundler to a
+  // declarations-only folder and crash the app.
+  //
+  // The `@veil/*` aliases point mobile at the SDK's TypeScript *source* under
+  // `../../sdk/src`. `tsc` follows those files and then tries to resolve their
+  // own imports (`react`, `@stellar/stellar-sdk`) from the SDK's directory,
+  // where — in the mobile-only CI job — they are not installed. Metro resolves
+  // them at runtime via `config.resolver.nodeModulesPaths` (see metro.config.js),
+  // but `tsc` has no equivalent, so we map those two specifiers to the copies in
+  // the mobile app's own `node_modules` for typechecking only.
+  //
+  // `extends` replaces the parent `paths` object wholesale rather than merging,
+  // so every alias from tsconfig.json is repeated here.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./app/*"],
+      "@/components/*": ["./components/*"],
+      "@/assets/*": ["./assets/*"],
+      "@veil/sdk": ["../../sdk/src/index"],
+      "@veil/events": ["../../sdk/src/events"],
+      "@veil/utils": ["../../sdk/src/utils"],
+      "@veil/recovery": ["../../sdk/src/recovery/sep30"],
+      "@veil/backup": ["../../sdk/src/backup"],
+      "@veil/sep7": ["../../sdk/src/sep7"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"]
+    }
+  }
+}

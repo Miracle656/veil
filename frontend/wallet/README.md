@@ -2,7 +2,7 @@
 
 The Veil Wallet is a Progressive Web App (PWA) built with Next.js 14. It is the primary user-facing application for the Veil ecosystem — a passkey-powered smart wallet on Stellar Soroban where users authenticate with biometrics (Face ID, fingerprint, Windows Hello) instead of seed phrases or private keys.
 
-**Live:** https://veil-ezry.vercel.app
+**Live:** https://app.useveilapp.xyz
 
 ---
 

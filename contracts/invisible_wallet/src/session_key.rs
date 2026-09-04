@@ -115,9 +115,13 @@ pub fn enforce(
 ) -> Result<(), WalletError> {
     let mut acl = get_acl(env, key_id).ok_or(WalletError::SignerNotAuthorized)?;
 
-    if env.ledger().timestamp() > acl.expiry {
-        return Err(WalletError::SessionKeyExpired);
-    }
+    // Expiry is compared against the consensus ledger timestamp with a small
+    // clock-skew grace window; see `crate::auth::expiration` for the rationale.
+    crate::auth::expiration::ensure_not_expired(
+        env.ledger().timestamp(),
+        acl.expiry,
+        WalletError::SessionKeyExpired,
+    )?;
 
     if *target != acl.target_contract {
         return Err(WalletError::SessionKeyAclViolation);
@@ -340,6 +344,61 @@ mod tests {
                 Err(WalletError::SessionKeyExpired)
             );
         });
+    }
+
+    // ── Expiry boundary behaviour (clock-skew tolerance) ──────────────────────
+
+    use crate::auth::expiration::CLOCK_SKEW_TOLERANCE_SECS;
+
+    /// Register a key expiring at `expiry`, advance the ledger clock to `now`,
+    /// and return the result of a minimal `enforce` call.
+    fn enforce_at(env: &Env, contract_id: &Address, target: &Address, expiry: u64, now: u64)
+        -> Result<(), WalletError>
+    {
+        let key_id = mock_key_id(env, 0x10);
+        let sel = symbol_short!("transfer");
+        env.as_contract(contract_id, || {
+            register(env, key_id.clone(), SessionKeyAcl {
+                pubkey: mock_pubkey(env, 0xAB),
+                target_contract: target.clone(),
+                selector: sel.clone(),
+                amount_cap: 1_000_000,
+                spent: 0,
+                expiry,
+            });
+            let mut info = env.ledger().get();
+            info.timestamp = now;
+            env.ledger().set(info);
+            enforce(env, &key_id, target, &sel, 1)
+        })
+    }
+
+    #[test]
+    fn not_rejected_exactly_at_expiry() {
+        let (env, contract_id, target) = setup();
+        assert!(enforce_at(&env, &contract_id, &target, 1_000, 1_000).is_ok());
+    }
+
+    #[test]
+    fn not_rejected_within_grace_window() {
+        // One second past expiry — the skew case the tolerance exists to absorb.
+        let (env, contract_id, target) = setup();
+        assert!(enforce_at(&env, &contract_id, &target, 1_000, 1_001).is_ok());
+        // Right at the edge of the grace window it is still accepted.
+        let (env, contract_id, target) = setup();
+        assert!(
+            enforce_at(&env, &contract_id, &target, 1_000, 1_000 + CLOCK_SKEW_TOLERANCE_SECS)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejected_one_second_past_grace_window() {
+        let (env, contract_id, target) = setup();
+        assert_eq!(
+            enforce_at(&env, &contract_id, &target, 1_000, 1_000 + CLOCK_SKEW_TOLERANCE_SECS + 1),
+            Err(WalletError::SessionKeyExpired)
+        );
     }
 
     // ── Unregistered key ──────────────────────────────────────────────────────

@@ -1,7 +1,8 @@
 {
   "name": "@veil/agent",
   "version": "0.2.0",
-  "description": "Veil AI agent — Claude-powered wallet assistant with x402 Stellar payments",
+  "private": true,
+  "description": "Veil AI agent \u2014 Claude-powered wallet assistant with x402 Stellar payments",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,11 +32,11 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.81.0",
+    "@anthropic-ai/sdk": "^0.113.0",
     "@soroswap/sdk": "^0.4.0",
-    "@stellar/stellar-sdk": "^14.6.1",
+    "@stellar/stellar-sdk": "^16.1.0",
     "@x402/core": "^2.13.0",
-    "@x402/stellar": "^2.11.0",
+    "@x402/stellar": "^2.19.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -45,11 +46,11 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
-    "@types/node": "^20.0.0",
+    "@types/node": "^26.1.1",
     "@types/ws": "^8.5.12",
-    "jest": "^30.3.0",
+    "jest": "^30.4.2",
     "ts-jest": "^29.4.9",
-    "tsx": "^4.22.3",
-    "typescript": "^5.0.0"
+    "tsx": "^4.23.1",
+    "typescript": "^6.0.3"
   }
 }

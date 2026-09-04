@@ -1,35 +1,30 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { txActive } from '@/lib/txState'
+import { createIdleWatcher } from '@/lib/idle-lock'
 
-const LOCK_TIMEOUT_MS = 5 * 60 * 1000
-const ACTIVITY_EVENTS = ['mousemove', 'keydown', 'touchstart', 'click', 'scroll'] as const
-
+/**
+ * Locks the wallet after a configurable period of inactivity.
+ *
+ * Behaviour and the timeout itself live in `lib/idle-lock.ts`; this hook just
+ * wires the watcher to Next's router and the session store. On lock it clears
+ * in-memory session state and routes to `/lock`, which re-prompts the passkey.
+ * The timeout (5 / 15 / 30 minutes, or never) is configured in
+ * Settings → Security and applied immediately.
+ */
 export function useInactivityLock() {
-  const router   = useRouter()
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const lock = useCallback(() => {
-    // Never interrupt an in-flight transaction — reschedule and check again
-    if (txActive()) {
-      timerRef.current = setTimeout(lock, 35_000)
-      return
-    }
-    sessionStorage.clear()
-    router.replace('/lock')
-  }, [router])
-
-  const resetTimer = useCallback(() => {
-    if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(lock, LOCK_TIMEOUT_MS)
-  }, [lock])
+  const router = useRouter()
 
   useEffect(() => {
-    resetTimer()
-    ACTIVITY_EVENTS.forEach(e => window.addEventListener(e, resetTimer, { passive: true }))
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-      ACTIVITY_EVENTS.forEach(e => window.removeEventListener(e, resetTimer))
-    }
-  }, [resetTimer])
+    const watcher = createIdleWatcher({
+      onLock: () => {
+        sessionStorage.clear()
+        router.replace('/lock')
+      },
+      // Never lock mid-transaction.
+      shouldDefer: txActive,
+    })
+    watcher.start()
+    return () => watcher.stop()
+  }, [router])
 }

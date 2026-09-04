@@ -29,7 +29,7 @@ export default function CTA() {
           initial={{ opacity: 0, y: 44 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.85, ease: [0.65, 0.05, 0.36, 1] }}
+          transition={{ duration: 0.85, ease: [0.65, 0.05, 0.36, 1] as [number, number, number, number] }}
         >
           {/* Badge */}
           <span className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-pill border border-white/10 bg-white/[0.03] text-xs text-[#8f8f8f] font-medium mb-8">
@@ -48,7 +48,7 @@ export default function CTA() {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <a href="https://veil-2ap8.vercel.app">
+            <a href="https://docs.useveilapp.xyz">
               <motion.button
                 whileHover={{ scale: 1.04, boxShadow: '0 0 28px rgba(5,162,194,0.2)' }}
                 whileTap={{ scale: 0.97 }}

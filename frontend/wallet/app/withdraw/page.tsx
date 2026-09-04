@@ -1,4 +1,5 @@
 'use client'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 /**
  * SEP-24 fiat off-ramp.
@@ -14,6 +15,7 @@
  *   6. Continue polling until status === 'completed' (or terminal).
  */
 
+import { inclusionFee } from '@/lib/fees'
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -82,16 +84,16 @@ export default function WithdrawPage() {
   // ── Boot: derive fee-payer + load balances ────────────────────────────────
 
   useEffect(() => {
-    const addr = sessionStorage.getItem('invisible_wallet_address')
+    const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
 
-    const secret = sessionStorage.getItem('veil_signer_secret')
-      || localStorage.getItem('veil_signer_secret')
+    const secret = walletSession.getItem('veil_signer_secret')
+      || walletLocal.getItem('veil_signer_secret')
     let publicKey: string | null = null
     if (secret) {
       try { publicKey = Keypair.fromSecret(secret).publicKey() } catch { /* skip */ }
     }
-    if (!publicKey) publicKey = localStorage.getItem('veil_signer_public_key')
+    if (!publicKey) publicKey = walletLocal.getItem('veil_signer_public_key')
     if (!publicKey || !publicKey.startsWith('G')) {
       setError('Spending wallet not set up yet. Tap "Fund wallet" on the dashboard first.')
       setStep('error')
@@ -227,8 +229,8 @@ export default function WithdrawPage() {
     }
     if (!selectedAsset) { setError('No asset selected.'); setStep('error'); return }
 
-    const signerSecret = sessionStorage.getItem('veil_signer_secret')
-      || localStorage.getItem('veil_signer_secret')
+    const signerSecret = walletSession.getItem('veil_signer_secret')
+      || walletLocal.getItem('veil_signer_secret')
     if (!signerSecret) {
       setError('Signing key not found. Return to dashboard and tap "Fund wallet" to set up a fee-payer.')
       setStep('error')
@@ -265,10 +267,12 @@ export default function WithdrawPage() {
       const feePayerKp = Keypair.fromSecret(signerSecret)
 
       // Passkey gate before signing/submitting.
-      const keyId = localStorage.getItem('invisible_wallet_key_id')
+      const keyId = walletLocal.getItem('invisible_wallet_key_id')
       if (!keyId) throw new Error('No passkey found. Please register the wallet first.')
       if (keyId !== 'recovery') {
-        const credIdBin = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'))
+        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const credIdBin = atob(padded)
         const credId    = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
         const challenge = crypto.getRandomValues(new Uint8Array(32))
         const assertion = await navigator.credentials.get({
@@ -308,7 +312,7 @@ export default function WithdrawPage() {
       const account = await horizonServer.loadAccount(feePayerKp.publicKey())
 
       const tx = new TransactionBuilder(account, {
-        fee: BASE_FEE,
+        fee: inclusionFee(),
         networkPassphrase: network.networkPassphrase,
       })
         .addOperation(Operation.payment({

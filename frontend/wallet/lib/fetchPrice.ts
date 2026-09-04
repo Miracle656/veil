@@ -23,8 +23,8 @@ export async function fetchPrice(
 ): Promise<number | null> {
   if (code.toUpperCase() === 'USDC') return 1.0
   const assetA = assetParam(code, issuer)
-  // Quote everything in USDC (testnet USDC issuer)
-  const assetB = 'USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+  // Quote everything in USDC, using whichever issuer is canonical here.
+  const assetB = `USDC:${getUsdcIssuer()}`
   const url    = `${LENS_BASE_URL}/price/${encodeURIComponent(assetA)}/${encodeURIComponent(assetB)}`
 
   const controller = new AbortController()
@@ -65,4 +65,5 @@ export async function fetchPrices(
     if (r.status === 'fulfilled') acc[r.value.key] = r.value.price
     return acc
   }, {})
-}
+}import { getUsdcIssuer } from './network'
+

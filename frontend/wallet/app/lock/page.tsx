@@ -1,11 +1,15 @@
 'use client'
 
+import { NetworkSwitcher } from '@/components/NetworkSwitcher'
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { LockKeyhole, Fingerprint, AlertCircle } from 'lucide-react'
 import { useInvisibleWallet } from '@veil/sdk'
-import { deriveStoredFeePayer } from '@/lib/deriveFeePayer'
+import { ensureFeePayer } from '@/lib/feePayer'
+import { FEE_PAYER_PRF_SALT, type PrfEvaluator } from '@veil/prf'
 import { walletConfig } from '@/lib/network'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { passkeyErrorMessage } from '@/lib/passkeyAuth'
 
 // ── Lock screen ───────────────────────────────────────────────────────────────
 export default function LockPage() {
@@ -25,27 +29,48 @@ export default function LockPage() {
       // wallet.login() only checks localStorage + chain; it doesn't prompt the
       // device. We call navigator.credentials.get() with userVerification:
       // 'required' so the OS always shows Face ID / fingerprint / Windows Hello.
-      const keyId = localStorage.getItem('invisible_wallet_key_id')
+      const keyId = walletLocal.getItem('invisible_wallet_key_id')
       if (!keyId) {
         setError('No passkey found. Please register again.')
         return
       }
 
+      // For a PRF wallet we reuse this single unlock assertion to also derive the
+      // fee-payer seed (ADR 0003) — piggybacking the PRF evaluation avoids a
+      // second biometric prompt.
+      let prfEvaluator: PrfEvaluator | undefined
+
       if (keyId !== 'recovery') {
         // Decode base64url key ID → ArrayBuffer
-        const b64 = keyId.replace(/-/g, '+').replace(/_/g, '/')
-        const binary = atob(b64)
+        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const binary = atob(padded)
         const idBuffer = new Uint8Array(binary.length)
         for (let i = 0; i < binary.length; i++) idBuffer[i] = binary.charCodeAt(i)
 
         const challenge = crypto.getRandomValues(new Uint8Array(32))
-        await navigator.credentials.get({
+        const saltBuf = new Uint8Array(FEE_PAYER_PRF_SALT).buffer
+        const assertion = (await navigator.credentials.get({
           publicKey: {
             challenge,
             allowCredentials: [{ id: idBuffer, type: 'public-key' }],
             userVerification: 'required',
+            extensions: { prf: { eval: { first: saltBuf } } } as AuthenticationExtensionsClientInputs,
           },
-        })
+        })) as PublicKeyCredential | null
+
+        const prfFirst = (
+          assertion?.getClientExtensionResults() as {
+            prf?: { results?: { first?: ArrayBuffer | ArrayBufferView } }
+          }
+        )?.prf?.results?.first
+        if (prfFirst) {
+          const bytes =
+            prfFirst instanceof ArrayBuffer
+              ? new Uint8Array(prfFirst)
+              : new Uint8Array((prfFirst as ArrayBufferView).buffer)
+          prfEvaluator = async () => bytes
+        }
       }
 
       // Step 2 — Biometric confirmed; verify wallet exists on-chain and restore session.
@@ -56,30 +81,26 @@ export default function LockPage() {
         return
       }
 
-      const existing = sessionStorage.getItem('invisible_wallet_address')
+      const existing = walletSession.getItem('invisible_wallet_address')
       if (existing && existing !== result.walletAddress) {
         sessionStorage.clear()
         setError('Account mismatch detected. Please register again.')
         return
       }
-      sessionStorage.setItem('invisible_wallet_address', result.walletAddress)
-      // Restore fee-payer secret — derive from passkey if localStorage was cleared
-      let storedSecret = localStorage.getItem('veil_signer_secret')
-      if (!storedSecret) {
-        const derived = await deriveStoredFeePayer()
-        if (derived) {
-          storedSecret = derived.secret()
-          localStorage.setItem('veil_signer_secret', storedSecret)
-          localStorage.setItem('veil_signer_public_key', derived.publicKey())
-        }
-      }
-      if (storedSecret) sessionStorage.setItem('veil_signer_secret', storedSecret)
+      walletSession.setItem('invisible_wallet_address', result.walletAddress)
+
+      // Re-establish the fee-payer for this session. PRF wallets re-derive the
+      // seed from the assertion above (no extra prompt) and keep it in
+      // sessionStorage only — nothing plaintext is restored to localStorage, so
+      // the lock actually protects the key at rest (ADR 0003, C3). Legacy wallets
+      // restore from localStorage without a prompt. Best-effort — a failure here
+      // must not block entry to the dashboard.
+      await ensureFeePayer(prfEvaluator).catch(() => null)
 
       router.replace('/dashboard')
 
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unlock failed. Please try again.'
-      setError(message)
+      setError(passkeyErrorMessage(err))
     } finally {
       setIsUnlocking(false)
     }
@@ -91,16 +112,22 @@ export default function LockPage() {
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
       <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem' }}>
+        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
+          <NetworkSwitcher />
+        </div>
 
-        {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
+        <header style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'center' }}>
+           {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
         <span style={{ fontFamily: 'Anton, Impact, sans-serif', fontSize: '2rem', letterSpacing: '0.08em', color: 'var(--gold)', userSelect: 'none' }}>
           VEIL
         </span>
-
+        </header>
+       
+        <main style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
         {/* Lock card */}
         <div
           className="card"
-          style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem', padding: '2.5rem 2rem' }}
+          style={{ maxWidth:400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem'}}
         >
           {/* Lock icon */}
           <div style={{
@@ -116,8 +143,8 @@ export default function LockPage() {
             <h1 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.25rem', color: 'var(--off-white)' }}>
               Wallet locked
             </h1>
-            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.45)', lineHeight: 1.6 }}>
-              Your session ended after 5 minutes of inactivity.
+            <p className='text-muted'>
+              Your session was locked after a period of inactivity.
               <br />
               Verify your identity to continue.
             </p>
@@ -147,11 +174,13 @@ export default function LockPage() {
           </button>
 
           {/* Subtle hint */}
-          <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.25)', textAlign: 'center' }}>
+          <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', textAlign: 'center' }}>
             Your biometric is your key — no password needed.
           </p>
         </div>
+        </main>
       </div>
     </div>
   )
 }
+

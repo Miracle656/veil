@@ -1,3 +1,4 @@
+import { inclusionFee } from './fees'
 import {
   Keypair, rpc as SorobanRpc, Contract, Account,
   TransactionBuilder, BASE_FEE, Asset, nativeToScVal, scValToNative, xdr,
@@ -27,7 +28,7 @@ async function getWalletNonce(
     const dummyKp = Keypair.random()
     const dummyAcct = new Account(dummyKp.publicKey(), '0')
     const probeTx = new TransactionBuilder(dummyAcct, {
-      fee: BASE_FEE,
+      fee: inclusionFee(),
       networkPassphrase,
     })
       .addOperation(new Contract(contractAddress).call('get_nonce'))
@@ -137,7 +138,7 @@ export async function sweepContractBalance(
   const dummyKp   = Keypair.random()
   const dummyAcct = new Account(dummyKp.publicKey(), '0')
   const balanceTx = new TransactionBuilder(dummyAcct, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase,
   })
     .addOperation(sac.call('balance', nativeToScVal(contractAddress, { type: 'address' })))
@@ -165,7 +166,7 @@ export async function sweepContractBalance(
   // 2. Build SAC.transfer(C..., G..., fullBalance) using the real fee-payer account
   const feePayerAcct = await rpc.getAccount(feePayerKeypair.publicKey())
   const tx = new TransactionBuilder(feePayerAcct, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase,
   })
     .addOperation(sac.call(
@@ -259,7 +260,7 @@ export async function sweepContractBalance(
   const ihfOp = tx.operations[0] as Operation.InvokeHostFunction
   const feePayerAcct2 = await rpc.getAccount(feePayerKeypair.publicKey())
   const signedTx = new TransactionBuilder(feePayerAcct2, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase,
   })
     .addOperation(Operation.invokeHostFunction({

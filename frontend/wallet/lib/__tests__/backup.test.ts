@@ -1,4 +1,10 @@
 /**
+ * @jest-environment node
+ *
+ * Runs under Node (not jsdom) so Web Crypto sees same-realm ArrayBuffers —
+ * jsdom's separate realm makes the PBKDF2 `salt` fail SubtleCrypto's
+ * `instanceof ArrayBuffer` check ("Failed to normalize algorithm").
+ *
  * Tests for the wallet-level encrypted backup wiring (lib/backup.ts).
  *
  * Exercises a full round-trip through a pluggable backend, confirms the backend
@@ -17,6 +23,10 @@ Object.defineProperty(globalThis, 'crypto', {
 })
 // jsdom does not provide these globals; the SDK backup code needs them.
 Object.assign(globalThis, { TextEncoder, TextDecoder })
+
+// The encrypted-backup round-trips run real PBKDF2 key derivation, which
+// exceeds Jest's default 5s timeout on slower CI runners. Give them headroom.
+jest.setTimeout(30_000)
 
 import {
   backupWallet,

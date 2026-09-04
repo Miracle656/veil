@@ -28,6 +28,10 @@ pub enum DataKey {
     Nonce,
     /// Granular spending limit for a spender and token.
     Allowance(AllowanceKey),
+    /// The designated recovery key address (Address).
+    RecoveryKey,
+    /// Stores a PendingRecovery struct while a recovery-key request is in progress.
+    RecoveryKeyPending,
 }
 
 #[contracttype]
@@ -72,6 +76,22 @@ pub fn remove_signer(env: &Env, index: u32) -> bool {
     } else {
         false
     }
+}
+
+/// Replace the public key of an existing signer in place, keeping the same
+/// index so the signer set size and slot layout are preserved. Returns true if
+/// `old_key` was found and replaced, false otherwise. Used by `rotate_signer`
+/// to swap a lost device's key without re-deploying the wallet.
+pub fn replace_signer(env: &Env, old_key: &BytesN<65>, new_key: &BytesN<65>) -> bool {
+    let mut signers = get_signers(env);
+    for (index, stored_key) in signers.iter() {
+        if stored_key == *old_key {
+            signers.set(index, new_key.clone());
+            env.storage().instance().set(&DataKey::Signers, &signers);
+            return true;
+        }
+    }
+    false
 }
 
 /// Check if any signer key matches the given public key.

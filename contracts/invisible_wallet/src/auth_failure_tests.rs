@@ -107,6 +107,7 @@ fn make_auth_data(env: &Env, rp_id: &str) -> Bytes {
     let hash: [u8; 32] = h.finalize().into();
     let mut ad = [0u8; 37];
     ad[..32].copy_from_slice(&hash);
+    ad[32] = 0x05; // flags: User Present (0x01) + User Verified (0x04)
     Bytes::from_array(env, &ad)
 }
 

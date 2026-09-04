@@ -1,3 +1,4 @@
+import { inclusionFee } from './fees'
 import {
   BASE_FEE,
   Keypair,
@@ -25,7 +26,7 @@ export function buildSponsoredFeeBumpTransaction({
   const sponsorKeypair = Keypair.fromSecret(sponsor.secret)
   const feeBump = TransactionBuilder.buildFeeBumpTransaction(
     sponsorKeypair.publicKey(),
-    sponsor.baseFee ?? BASE_FEE,
+    sponsor.baseFee ?? inclusionFee(),
     innerTransaction,
     networkPassphrase,
   )

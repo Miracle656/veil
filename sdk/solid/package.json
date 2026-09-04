@@ -1,28 +1,23 @@
 {
   "name": "@veil/invisible-wallet-solid",
   "version": "0.1.0",
-  "description": "Solid.js adapter for Invisible Wallet SDK",
-  "main": "dist/solid/src/index.js",
-  "module": "dist/solid/src/index.js",
-  "types": "dist/solid/src/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/solid/src/index.d.ts",
-      "default": "./dist/solid/src/index.js"
-    }
-  },
-  "scripts": {
-    "build": "tsc"
-  },
-  "dependencies": {
-    "invisible-wallet-sdk": "file:.."
-  },
+  "description": "Solid.js adapter for Invisible Wallet (Soroban + WebAuthn) \u2014 ships inside invisible-wallet-sdk as the `/solid` subpath",
+  "private": true,
+  "sideEffects": false,
+  "main": "../dist/solid/index.js",
+  "module": "../dist/solid/index.js",
+  "types": "../dist/solid/index.d.ts",
   "peerDependencies": {
     "solid-js": "^1.8.0"
   },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "solid-js": "^1.8.0",
-    "typescript": "^5.0.0"
-  }
+  "keywords": [
+    "stellar",
+    "soroban",
+    "webauthn",
+    "passkeys",
+    "wallet",
+    "solid",
+    "solidjs"
+  ],
+  "license": "MIT"
 }

@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate, NavLink, useNavigate } from '@solidjs/router';
 import { createSignal, createEffect, onMount, Show } from 'solid-js';
-import { useInvisibleWallet } from '@veil/invisible-wallet-solid';
+import { useInvisibleWallet } from 'invisible-wallet-sdk/solid';
 import {
   appConfig,
   persistSession,

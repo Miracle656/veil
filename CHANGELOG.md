@@ -19,7 +19,7 @@ New sections are generated automatically by `conventional-changelog-cli` — run
 - Soroban wallet contract with `WalletError` enum and 6 unit tests
 - Factory contract for deploying user wallets
 - TypeScript SDK (`invisible-wallet-sdk`) with `useInvisibleWallet` React hook
-- Next.js PWA wallet at https://veil-ezry.vercel.app
+- Next.js PWA wallet at https://app.useveilapp.xyz
   - Dashboard with combined contract + fee-payer XLM balance
   - Send (G→G classic payment, G→C SAC transfer)
   - Swap via SDEX `pathPaymentStrictSend` with auto-trustline
@@ -31,7 +31,7 @@ New sections are generated automatically by `conventional-changelog-cli` — run
 - Cache-clear recovery: "Signing key not found" banner and fallback flows
 - Lens price oracle integration (x402 micropayments)
 - Wraith SAC event indexer integration for incoming transfer history
-- Marketing site at https://veil-mocha.vercel.app and docs site at https://veil-2ap8.vercel.app
+- Marketing site at https://useveilapp.xyz and docs site at https://docs.useveilapp.xyz
 
 [Unreleased]: https://github.com/Miracle656/veil/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Miracle656/veil/releases/tag/v0.1.0

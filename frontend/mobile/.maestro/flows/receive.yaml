@@ -1,0 +1,51 @@
+appId: xyz.veil.wallet
+name: Receive
+tags:
+  - core
+  - receive
+---
+# Covers the receive path the web wallet exposes at /receive: an address the
+# payer can act on, a SEP-7 QR built from it, and the two ways to hand it over.
+- runFlow: ../subflows/launch-fresh.yaml
+
+- openLink: "veil://receive"
+- extendedWaitUntil:
+    visible:
+      id: "receive-screen"
+    timeout: 20000
+- assertVisible:
+    id: "receive-address"
+- assertVisible: "Show this to get paid on Stellar."
+
+# Copy writes to the clipboard and reports it. The clipboard itself is not
+# readable from a flow, so the confirmation is the observable part.
+- tapOn:
+    id: "receive-copy-button"
+- assertVisible: "Copied"
+
+# Share opens the system sheet, which is OS UI outside the app. Asserting the
+# button exists and is tappable is as far as a flow can go without depending on
+# a specific launcher's share dialog.
+- assertVisible:
+    id: "receive-share-button"
+
+# The screen survives leaving and coming back — the QR and address are rebuilt,
+# not cached into a blank state.
+- tapOn: "Send"
+- assertVisible:
+    id: "send-screen"
+- tapOn: "Receive"
+- assertVisible:
+    id: "receive-address"
+
+# A requested amount arrives as a query parameter on the link. The screen does
+# not render it yet (it builds a destination-only SEP-7 URI), so this asserts
+# the routing only: the link must not be dropped or land somewhere else.
+- stopApp
+- openLink: "veil://receive?amount=42&asset=XLM"
+- extendedWaitUntil:
+    visible:
+      id: "receive-screen"
+    timeout: 30000
+- assertVisible:
+    id: "receive-address"

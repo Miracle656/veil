@@ -1,0 +1,26 @@
+{
+  "name": "veil-x402-api-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Next.js client that pays an x402-guarded API with 0.01 XLM, signed via Veil",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.6.1",
+    "@x402/core": "^2.17.0",
+    "@x402/stellar": "^2.17.0",
+    "next": "^14.2.29",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.4.0"
+  }
+}

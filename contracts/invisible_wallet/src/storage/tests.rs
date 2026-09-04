@@ -20,6 +20,8 @@ fn _cover_all_variants(key: &DataKey) {
         DataKey::RecoveryPending => (),
         DataKey::Nonce => (),
         DataKey::Allowance(_) => (),
+        DataKey::RecoveryKey => (),
+        DataKey::RecoveryKeyPending => (),
     };
 }
 

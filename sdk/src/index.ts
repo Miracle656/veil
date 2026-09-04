@@ -35,11 +35,17 @@ export type {
     Sep7PayParams,
 } from './sep7';
 export * from './webauthn/attestation';
-export { webAuthnProvider } from './webauthn';
 export * from './recovery/sep30';
 export * from './crypto/prf';
 export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';
 export * from './claimableBalance';
+export * from './network';
+export * from './fees';
+export * from './reserves';
+export * from './deriveFeePayer';
+export * from './feePayer';
+export * from './walletStorage';
+
 

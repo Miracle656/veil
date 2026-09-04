@@ -1,12 +1,14 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
-import { VeilLogo } from '@/components/VeilLogo'
+import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
+import { isMultisigAvailable } from '@/lib/multisigConfig'
 import { useWalletConnect } from '@/lib/walletConnect'
 import {
   generateMnemonicPhrase,
@@ -16,6 +18,8 @@ import {
   storeEncryptedMnemonic,
   getEncryptedMnemonic,
 } from '@/lib/recovery'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 
 type Section = 'overview' | 'add-signer' | 'guardian' | 'recovery-backup'
 
@@ -146,6 +150,7 @@ export default function SettingsPage() {
   const [section, setSection] = useState<Section>('overview')
   const [status, setStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [prfDowngraded, setPrfDowngraded] = useState(false)
 
   const [signers, setSigners] = useState<SignerInfo[]>([])
   const [localPublicKey, setLocalPublicKey] = useState<string | null>(null)
@@ -257,10 +262,17 @@ export default function SettingsPage() {
     }
   }
 
+  const [multisigAvailable, setMultisigAvailable] = useState(false)
+
   useEffect(() => {
-    const addr = sessionStorage.getItem('invisible_wallet_address')
+    const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
     setAddress(addr)
+    // Active network is read from localStorage, so this waits for mount (#672).
+    setMultisigAvailable(isMultisigAvailable())
+    // Check fee-payer downgrade state so the card can show a warning dot
+    // without importing the full diagnostics into every render.
+    setPrfDowngraded(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
   }, [router])
 
   const fetchSigners = useCallback(async () => {
@@ -277,12 +289,12 @@ export default function SettingsPage() {
       fetchSigners()
     }
     if (typeof window !== 'undefined') {
-      setLocalPublicKey(localStorage.getItem('invisible_wallet_public_key'))
+      setLocalPublicKey(walletLocal.getItem('invisible_wallet_public_key'))
     }
   }, [address, section, fetchSigners])
 
   function getSignerKeypair(): Keypair {
-    const secret = sessionStorage.getItem('veil_signer_secret')
+    const secret = walletSession.getItem('veil_signer_secret')
     if (!secret) throw new Error('No signer key in session')
     return Keypair.fromSecret(secret)
   }
@@ -354,7 +366,7 @@ export default function SettingsPage() {
           </svg>
           {section === 'overview' ? 'Dashboard' : 'Settings'}
         </button>
-        <VeilLogo size={22} />
+        <VeilMark size={22} />
         <ThemeToggle />
       </nav>
 
@@ -362,9 +374,9 @@ export default function SettingsPage() {
         {/* Overview */}
         {section === 'overview' && (
           <>
-            <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '0.375rem' }}>
-              Security
-            </h2>
+            <div style={{ marginBottom: '1.75rem' }}>
+          <PageHeader eyebrow="Preferences" title="Settings" />
+        </div>
             <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '2rem' }}>
               Manage signers, recovery, and wallet settings
             </p>
@@ -380,21 +392,57 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              {/* Add signer card */}
+              {/* Passkeys card */}
               <button
                 className="card"
-                onClick={() => { setSection('add-signer'); setStatus(null) }}
+                onClick={() => router.push('/settings/passkeys')}
                 style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Add signer</p>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Passkeys</p>
                     <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
-                      Register a second device with a new passkey
+                      View and manage passkeys registered on this wallet
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
                     <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Fee Payer card */}
+              <button
+                id="settings-fee-payer"
+                className="card"
+                onClick={() => router.push('/settings/fee-payer')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: prfDowngraded ? '1px solid rgba(220,38,38,0.35)' : '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Fee Payer</p>
+                      {prfDowngraded && (
+                        <span
+                          title="PRF was requested but is unavailable on this device — fee payer may differ on other clients"
+                          style={{
+                            display: 'inline-block',
+                            width: '7px', height: '7px',
+                            borderRadius: '50%',
+                            background: 'rgba(220,38,38,0.85)',
+                            flexShrink: 0,
+                          }}
+                        />
+                      )}
+                    </div>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      {prfDowngraded
+                        ? 'PRF unavailable — using legacy derivation'
+                        : 'View active fee-payer address and derivation mode'}
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke={prfDowngraded ? 'rgba(220,38,38,0.5)' : 'rgba(246,247,248,0.3)'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -475,6 +523,44 @@ export default function SettingsPage() {
                 </div>
               </button>
 
+              {/* Security & Lock */}
+              <button
+                className="card"
+                onClick={() => router.push('/settings/security')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Security &amp; Lock</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Auto-lock the wallet after inactivity
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Privacy */}
+              <button
+                className="card"
+                onClick={() => router.push('/settings/privacy')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Privacy</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Error reporting and data preferences
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
               {/* Address Book card */}
               <button
                 className="card"
@@ -494,24 +580,27 @@ export default function SettingsPage() {
                 </div>
               </button>
 
-              {/* DAO Multisig Wallet Card */}
-              <button
-                className="card"
-                onClick={() => router.push('/multisig')}
-                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>DAO Multisig Wallet</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
-                      Configure M-of-N signers, deploy wallet contract, and track pending tx approvals
-                    </p>
+              {/* DAO Multisig Wallet Card — only where the contract exists (#672);
+                  /multisig redirects away on networks without it. */}
+              {multisigAvailable ? (
+                <button
+                  className="card"
+                  onClick={() => router.push('/multisig')}
+                  style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>DAO Multisig Wallet</p>
+                      <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                        Configure M-of-N signers, deploy wallet contract, and track pending tx approvals
+                      </p>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                      <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
                   </div>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </div>
-              </button>
+                </button>
+              ) : null}
 
               <button
                 className="card"
@@ -527,6 +616,24 @@ export default function SettingsPage() {
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
                     <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              <button
+                className="card"
+                onClick={() => router.push('/settings/danger')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid rgba(220, 38, 38, 0.3)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'rgba(220, 38, 38, 0.9)' }}>Danger Zone</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Irreversible actions: account merge and permanent wallet deletion
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(220, 38, 38, 0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>

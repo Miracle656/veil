@@ -11,6 +11,7 @@ import {
   isSep24Complete,
   type Sep24TransactionStatus,
 } from '@/lib/sep24'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -79,16 +80,16 @@ export default function BuyPage() {
   const pollIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
-    const stored = sessionStorage.getItem('invisible_wallet_address')
+    const stored = walletSession.getItem('invisible_wallet_address')
     if (!stored) { router.replace('/lock'); return }
 
-    const secret = sessionStorage.getItem('veil_signer_secret')
-      || localStorage.getItem('veil_signer_secret')
+    const secret = walletSession.getItem('veil_signer_secret')
+      || walletLocal.getItem('veil_signer_secret')
     if (secret) {
       try { setFeePayerAddress(Keypair.fromSecret(secret).publicKey()) } catch { /* skip */ }
       return
     }
-    const pub = localStorage.getItem('veil_signer_public_key')
+    const pub = walletLocal.getItem('veil_signer_public_key')
     if (pub) setFeePayerAddress(pub)
   }, [router])
 
@@ -226,7 +227,7 @@ export default function BuyPage() {
             </div>
 
             {!feePayerAddress && (
-              <div style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem', background: 'rgba(253,218,36,0.06)', border: '1px solid rgba(253,218,36,0.2)', borderRadius: '12px' }}>
+              <div style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem', background: 'var(--surface-md)', border: '1px solid var(--border-dim)', borderRadius: '12px' }}>
                 <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', lineHeight: 1.5 }}>
                   Your spending address isn&apos;t set up yet. Tap <strong style={{ color: 'var(--off-white)' }}>Fund wallet</strong> on the dashboard first so the provider knows where to send your funds.
                 </p>
@@ -247,7 +248,7 @@ export default function BuyPage() {
                     onClick={() => handleSelectAnchor(anchor)}
                     style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '1.125rem 1.25rem', cursor: 'pointer', background: 'var(--surface)', border: 'none', textAlign: 'left', width: '100%', borderRadius: '12px' }}
                   >
-                    <span style={{ color: 'var(--gold)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '2.5rem', height: '2.5rem', borderRadius: '10px', background: 'rgba(253,218,36,0.08)' }}>
+                    <span style={{ color: 'var(--gold)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: '2.5rem', height: '2.5rem', borderRadius: '10px', background: 'var(--surface-md)', border: '1px solid var(--border-dim)' }}>
                       <Icon />
                     </span>
                     <div>
@@ -294,7 +295,7 @@ export default function BuyPage() {
         {/* ── Transak opened in new tab ── */}
         {step === 'transak-open' && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', paddingTop: '3rem', gap: '1.5rem' }}>
-            <div style={{ width: '4rem', height: '4rem', borderRadius: '50%', background: 'rgba(253,218,36,0.08)', border: '1px solid rgba(253,218,36,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ width: '4rem', height: '4rem', borderRadius: '50%', background: 'var(--surface-md)', border: '1px solid var(--border-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
                 <rect x="1" y="4" width="22" height="16" rx="2" stroke="currentColor" strokeWidth="1.75"/>
                 <path d="M1 10h22" stroke="currentColor" strokeWidth="1.75"/>
@@ -388,7 +389,7 @@ export default function BuyPage() {
         {/* ── Success ── */}
         {step === 'success' && (
           <div style={{ textAlign: 'center', paddingTop: '3rem' }}>
-            <div style={{ width: '4rem', height: '4rem', borderRadius: '50%', background: 'rgba(253,218,36,0.12)', border: '1px solid rgba(253,218,36,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+            <div style={{ width: '4rem', height: '4rem', borderRadius: '50%', background: 'var(--surface-md)', border: '1px solid var(--border-dim)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
                 <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>

@@ -1,10 +1,11 @@
 'use client'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 export const dynamic = 'force-dynamic'
 
+import { inclusionFee } from '@/lib/fees'
 import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Image from 'next/image'
 import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
   TransactionBuilder, BASE_FEE, Networks, Asset, nativeToScVal, scValToNative,
@@ -15,14 +16,19 @@ import { WalletConnectApprovalModal } from '@/components/WalletConnectApprovalMo
 import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { deriveStoredFeePayer } from '@/lib/deriveFeePayer'
+import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
-import { buildFriendbotUrl, getNativeAssetContractId, getNetwork } from '@/lib/network'
+import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
+import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName } from '@/lib/network'
+import { isMultisigAvailable } from '@/lib/multisigConfig'
 import { sweepContractBalance } from '@/lib/sweepContractBalance'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import type { WebAuthnSignature } from '@veil/sdk'
 import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
-import { useActivityFeed, initActivityFeed, hydrateActivityFeed } from '@/lib/activityFeed'
+import { VeilMark } from '@/components/ui/VeilMark'
+import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
+import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
+import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 
 const network = getNetwork()
 
@@ -32,6 +38,65 @@ export interface WalletAsset {
   code: string
   issuer: string | null
   balance: string
+}
+
+// ── Shared types ─────────────────────────────────────────────────────────────
+
+type HorizonOp = {
+  id: string; type: string
+  from?: string; to?: string; funder?: string; account?: string
+  amount?: string; starting_balance?: string
+  asset_type?: string; asset_code?: string; asset_issuer?: string
+  source_amount?: string
+  source_asset_type?: string; source_asset_code?: string
+  created_at: string; transaction_hash: string
+  transaction?: { memo?: string }
+}
+
+type WraithTransfer = {
+  id: number; eventType: string; fromAddress: string | null
+  toAddress: string | null; amount: string; ledger: number
+  ledgerClosedAt: string; txHash: string; contractId: string
+}
+
+type WraithPage = { transfers: WraithTransfer[], next_cursor?: string | null }
+
+function mapHorizonOps(ops: HorizonOp[], signerPublicKey: string): import('@/components/TxDetailSheet').TxRecord[] {
+  return ops
+    .filter(p => p.type === 'payment' || p.type === 'create_account' || p.type === 'path_payment_strict_send')
+    .map(p => {
+      if (p.type === 'create_account') {
+        return {
+          id: p.id, type: 'received' as const,
+          amount: p.starting_balance ?? '0', asset: 'XLM',
+          counterparty: p.funder ?? 'Friendbot',
+          timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
+          hash: p.transaction_hash,
+        }
+      }
+      if (p.type === 'path_payment_strict_send') {
+        const srcAsset = p.source_asset_type === 'native' ? 'XLM' : (p.source_asset_code ?? 'XLM')
+        const dstAsset = p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? '')
+        return {
+          id: p.id, type: 'swapped' as const,
+          amount: p.source_amount ?? '0', asset: srcAsset,
+          destAmount: p.amount ?? '0', destAsset: dstAsset,
+          counterparty: 'Stellar DEX',
+          timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
+          hash: p.transaction_hash,
+        }
+      }
+      return {
+        id: p.id,
+        type: p.from === signerPublicKey ? 'sent' as const : 'received' as const,
+        amount: p.amount ?? '0',
+        asset: p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? ''),
+        counterparty: p.from === signerPublicKey ? (p.to ?? '') : (p.from ?? ''),
+        timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
+        hash: p.transaction_hash,
+        memo: p.transaction?.memo,
+      }
+    })
 }
 
 // ── Module-level cache ────────────────────────────────────────────────────────
@@ -67,23 +132,116 @@ function DashboardPageContent() {
   const [showConnectDapp, setShowConnectDapp] = useState(false)
   const [connectToast, setConnectToast] = useState<string | null>(null)
   const [sep24Modal, setSep24Modal] = useState<'deposit' | 'withdraw' | null>(null)
+  const [wraithInCursor, setWraithInCursor]   = useState<string | null>(null)
+  const [wraithOutCursor, setWraithOutCursor] = useState<string | null>(null)
+  const [hasMorePages, setHasMorePages]       = useState(false)
+  const [isLoadingMore, setIsLoadingMore]     = useState(false)
+  // PRF downgrade: surfaced as a dismissible banner (issue #629).
+  const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
+  const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
+
+  // Shoulder-surfing guard. Persisted, but read after mount so the server and
+  // client render the same first paint.
+  const [hideAmounts, setHideAmounts] = useState(false)
+  const hideLoaded = useRef(false)
+  useEffect(() => {
+    try { setHideAmounts(localStorage.getItem('veil_hide_amounts') === '1') } catch { /* blocked storage */ }
+    hideLoaded.current = true
+  }, [])
+  useEffect(() => {
+    if (!hideLoaded.current) return
+    try { localStorage.setItem('veil_hide_amounts', hideAmounts ? '1' : '0') } catch { /* blocked storage */ }
+  }, [hideAmounts])
+
+  // Time-of-day greeting is resolved after mount: the server's clock and the
+  // viewer's are not the same, and a mismatch breaks hydration.
+  const [greeting, setGreeting] = useState('Welcome back')
+  useEffect(() => {
+    const h = new Date().getHours()
+    setGreeting(h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening')
+  }, [])
+
+  const priceOf = useCallback(
+    (a: { code: string; issuer?: string | null }) =>
+      prices[a.issuer ? `${a.code}:${a.issuer}` : a.code] ?? null,
+    [prices],
+  )
+
+  // Balances are priced in USD upstream; this renders them in whichever
+  // currency the user picked (naira by default for the launch market).
+  const { code: currencyCode, rate: fxRate } = useCurrency()
+  useEffect(() => { hydrateCurrency() }, [])
+  const usd = (n: number) => formatFiat(n, currencyCode, fxRate)
+
+  const pricedAssets = assets.filter((a) => priceOf(a) != null)
+  const totalUsd = pricedAssets.reduce(
+    (sum, a) => sum + parseFloat(a.balance) * (priceOf(a) as number),
+    0,
+  )
+  // Only show a total once at least one asset has a price. A partial sum
+  // rendered as "the" balance understates the wallet without saying so.
+  const totalLabel = pricedAssets.length > 0 ? usd(totalUsd) : '—'
+
+  // 24h change on the total. Recorded locally rather than fetched: Lens serves
+  // a spot price and nothing historical, so this is the change in what the
+  // wallet is worth. Null — and so hidden — until a snapshot is a day old.
+  const [dayChange, setDayChange] = useState<number | null>(null)
+  useEffect(() => {
+    // A partial total is not comparable with a full one, and recording it would
+    // report a price-feed outage as a loss. Drop the chip entirely until every
+    // asset is priced rather than showing a number nobody can act on.
+    if (!walletAddress || !isComparableTotal(assets.length, pricedAssets.length)) {
+      setDayChange(null)
+      return
+    }
+    const key = historyKey(getNetworkName(), walletAddress)
+    const now = Date.now()
+    const history = recordSnapshot(readHistory(key), totalUsd, now)
+    writeHistory(key, history)
+    setDayChange(change24h(history, totalUsd, now))
+  }, [walletAddress, totalUsd, assets.length, pricedAssets.length])
+
+  const balanceLine = assets
+    .slice()
+    .sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance))
+    .slice(0, 2)
+    .map((a) => `${parseFloat(a.balance).toFixed(2)} ${a.code}`)
+    .join(' · ')
+
+  const recent = transactions.slice(0, 4)
+
+  const [multisigAvailable, setMultisigAvailable] = useState(false)
+
+  const horizonNextRef = useRef<(() => Promise<any>) | null>(null)
 
   useEffect(() => {
-    const stored = sessionStorage.getItem('invisible_wallet_address')
+    const stored = walletSession.getItem('invisible_wallet_address')
     if (!stored) { router.replace('/lock'); return }
     setWalletAddress(stored)
 
-    // Ensure veil_signer_secret is in localStorage so it survives lock/unlock.
-    // Wallets created before this fix only had it in sessionStorage.
-    const secret = sessionStorage.getItem('veil_signer_secret')
-    if (secret && !localStorage.getItem('veil_signer_secret')) {
-      localStorage.setItem('veil_signer_secret', secret)
-    }
+    // The chip is the main way into /multisig, and that route is gated on
+    // networks where the contract is not installed (#672) — so offering the
+    // chip there would just bounce the user straight back here. Resolved after
+    // mount because the active network lives in localStorage.
+    setMultisigAvailable(isMultisigAvailable())
+
+    // Establish the fee-payer for this session (idempotent, fire-and-forget).
+    // PRF wallets keep the seed in sessionStorage only — never copied to
+    // localStorage — so the lock protects it at rest (ADR 0003, C3).
+    void ensureFeePayer().then(() => {
+      // After the fee-payer is established, check whether a silent PRF→legacy
+      // downgrade occurred (issue #629). Show a banner if so.
+      setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
+    })
   }, [router])
 
   const fetchData = useCallback(async () => {
     if (!walletAddress) return   // keep loading=true until address is ready
     if (cachedAssets === null) setLoading(true)
+    horizonNextRef.current = null
+    setWraithInCursor(null)
+    setWraithOutCursor(null)
+    setHasMorePages(false)
 
     const horizonServer = new Server(network.horizonUrl)
     const rpcServer     = new SorobanRpc.Server(network.rpcUrl)
@@ -98,7 +256,7 @@ function DashboardPageContent() {
       const dummyKp     = Keypair.random()
       const dummyAcct   = new Account(dummyKp.publicKey(), '0')
       const balanceTx   = new TransactionBuilder(dummyAcct, {
-        fee: BASE_FEE, networkPassphrase: network.networkPassphrase,
+        fee: inclusionFee(), networkPassphrase: network.networkPassphrase,
       })
         .addOperation(sacContract.call('balance', nativeToScVal(walletAddress, { type: 'address' })))
         .setTimeout(30)
@@ -118,10 +276,10 @@ function DashboardPageContent() {
     setContractXlm(contractXlm)
 
     // ── 2. Fee-payer G... balance (holds the testnet faucet XLM) ────────────
-    const signerSecret    = sessionStorage.getItem('veil_signer_secret')
+    const signerSecret    = walletSession.getItem('veil_signer_secret')
     const signerPublicKey = signerSecret
       ? Keypair.fromSecret(signerSecret).publicKey()
-      : (localStorage.getItem('veil_signer_public_key') || null)
+      : (walletLocal.getItem('veil_signer_public_key') || null)
 
     // Track whether fee-payer exists so we can show a recovery banner
     setHasFeePayerKey(!!signerPublicKey)
@@ -142,76 +300,24 @@ function DashboardPageContent() {
           .map(b => ({ code: b.asset_code, issuer: b.asset_issuer, balance: b.balance }))
 
         // Transaction history (fee-payer account)
-        type HorizonOp = {
-          id: string; type: string
-          from?: string; to?: string; funder?: string; account?: string
-          amount?: string; starting_balance?: string
-          asset_type?: string; asset_code?: string; asset_issuer?: string
-          source_amount?: string
-          source_asset_type?: string; source_asset_code?: string
-          created_at: string; transaction_hash: string
-          transaction?: { memo?: string }
-        }
-
-        const payments = await horizonServer
+        const paymentsPage = await horizonServer
           .payments()
           .forAccount(signerPublicKey)
           .limit(20)
           .order('desc')
           .call()
 
-        txRecords = (payments.records as HorizonOp[])
-          .filter(p => p.type === 'payment' || p.type === 'create_account' || p.type === 'path_payment_strict_send')
-          .map(p => {
-            if (p.type === 'create_account') {
-              return {
-                id:           p.id,
-                type:         'received' as const,
-                amount:       p.starting_balance ?? '0',
-                asset:        'XLM',
-                counterparty: p.funder ?? 'Friendbot',
-                timestamp:    Math.floor(new Date(p.created_at).getTime() / 1000),
-                hash:         p.transaction_hash,
-              }
-            }
-            if (p.type === 'path_payment_strict_send') {
-              const srcAsset = p.source_asset_type === 'native' ? 'XLM' : (p.source_asset_code ?? 'XLM')
-              const dstAsset = p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? '')
-              return {
-                id:           p.id,
-                type:         'swapped' as const,
-                amount:       p.source_amount ?? '0',
-                asset:        srcAsset,
-                destAmount:   p.amount ?? '0',
-                destAsset:    dstAsset,
-                counterparty: 'Stellar DEX',
-                timestamp:    Math.floor(new Date(p.created_at).getTime() / 1000),
-                hash:         p.transaction_hash,
-              }
-            }
-            return {
-              id:           p.id,
-              type:         p.from === signerPublicKey ? 'sent' as const : 'received' as const,
-              amount:       p.amount ?? '0',
-              asset:        p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? ''),
-              counterparty: p.from === signerPublicKey ? (p.to ?? '') : (p.from ?? ''),
-              timestamp:    Math.floor(new Date(p.created_at).getTime() / 1000),
-              hash:         p.transaction_hash,
-              memo:         p.transaction?.memo,
-            }
-          })
+        horizonNextRef.current = paymentsPage.records.length >= 20 ? paymentsPage.next : null
+        txRecords = mapHorizonOps(paymentsPage.records as HorizonOp[], signerPublicKey)
       } catch { /* not yet funded */ }
     }
 
     // ── 3. Wraith: incoming SAC transfers to the wallet contract ────────────
     const wraithUrl = process.env.NEXT_PUBLIC_WRAITH_URL
+    let localInCursor: string | null = null
+    let localOutCursor: string | null = null
     if (wraithUrl) {
       try {
-        type WraithTransfer = {
-          id: number; eventType: string; fromAddress: string | null
-          toAddress: string | null; amount: string; ledger: number
-          ledgerClosedAt: string; txHash: string; contractId: string
-        }
         // Incoming: to wallet C... address
         // Outgoing: from fee-payer G... address (sends go from fee-payer, not contract)
         const feePayerAddr = signerPublicKey || walletAddress
@@ -219,8 +325,12 @@ function DashboardPageContent() {
           fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20`),
           fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20`),
         ])
-        const inData  = inRes.ok  ? await inRes.json()  as { transfers: WraithTransfer[] } : { transfers: [] }
-        const outData = outRes.ok ? await outRes.json() as { transfers: WraithTransfer[] } : { transfers: [] }
+        const inData  = inRes.ok  ? await inRes.json()  as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+        const outData = outRes.ok ? await outRes.json() as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+        localInCursor  = inData.next_cursor  ?? null
+        localOutCursor = outData.next_cursor ?? null
+        setWraithInCursor(localInCursor)
+        setWraithOutCursor(localOutCursor)
 
         const wraithRecords: TxRecord[] = [
           ...inData.transfers.map(t => ({
@@ -286,6 +396,7 @@ function DashboardPageContent() {
     hydrateActivityFeed(txRecords)
     if (signerPublicKey) initActivityFeed(signerPublicKey)
 
+    setHasMorePages(horizonNextRef.current !== null || localInCursor !== null || localOutCursor !== null)
     setLoading(false)
   }, [walletAddress])
 
@@ -305,6 +416,75 @@ function DashboardPageContent() {
     document.addEventListener('visibilitychange', onVisible)
     return () => document.removeEventListener('visibilitychange', onVisible)
   }, [fetchData])
+
+  const handleLoadMore = useCallback(async () => {
+    if (!walletAddress) return
+    setIsLoadingMore(true)
+    try {
+      const signerSecret    = walletSession.getItem('veil_signer_secret')
+      const signerPublicKey = signerSecret
+        ? Keypair.fromSecret(signerSecret).publicKey()
+        : (walletLocal.getItem('veil_signer_public_key') || '')
+
+      const additionalRecords: import('@/components/TxDetailSheet').TxRecord[] = []
+
+      if (horizonNextRef.current) {
+        try {
+          const page = await horizonNextRef.current()
+          additionalRecords.push(...mapHorizonOps(page.records as HorizonOp[], signerPublicKey))
+          horizonNextRef.current = page.records.length >= 20 ? page.next : null
+        } catch { /* Horizon unavailable */ }
+      }
+
+      const wraithUrl = process.env.NEXT_PUBLIC_WRAITH_URL
+      let newInCursor: string | null = null
+      let newOutCursor: string | null = null
+
+      if (wraithUrl && (wraithInCursor || wraithOutCursor)) {
+        try {
+          const feePayerAddr = signerPublicKey || walletAddress
+          const fetches: Promise<Response>[] = []
+          if (wraithInCursor)  fetches.push(fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20&cursor=${wraithInCursor}`))
+          if (wraithOutCursor) fetches.push(fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20&cursor=${wraithOutCursor}`))
+          const responses = await Promise.all(fetches)
+          let idx = 0
+
+          if (wraithInCursor) {
+            const res = responses[idx++]
+            const data = res.ok ? await res.json() as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+            newInCursor = data.next_cursor ?? null
+            additionalRecords.push(...data.transfers.map(t => ({
+              id: `w-${t.id}`, type: 'received' as const,
+              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7), asset: 'XLM',
+              counterparty: t.fromAddress ?? 'unknown',
+              timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
+              hash: t.txHash,
+            })))
+          }
+
+          if (wraithOutCursor) {
+            const res = responses[idx++]
+            const data = res.ok ? await res.json() as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+            newOutCursor = data.next_cursor ?? null
+            additionalRecords.push(...data.transfers.map(t => ({
+              id: `w-${t.id}`, type: 'sent' as const,
+              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7), asset: 'XLM',
+              counterparty: t.toAddress ?? 'unknown',
+              timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
+              hash: t.txHash,
+            })))
+          }
+        } catch { /* Wraith unavailable — hide button, keep existing list */ }
+      }
+
+      setWraithInCursor(newInCursor)
+      setWraithOutCursor(newOutCursor)
+      setHasMorePages(horizonNextRef.current !== null || newInCursor !== null || newOutCursor !== null)
+      if (additionalRecords.length > 0) appendActivityFeed(additionalRecords)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [walletAddress, wraithInCursor, wraithOutCursor])
 
   // Fetch live USDC prices from Lens after balances load.
   // Runs in the background — does not block balance rendering and does not
@@ -355,27 +535,12 @@ function DashboardPageContent() {
     setFundingError(null)
     try {
       // Friendbot only funds classic G... accounts, not C... contract addresses.
-      // Derive the G... public key from session secret or fall back to localStorage.
-      const signerSecret = sessionStorage.getItem('veil_signer_secret')
-      let signerPublicKey = signerSecret
-        ? Keypair.fromSecret(signerSecret).publicKey()
-        : (localStorage.getItem('veil_signer_public_key') || null)
+      // ensureFeePayer re-establishes the fee-payer (PRF-derived when supported,
+      // legacy fallback otherwise) without persisting the seed to localStorage.
+      const feePayer = await ensureFeePayer()
+      if (!feePayer) throw new Error('No passkey found. Please register again.')
+      const signerPublicKey = feePayer.publicKey()
 
-      // After cache clear or cross-device recovery — derive fee-payer from passkey.
-      // Same credential ID always produces the same keypair, so funds are never lost.
-      if (!signerPublicKey) {
-        const derived = await deriveStoredFeePayer()
-        if (!derived) throw new Error('No passkey found. Please register again.')
-        localStorage.setItem('veil_signer_public_key', derived.publicKey())
-        localStorage.setItem('veil_signer_secret', derived.secret())
-        sessionStorage.setItem('veil_signer_secret', derived.secret())
-        signerPublicKey = derived.publicKey()
-      }
-      // Always ensure the secret is persisted to localStorage so it survives lock/unlock
-      const currentSecret = sessionStorage.getItem('veil_signer_secret')
-      if (currentSecret && !localStorage.getItem('veil_signer_secret')) {
-        localStorage.setItem('veil_signer_secret', currentSecret)
-      }
       const friendbotUrl = buildFriendbotUrl(signerPublicKey)
       if (!friendbotUrl) {
         await fetchData()
@@ -410,18 +575,20 @@ function DashboardPageContent() {
     setIsSweeping(true)
     setSweepError(null)
     try {
-      const signerSecret = sessionStorage.getItem('veil_signer_secret')
-        || localStorage.getItem('veil_signer_secret')
+      const signerSecret = walletSession.getItem('veil_signer_secret')
+        || walletLocal.getItem('veil_signer_secret')
       if (!signerSecret) throw new Error('Signing key not found. Return to dashboard and tap "Set up fee-payer".')
       const feePayerKp = Keypair.fromSecret(signerSecret)
 
       const localSignAuthEntry = async (payload: Uint8Array): Promise<WebAuthnSignature | null> => {
-        const keyId        = localStorage.getItem('invisible_wallet_key_id')
-        const publicKeyHex = localStorage.getItem('invisible_wallet_public_key')
+        const keyId        = walletLocal.getItem('invisible_wallet_key_id')
+        const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
         if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
 
         const challenge  = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer
-        const credIdBin  = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'))
+        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const credIdBin  = atob(padded)
         const credId     = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
 
         const assertion = await navigator.credentials.get({
@@ -486,7 +653,8 @@ function DashboardPageContent() {
               setCopied(true)
               setTimeout(() => setCopied(false), 2000)
             }}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            className='settings-button'
+            style={{ color: "var(--color-muted)"}}
             title="Copy wallet address"
           >
             <span className="address-chip">
@@ -501,10 +669,13 @@ function DashboardPageContent() {
           </button>
         )}
         <button
+          aria-label='Settings'
           onClick={() => router.push('/settings')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: 'var(--warm-grey)', display: 'flex' }}
+          className='settings-button'
+          style={{ color: "var(--color-muted)"}}
           title="Settings"
         >
+          
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.75"/>
             <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"/>
@@ -512,18 +683,63 @@ function DashboardPageContent() {
         </button>
       </header>
 
-      <main className="wallet-main" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
+      <main className="wallet-main wallet-main--wide" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
 
-        <div style={{ marginBottom: '2rem' }}>
-          <h1 style={{
-            fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic',
-            fontSize: '1.75rem', color: 'var(--off-white)', marginBottom: '0.25rem',
-          }}>
-            Dashboard
-          </h1>
-          <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.5)' }}>
-            Your wallet locks automatically after 5 minutes of inactivity.
-          </p>
+
+        {/* ── Header row: greeting, hide-amounts, add money, send ── */}
+        <div className="vw-head">
+          <div>
+            <div className="vw-eyebrow">{greeting}</div>
+            <div className="vw-title">Your wallet</div>
+          </div>
+          <div className="vw-actions">
+            <button className="vw-pill" onClick={() => setHideAmounts(v => !v)}>
+              {hideAmounts ? 'Show amounts' : 'Hide amounts'}
+            </button>
+            <button className="vw-pill" onClick={() => setSep24Modal('deposit')}>Add money</button>
+          </div>
+        </div>
+
+        {/* ── Primary action cards (Send / Receive / Swap / Buy) ─────────── */}
+        <div className="vw-actions-grid">
+          <button className="vw-action-card" onClick={() => router.push('/send')}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
+              <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span>Send</span>
+          </button>
+          <button className="vw-action-card" onClick={() => router.push('/receive')}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
+              <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span>Receive</span>
+          </button>
+          <button className="vw-action-card" onClick={() => router.push('/swap')}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
+              <path d="M7 16l-4-4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M17 8l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M3 12h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            <span>Swap</span>
+          </button>
+          <button className="vw-action-card" onClick={() => router.push('/buy')}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
+              <path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span>Buy</span>
+          </button>
+        </div>
+
+        {/* ── Secondary actions — horizontally scrollable chip row ────────── */}
+        <div className="vw-more vw-more--scroll">
+          <button className="vw-chip" onClick={() => router.push('/assets')}>Assets</button>
+          <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
+          <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
+          <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
+          {multisigAvailable ? (
+            <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
+          ) : null}
+          <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>Connect dApp</button>
         </div>
 
         {/* ── Fee-payer missing banner (after cache clear) ── */}
@@ -531,8 +747,8 @@ function DashboardPageContent() {
           <div style={{
             marginBottom: '1.5rem',
             padding: '1rem 1.25rem',
-            background: 'rgba(253,218,36,0.07)',
-            border: '1px solid rgba(253,218,36,0.25)',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
             borderRadius: '12px',
           }}>
             <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', marginBottom: '0.5rem', fontWeight: 500 }}>
@@ -542,10 +758,10 @@ function DashboardPageContent() {
               Your browser storage was cleared. Tap below to set up a new fee-payer account so you can send, swap, and use the agent.
             </p>
             <button
-              className="btn-gold"
+              className="btn-secondary"
               onClick={handleFund}
               disabled={isFunding}
-              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem' }}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
             >
               {isFunding
                 ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
@@ -557,13 +773,49 @@ function DashboardPageContent() {
           </div>
         )}
 
+        {/* ── PRF downgrade warning banner (issue #629) ── */}
+        {!loading && showPrfDowngrade && !prfDowngradeDismissed && (
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'rgba(220,38,38,0.06)',
+            border: '1px solid rgba(220,38,38,0.3)',
+            borderRadius: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
+                Fee payer: PRF unavailable on this device
+              </p>
+              <button
+                id="dashboard-prf-downgrade-dismiss"
+                onClick={() => setPrfDowngradeDismissed(true)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-muted)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              This wallet requested a WebAuthn PRF result but the authenticator didn&apos;t provide one. It fell back to the legacy fee payer, which will look like a different wallet on a PRF-capable device. If this is unexpected, copy the diagnostics in Settings → Fee Payer and share them.
+            </p>
+            <button
+              id="dashboard-prf-downgrade-details"
+              className="btn-gold"
+              onClick={() => router.push('/settings/fee-payer')}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', color: 'var(--color-muted)' }}
+            >
+              View diagnostics
+            </button>
+          </div>
+        )}
+
         {/* ── Sweep prompt: contract SAC balance detected ── */}
         {!loading && contractXlm > 0 && !sweepDismissed && (
           <div style={{
             marginBottom: '1.5rem',
             padding: '1rem 1.25rem',
-            background: 'rgba(253,218,36,0.07)',
-            border: '1px solid rgba(253,218,36,0.25)',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
             borderRadius: '12px',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -572,7 +824,7 @@ function DashboardPageContent() {
               </p>
               <button
                 onClick={() => setSweepDismissed(true)}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(246,247,248,0.4)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-muted)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
                 title="Dismiss"
               >
                 ×
@@ -585,10 +837,10 @@ function DashboardPageContent() {
               <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginBottom: '0.625rem' }}>{sweepError}</p>
             )}
             <button
-              className="btn-gold"
+              className="btn-secondary"
               onClick={handleSweep}
               disabled={isSweeping}
-              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem' }}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
             >
               {isSweeping
                 ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
@@ -597,316 +849,138 @@ function DashboardPageContent() {
           </div>
         )}
 
-        {/* ── Balance Display ── */}
-        <div style={{ marginBottom: '2rem' }}>
-          <p style={{ fontSize: '0.75rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--warm-grey)', letterSpacing: '0.08em', marginBottom: '0.5rem' }}>
-            AVAILABLE BALANCE
-          </p>
-          {loading ? (
-            <div className="skeleton" style={{ width: '220px', height: '3rem', borderRadius: '8px' }} />
-          ) : (
-            <div style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '2.5rem', color: 'var(--off-white)' }}>
-              {xlmBalance !== null
-                ? `${parseFloat(xlmBalance).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 7 })} XLM`
-                : '—'
-              }
-            </div>
-          )}
 
-          {/* Faucet button for unfunded or zero-balance testnet wallets */}
-          {network.friendbotUrl && !loading && (xlmBalance === null || xlmBalance === '0') && (
-            <div style={{ marginTop: '1.25rem' }}>
-              <button
-                className="btn-ghost"
-                onClick={handleFund}
-                disabled={isFunding}
-                style={{ width: 'auto', paddingLeft: '1.5rem', paddingRight: '1.5rem', minHeight: '3rem' }}
-              >
-                {isFunding ? (
-                  <div className="spinner spinner-light" style={{ width: '1.25rem', height: '1.25rem' }} />
-                ) : (
-                  'Fund with testnet XLM'
+        {/* ── Three-column layout: center + right rail ── */}
+        <div className="vw-center-col">
+          {/* ── Balance plate + earning (center top) ── */}
+          <div className="vw-balance-row">
+            <div className="vw-silver">
+              <div className="vw-silver__sheen" />
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div className="vw-silver__label">Total balance</div>
+                <VeilMark size={28} color="#0F0F0F" />
+              </div>
+              <div className="vw-silver__amountrow">
+                <div className="vw-silver__amount">{hideAmounts ? '••••' : totalLabel}</div>
+                {!hideAmounts && dayChange !== null && (
+                  <span className={'vw-silver__delta ' + (dayChange >= 0 ? 'vw-silver__delta--up' : 'vw-silver__delta--down')}>
+                    {dayChange >= 0 ? '▲' : '▼'} {Math.abs(dayChange).toFixed(2)}% · 24h
+                  </span>
                 )}
-              </button>
-              {fundingError && (
-                <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginTop: '0.75rem' }}>
-                  {fundingError}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* ── Action Row ── */}
-        <div className="action-grid">
-          <ActionButton
-            label="Send"
-            onClick={() => router.push('/send')}
-            icon={<path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-          />
-          <ActionButton
-            label="Receive"
-            onClick={() => router.push('/receive')}
-            icon={<path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-          />
-          <ActionButton
-            label="Swap"
-            onClick={() => router.push('/swap')}
-            icon={<path d="M7 10l5-5 5 5M17 14l-5 5-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-          />
-          <ActionButton
-            label="Agent"
-            onClick={() => {
-              localStorage.setItem('veil_agent_last_visit', Date.now().toString())
-              setAgentBadge(false)
-              router.push('/agent')
-            }}
-            badge={agentBadge}
-            icon={<path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4zm0 10c-4 0-7 2-7 4v1h14v-1c0-2-3-4-7-4z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
-          />
-          <ActionButton
-            label="Connect"
-            onClick={() => setShowConnectDapp(true)}
-            icon={<path d="M8.5 8.5l7 7M13 5l6 6-4 4-6-6m-4 4l2-2m4 4l-2 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
-          />
-          <ActionButton
-            label="Deposit"
-            onClick={() => setSep24Modal('deposit')}
-            icon={<path d="M12 3v12m0 0l-4-4m4 4l4-4M3 17v2a2 2 0 002 2h14a2 2 0 002-2v-2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-          />
-          <ActionButton
-            label="Withdraw"
-            onClick={() => router.push('/withdraw')}
-            icon={<path d="M12 21V9m0 0l-4 4m4-4l4 4M3 7V5a2 2 0 012-2h14a2 2 0 012 2v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-          />
-          <ActionButton
-            label="Vault"
-            onClick={() => router.push('/vault')}
-            icon={<path d="M7 10V7a5 5 0 0110 0v3M5 10h14v10H5V10zm7 4v3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>}
-          />
-        </div>
-
-        {/* ── Buy crypto ── */}
-        <div style={{ marginBottom: '2rem' }}>
-          <button
-            onClick={() => router.push('/buy')}
-            style={{
-              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.625rem',
-              padding: '0.875rem 1.25rem', borderRadius: '12px', cursor: 'pointer',
-              background: 'rgba(253,218,36,0.06)', border: '1px solid rgba(253,218,36,0.2)',
-              color: 'var(--gold)', fontSize: '0.9375rem', fontWeight: 600,
-              transition: 'background 120ms',
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <rect x="2" y="5" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="1.75"/>
-              <path d="M2 10h20" stroke="currentColor" strokeWidth="1.75"/>
-            </svg>
-            Buy crypto
-          </button>
-          <button
-            onClick={() => router.push('/pools')}
-            style={{
-              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.625rem',
-              padding: '0.875rem 1.25rem', borderRadius: '12px', cursor: 'pointer',
-              background: 'rgba(253,218,36,0.04)', border: '1px solid rgba(253,218,36,0.16)',
-              color: 'var(--off-white)', fontSize: '0.9375rem', fontWeight: 500,
-              marginTop: '0.75rem',
-              transition: 'background 120ms',
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
-            </svg>
-            View pools
-          </button>
-        </div>
-
-        {/* ── Assets section ── */}
-        <section style={{ marginBottom: '2rem' }}>
-          <h2 style={{ fontSize: '0.75rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--warm-grey)', letterSpacing: '0.08em', marginBottom: '0.75rem' }}>
-            ASSETS
-          </h2>
-          {loading ? (
-            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div className="skeleton" style={{ width: '48px', height: '1.125rem' }} />
-                <div className="skeleton" style={{ width: '80px', height: '1.125rem' }} />
+              </div>
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', gap: '12px' }}>
+                <div className="vw-silver__sub">{hideAmounts ? '••••' : (balanceLine || 'No assets yet')}</div>
               </div>
             </div>
-          ) : assets.length === 0 ? (
-            <div className="card" style={{ textAlign: 'center', padding: '2rem' }}>
-              <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)' }}>
-                No assets found. Fund this address on Stellar Testnet to get started.
-              </p>
-            </div>
-          ) : (
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              {assets.map((asset, i) => {
-                const tokenHref = asset.issuer
-                  ? `/token/${asset.code}?issuer=${asset.issuer}`
-                  : `/token/${asset.code}`
-                const priceKey = asset.issuer ? `${asset.code}:${asset.issuer}` : asset.code
-                const unitPrice = prices[priceKey] ?? null
-                const usdValue  = unitPrice != null
-                  ? (parseFloat(asset.balance) * unitPrice).toFixed(2)
-                  : null
-                return (
-                  <button
-                    key={`${asset.code}-${asset.issuer ?? 'native'}`}
-                    onClick={() => router.push(tokenHref)}
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      width: '100%', padding: '0.875rem 1.25rem',
-                      background: 'none', border: 'none', cursor: 'pointer', color: 'var(--off-white)',
-                      borderBottom: i < assets.length - 1 ? '1px solid var(--border-dim)' : 'none',
-                      transition: 'background 100ms', textAlign: 'left',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <TokenIcon code={asset.code} size={36} />
-                      <div>
-                        <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>{asset.code}</p>
-                        <p style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.125rem' }}>
-                          {asset.code === 'XLM' ? 'Stellar Lumens' : asset.code === 'USDC' ? 'USD Coin' : asset.issuer ? `${asset.issuer.slice(0, 6)}…${asset.issuer.slice(-4)}` : 'Token'}
-                        </p>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.9375rem', fontWeight: 500 }}>
-                        {parseFloat(asset.balance).toFixed(2)}
-                      </p>
-                      <p style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.125rem' }}>
-                        {usdValue != null ? `${asset.code} · $${usdValue}` : asset.code}
-                      </p>
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </section>
 
-        {/* ── Activity section ── */}
-        <section>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-            <h2 style={{ fontSize: '0.75rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--warm-grey)', letterSpacing: '0.08em' }}>
-              ACTIVITY
-            </h2>
-            <button
-              onClick={() => fetchData()}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(246,247,248,0.4)', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.25rem' }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <path d="M1 4v6h6M23 20v-6h-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 0 1 3.51 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              Refresh
-            </button>
+            <div className="vw-panel" style={{ flex: 1, minWidth: 0, padding: '26px 28px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
+                <div className="vw-label">Earning</div>
+                <div className="vw-meta">Blend USDC pool</div>
+              </div>
+              <p style={{ fontSize: '14px', color: 'rgba(246,247,248,0.6)', lineHeight: 1.7, marginTop: '16px' }}>
+                Idle USDC can earn in the Blend pool. Nothing is deposited automatically —
+                you approve every move with your passkey.
+              </p>
+              <div style={{ flex: 1 }} />
+              <button className="vw-pill" style={{ alignSelf: 'flex-start', marginTop: '18px' }} onClick={() => router.push('/earn')}>
+                Open earn
+              </button>
+            </div>
           </div>
 
-          {/* Filter pills */}
-          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.875rem' }}>
-            {(['all', 'transfers', 'swaps'] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => setTxFilter(f)}
-                style={{
-                  padding: '0.3rem 0.875rem',
-                  borderRadius: '100px',
-                  border: '1px solid',
-                  fontSize: '0.75rem',
-                  fontFamily: 'Inter, sans-serif',
-                  cursor: 'pointer',
-                  transition: 'all 120ms',
-                  background: txFilter === f ? 'var(--gold)' : 'transparent',
-                  borderColor: txFilter === f ? 'var(--gold)' : 'rgba(246,247,248,0.15)',
-                  color: txFilter === f ? 'var(--near-black)' : 'rgba(246,247,248,0.5)',
-                  fontWeight: txFilter === f ? 600 : 400,
-                }}
-              >
-                {f === 'all' ? 'All' : f === 'transfers' ? 'Transfers' : 'Swaps'}
-              </button>
+          {/* ── Activity feed (center middle) ── */}
+          <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 4px' }}>
+              <div className="vw-label">Activity</div>
+              <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/activity')}>See all</button>
+            </div>
+            {recent.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '14px 0' }}>
+                {loading ? 'Loading…' : 'Nothing yet.'}
+              </p>
+            ) : recent.map((tx) => (
+              <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>
+                <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                  <span style={{ fontSize: '14px', fontWeight: 500 }}>
+                    {tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'}
+                  </span>
+                  <span className="vw-meta">
+                    {tx.counterparty.length > 12
+                      ? tx.counterparty.slice(0, 6) + '…' + tx.counterparty.slice(-6)
+                      : tx.counterparty}
+                  </span>
+                </span>
+                <Amount className={`text-sm font-semibold shrink-0 ${tx.type === 'received' ? 'text-teal' : 'text-off-white'}`}>
+                  {hideAmounts
+                    ? '••••'
+                    : (tx.type === 'sent' ? '-' : tx.type === 'received' ? '+' : '') + tx.amount + ' ' + tx.asset}
+                </Amount>
+              </Row>
             ))}
           </div>
-          {loading && (
-            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              {[1, 2, 3].map(i => (
-                <div key={i} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '0.875rem 1rem',
-                  borderBottom: i < 3 ? '1px solid var(--border-dim)' : 'none',
-                }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-                    <div className="skeleton" style={{ width: '48px', height: '0.875rem' }} />
-                    <div className="skeleton" style={{ width: '96px', height: '0.75rem' }} />
-                  </div>
-                  <div className="skeleton" style={{ width: '72px', height: '0.9375rem' }} />
-                </div>
-              ))}
+
+          {/* ── Agent card (center bottom) ── */}
+          <div className="vw-agent">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(183,172,232,0.16)', border: '1px solid rgba(183,172,232,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', color: '#B7ACE8', flexShrink: 0 }}>✦</div>
+              <div className="vw-label vw-label--lilac">Agent</div>
             </div>
-          )}
-          {(() => {
-            const filtered = transactions.filter(tx =>
-              txFilter === 'all' ? true :
-              txFilter === 'swaps' ? tx.type === 'swapped' :
-              tx.type !== 'swapped'
-            )
-            if (!loading && filtered.length === 0) return (
-              <div className="card" style={{ textAlign: 'center', padding: '2rem' }}>
-                <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)' }}>
-                  {transactions.length === 0 ? 'No transactions yet.' : `No ${txFilter} found.`}
-                </p>
-              </div>
-            )
-            if (filtered.length === 0) return null
-            return (
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                {filtered.map((tx, i) => (
-                  <button
-                    key={tx.id}
-                    onClick={() => setSelectedTx(tx)}
-                    style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      width: '100%', padding: '0.875rem 1rem',
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      borderBottom: i < filtered.length - 1 ? '1px solid var(--border-dim)' : 'none',
-                      color: 'var(--off-white)', textAlign: 'left',
-                      transition: 'background 100ms',
-                    }}
-                  >
-                    <div>
-                      <p style={{ fontSize: '0.875rem', fontWeight: 500 }}>
-                        {tx.type === 'sent' ? '↑ Sent' : tx.type === 'swapped' ? '⇄ Swap' : '↓ Received'}
-                      </p>
-                      <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.125rem', fontFamily: 'Inconsolata, monospace' }}>
-                        {tx.counterparty.length > 12
-                          ? `${tx.counterparty.slice(0, 6)}…${tx.counterparty.slice(-6)}`
-                          : tx.counterparty}
-                      </p>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      {tx.type === 'swapped' ? (
-                        <>
-                          <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.875rem' }}>
-                            -{tx.amount} {tx.asset}
-                          </p>
-                          <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.875rem', color: 'var(--teal)', marginTop: '0.125rem' }}>
-                            +{tx.destAmount} {tx.destAsset}
-                          </p>
-                        </>
-                      ) : (
-                        <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.9375rem' }}>
-                          {tx.amount} {tx.asset}
-                        </p>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )
-          })()}
-        </section>
+            <div style={{ fontFamily: 'Lora, Georgia, serif', fontStyle: 'italic', fontWeight: 600, fontSize: '19px', lineHeight: 1.4 }}>
+              &ldquo;Swap 10 XLM to USDC and send it to Ada.&rdquo;
+            </div>
+            <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.55)', lineHeight: 1.6 }}>
+              It builds the transactions. You sign each one with your passkey.
+            </p>
+            <button
+              onClick={() => router.push('/agent')}
+              style={{ border: '1px solid rgba(183,172,232,0.35)', color: '#B7ACE8', background: 'none', borderRadius: '100px', padding: '10px 20px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+            >
+              Open agent
+            </button>
+          </div>
+        </div>
+
+        {/* ── Right rail: assets with live fiat values ── */}
+        <div className="vw-rail">
+          <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
+              <Label className="vw-label">Assets</Label>
+              <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
+            </div>
+            {loading && assets.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>Loading…</p>
+            ) : assets.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>
+                No assets yet. Fund this address to get started.
+              </p>
+            ) : assets.map((asset) => {
+              const price = priceOf(asset)
+              const value = price != null ? parseFloat(asset.balance) * price : null
+              return (
+                <Row
+                  key={asset.code + '-' + (asset.issuer ?? 'native')}
+                  className="vw-listrow"
+                  onClick={() => router.push(asset.issuer ? '/token/' + asset.code + '?issuer=' + asset.issuer : '/token/' + asset.code)}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+                    <TokenIcon code={asset.code} size={38} />
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                      <span style={{ fontSize: '15px', fontWeight: 600 }}>{asset.code}</span>
+                      <span className="vw-meta">
+                        {hideAmounts ? '••••' : parseFloat(asset.balance).toFixed(4) + ' ' + asset.code}
+                      </span>
+                    </span>
+                  </span>
+                  <Amount className="text-[15px] font-semibold shrink-0">
+                    {hideAmounts ? '••••' : (value != null ? usd(value) : '—')}
+                  </Amount>
+                </Row>
+              )
+            })}
+          </div>
+        </div>
+
 
       </main>
 
@@ -932,7 +1006,7 @@ function DashboardPageContent() {
             transform: 'translateX(-50%)',
             zIndex: 70,
             background: 'rgba(32, 34, 38, 0.95)',
-            border: '1px solid rgba(253,218,36,0.25)',
+            border: '1px solid var(--border-dim)',
             borderRadius: '999px',
             padding: '0.625rem 0.95rem',
             color: 'var(--off-white)',
@@ -961,27 +1035,6 @@ export default function DashboardPage() {
     <Suspense fallback={<div className="wallet-shell"><main className="wallet-main" /></div>}>
       <DashboardPageContent />
     </Suspense>
-  )
-}
-
-const TOKEN_LOGOS: Record<string, string> = {
-  XLM:  '/tokens/xlm.png',
-  USDC: '/tokens/usdc.png',
-}
-
-function TokenIcon({ code, size = 32 }: { code: string; size?: number }) {
-  const src = TOKEN_LOGOS[code.toUpperCase()]
-  if (src) {
-    return (
-      <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: code === 'XLM' ? '#000' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Image src={src} alt={code} width={size} height={size} style={{ objectFit: 'contain', ...(code === 'XLM' ? { filter: 'invert(1)', padding: '4px' } : {}) }} />
-      </div>
-    )
-  }
-  return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: 'rgba(253,218,36,0.12)', border: '1px solid rgba(253,218,36,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.38, fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>
-      {code[0]}
-    </div>
   )
 }
 

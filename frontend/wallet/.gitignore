@@ -14,5 +14,12 @@ public/workbox-*.js
 public/workbox-*.js.map
 public/fallback-*.js
 
+
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Playwright output
+playwright-report/
+test-results/
+playwright-report/
+test-results/

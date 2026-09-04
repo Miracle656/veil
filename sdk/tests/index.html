@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Veil SDK Browser Matrix Test</title>
+</head>
+<body>
+  <h1>Veil SDK Browser Matrix Test</h1>
+  <script type="module">
+    import { Buffer } from 'buffer';
+    window.Buffer = Buffer;
+    import { InvisibleWallet } from '../src/vanilla.ts';
+    window.InvisibleWallet = InvisibleWallet;
+  </script>
+</body>
+</html>

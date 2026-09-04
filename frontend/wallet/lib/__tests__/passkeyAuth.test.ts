@@ -1,4 +1,34 @@
-import { requirePasskey } from '../passkeyAuth'
+import { TextEncoder, TextDecoder } from 'util'
+
+// jsdom does not expose these globals; @stellar/stellar-sdk — pulled in
+// transitively via passkeyAuth.ts -> walletStorage.ts -> network.ts — needs
+// them at import time.
+Object.assign(globalThis, { TextEncoder, TextDecoder })
+
+import { requirePasskey, passkeyErrorMessage } from '../passkeyAuth'
+
+describe('passkeyErrorMessage', () => {
+  it('hides the WebAuthn spec URL when the ceremony is cancelled or timed out', () => {
+    const err = new DOMException(
+      'The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.',
+      'NotAllowedError',
+    )
+    expect(passkeyErrorMessage(err)).toBe(
+      "The passkey was cancelled, timed out, or isn't on this device. Try again.",
+    )
+    expect(passkeyErrorMessage(err)).not.toMatch(/w3\.org/)
+  })
+
+  it('maps AbortError the same way', () => {
+    expect(passkeyErrorMessage(new DOMException('The operation was aborted.', 'AbortError'))).toBe(
+      "The passkey was cancelled, timed out, or isn't on this device. Try again.",
+    )
+  })
+
+  it('keeps a non-passkey error readable without injecting unlock copy', () => {
+    expect(passkeyErrorMessage(new Error('Simulation failed: panic'))).toBe('Simulation failed: panic')
+  })
+})
 
 describe('requirePasskey', () => {
   // Mock localStorage

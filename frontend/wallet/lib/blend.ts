@@ -1,3 +1,4 @@
+import { inclusionFee } from './fees'
 import {
   Account,
   BASE_FEE,
@@ -216,7 +217,7 @@ async function buildBlendSubmitXdr(params: {
     const tx = new TransactionBuilder(
       new Account(sourceAccount.accountId(), sourceAccount.sequenceNumber()),
       {
-        fee: BASE_FEE,
+        fee: inclusionFee(),
         networkPassphrase: net.networkPassphrase,
       }
     )

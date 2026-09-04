@@ -1,4 +1,9 @@
 /**
+ * @jest-environment node
+ *
+ * Runs under Node (not jsdom): jsdom's separate ArrayBuffer realm makes
+ * SubtleCrypto reject same-realm buffers ("not instance of ArrayBuffer").
+ *
  * Tests for encrypted cloud backup & cross-device restore.
  *
  * Uses Node's real Web Crypto (webcrypto) so AES-GCM authentication — and thus
@@ -13,6 +18,10 @@ Object.defineProperty(globalThis, 'crypto', {
   value: webcrypto,
   configurable: true,
 })
+
+// The encrypted-backup round-trips run real PBKDF2 key derivation, which
+// exceeds Jest's default 5s timeout on slower CI runners. Give them headroom.
+jest.setTimeout(30_000)
 
 import {
   encryptBackup,
@@ -66,7 +75,15 @@ describe('encryptBackup / decryptBackup', () => {
     const sealed = await encryptBackup(metadata, 'pw')
     const blob = serializeBackup(sealed)
     expect(blob).not.toContain('CWALLETADDRESS1234567890')
-    expect(blob).not.toContain('USD')
+
+    // Short markers must be searched in the decoded ciphertext, not in the
+    // base64 envelope: base64 draws from a 64-symbol alphabet, so a 3-letter
+    // token like the currency code turns up by chance in a ~700-character
+    // encoding roughly once every few hundred runs and fails CI at random.
+    const plaintextBytes = Buffer.from(sealed.ciphertext, 'base64').toString('latin1')
+    expect(plaintextBytes).not.toContain('USD')
+    expect(plaintextBytes).not.toContain('CWALLETADDRESS1234567890')
+
     expect(sealed.algorithm).toBe('AES-GCM')
     expect(sealed.kdf).toBe('PBKDF2')
     expect(typeof sealed.salt).toBe('string')
@@ -165,6 +182,26 @@ describe('backend create / restore', () => {
 
   it('deserializeBackup rejects malformed blobs', () => {
     expect(() => deserializeBackup('{not json')).toThrow(BackupError)
+  })
+})
+
+describe('backward compatibility — version-1 envelopes', () => {
+  it('decrypts a version-1 envelope at 210,000 iterations', async () => {
+    const metadata = sampleMetadata()
+    // Encrypt at the old work factor and manually downgrade the version to
+    // simulate an envelope written before the PBKDF2 iteration bump.
+    const sealed = await encryptBackup(metadata, 'correct horse battery staple', {
+      iterations: 210_000,
+    })
+    const v1Envelope = { ...sealed, version: 1 as number }
+
+    const restored = await decryptBackup(v1Envelope, 'correct horse battery staple')
+    expect(restored).toEqual(metadata)
+  })
+
+  it('rejects versions other than 1 or the current format', async () => {
+    const sealed = await encryptBackup(sampleMetadata(), 'pw')
+    await expect(decryptBackup({ ...sealed, version: 3 }, 'pw')).rejects.toThrow(BackupError)
   })
 })
 

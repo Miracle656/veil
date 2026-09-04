@@ -1,10 +1,19 @@
-use soroban_sdk::{contracttype, Env, BytesN};
+use soroban_sdk::{contracttype, Address, Env, BytesN};
 
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     WasmHash,
     Deployed(BytesN<32>),
+    Admin,
+}
+
+pub fn set_admin(env: &Env, admin: &Address) {
+    env.storage().instance().set(&DataKey::Admin, admin);
+}
+
+pub fn get_admin(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::Admin)
 }
 
 pub fn set_wasm_hash(env: &Env, hash: &BytesN<32>) {
