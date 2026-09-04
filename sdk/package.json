@@ -93,7 +93,7 @@
     "@size-limit/preset-small-lib": "^12.1.0",
     "@storybook/addon-essentials": "^8.6.0",
     "@storybook/react": "^8.6.0",
-    "@storybook/react-vite": "^8.6.0",
+    "@storybook/react-vite": "^10.5.10",
     "@stryker-mutator/core": "^8.7.0",
     "@stryker-mutator/jest-runner": "^8.7.0",
     "@stryker-mutator/typescript-checker": "^8.7.1",
