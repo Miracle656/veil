@@ -15,6 +15,7 @@
  */
 
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
 import { getHiddenAmounts } from './hiddenAmounts';
 import { getNotifIncoming, getNotifOutgoing, hydrateNotifPrefs } from './notificationPrefs';
@@ -64,6 +65,31 @@ export async function requestNotificationPermissions(): Promise<boolean> {
  * content, which is wrong for an activity-feed notification — we just want a
  * banner.
  */
+export async function configureNotificationChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+
+  // Android 8+ takes importance from the CHANNEL, not from the notification.
+  // Without one declared, expo-notifications lands on a default channel at
+  // DEFAULT importance, which files the notification quietly into the shade —
+  // it never becomes the heads-up banner that slides down over whatever the
+  // user is looking at. For "you were just paid", the banner is the point.
+  //
+  // Creating a channel that already exists is a no-op, so this is safe on every
+  // launch. Note the importance of an EXISTING channel cannot be raised from
+  // code — Android reserves that for the user — so a device that already
+  // installed a build without this keeps the quiet channel until the app is
+  // reinstalled or the user changes it in system settings.
+  await Notifications.setNotificationChannelAsync('transfers', {
+    name: 'Transfers',
+    description: 'Payments arriving in and leaving your wallet',
+    importance: Notifications.AndroidImportance.HIGH,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    sound: null,
+    vibrationPattern: [0, 200],
+    enableVibrate: true,
+  });
+}
+
 export function configureNotificationHandler(): void {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({
@@ -184,7 +210,19 @@ export async function fireTransferNotification(params: {
         type: params.type,
       },
     },
-    trigger: null, // fire immediately
+    // Android carries the channel on the TRIGGER, not the content, and a null
+    // trigger cannot name one — so it would land on the default channel at
+    // DEFAULT importance and never appear as a banner. A one-second interval is
+    // the shortest trigger that can name a channel; iOS ignores channelId and
+    // treats a null trigger as immediate.
+    trigger:
+      Platform.OS === 'android'
+        ? {
+            type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+            seconds: 1,
+            channelId: 'transfers',
+          }
+        : null,
   });
 }
 

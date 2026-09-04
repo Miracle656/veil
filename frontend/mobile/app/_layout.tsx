@@ -17,6 +17,7 @@ import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
 import { hydrateLockSettings } from '../lib/appLock';
 import {
+  configureNotificationChannel,
   configureNotificationHandler,
   requestNotificationPermissions,
   setAppLocked,
@@ -49,6 +50,9 @@ export default function RootLayout() {
     // Configure local notifications: the handler decides how they appear when
     // the app is in the foreground; permissions are requested once per install.
     configureNotificationHandler();
+    // Android takes heads-up behaviour from the channel, so it has to exist
+    // before the first notification is posted.
+    void configureNotificationChannel();
     void requestNotificationPermissions();
   }, []);
 
