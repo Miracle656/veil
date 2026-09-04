@@ -1,5 +1,6 @@
 import { errorMessage } from './errorMessage';
 import './polyfills';
+import { assertEncodable, simulationErrorMessage } from './simulationError';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -276,9 +277,22 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
 
   // Small CPU leeway for host-function ECDSA verification not modeled by
   // recording-mode simulation.
+  // Encode once and check it here: a truncated or empty envelope reads at the
+  // RPC as "could not unmarshal", which looks like a server-side problem.
+  const encoded = tx.toXDR();
+  assertEncodable(encoded, 'Smart-wallet transaction');
+
   const sim = await rpc.simulateTransaction(tx, { cpuInstructions: 5_000_000 } as any);
   if (SorobanRpc.Api.isSimulationError(sim)) {
-    throw new Error(`Simulation failed: ${sim.error}`);
+    throw new Error(
+      simulationErrorMessage({
+        error: sim.error,
+        flow: 'Smart-wallet transaction',
+        rpcUrl: network.rpcUrl,
+        network: network.name,
+        xdrLength: encoded.length,
+      }),
+    );
   }
 
   // Recording-mode simulation returns auth entries with

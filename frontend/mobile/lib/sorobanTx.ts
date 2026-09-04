@@ -1,6 +1,7 @@
 import { Transaction, TransactionBuilder, Keypair, rpc as SorobanRpc } from '@stellar/stellar-sdk';
 
 import './polyfills';
+import { assertEncodable, simulationErrorMessage } from './simulationError';
 import { inclusionFee } from './fees';
 
 /**
@@ -47,9 +48,20 @@ export async function signAndSubmitSorobanXdr(params: {
 
   // The footprint and resource fees have to be assembled before submit; the
   // simulation also revalidates the invocation against the current ledger.
+  const encoded = built.toXDR();
+  assertEncodable(encoded, 'Swap');
+
   const sim = await rpc.simulateTransaction(built);
   if (SorobanRpc.Api.isSimulationError(sim)) {
-    throw new Error(`Simulation failed: ${sim.error}`);
+    throw new Error(
+      simulationErrorMessage({
+        error: sim.error,
+        flow: 'Swap',
+        rpcUrl: params.rpcUrl,
+        network: params.networkPassphrase.includes('Test') ? 'testnet' : 'mainnet',
+        xdrLength: encoded.length,
+      }),
+    );
   }
 
   const assembled = SorobanRpc.assembleTransaction(built, sim).build();
