@@ -255,25 +255,25 @@ async function signXdrPayload(
     )
 
     for (const parsed of authEntries) {
-      const cred = parsed.credentials()
-      if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+      const cred = parsed.credentials
+      if (cred.type !== 'sorobanCredentialsAddress') {
         continue
       }
 
-      const addrCred = cred.address()
-      const contractAddr = Address.fromScAddress(addrCred.address()).toString()
+      const addrCred = cred.address
+      const contractAddr = Address.fromScAddress(addrCred.address).toString()
       const currentNonce = await getWalletNonce(rpc, contractAddr, network.networkPassphrase)
 
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addrCred.nonce(),
-          invocation: parsed.rootInvocation(),
+          networkId: networkIdBytes,
+          nonce: addrCred.nonce,
+          invocation: parsed.rootInvocation,
           signatureExpirationLedger: validUntilLedger,
         }),
       )
       const payloadHash = new Uint8Array(
-        await crypto.subtle.digest('SHA-256', new Uint8Array(preimage.toXDR())),
+        await crypto.subtle.digest('SHA-256', preimage.toXdr().buffer as ArrayBuffer),
       )
 
       const webAuthnSig = await signAuthEntry(payloadHash)
@@ -292,16 +292,17 @@ async function signXdrPayload(
       }
       const sigVec = xdr.ScVal.scvVec(sigElements)
 
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
+      authEntries[authEntries.indexOf(parsed)] = new xdr.SorobanAuthorizationEntry({
+        credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
           new xdr.SorobanAddressCredentials({
-            address: addrCred.address(),
-            nonce: addrCred.nonce(),
+            address: addrCred.address,
+            nonce: addrCred.nonce,
             signatureExpirationLedger: validUntilLedger,
             signature: sigVec,
           }),
         ),
-      )
+        rootInvocation: parsed.rootInvocation,
+      })
     }
   }
 

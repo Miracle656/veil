@@ -158,12 +158,12 @@ export function extractInvocation(
 
   try {
     const func = op.func
-    if (func.switch().name !== 'hostFunctionTypeInvokeContract') return null
-    const ic = func.invokeContract()
+    if (func.type !== 'hostFunctionTypeInvokeContract') return null
+    const ic = func.invokeContract
     return {
-      contractId: Address.fromScAddress(ic.contractAddress()).toString(),
-      functionName: ic.functionName().toString(),
-      args: ic.args(),
+      contractId: Address.fromScAddress(ic.contractAddress).toString(),
+      functionName: ic.functionName.toString(),
+      args: ic.args,
     }
   } catch {
     return null
@@ -175,16 +175,16 @@ export function decodeEvents(events: xdr.DiagnosticEvent[]): DecodedEvent[] {
   const decoded: DecodedEvent[] = []
   for (const diagnostic of events) {
     try {
-      const event = diagnostic.event()
-      const contractIdBuf = event.contractId()
-      const body = event.body().v0()
+      const event = diagnostic.event
+      const contractIdBuf = event.contractId
+      const body = event.body.v0
       decoded.push({
-        type: event.type().name,
+        type: event.type.name,
         contractId: contractIdBuf
-          ? StrKey.encodeContract(contractIdBuf as unknown as Buffer)
+          ? StrKey.encodeContract(contractIdBuf.toBytes())
           : null,
-        topics: body.topics().map(safeScValToNative),
-        data: safeScValToNative(body.data()),
+        topics: body.topics.map(safeScValToNative),
+        data: safeScValToNative(body.data),
       })
     } catch {
       // Skip events we cannot decode rather than failing the whole preview.
