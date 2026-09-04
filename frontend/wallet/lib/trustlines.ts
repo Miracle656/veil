@@ -1,3 +1,4 @@
+import { inclusionFee } from './fees'
 import {
   Asset,
   BASE_FEE,
@@ -93,7 +94,7 @@ export function buildChangeTrustTx(params: {
   const limit = params.remove ? REMOVE_TRUSTLINE_LIMIT : params.limit
 
   return new TransactionBuilder(params.account, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: params.networkPassphrase,
   })
     .addOperation(

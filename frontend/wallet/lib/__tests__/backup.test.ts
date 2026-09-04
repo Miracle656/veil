@@ -24,6 +24,10 @@ Object.defineProperty(globalThis, 'crypto', {
 // jsdom does not provide these globals; the SDK backup code needs them.
 Object.assign(globalThis, { TextEncoder, TextDecoder })
 
+// The encrypted-backup round-trips run real PBKDF2 key derivation, which
+// exceeds Jest's default 5s timeout on slower CI runners. Give them headroom.
+jest.setTimeout(30_000)
+
 import {
   backupWallet,
   restoreWallet,

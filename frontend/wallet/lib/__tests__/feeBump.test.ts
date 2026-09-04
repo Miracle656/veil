@@ -12,6 +12,11 @@ jest.mock('@stellar/stellar-sdk', () => {
 
   return {
     BASE_FEE: '100',
+    // feeBump now bids through lib/fees, which reads lib/network — and that
+    // needs Networks and Asset at module load. Mocking the SDK without them
+    // fails the whole suite before a single test runs.
+    Networks: { TESTNET: 'Test SDF Network ; September 2015', PUBLIC: 'Public Global Stellar Network ; September 2015' },
+    Asset: { native: () => ({ contractId: () => 'CNATIVE' }) },
     Keypair: {
       fromSecret: jest.fn(() => sponsorKeypair),
     },

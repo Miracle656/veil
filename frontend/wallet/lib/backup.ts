@@ -26,6 +26,7 @@ import {
   type BackupSecret,
   type BackupStorageBackend,
 } from '@veil/backup'
+import { walletLocal } from '@/lib/walletStorage'
 
 // Local crypto helpers — kept inline so the backup path stays free of the heavy
 // @stellar/stellar-sdk dependency that `@veil/utils` pulls in.
@@ -132,8 +133,8 @@ export function collectWalletMetadata(overrides: Partial<WalletBackupMetadata> =
   if (typeof localStorage === 'undefined') {
     throw new Error('collectWalletMetadata must run in a browser context')
   }
-  const address = overrides.address ?? localStorage.getItem(ADDRESS_KEY) ?? ''
-  const publicKey = localStorage.getItem(PUBLIC_KEY_KEY)
+  const address = overrides.address ?? walletLocal.getItem(ADDRESS_KEY) ?? ''
+  const publicKey = walletLocal.getItem(PUBLIC_KEY_KEY)
   if (!address) throw new Error('No wallet found on this device. Register before backing up.')
 
   const signers =
@@ -155,9 +156,9 @@ export function collectWalletMetadata(overrides: Partial<WalletBackupMetadata> =
 /** Write the non-secret parts of a restored backup back into local storage. */
 export function persistRestoredState(metadata: WalletBackupMetadata): void {
   if (typeof localStorage === 'undefined') return
-  localStorage.setItem(ADDRESS_KEY, metadata.address)
+  walletLocal.setItem(ADDRESS_KEY, metadata.address)
   const primary = metadata.signers[0]?.publicKey
-  if (primary) localStorage.setItem(PUBLIC_KEY_KEY, primary)
+  if (primary) walletLocal.setItem(PUBLIC_KEY_KEY, primary)
   if (metadata.settings) localStorage.setItem(SETTINGS_KEY, JSON.stringify(metadata.settings))
 }
 
@@ -281,8 +282,8 @@ export async function enrollNewSignerPasskey(
   const publicKey = bufferToHex(publicKeyBytes)
 
   if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(KEY_ID_KEY, credential.id)
-    localStorage.setItem(PUBLIC_KEY_KEY, publicKey)
+    walletLocal.setItem(KEY_ID_KEY, credential.id)
+    walletLocal.setItem(PUBLIC_KEY_KEY, publicKey)
   }
 
   return { publicKey, credentialId: credential.id }

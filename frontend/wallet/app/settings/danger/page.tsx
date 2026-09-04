@@ -1,5 +1,6 @@
 'use client'
 
+import { inclusionFee } from '@/lib/fees'
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -11,9 +12,11 @@ import {
 } from '@stellar/stellar-sdk'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork, walletConfig } from '@/lib/network'
-import { VeilLogo } from '@/components/VeilLogo'
+import { resetFeePayer } from '@/lib/feePayer'
+import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet } from '@veil/sdk'
+import { walletLocal, walletSession, clearActiveNetworkWallet } from '@/lib/walletStorage'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -46,15 +49,15 @@ export default function DangerPage() {
 
   // ── Load current user info ──────────────────────────────────────────────────
   useEffect(() => {
-    const addr = sessionStorage.getItem('invisible_wallet_address')
+    const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) {
       router.replace('/lock')
       return
     }
 
     const secret =
-      sessionStorage.getItem('veil_signer_secret') ||
-      localStorage.getItem('veil_signer_secret')
+      walletSession.getItem('veil_signer_secret') ||
+      walletLocal.getItem('veil_signer_secret')
     
     if (!secret) {
       setError('No fee-payer signing key found. Please set up your wallet first.')
@@ -157,7 +160,7 @@ export default function DangerPage() {
       const account = await server.loadAccount(feePayerAddress)
 
       const transaction = new TransactionBuilder(account, {
-        fee: BASE_FEE,
+        fee: inclusionFee(),
         networkPassphrase: network.networkPassphrase,
       })
         .addOperation(
@@ -174,15 +177,12 @@ export default function DangerPage() {
       setTxHash(result.hash)
       setStep('success')
 
-      // Clear local wallet data
-      localStorage.removeItem('veil_signer_secret')
-      localStorage.removeItem('veil_signer_public_key')
-      localStorage.removeItem('invisible_wallet_address')
-      localStorage.removeItem('invisible_wallet_key_id')
-      localStorage.removeItem('invisible_wallet_public_key')
-      sessionStorage.removeItem('veil_signer_secret')
-      sessionStorage.removeItem('veil_signer_public_key')
-      sessionStorage.removeItem('invisible_wallet_address')
+      // Clear local wallet data. resetFeePayer() drops the in-memory fee-payer
+      // cache and the pinned derivation mode as well (ADR 0003).
+      // clearActiveNetworkWallet() wipes only THIS network's slots, so a reset
+      // on testnet can never destroy a mainnet wallet (and vice versa).
+      resetFeePayer()
+      clearActiveNetworkWallet()
 
     } catch (err: any) {
       console.error(err)
@@ -236,7 +236,7 @@ export default function DangerPage() {
           </svg>
           Settings
         </button>
-        <VeilLogo size={22} />
+        <VeilMark size={22} />
         <ThemeToggle />
       </nav>
 

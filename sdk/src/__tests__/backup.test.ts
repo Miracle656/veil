@@ -19,6 +19,10 @@ Object.defineProperty(globalThis, 'crypto', {
   configurable: true,
 })
 
+// The encrypted-backup round-trips run real PBKDF2 key derivation, which
+// exceeds Jest's default 5s timeout on slower CI runners. Give them headroom.
+jest.setTimeout(30_000)
+
 import {
   encryptBackup,
   decryptBackup,
@@ -178,6 +182,26 @@ describe('backend create / restore', () => {
 
   it('deserializeBackup rejects malformed blobs', () => {
     expect(() => deserializeBackup('{not json')).toThrow(BackupError)
+  })
+})
+
+describe('backward compatibility — version-1 envelopes', () => {
+  it('decrypts a version-1 envelope at 210,000 iterations', async () => {
+    const metadata = sampleMetadata()
+    // Encrypt at the old work factor and manually downgrade the version to
+    // simulate an envelope written before the PBKDF2 iteration bump.
+    const sealed = await encryptBackup(metadata, 'correct horse battery staple', {
+      iterations: 210_000,
+    })
+    const v1Envelope = { ...sealed, version: 1 as number }
+
+    const restored = await decryptBackup(v1Envelope, 'correct horse battery staple')
+    expect(restored).toEqual(metadata)
+  })
+
+  it('rejects versions other than 1 or the current format', async () => {
+    const sealed = await encryptBackup(sampleMetadata(), 'pw')
+    await expect(decryptBackup({ ...sealed, version: 3 }, 'pw')).rejects.toThrow(BackupError)
   })
 })
 

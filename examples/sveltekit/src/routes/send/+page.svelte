@@ -32,7 +32,7 @@
     try {
       // Native XLM uses 7 decimal places (stroops).
       const amountStroops = BigInt(Math.round(Number(amount) * 10_000_000));
-      const result = await wallet.send(feePayerSecret, to, amountStroops, undefined, memo || undefined);
+      const result = await wallet.sendPayment(feePayerSecret, to, amountStroops, undefined, memo || undefined);
       txHash = result.transactionHash;
       to = '';
       amount = '';
@@ -63,7 +63,7 @@
     <input bind:value={memo} type="text" placeholder="Memo (optional)" disabled={busy} />
 
     <button disabled={busy || !to || !amount} on:click={handleSend}>
-      {busy ? ($wallet.status === 'signing' ? 'Confirm with passkey…' : 'Sending…') : 'Send payment'}
+      {busy ? ($wallet.isPending ? 'Confirm with passkey…' : 'Sending…') : 'Send payment'}
     </button>
 
     {#if txHash}

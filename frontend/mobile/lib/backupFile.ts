@@ -258,7 +258,9 @@ export async function persistRestoredState(metadata: WalletBackupMetadata): Prom
   if (primary) entries[PUBLIC_KEY_KEY] = primary;
   if (metadata.settings) entries[SETTINGS_KEY] = JSON.stringify(metadata.settings);
 
-  await AsyncStorage.setMany(entries);
+  // `multiSet` (array of [key, value] tuples) is the batch API in async-storage
+  // 2.x (SDK 54); the record-shaped `setMany` only existed in 3.x.
+  await AsyncStorage.multiSet(Object.entries(entries));
 }
 
 /** A passkey enrolled on this device, to be bound as an additional signer. */

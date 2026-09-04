@@ -18,6 +18,7 @@ import {
   Operation,
 } from '@stellar/stellar-sdk'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 // ── Anchor config ─────────────────────────────────────────────────────────────
 
@@ -197,8 +198,8 @@ export async function getSep10Jwt(
   const tx = new Transaction(challengeXdr, effectivePassphrase)
   const txHash = tx.hash() // 32-byte Buffer
 
-  const keyId        = localStorage.getItem('invisible_wallet_key_id')
-  const publicKeyHex = localStorage.getItem('invisible_wallet_public_key')
+  const keyId        = walletLocal.getItem('invisible_wallet_key_id')
+  const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
   if (!keyId || !publicKeyHex) {
     throw new Error('No passkey found. Please register the wallet first.')
   }
@@ -224,8 +225,8 @@ export async function getSep10Jwt(
   // Build a decorated transaction: add a Keypair signature so the anchor can
   // verify the account owns the key. For passkey wallets we use a derived
   // fee-payer keypair stored in localStorage/sessionStorage.
-  const signerSecret = sessionStorage.getItem('veil_signer_secret')
-    || localStorage.getItem('veil_signer_secret')
+  const signerSecret = walletSession.getItem('veil_signer_secret')
+    || walletLocal.getItem('veil_signer_secret')
 
   let signedXdr: string
   if (signerSecret) {

@@ -42,6 +42,7 @@ const config: DocsThemeConfig = {
   head: (
     <>
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="icon" type="image/svg+xml" href="/icon.svg" />
       <meta
         name="description"
         content="Veil — Passkey-powered Stellar smart wallet. SDK reference, contract API, and architecture docs."

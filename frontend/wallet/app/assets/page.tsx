@@ -17,14 +17,15 @@ import {
   type HorizonBalanceLike,
   type Trustline,
 } from '@/lib/trustlines'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const Server = Horizon.Server
 const network = getNetwork()
 
 function getSignerSecret(): string | null {
   return (
-    sessionStorage.getItem('veil_signer_secret') ||
-    localStorage.getItem('veil_signer_secret')
+    walletSession.getItem('veil_signer_secret') ||
+    walletLocal.getItem('veil_signer_secret')
   )
 }
 

@@ -36,8 +36,14 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# tests
+coverage/
+
 example
 
 # generated native folders
 /ios
 /android
+
+# Maestro
+maestro-report.xml

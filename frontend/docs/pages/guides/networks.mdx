@@ -19,7 +19,7 @@ Stellar offers three networks for development and production. This guide helps y
 | **Real XLM** | No (free) | No (free) | Yes (real money) |
 | **Use Case** | Experimental features | App development & QA | Production dApps |
 | **Friendbot** | Yes | Yes | No (must buy XLM) |
-| **RPC Endpoint** | soroban-futurenet.stellar.org | soroban-testnet.stellar.org | soroban-mainnet.stellar.org |
+| **RPC Endpoint** | soroban-futurenet.stellar.org | soroban-testnet.stellar.org | No public host — paid provider (see [Mainnet RPC](#mainnet-rpc-is-paid-and-why-the-wallet-proxies-it)) |
 | **Horizon API** | horizon-futurenet.stellar.org | horizon-testnet.stellar.org | horizon.stellar.org |
 | **Network ID** | `StellarFuturenetNetwork` | `Test SDF Network` | `Public Global Stellar` |
 | **Fee Rate** | ~100 stroops/tx | ~100 stroops/tx | ~100 stroops/tx |
@@ -150,11 +150,50 @@ Most Veil development happens on Testnet. It has stable features and monthly res
 ```bash
 # Environment variables for Mainnet
 export STELLAR_NETWORK="mainnet"
-export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+# There is NO public mainnet Soroban RPC. Point this at your own paid/keyed
+# provider endpoint (see "Mainnet RPC is paid" below). Horizon, by contrast,
+# does have a free public host.
+export SOROBAN_RPC_HOST="$MAINNET_RPC_URL"
 export SOROBAN_RPC_PORT="443"
 export HORIZON_URL="https://horizon.stellar.org"
 export NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
 ```
+
+### Mainnet RPC is paid (and why the wallet proxies it)
+
+Unlike Futurenet and Testnet, **Stellar runs no free public Soroban RPC for
+mainnet.** There is no `soroban-mainnet.stellar.org` host — following any table
+that lists one lands on a dead DNS name. Mainnet Soroban RPC is a paid, keyed
+service. Practical providers:
+
+- [QuickNode](https://www.quicknode.com/chains/xlm)
+- [Blockdaemon](https://www.blockdaemon.com/protocols/stellar)
+- [Validation Cloud](https://www.validationcloud.io/)
+- Self-hosted [Stellar RPC](https://developers.stellar.org/docs/data/rpc/admin-guide)
+
+Because that endpoint carries an account key, the Veil wallet never ships it to
+the browser. It lives in a **server-only** variable and is reached through a
+same-origin proxy, `app/api/rpc/mainnet/route.ts`:
+
+- **Keep the URL server-side.** Set `MAINNET_RPC_URL` (note: **no**
+  `NEXT_PUBLIC_` prefix). A `NEXT_PUBLIC_` variable is inlined into the client
+  bundle, so it would publish the key to every visitor of the live site — an
+  immediate, metered cost. `SOROBAN_MAINNET_RPC_URL` is also accepted.
+- **The proxy is not an open relay.** It allow-lists only the eleven JSON-RPC
+  methods the wallet actually calls (`getHealth`, `getNetwork`,
+  `getVersionInfo`, `getLatestLedger`, `getFeeStats`, `getLedgerEntries`,
+  `getEvents`, `getTransaction`, `getTransactions`, `simulateTransaction`,
+  `sendTransaction`) and rejects anything else with `403`, so a public endpoint
+  can't be used to drain the quota. The upstream URL is never echoed in an error.
+- **The UI checks before offering mainnet.** `GET /api/rpc/mainnet` returns
+  `{"configured": <bool>}` — `true` when a URL is set, `false` otherwise. The
+  network switcher uses this to decide whether to offer the mainnet toggle at
+  all; when unset, `POST` replies `503` and the wallet stays on testnet rather
+  than failing halfway through a transaction.
+
+For **local development** against your own unkeyed or self-hosted RPC, an
+explicit `NEXT_PUBLIC_MAINNET_RPC_URL` overrides the proxy so the browser talks
+to it directly.
 
 ### Get Mainnet XLM
 
@@ -175,9 +214,10 @@ Mainnet has no Friendbot. You must buy XLM from an exchange:
 
 ```bash
 # Deploy Veil contract to Mainnet (REAL XLM WILL BE CHARGED)
+# $MAINNET_RPC_URL is your own paid provider endpoint — there is no public one.
 soroban contract deploy \
   --wasm target/wasm32-unknown-unknown/release/veil_wallet.wasm \
-  --rpc-url https://soroban-mainnet.stellar.org \
+  --rpc-url "$MAINNET_RPC_URL" \
   --network-passphrase "Public Global Stellar Network ; September 2015"
 
 # Initialize wallet on Mainnet
@@ -185,12 +225,90 @@ soroban contract invoke \
   --contract-id CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABUFC \
   --function init \
   --arg-xdr-base64 "AAAAQQAAAAACc4fQYlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXlzfXGqoHUZRXl=" \
-  --rpc-url https://soroban-mainnet.stellar.org \
+  --rpc-url "$MAINNET_RPC_URL" \
   --network-passphrase "Public Global Stellar Network ; September 2015"
 ```
 
 <Callout type="warning">
 **BE CAREFUL ON MAINNET.** Every transaction costs real XLM. Test thoroughly on Testnet first. Never deploy unaudited code to Mainnet.
+</Callout>
+
+## Runtime Network Switching & Per-Network Storage
+
+The deployed wallet is not pinned to one network at build time — a visitor can
+switch between Testnet and Mainnet from the `NetworkSwitcher` control without a
+redeploy. When mainnet traffic goes through the same-origin proxy (the
+default), the switcher first probes `GET /api/rpc/mainnet` and only enables
+the Mainnet option when it reports `{"configured": true}` — meaning the server
+has `MAINNET_RPC_URL` set. A deployment that instead points
+`NEXT_PUBLIC_MAINNET_RPC_URL` straight at an RPC skips the probe and enables
+Mainnet directly. Either way, an unconfigured Mainnet renders disabled with a
+tooltip explaining why, rather than as an enabled control that would fail on
+first use.
+
+<Callout type="warning">
+**The same passkey resolves to a DIFFERENT wallet address on each network.**
+The wallet contract is deployed per network — Testnet and Mainnet each have
+their own factory contract (`CAUK4…` vs `CCZ3J…`) — so the `C…` address your
+passkey derives on Testnet is not the same account as the one it derives on
+Mainnet. Any integration, support flow, or mental model that assumes "one
+passkey → one address" is wrong for this wallet.
+</Callout>
+
+### Why storage is namespaced per network
+
+Early on, wallet identity (`invisible_wallet_address`, `veil_signer_secret`,
+and related keys — see the full list in `lib/network.ts`'s `WALLET_KEYS`) was
+stored under plain, un-namespaced `localStorage`/`sessionStorage` keys. Because
+one passkey maps to two different addresses, this let one network's data
+clobber the other's:
+
+- Switching to Testnet stranded the Mainnet address.
+- Registering a new wallet on one network silently overwrote the other's keys.
+- Worst case: using **"Reset wallet" while on Testnet could delete the bare
+  keys and destroy a real-funds Mainnet wallet**, since Testnet reads/writes
+  those same un-suffixed keys.
+
+The fix (mirrored from the mobile app's `lib/walletStore.ts`) gives each
+network its own storage slot:
+
+- **Testnet** keeps the historical, un-suffixed keys, so existing installs
+  keep working with no migration needed.
+- **Mainnet** keys carry a `_mainnet` suffix.
+- `namespaceKey()` in `lib/network.ts` is the single place that maps a logical
+  key to its per-network physical slot; `lib/walletStorage.ts` wraps
+  `localStorage`/`sessionStorage` with it so app code never has to namespace
+  keys by hand.
+- `clearActiveNetworkWallet()` (the "Reset wallet" primitive) only ever
+  touches the active network's namespaced keys — it cannot reach the other
+  network's slot.
+- A **one-time legacy migration** (`migrateLegacyStorageOnce`, gated by a
+  `veil_storage_schema` flag) copies a pre-namespacing Mainnet install's bare
+  keys into the new `_mainnet` slots the first time this code runs, so
+  existing Mainnet users don't lose access to an already-funded wallet.
+
+### What happens on switch
+
+`setActiveNetwork()` persists the choice to `localStorage` and then **reloads
+the page** — deliberately, rather than swapping state in place. Every module
+that captured a value derived from the old network (the SDK client, cached
+balances, in-flight requests) is rebuilt from scratch against the new one,
+which avoids a stale RPC client quietly reading Testnet data while the UI
+claims to be on Mainnet.
+
+The switch also drops the current network's **session** address
+(`invisible_wallet_address` in `sessionStorage`) before reloading. This is
+intentional: after the reload, `/lock` re-derives the address against the new
+network's factory. If the old address were left in place, `/lock` would see a
+stored address that doesn't match the freshly-derived one and treat it as
+tampering ("Account mismatch") — the wrong verdict for someone who simply
+changed networks. The fee-payer key is *not* dropped on switch, since a
+Stellar `G…` keypair is the same address on every network.
+
+<Callout type="info">
+If you're integrating against this wallet: never assume a user's address is
+stable across a network switch, and always re-read the active address after a
+switch completes rather than caching it.
 </Callout>
 
 ## Recommended Development Workflow
@@ -235,7 +353,7 @@ npm run test:integration
 # - Mainnet simulation ✓
 
 export STELLAR_NETWORK="mainnet"
-export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+export SOROBAN_RPC_HOST="$MAINNET_RPC_URL"   # your paid provider — no public host
 
 # Deploy with caution
 soroban contract deploy --network-passphrase "Public Global Stellar Network ; September 2015"
@@ -278,7 +396,8 @@ case "$1" in
     ;;
   mainnet)
     export STELLAR_NETWORK="mainnet"
-    export SOROBAN_RPC_HOST="https://soroban-mainnet.stellar.org"
+    # No public mainnet RPC — set MAINNET_RPC_URL to your paid provider endpoint.
+    export SOROBAN_RPC_HOST="$MAINNET_RPC_URL"
     export NETWORK_PASSPHRASE="Public Global Stellar Network ; September 2015"
     ;;
   *)
@@ -299,7 +418,7 @@ source ~/.stellar-network testnet
 
 source ~/.stellar-network mainnet
 # ✓ Network set to: mainnet
-# ✓ RPC: https://soroban-mainnet.stellar.org
+# ✓ RPC: $MAINNET_RPC_URL   (your paid provider — no public host)
 ```
 
 ## Network Status & Monitoring

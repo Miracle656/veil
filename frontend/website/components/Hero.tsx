@@ -106,7 +106,7 @@ export default function Hero() {
           transition={{ duration: 0.7, delay: 1.75 }}
           className="flex flex-col sm:flex-row gap-3 justify-center items-center"
         >
-          <a href="https://veil-2ap8.vercel.app">
+          <a href="https://docs.useveilapp.xyz">
             <motion.button
               whileHover={{ scale: 1.03, boxShadow: '0 0 28px rgba(5,162,194,0.22)' }}
               whileTap={{ scale: 0.97 }}

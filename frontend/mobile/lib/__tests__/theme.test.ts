@@ -50,7 +50,7 @@ describe('default theme', () => {
 
   it('matches the palette the app already shipped with', async () => {
     const theme = await loadTheme();
-    expect(theme.getThemeColors().background).toBe('#0B0B0F');
+    expect(theme.getThemeColors().background).toBe('#0F0F0F');
     expect(theme.getThemeColors().textStrong).toBe('#FFFFFF');
   });
 });
@@ -60,7 +60,7 @@ describe('persistence', () => {
     mockStorage.set(STORAGE_KEY, 'light');
     const theme = await loadTheme();
     expect(theme.getTheme()).toBe('light');
-    expect(theme.getThemeColors().background).toBe('#F6F7F9');
+    expect(theme.getThemeColors().background).toBe('#FFFFFF');
   });
 
   it('writes the choice to storage', async () => {
@@ -141,13 +141,30 @@ describe('subscribeToTheme', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it('does not notify when the theme is unchanged', async () => {
+  it('does not notify when the preference is unchanged', async () => {
     const theme = await loadTheme();
     const listener = jest.fn();
     theme.subscribeToTheme(listener);
 
-    await theme.setTheme('dark');
+    // Re-selecting what is already chosen is a no-op.
+    await theme.setTheme(theme.getThemePreference());
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('notifies on a preference change even when the resolved theme is the same', async () => {
+    // Selecting "Follow device" on a phone already showing dark moves no
+    // pixel of the palette, but the settings list has to re-tick the chosen
+    // row — so the store notifies on the preference, not just the colours.
+    const theme = await loadTheme();
+    await theme.setTheme('dark');
+
+    const listener = jest.fn();
+    theme.subscribeToTheme(listener);
+
+    await theme.setTheme('system');
+
+    expect(listener).toHaveBeenCalled();
+    expect(theme.getThemePreference()).toBe('system');
   });
 
   it('notifies once hydration settles, so a pre-hydration render updates', async () => {
@@ -193,5 +210,72 @@ describe('palette', () => {
     );
     // onAccent is white in both: it sits on the accent fill, not the background.
     expect(shared).toEqual(['onAccent']);
+  });
+});
+
+/**
+ * Load theme.ts with the device reporting a given colour scheme.
+ *
+ * The spy has to be installed AFTER `jest.resetModules()` and before requiring
+ * theme.ts: resetting the registry hands out a fresh `react-native`, so a spy
+ * placed on the previous copy of `Appearance` is not the one theme.ts reads.
+ */
+async function loadThemeWithScheme(scheme: 'light' | 'dark'): Promise<ThemeModule> {
+  jest.resetModules();
+  const rn = require('react-native');
+  jest.spyOn(rn.Appearance, 'getColorScheme').mockReturnValue(scheme);
+  const mod: ThemeModule = require('../theme');
+  await mod.hydrateTheme();
+  return mod;
+}
+
+describe('system preference', () => {
+  it('follows the device scheme when set to system', async () => {
+    const theme = await loadThemeWithScheme('light');
+    await theme.setTheme('system');
+
+    expect(theme.getThemePreference()).toBe('system');
+    expect(theme.getTheme()).toBe('light');
+    expect(theme.getThemeColors().background).toBe('#FFFFFF');
+  });
+
+  it('ignores the device once the user pins a theme', async () => {
+    const theme = await loadThemeWithScheme('light');
+    await theme.setTheme('dark');
+
+    // The device says light; the user said dark, and the user wins.
+    expect(theme.getTheme()).toBe('dark');
+    expect(theme.getSystemTheme()).toBe('light');
+  });
+
+  it('persists "system" rather than the colour it happened to resolve to', async () => {
+    // Storing the resolved value would freeze the choice: a user who picked
+    // "follow device" on a dark evening would be pinned to dark next morning.
+    const theme = await loadTheme();
+    await theme.setTheme('system');
+
+    expect(mockStorage.get(STORAGE_KEY)).toBe('system');
+
+    const reloaded = await loadTheme();
+    expect(reloaded.getThemePreference()).toBe('system');
+  });
+
+  it('still accepts a bare light/dark written by an older build', async () => {
+    mockStorage.set(STORAGE_KEY, 'light');
+    const theme = await loadTheme();
+
+    expect(theme.getThemePreference()).toBe('light');
+    expect(theme.getTheme()).toBe('light');
+  });
+
+  it('toggles away from what is on screen, not from the preference', async () => {
+    const theme = await loadThemeWithScheme('light');
+    await theme.setTheme('system'); // resolves to light
+
+    await theme.toggleTheme();
+
+    // Pressing a toggle means "give me the other one to what I can see".
+    expect(theme.getTheme()).toBe('dark');
+    expect(theme.getThemePreference()).toBe('dark');
   });
 });

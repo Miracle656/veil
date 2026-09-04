@@ -1,24 +1,31 @@
-import { Networks } from '@stellar/stellar-sdk';
+import { errorMessage } from './errorMessage';
 import {
   SoroswapSDK,
   SupportedNetworks,
   SupportedProtocols,
   TradeType,
 } from '@soroswap/sdk';
+import { Asset, Horizon, Keypair, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 
-const NETWORK_PASSPHRASE =
-  process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim() || Networks.TESTNET;
-const IS_TESTNET = NETWORK_PASSPHRASE === Networks.TESTNET;
+import { inclusionFee } from './fees';
+import { getNetwork, getNetworkName } from './network';
 
 const SOROSWAP_API_KEY = process.env['EXPO_PUBLIC_SOROSWAP_API_KEY']?.trim() || '';
+
+/** Whether the *currently active* network is testnet. Read per call, not cached. */
+function isTestnet(): boolean {
+  return getNetworkName() === 'testnet';
+}
 
 function getSoroswapClient(): SoroswapSDK | null {
   if (!SOROSWAP_API_KEY) {
     return null;
   }
+  // Built per call rather than memoised: the user can switch networks at
+  // runtime, and a client pinned at module load would keep quoting the old one.
   return new SoroswapSDK({
     apiKey: SOROSWAP_API_KEY,
-    defaultNetwork: IS_TESTNET ? SupportedNetworks.TESTNET : SupportedNetworks.MAINNET,
+    defaultNetwork: isTestnet() ? SupportedNetworks.TESTNET : SupportedNetworks.MAINNET,
   });
 }
 
@@ -85,11 +92,27 @@ export async function getSoroswapQuote(params: SwapParams): Promise<SwapQuote | 
  * Build an assembled Soroswap swap XDR ready for passkey signing.
  * Returns null on failure (caller should fall back to classic SDEX).
  */
-export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string | null> {
+/** A swap the router could not build, carrying the reason it gave. */
+export class SoroswapBuildError extends Error {
+  readonly cause: unknown;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = 'SoroswapBuildError';
+    this.cause = cause;
+  }
+}
+
+export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string> {
   try {
     const client = getSoroswapClient();
     if (!client) {
-      return null;
+      // No API key configured, so the router is unreachable. Say that rather
+      // than reporting it as a failed build — it is a deployment gap, not
+      // something the user did.
+      throw new SoroswapBuildError(
+        'Swaps are unavailable: this build has no Soroswap API key configured.',
+      );
     }
 
     const quote = await client.quote({
@@ -115,24 +138,78 @@ export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string |
     return build.xdr;
   } catch (err) {
     console.warn('[soroswap] buildSwapXdr failed:', err);
-    return null;
+    // Rethrow with the underlying reason attached rather than returning null.
+    //
+    // Swallowing it meant every failure — no liquidity for the pair, an amount
+    // below the router's minimum, and most commonly an account with no funds —
+    // reached the user as the same "Failed to build swap transaction." That
+    // tells them nothing about what to do next, which is the only thing an
+    // error at this point is for.
+    throw new SoroswapBuildError(errorMessage(err), err);
   }
 }
 
-/** Fetch the Soroswap token list and return the contract address for a symbol. */
+/**
+ * Resolve a symbol to its Soroban contract address for the active network.
+ * Native XLM is derived locally (it is never in any token list); other symbols
+ * come from Soroswap's curated list, whose shape is `{ assets: [{ code,
+ * issuer, contract, … }] }` with the network implied by the list itself
+ * (mainnet). Testnet token routing goes through the classic DEX instead.
+ */
 export async function resolveTokenAddress(symbol: string): Promise<string | null> {
+  const code = symbol.toUpperCase();
+  if (code === 'XLM') return Asset.native().contractId(getNetwork().networkPassphrase);
+  if (isTestnet()) return null;
+  return (await fetchListAsset(code))?.contract ?? null;
+}
+
+type ListAsset = { code?: string; issuer?: string; contract?: string };
+
+async function fetchListAsset(code: string): Promise<ListAsset | null> {
   try {
     const res = await fetch(
       'https://raw.githubusercontent.com/soroswap/token-list/main/tokenList.json'
     );
     const list = await res.json();
-    const tokens: Array<{ symbol: string; contract: string; network: string }> = list.tokens ?? [];
-    const network = IS_TESTNET ? 'TESTNET' : 'MAINNET';
-    const found = tokens.find(
-      (t) => t.symbol.toUpperCase() === symbol.toUpperCase() && t.network === network
-    );
-    return found?.contract ?? null;
+    const assets: ListAsset[] = list.assets ?? [];
+    return assets.find((t) => (t.code ?? '').toUpperCase() === code) ?? null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Make sure the spending account trusts the asset a swap will pay out. The
+ * Soroswap router refuses to build a swap whose receiver lacks the destination
+ * trustline ("Missing trustline in G… for asset: X"), and SAC payouts to a
+ * G-account need one regardless. No-op for XLM and already-trusted assets.
+ * The (code, issuer) pair comes from the same curated list the swap's contract
+ * address does, so the trustline always matches what the router delivers.
+ * Note: a new trustline locks a further 0.5 XLM of base reserve.
+ */
+export async function ensureSwapOutTrustline(signerSecret: string, code: string): Promise<void> {
+  const u = code.toUpperCase();
+  if (u === 'XLM' || isTestnet()) return;
+  const entry = await fetchListAsset(u);
+  if (!entry?.issuer) return; // unknown asset — let the router's own error surface
+  const asset = new Asset(u, entry.issuer);
+
+  const network = getNetwork();
+  const server = new Horizon.Server(network.horizonUrl);
+  const kp = Keypair.fromSecret(signerSecret);
+  const account = await server.loadAccount(kp.publicKey());
+  const trusted = (account.balances as unknown as Array<Record<string, unknown>>).some(
+    (b) => b['asset_code'] === asset.getCode() && b['asset_issuer'] === asset.getIssuer(),
+  );
+  if (trusted) return;
+
+  const tx = new TransactionBuilder(account, {
+    fee: inclusionFee(),
+    networkPassphrase: network.networkPassphrase,
+  })
+    .addOperation(Operation.changeTrust({ asset }))
+    .setTimeout(60)
+    .build();
+  tx.sign(kp);
+  await server.submitTransaction(tx);
 }

@@ -34,7 +34,7 @@ export default function BackupScreen() {
   const [mode, setMode] = useState<Mode>('export');
 
   return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.title}>Wallet backup</Text>
 
       <View style={styles.segmented}>

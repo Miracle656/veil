@@ -25,10 +25,10 @@ import * as Crypto from 'expo-crypto';
 // ── Format constants ────────────────────────────────────────────────────────────
 
 /** Bumped when the envelope or metadata layout changes incompatibly. */
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 
 /** Default PBKDF2 work factor for passphrase-derived keys. */
-export const DEFAULT_PBKDF2_ITERATIONS = 210_000;
+export const DEFAULT_PBKDF2_ITERATIONS = 600_000;
 
 // ── Types ───────────────────────────────────────────────────────────────────────
 
@@ -285,7 +285,7 @@ export function decryptBackup(
   if (!encrypted || typeof encrypted !== 'object') {
     throw new BackupError('Malformed backup envelope');
   }
-  if (encrypted.version !== BACKUP_FORMAT_VERSION) {
+  if (encrypted.version !== 1 && encrypted.version !== BACKUP_FORMAT_VERSION) {
     throw new BackupError(`Unsupported backup version: ${encrypted.version}`);
   }
   if (encrypted.algorithm !== 'AES-GCM') {
