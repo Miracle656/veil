@@ -44,8 +44,21 @@ export const THEME_STORAGE_KEY = 'veil_theme';
 export type ThemeColors = {
   /** Screen background. */
   background: string;
-  /** Cards, inputs, and list containers sitting on the background. */
+  /**
+   * Cards, inputs, and list containers sitting on the background.
+   *
+   * Translucent by design — it tints whatever is behind it. That only reads as
+   * a surface when `background` is what is behind it, so anything floating over
+   * a scrim (a modal, a sheet) needs {@link surfaceRaised} instead.
+   */
   surface: string;
+  /**
+   * Opaque fill for surfaces that float over arbitrary content: modals, sheets,
+   * popovers. Distinct from `surface` because those cannot borrow the page's
+   * background to sit on, and distinct from `background` so a modal reads as
+   * lifted off the page rather than flush with it.
+   */
+  surfaceRaised: string;
   /** Raised surface — quick-action tiles, tx icon chips (artboard `surface-md`). */
   surfaceMd: string;
   /** Borders, dividers, and secondary button fills. */
@@ -90,6 +103,7 @@ export const THEMES: Record<Theme, ThemeColors> = {
   dark: {
     background: '#0F0F0F',
     surface: 'rgba(255,255,255,0.03)',
+    surfaceRaised: '#1C1C1E',
     surfaceMd: 'rgba(255,255,255,0.06)',
     border: 'rgba(255,255,255,0.08)',
     textStrong: '#FFFFFF',
@@ -110,6 +124,7 @@ export const THEMES: Record<Theme, ThemeColors> = {
   light: {
     background: '#FFFFFF',
     surface: 'rgba(0,0,0,0.02)',
+    surfaceRaised: '#FFFFFF',
     surfaceMd: 'rgba(0,0,0,0.04)',
     border: 'rgba(0,0,0,0.10)',
     textStrong: '#0F0F0F',

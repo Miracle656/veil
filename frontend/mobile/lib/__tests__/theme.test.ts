@@ -279,3 +279,32 @@ describe('system preference', () => {
     expect(theme.getThemePreference()).toBe('dark');
   });
 });
+
+describe('surface tokens', () => {
+  /**
+   * `surface` is a translucent tint; `surfaceRaised` is an opaque fill.
+   * Confusing the two is invisible in review — it compiles, it type-checks, and
+   * it looks right on any screen where the page happens to sit behind it. It
+   * only shows up as a modal you can read the settings list through.
+   */
+  it('surfaceRaised is fully opaque in both themes', async () => {
+    const { THEMES } = await loadTheme();
+    for (const name of ['dark', 'light'] as const) {
+      expect(THEMES[name].surfaceRaised).toMatch(/^#[0-9a-fA-F]{6}$/);
+    }
+  });
+
+  it('surface is translucent, and so cannot be a fill over a scrim', async () => {
+    const { THEMES } = await loadTheme();
+    for (const name of ['dark', 'light'] as const) {
+      expect(THEMES[name].surface).toMatch(/^rgba\(/);
+    }
+  });
+
+  it('background is opaque in both themes', async () => {
+    const { THEMES } = await loadTheme();
+    for (const name of ['dark', 'light'] as const) {
+      expect(THEMES[name].background).toMatch(/^#[0-9a-fA-F]{6}$/);
+    }
+  });
+});

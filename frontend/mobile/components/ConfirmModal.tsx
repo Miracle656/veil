@@ -105,7 +105,9 @@ function createStyles(colors: ThemeColors) {
       width: '100%',
       maxWidth: 380,
       borderRadius: 20,
-      backgroundColor: colors.surface,
+      // Opaque: this floats over a scrim over arbitrary content, so the 3%
+      // translucent `surface` let the page read straight through the card.
+      backgroundColor: colors.surfaceRaised,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
       padding: 20,
