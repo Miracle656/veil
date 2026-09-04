@@ -417,6 +417,31 @@ Vue entry point pulls in no React. See [`examples/vue/`](examples/vue/) for a
 Vite starter covering register, login and send, and [`examples/nuxt/`](examples/nuxt/)
 for the SSR flavour.
 
+### With Svelte
+
+```ts
+import { createWalletStore } from 'invisible-wallet-sdk/svelte';
+
+const wallet = createWalletStore({
+  factoryAddress: FACTORY_CONTRACT_ID,
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+});
+
+// $wallet reactively reflects { address, isDeployed, isPending, error }
+await wallet.register('alice');
+await wallet.deploy(feePayerSecret);
+const sig = await wallet.signAuthEntry(signaturePayload);
+await wallet.sendPayment(feePayerSecret, to, amountInStroops);
+```
+
+The store binds the same `InvisibleWalletCore` the React hook and the Vue
+composable do, so all three adapters expose an identical set of actions.
+
+See [`sdk/src/svelte`](sdk/src/svelte) for the adapter and
+[`examples/sveltekit`](examples/sveltekit) for a full register/dashboard/send
+example.
+
 ### Without a framework
 
 ```js

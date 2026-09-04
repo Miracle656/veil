@@ -1,7 +1,7 @@
 {
   "name": "invisible-wallet-sdk",
   "version": "0.2.0",
-  "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn) — supports Web and React Native",
+  "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn) \u2014 supports Web and React Native",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "react-native": "src/index.ts",
@@ -24,12 +24,17 @@
     "./vue": {
       "types": "./dist/vue/index.d.ts",
       "default": "./dist/vue/index.js"
+    },
+    "./svelte": {
+      "types": "./dist/svelte/index.d.ts",
+      "default": "./dist/svelte/index.js"
     }
   },
   "files": [
     "dist",
     "src",
-    "vue"
+    "vue",
+    "svelte"
   ],
   "scripts": {
     "build": "tsc && node scripts/flatten-dist.js",
@@ -63,7 +68,8 @@
     "react-dom": ">=18.0.0",
     "react-native": ">=0.72.0",
     "react-native-passkey": ">=3.0.0",
-    "vue": "^3.0.0"
+    "vue": "^3.0.0",
+    "svelte": ">=4.0.0"
   },
   "peerDependenciesMeta": {
     "react-dom": {
@@ -76,6 +82,9 @@
       "optional": true
     },
     "vue": {
+      "optional": true
+    },
+    "svelte": {
       "optional": true
     }
   },
@@ -105,6 +114,7 @@
     "react-dom": "^19.2.8",
     "size-limit": "^12.1.0",
     "storybook": "^8.6.0",
+    "svelte": "^4.2.19",
     "ts-jest": "^29.2.0",
     "tsd": "^0.33.0",
     "typescript": "^6.0.3",
