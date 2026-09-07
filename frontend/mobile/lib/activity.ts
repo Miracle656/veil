@@ -165,19 +165,34 @@ export async function getFeePayerAddress(): Promise<string | null> {
   }
 }
 
-/** Native XLM held by a contract address, in XLM (not stroops). 0 when empty. */
-export async function fetchContractXlm(contract: string): Promise<number> {
+/**
+ * How much of `asset` a contract address holds, in whole units. 0 when empty.
+ *
+ * A contract's balance is a SAC contract-storage entry, not a trustline, so
+ * this works for any asset without the contract having to trust it first.
+ */
+export async function fetchContractAssetBalance(
+  contract: string,
+  asset?: { code: string; issuer: string },
+): Promise<number> {
   try {
     const net = getNetwork();
     const server = new SorobanRpc.Server(net.rpcUrl);
-    const entry = await server.getSACBalance(contract, Asset.native(), net.networkPassphrase);
+    const sacAsset = asset ? new Asset(asset.code, asset.issuer) : Asset.native();
+    const entry = await server.getSACBalance(contract, sacAsset, net.networkPassphrase);
     const stroops = entry.balanceEntry?.amount;
     if (!stroops) return 0;
+    // Classic assets are all 7-decimal on Stellar, native included.
     const n = Number(stroops) / 10_000_000;
     return isFinite(n) ? n : 0;
   } catch {
     return 0;
   }
+}
+
+/** Native XLM held by a contract address, in XLM (not stroops). 0 when empty. */
+export async function fetchContractXlm(contract: string): Promise<number> {
+  return fetchContractAssetBalance(contract);
 }
 
 /**

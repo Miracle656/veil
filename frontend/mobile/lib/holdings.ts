@@ -2,7 +2,7 @@ import { Horizon, StrKey } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
 import { fetchPrice, usdValue } from './fetchPrice';
-import { fetchContractXlm, getFeePayerAddress } from './activity';
+import { fetchContractAssetBalance, fetchContractXlm, getFeePayerAddress } from './activity';
 
 export type Holding = {
   code: string;
@@ -82,6 +82,28 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
     } else if ((b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12') && b.asset_code) {
       rows.push({ code: b.asset_code, issuer: b.asset_issuer ?? null, balance: b.balance, native: false });
     }
+  }
+
+  // Add what the CONTRACT holds of each issued asset, not just its XLM.
+  //
+  // A contract's balance is a SAC contract-storage entry, invisible to the
+  // Horizon account read above — that only ever sees the fee payer's
+  // trustlines. Until contracts could hold anything but XLM this did not
+  // matter; now that they can, sending USDC from the fee payer into the
+  // contract made 5 of 17 USDC vanish from the list, because the side holding
+  // it was never read.
+  if (StrKey.isValidContract(address)) {
+    await Promise.all(
+      rows
+        .filter((r) => !r.native && r.issuer)
+        .map(async (r) => {
+          const held = await fetchContractAssetBalance(address, {
+            code: r.code,
+            issuer: r.issuer as string,
+          });
+          if (held > 0) r.balance = (Number(r.balance) + held).toFixed(7);
+        }),
+    );
   }
 
   return Promise.all(

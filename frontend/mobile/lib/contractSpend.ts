@@ -102,15 +102,30 @@ export async function getFeePayerSpendableXlm(): Promise<number> {
   return (await getFeePayerXlm()).spendable;
 }
 
+/** An issued asset, or `undefined`/native for XLM. */
+export type SpendAsset = { code: string; issuer: string } | undefined;
+
 /**
- * Send `amount` XLM out of the smart wallet's own balance to `destination`
- * (classic or contract). Prompts the passkey for the auth-entry signature; the
- * fee-payer wraps and pays the fee. Resolves with the transaction hash.
+ * Send `amount` of `asset` out of the smart wallet's own balance to
+ * `destination` (classic or contract). Prompts the passkey for the auth-entry
+ * signature; the fee-payer wraps and pays the fee.
+ *
+ * Works for any asset, not just XLM, and that needs no contract change: the
+ * wallet's `__check_auth` verifies a passkey signature over the authorization
+ * payload and never inspects which asset is moving. Soroban invokes it whenever
+ * this contract is the `from` of a SAC transfer, so USDC's SAC calls it exactly
+ * as the native one does.
+ *
+ * Nor does the contract need a trustline. Per Stellar's SAC docs, a contract's
+ * balance and authorization state live in contract storage rather than a
+ * trustline — trustlines are a classic-account concept, and classic operations
+ * cannot address a contract at all.
  */
-export async function sendXlmFromContract(
+export async function sendAssetFromContract(
   contractAddress: string,
   destination: string,
   amount: string,
+  asset?: SpendAsset,
 ): Promise<string> {
   const network = getNetwork();
   const server = new SorobanRpc.Server(network.rpcUrl);
@@ -118,9 +133,12 @@ export async function sendXlmFromContract(
   const feePayer = await getFeePayerAddress();
   if (!feePayer) throw new Error('No fee-payer key on this device.');
 
-  // The native SAC id is deterministic per network — no config needed.
-  const nativeSac = Asset.native().contractId(network.networkPassphrase);
-  const contract = new Contract(nativeSac);
+  // SAC ids are derived from the asset and the network passphrase, so every
+  // asset resolves without configuration — and derivation is verifiable:
+  // Asset('USDC', GA5ZSEJY…).contractId(PUBLIC) is the CCW67TSZ… that Horizon
+  // reports as USDC's contract.
+  const sacAsset = asset ? new Asset(asset.code, asset.issuer) : Asset.native();
+  const contract = new Contract(sacAsset.contractId(network.networkPassphrase));
 
   const account = await server.getAccount(feePayer);
   const unsigned = new TransactionBuilder(account, {
@@ -151,4 +169,16 @@ export async function sendXlmFromContract(
   } finally {
     unregister();
   }
+}
+
+/**
+ * @deprecated Prefer {@link sendAssetFromContract}. Kept so existing callers
+ * keep compiling; XLM is just the no-asset case.
+ */
+export function sendXlmFromContract(
+  contractAddress: string,
+  destination: string,
+  amount: string,
+): Promise<string> {
+  return sendAssetFromContract(contractAddress, destination, amount);
 }

@@ -14,10 +14,11 @@ import { PaperPlaneIcon, ReceiveIcon, SwapIcon, type IconProps } from '../../com
 import { truncateAddress } from '../../components/ui/AddressChip';
 import { StrKey } from '@stellar/stellar-sdk';
 
-import { fetchPrice } from '../../lib/price';
+import { fetchPrice } from '../../lib/fetchPrice';
+import { StellarIdenticon } from '../../components/StellarIdenticon';
 import { fetchTokenDetail, parseAssetId, type TokenActivity, type TokenDetail } from '../../lib/token';
 import { getWalletAddress } from '../../lib/walletStore';
-import { fetchContractXlm, getFeePayerAddress } from '../../lib/activity';
+import { fetchContractAssetBalance, getFeePayerAddress } from '../../lib/activity';
 
 const NAMES: Record<string, string> = { XLM: 'Stellar Lumens', USDC: 'USD Coin', EURC: 'Euro Coin' };
 
@@ -58,7 +59,19 @@ export default function TokenDetailScreen() {
           ? fetchTokenDetail(effective, asset.code, asset.issuer)
           : Promise.resolve({ code: asset.code, issuer: asset.issuer, balance: '0', activity: [] as TokenActivity[] }),
         fetchPrice(asset.code, asset.issuer),
-        isContract && asset.code === 'XLM' ? fetchContractXlm(stored) : Promise.resolve(0),
+        // Any asset, not just XLM. The contract holds issued assets as SAC
+        // storage entries, which the Horizon read above cannot see — it only
+        // ever looks at the fee payer's trustlines. Restricting this to XLM
+        // meant a token page reported the fee payer's share as the whole
+        // balance while the dashboard, which does sum both, disagreed.
+        isContract
+          ? fetchContractAssetBalance(
+              stored,
+              asset.code === 'XLM' || !asset.issuer
+                ? undefined
+                : { code: asset.code, issuer: asset.issuer },
+            )
+          : Promise.resolve(0),
       ]);
       setDetail(extraXlm > 0 ? { ...d, balance: (Number(d.balance) + extraXlm).toFixed(7) } : d);
       setPrice(p);
@@ -138,6 +151,20 @@ export default function TokenDetailScreen() {
   );
 }
 
+/** Today shows a time; anything older shows a date. Timestamps are seconds. */
+function formatWhen(seconds: number): string {
+  const d = new Date(seconds * 1000);
+  if (!Number.isFinite(d.getTime())) return '';
+  const now = new Date();
+  const sameDay =
+    d.getDate() === now.getDate() &&
+    d.getMonth() === now.getMonth() &&
+    d.getFullYear() === now.getFullYear();
+  return sameDay
+    ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 function TransferRow({
   record,
   styles,
@@ -148,18 +175,30 @@ function TransferRow({
   last: boolean;
 }) {
   const received = record.direction === 'received';
+  // Same shape as the dashboard feed: identicon, address first, action beneath,
+  // amount over date. Three different transaction rows in one app taught the
+  // user three different layouts for the same information.
+  const when = formatWhen(record.timestamp);
   return (
     <View style={[styles.row, !last && styles.rowBorder]}>
+      <View style={styles.rowAvatar}>
+        <StellarIdenticon address={record.counterparty} size={34} />
+      </View>
       <View style={styles.rowLeft}>
-        <Text style={styles.rowType}>{received ? 'Received' : 'Sent'}</Text>
         <Text style={styles.rowParty} numberOfLines={1}>
-          {received ? 'from' : 'to'} {truncateAddress(record.counterparty, 6, 6)}
+          {truncateAddress(record.counterparty, 6, 6)}
+        </Text>
+        <Text style={styles.rowType}>
+          {received ? '↓ Received' : '↑ Sent'}
         </Text>
       </View>
-      <Text style={[styles.rowAmount, received ? styles.amountIn : styles.amountOut]}>
-        {received ? '+' : '−'}
-        {fmtAmount(record.amount)}
-      </Text>
+      <View style={styles.rowRight}>
+        <Text style={[styles.rowAmount, received ? styles.amountIn : styles.amountOut]}>
+          {received ? '+' : '−'}
+          {fmtAmount(record.amount)}
+        </Text>
+        {when ? <Text style={styles.rowWhen}>{when}</Text> : null}
+      </View>
     </View>
   );
 }
@@ -204,9 +243,13 @@ const createStyles = (colors: ThemeColors) =>
     },
     row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: 16 },
     rowBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
-    rowLeft: { flexShrink: 1, gap: 2 },
-    rowType: { color: colors.textPrimary, fontFamily: fontFamily.bodyMedium, fontSize: 15 },
-    rowParty: { color: colors.textFaint, fontFamily: fontFamily.address, fontSize: 12 },
+    rowAvatar: { borderRadius: 8, overflow: 'hidden' },
+    rowLeft: { flex: 1, gap: 3 },
+    // Address leads, action follows — the reverse of before, matching the feed.
+    rowParty: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 14 },
+    rowType: { color: colors.textFaint, fontFamily: fontFamily.bodyMedium, fontSize: 12 },
+    rowRight: { alignItems: 'flex-end', gap: 3 },
+    rowWhen: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 12 },
     rowAmount: { fontFamily: fontFamily.address, fontSize: 14, textAlign: 'right' },
     amountIn: { color: colors.positive },
     amountOut: { color: colors.textPrimary },
