@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import * as SystemUI from 'expo-system-ui';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -39,6 +40,20 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, fontError]);
 
+  // Paint the native window background to match the in-app theme.
+  //
+  // Android draws the gesture navigation bar over the app rather than beside
+  // it, and what shows through is the *window* background — which Android sets
+  // from the OS colour scheme, not from Veil's. Anyone running the phone in
+  // light mode with Veil pinned to dark got a white band under the tab bar,
+  // because the window beneath was still the light theme's.
+  //
+  // Stack's `contentStyle` below cannot reach this: it paints inside the
+  // navigator, and the strip in question is outside it.
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(colors.background);
+  }, [colors.background]);
+
   // Apply any persisted network override before the first screen reads
   // getNetwork(). Without this the app always starts on the build-time network
   // and a saved choice would only take effect after the user re-picked it.
@@ -66,7 +81,12 @@ export default function RootLayout() {
   return (
     // GestureHandlerRootView + BottomSheetModalProvider are required by the
     // @gorhom bottom sheets used for the transaction detail surface.
-    <GestureHandlerRootView style={styles.root}>
+    // The background is applied here, not in `styles.root`, because it has to
+    // follow the in-app theme rather than a value frozen at module load. This
+    // is the app's own outermost view: painting it means the dark screen
+    // reaches the bottom of the display even if the native window beneath is
+    // still light, which is belt-and-braces alongside the SystemUI call above.
+    <GestureHandlerRootView style={[styles.root, { backgroundColor: colors.background }]}>
       <SafeAreaProvider>
         <BottomSheetModalProvider>
           <ConnectivityProvider>

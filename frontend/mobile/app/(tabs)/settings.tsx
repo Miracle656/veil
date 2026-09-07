@@ -1,5 +1,5 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
@@ -16,7 +16,8 @@ import {
   type VeilNetworkName,
 } from '../../lib/network';
 import { ConfirmModal } from '../../components/ConfirmModal';
-import { getWalletAddress, clearWalletStore } from '../../lib/walletStore';
+import { NoticeModal } from '../../components/NoticeModal';
+import { getWalletAddress, hasUsableWallet, clearWalletStore } from '../../lib/walletStore';
 import { getFeePayerAddress } from '../../lib/activity';
 import { fundWithFriendbot } from '../../lib/testnetWallet';
 import {
@@ -97,7 +98,7 @@ export default function SettingsScreen() {
       onPress: () => {
         void requestNotificationPermissions().then((granted) => {
           if (!granted) {
-            Alert.alert('Notifications off', 'Enable notifications in your device settings to receive alerts.');
+            setNotice({ title: 'Notifications off', message: 'Enable notifications in your device settings to receive alerts.', tone: 'neutral' });
           } else {
             void setNotifIncoming(!notifIncoming);
           }
@@ -106,7 +107,7 @@ export default function SettingsScreen() {
       switch: { value: notifIncoming, onChange: (v) => {
         void requestNotificationPermissions().then((granted) => {
           if (!granted) {
-            Alert.alert('Notifications off', 'Enable notifications in your device settings to receive alerts.');
+            setNotice({ title: 'Notifications off', message: 'Enable notifications in your device settings to receive alerts.', tone: 'neutral' });
           } else {
             void setNotifIncoming(v);
           }
@@ -132,6 +133,7 @@ export default function SettingsScreen() {
   // part of the wallet rather than a grey OS box.
   const [pendingNetwork, setPendingNetwork] = useState<VeilNetworkName | null>(null);
   const [switchedTo, setSwitchedTo] = useState<VeilNetworkName | null>(null);
+  const [switchedHasWallet, setSwitchedHasWallet] = useState(true);
 
   const handleNetworkToggle = (toMainnet: boolean) => {
     setPendingNetwork(toMainnet ? 'mainnet' : 'testnet');
@@ -141,7 +143,16 @@ export default function SettingsScreen() {
     const target = pendingNetwork;
     setPendingNetwork(null);
     if (!target) return;
-    void setNetwork(target).then(() => setSwitchedTo(target));
+    void setNetwork(target).then(async () => {
+      // Wallets are namespaced per network (lib/walletStore.ts) so a reset on
+      // one can never destroy the other. The cost is that a switch can land on
+      // a network with no wallet at all, and saying nothing here meant the user
+      // discovered it later, mid-send, as "No passkey found on this device".
+      // Uses the same readiness test the spend path enforces, so this cannot
+      // quietly pass while a swap still fails.
+      setSwitchedHasWallet(await hasUsableWallet());
+      setSwitchedTo(target);
+    });
   };
 
   const general: Row[] = [
@@ -156,10 +167,16 @@ export default function SettingsScreen() {
     { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
     { key: 'about', title: 'About', subtitle: 'Version, licenses, and support', onPress: () => {} },
   ];
+  // NoticeModal rather than Alert.alert: these report an outcome, and the
+  // platform dialog renders "Funded" and "Funding failed" identically.
+  const [notice, setNotice] = useState<
+    { title: string; message: string; tone: 'neutral' | 'success' | 'error' } | null
+  >(null);
+
   const fundTestXlm = async () => {
     const address = await getWalletAddress();
     if (!address) {
-      Alert.alert('No wallet', 'Create a wallet first.');
+      setNotice({ title: 'No wallet', message: 'Create a wallet first.', tone: 'error' });
       return;
     }
     // Smart (C…) wallet: fund BOTH sides — the fee-payer G-account (classic
@@ -168,50 +185,71 @@ export default function SettingsScreen() {
     if (address.startsWith('C')) {
       const feePayer = await getFeePayerAddress();
       if (!feePayer) {
-        Alert.alert('No fee-payer key', 'This wallet has no fee-payer key on the device.');
+        setNotice({
+          title: 'No fee-payer key',
+          message: 'This wallet has no fee-payer key on the device.',
+          tone: 'error',
+        });
         return;
       }
       const [fpOk, cOk] = await Promise.all([fundWithFriendbot(feePayer), fundWithFriendbot(address)]);
-      Alert.alert(
-        fpOk || cOk ? 'Funded' : 'Funding failed',
-        fpOk && cOk
-          ? 'Test XLM sent to your fee-payer and your smart wallet.'
-          : fpOk
-            ? 'Fee-payer funded; the smart wallet top-up was rejected (it may be rate-limited).'
-            : cOk
-              ? 'Smart wallet funded; the fee-payer top-up was rejected (it may be rate-limited).'
-              : 'Friendbot rejected both requests. Try again in a moment.',
-      );
+      setNotice({
+        title: fpOk || cOk ? 'Funded' : 'Funding failed',
+        tone: fpOk && cOk ? 'success' : fpOk || cOk ? 'neutral' : 'error',
+        message:
+          fpOk && cOk
+            ? 'Test XLM sent to your fee-payer and your smart wallet.'
+            : fpOk
+              ? 'Fee-payer funded; the smart wallet top-up was rejected (it may be rate-limited).'
+              : cOk
+                ? 'Smart wallet funded; the fee-payer top-up was rejected (it may be rate-limited).'
+                : 'Friendbot rejected both requests. Try again in a moment.',
+      });
       return;
     }
     const ok = await fundWithFriendbot(address);
-    Alert.alert(
-      ok ? 'Funded' : 'Funding failed',
-      ok
+    setNotice({
+      title: ok ? 'Funded' : 'Funding failed',
+      tone: ok ? 'success' : 'error',
+      message: ok
         ? `Test XLM is on its way to ${address.slice(0, 4)}…${address.slice(-4)}.`
         : 'Friendbot rejected the request. Try again in a moment.',
-    );
+    });
   };
-  const resetWallet = () => {
-    Alert.alert(
-      'Reset wallet?',
-      'Removes the wallet key from this device so you can create a fresh testnet wallet. Back up your secret first if you need it.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: async () => {
-            await clearWalletStore();
-            router.replace('/welcome');
-          },
-        },
-      ],
-    );
+
+  // ConfirmModal, not Alert.alert — the component exists precisely to keep a
+  // decision inside Veil's visual language, and it can style a destructive
+  // action as destructive, which the platform dialog cannot.
+  const [resetOpen, setResetOpen] = useState(false);
+  const resetWallet = () => setResetOpen(true);
+  const confirmReset = async () => {
+    setResetOpen(false);
+    await clearWalletStore();
+    router.replace('/welcome');
   };
+
   const developer: Row[] = [
-    { key: 'fund', title: 'Fund test XLM', subtitle: 'Top up this wallet from Friendbot', value: 'Testnet', onPress: fundTestXlm },
-    { key: 'reset', title: 'Reset wallet', subtitle: 'Clear this wallet and start fresh', onPress: resetWallet },
+    // Endpoints, factory contract and per-network config warnings. Diagnostic
+    // rather than everyday: the Mainnet switch above is how you actually change
+    // network, and this is where you look when it does not behave.
+    { key: 'network-details', title: 'Network details', subtitle: 'Endpoints and contract configuration', onPress: () => router.push('/settings/network') },
+    {
+      key: 'fund',
+      title: 'Fund test XLM',
+      subtitle: onTestnet
+        ? 'Top up this wallet from Friendbot'
+        : 'Unavailable on mainnet — Friendbot is testnet only',
+      value: 'Testnet',
+      onPress: fundTestXlm,
+    },
+    {
+      key: 'reset',
+      title: 'Reset wallet',
+      subtitle: onTestnet
+        ? 'Clear the testnet wallet and start fresh'
+        : 'Clear the MAINNET wallet — real funds',
+      onPress: resetWallet,
+    },
   ];
 
   const group = (heading: string, rows: Row[]) => (
@@ -337,13 +375,59 @@ export default function SettingsScreen() {
         onCancel={() => setPendingNetwork(null)}
       />
 
+      {/*
+        The launch-time gate in app/index.tsx sends a wallet-less device to
+        /welcome, but it only runs at launch — switching network in-app left the
+        user on a dashboard for a wallet that does not exist, and the first sign
+        of it was a failed spend ("No passkey found on this device").
+
+        So the switch itself offers the way out: when the new network has no
+        wallet, confirming goes to wallet creation instead of dismissing.
+      */}
+      <NoticeModal
+        isOpen={notice !== null}
+        title={notice?.title ?? ''}
+        message={notice?.message ?? ''}
+        tone={notice?.tone ?? 'neutral'}
+        onClose={() => setNotice(null)}
+      />
+
+      {/*
+        Names the network it is about to wipe. The copy used to say "testnet"
+        unconditionally, so on mainnet it reassured the user while clearing a
+        real-funds key — the worst direction for a destructive prompt to be
+        wrong in.
+      */}
+      <ConfirmModal
+        isOpen={resetOpen}
+        destructive
+        title={onTestnet ? 'Reset testnet wallet?' : 'Reset your MAINNET wallet?'}
+        message={
+          onTestnet
+            ? "Removes this device's testnet wallet key so you can create a fresh one. Your mainnet wallet is not affected."
+            : 'Removes this device’s MAINNET wallet key. This wallet holds REAL funds, and without a backup they become unreachable. Back up your secret first.'
+        }
+        confirmLabel={onTestnet ? 'Reset' : 'Reset mainnet wallet'}
+        cancelLabel="Cancel"
+        onConfirm={confirmReset}
+        onCancel={() => setResetOpen(false)}
+      />
+
       <ConfirmModal
         isOpen={switchedTo !== null}
-        title="Network switched"
-        message={`You are now on ${switchedTo}. Fully close and reopen the app so every connection picks up the new network.`}
-        confirmLabel="Got it"
-        cancelLabel="Close"
-        onConfirm={() => setSwitchedTo(null)}
+        title={switchedHasWallet ? 'Network switched' : `No wallet on ${switchedTo}`}
+        message={
+          switchedHasWallet
+            ? `You are now on ${switchedTo}. Fully close and reopen the app so every connection picks up the new network.`
+            : `You are now on ${switchedTo}, and this device has no ${switchedTo} wallet yet — each network keeps its own, so a reset on one can never touch the other. Create one to send, swap or earn here. Your other wallets are unaffected.`
+        }
+        confirmLabel={switchedHasWallet ? 'Got it' : 'Create wallet'}
+        cancelLabel={switchedHasWallet ? 'Close' : 'Not now'}
+        onConfirm={() => {
+          const needsWallet = !switchedHasWallet;
+          setSwitchedTo(null);
+          if (needsWallet) router.push('/create-wallet');
+        }}
         onCancel={() => setSwitchedTo(null)}
       />
     </SafeAreaView>
