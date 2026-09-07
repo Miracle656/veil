@@ -60,6 +60,21 @@ const config: ExpoConfig = {
   },
   android: {
     package: BUNDLE_IDENTIFIER,
+    // Draw behind the system bars.
+    //
+    // Without this Android paints the navigation bar itself, from the platform
+    // theme rather than ours — a white strip under the tab bar that stayed
+    // white in dark mode, because it was never Veil drawing it. No JS-side fix
+    // reaches it: SystemUI.setBackgroundColorAsync sets the root view, and the
+    // navigator's contentStyle paints inside the navigator; the strip is
+    // outside both.
+    //
+    // Edge-to-edge makes the bar transparent and lets the app's own background
+    // show through, so it follows the in-app theme automatically — including
+    // when the user pins dark on a light phone, which a static
+    // androidNavigationBar colour could not do. Every screen already insets
+    // through SafeAreaView/Screen, so nothing ends up underneath it.
+    edgeToEdgeEnabled: true,
     adaptiveIcon: {
       backgroundColor: '#0F0F0F',
       foregroundImage: './assets/images/android-icon-foreground.png',

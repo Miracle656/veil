@@ -44,28 +44,34 @@ describe('fetchPrice', () => {
     );
   });
 
-  it('returns fallback on a non-OK status (e.g. 402 payment required)', async () => {
+  // These previously asserted a number came back, satisfied by a hardcoded
+  // 0.11 XLM estimate. That estimate valued 5.35 XLM at $0.59 against a real
+  // $0.99 while Lens was answering 401 — wrong by 40%, presented as fact. A
+  // fiat figure is something a user acts on, so absent beats wrong, and any
+  // baked-in rate is wrong within days. Null is now the contract.
+  it('returns null on a non-OK status (401 no key, 402 gated, 404 unknown pair)', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: false,
       json: async () => ({}),
     }) as unknown as typeof fetch;
-    const price = await fetchPrice('XLM', null);
-    expect(typeof price).toBe('number');
+    await expect(fetchPrice('XLM', null)).resolves.toBeNull();
   });
 
-  it('returns fallback when the price field is absent or non-numeric', async () => {
+  it('returns null when the price field is absent or non-numeric', async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ price: 'nope' }),
     }) as unknown as typeof fetch;
-    const price = await fetchPrice('XLM', null);
-    expect(typeof price).toBe('number');
+    await expect(fetchPrice('XLM', null)).resolves.toBeNull();
   });
 
-  it('returns fallback when the request throws (timeout / network error)', async () => {
+  it('returns null when the request throws (timeout / network error)', async () => {
     global.fetch = jest.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch;
-    const price = await fetchPrice('XLM', null);
-    expect(typeof price).toBe('number');
+    await expect(fetchPrice('XLM', null)).resolves.toBeNull();
+  });
+
+  it('still prices USDC at 1, which is definitional rather than a guess', async () => {
+    await expect(fetchPrice('USDC', null)).resolves.toBe(1.0);
   });
 });
 

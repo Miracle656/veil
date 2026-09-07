@@ -34,7 +34,8 @@ const USDC_ISSUERS = {
  * Lens gates reads behind an API key (`REQUIRE_API_KEY`). Without one every
  * request comes back 401, which the wallet cannot tell apart from "no such
  * pair" — so a perfectly healthy oracle reads as a missing price. Sent when
- * configured; the fallback estimate covers the case where it is not.
+ * configured; without it every quote comes back 401 and the wallet shows no
+ * fiat value at all, which is the honest outcome rather than a guessed one.
  *
  * Public by construction: anything shipped in an app bundle is readable. This
  * should be a rate-limited read key, never one that can spend.
@@ -55,13 +56,17 @@ async function usdcIssuer(): Promise<string> {
 }
 
 /**
- * Approximate USD prices used only when the Lens oracle can't answer (402-gated,
- * offline, testnet). Deliberately rough — like the currency `fallbackRate`, this
- * exists so the balance renders a plausible fiat figure (and switching display
- * currency visibly does something) rather than collapsing to an em dash. A live
- * quote always overrides it.
+ * No hardcoded price fallback.
+ *
+ * There used to be one — `{ XLM: 0.11 }` — on the reasoning that a plausible
+ * fiat figure beats an em dash. It does not. While Lens was answering 401 the
+ * wallet quietly valued 5.35 XLM at $0.59 against a real $0.99: a 40% error,
+ * shown as fact, with nothing on screen suggesting it was a guess. A number a
+ * user might act on is worse wrong than absent, and any baked-in rate is wrong
+ * within days of being written.
+ *
+ * Callers already handle `null` by showing "no price yet", which is true.
  */
-const FALLBACK_USD: Record<string, number> = { XLM: 0.11 };
 
 function assetParam(code: string, issuer: string | null | undefined): string {
   if (code === 'XLM') return 'native';
@@ -81,8 +86,9 @@ export async function fetchPrice(
   issuer: string | null | undefined,
 ): Promise<number | null> {
   const upper = code.toUpperCase();
+  // USDC is the quote asset, so its price against itself is 1 by definition —
+  // not an estimate.
   if (upper === 'USDC') return 1.0;
-  const fallback = FALLBACK_USD[upper] ?? null;
 
   const assetA = assetParam(code, issuer);
   const assetB = `USDC:${await usdcIssuer()}`;
@@ -96,14 +102,15 @@ export async function fetchPrice(
       signal: controller.signal,
       headers: LENS_API_KEY ? { Authorization: `Bearer ${LENS_API_KEY}` } : undefined,
     });
-    // 402 = payment required, 404 = unknown pair — both fall back to an estimate.
-    if (!res.ok) return fallback;
+    // 401 = no API key, 402 = payment required, 404 = unknown pair. None of
+    // these is a price, so none of them may become one.
+    if (!res.ok) return null;
     const data = (await res.json()) as Record<string, unknown>;
     // Lens may return the price under any of several field names.
     const price = data['price'] ?? data['ask'] ?? data['last'] ?? data['close'];
-    return typeof price === 'number' ? price : fallback;
+    return typeof price === 'number' ? price : null;
   } catch {
-    return fallback; // AbortError (timeout), network error, or parse error.
+    return null; // AbortError (timeout), network error, or parse error.
   } finally {
     clearTimeout(timerId);
   }
