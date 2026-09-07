@@ -7,15 +7,21 @@ import {
   View,
 } from 'react-native';
 import { useActivityFeed, type TxRecord } from '../lib/activityFeed';
+import { StellarIdenticon } from './StellarIdenticon';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
+export type ActivityFilter = 'all' | 'transfers' | 'swaps' | 'sent' | 'received';
+
 export interface ActivityFeedProps {
-  /** Optional filter to show only specific types */
-  filter?: 'all' | 'transfers' | 'swaps';
+  /**
+   * Which rows to show. 'transfers' is everything that is not a swap; 'sent'
+   * and 'received' narrow that further and are what the tab bar uses.
+   */
+  filter?: ActivityFilter;
   /** Called when the user taps a transaction row */
   onSelectTx?: (tx: TxRecord) => void;
   /** Whether the feed is in a loading state (shows skeleton) */
@@ -26,6 +32,32 @@ export interface ActivityFeedProps {
   onRefresh?: () => void;
   /** Cap the number of rows shown (e.g. 3 on the dashboard preview). */
   limit?: number;
+}
+
+
+/** Truncate an address the way every Stellar explorer does. */
+function shortAddress(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 6)}…${value.slice(-6)}` : value;
+}
+
+/**
+ * Timestamps are stored in seconds (see activityFeed.ts), so they need scaling
+ * before Date sees them — passing seconds straight in dates everything to 1970.
+ *
+ * Today shows a time and anything older shows a date: on the day it happened
+ * "14:32" is what distinguishes two payments, and a month later the date is.
+ */
+function formatWhen(seconds: number): string {
+  const d = new Date(seconds * 1000);
+  if (!Number.isFinite(d.getTime())) return '';
+  const now = new Date();
+  const sameDay =
+    d.getDate() === now.getDate() &&
+    d.getMonth() === now.getMonth() &&
+    d.getFullYear() === now.getFullYear();
+  return sameDay
+    ? d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 // ── Component ───────────────────────────────────────────────────────────────
@@ -47,49 +79,71 @@ export default function ActivityFeed({
         ? transactions
         : filter === 'swaps'
           ? transactions.filter((tx) => tx.type === 'swapped')
-          : transactions.filter((tx) => tx.type !== 'swapped');
+          : filter === 'sent'
+            ? transactions.filter((tx) => tx.type === 'sent')
+            : filter === 'received'
+              ? transactions.filter((tx) => tx.type === 'received')
+              : transactions.filter((tx) => tx.type !== 'swapped');
     return limit ? base.slice(0, limit) : base;
   }, [transactions, filter, limit]);
 
   const renderItem = ({ item, index }: { item: TxRecord; index: number }) => {
     const isLast = index === filtered.length - 1;
+    const received = item.type === 'received';
+    const swapped = item.type === 'swapped';
+    const label = swapped ? 'Swap' : received ? 'Received' : 'Sent';
+    const when = formatWhen(item.timestamp);
 
     return (
       <TouchableOpacity
         activeOpacity={0.6}
         onPress={() => onSelectTx?.(item)}
         style={[styles.row, !isLast && styles.rowBorder]}
+        accessibilityRole="button"
+        // One spoken sentence rather than five fragments: a screen reader
+        // otherwise reads the address character by character mid-row.
+        accessibilityLabel={
+          swapped
+            ? `Swap, ${item.amount} ${item.asset} for ${item.destAmount} ${item.destAsset}, ${when}`
+            : `${label} ${item.amount} ${item.asset}, ${received ? 'from' : 'to'} ${shortAddress(item.counterparty)}, ${when}`
+        }
       >
+        {/* Identity first: which address, not which verb. Most rows say "Sent",
+            so leading with the action gives the eye nothing to sort on. */}
+        <View style={styles.avatarWrap}>
+          <StellarIdenticon address={item.counterparty} size={38} />
+        </View>
+
         <View style={styles.rowLeft}>
-          <Text style={styles.rowLabel}>
-            {item.type === 'sent'
-              ? '↑ Sent'
-              : item.type === 'swapped'
-              ? '⇄ Swap'
-              : '↓ Received'}
+          <Text style={styles.rowCounterparty} numberOfLines={1}>
+            {shortAddress(item.counterparty)}
           </Text>
-          <Text style={styles.rowCounterparty}>
-            {item.counterparty.length > 12
-              ? `${item.counterparty.slice(0, 6)}…${item.counterparty.slice(-6)}`
-              : item.counterparty}
-          </Text>
+          <View style={styles.rowMetaLine}>
+            <Text style={styles.rowLabel}>
+              {swapped ? '⇄ ' : received ? '↓ ' : '↑ '}
+              {label}
+            </Text>
+            {item.memo ? <Text style={styles.rowMemo}>✉</Text> : null}
+          </View>
         </View>
 
         <View style={styles.rowRight}>
-          {item.type === 'swapped' ? (
+          {swapped ? (
             <>
               <Text style={styles.rowAmount}>
-                -{item.amount} {item.asset}
+                −{item.amount} {item.asset}
               </Text>
               <Text style={[styles.rowAmount, styles.rowAmountTeal]}>
                 +{item.destAmount} {item.destAsset}
               </Text>
             </>
           ) : (
-            <Text style={styles.rowAmount}>
+            <Text style={[styles.rowAmount, received && styles.rowAmountTeal]}>
+              {received ? '+' : '−'}
               {item.amount} {item.asset}
             </Text>
           )}
+          {when ? <Text style={styles.rowWhen}>{when}</Text> : null}
         </View>
       </TouchableOpacity>
     );
@@ -133,7 +187,13 @@ export default function ActivityFeed({
         <Text style={styles.emptyText}>
           {transactions.length === 0
             ? 'No transactions yet.'
-            : `No ${filter} found.`}
+            : filter === 'sent'
+              ? 'Nothing sent yet.'
+              : filter === 'received'
+                ? 'Nothing received yet.'
+                : filter === 'swaps'
+                  ? 'No swaps yet.'
+                  : 'Nothing here yet.'}
         </Text>
       </View>
     );
@@ -167,8 +227,8 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surface,
       borderRadius: 16,
       overflow: 'hidden',
-      borderWidth: 1,
-      borderColor: colors.border,
+      // TEMP(layout preview): matched to AssetsList — one section keeping its
+      // border while the other loses it reads as a bug, not a design.
     },
     row: {
       flexDirection: 'row',
@@ -185,16 +245,32 @@ const createStyles = (colors: ThemeColors) =>
       flex: 1,
       marginRight: 12,
     },
-    rowLabel: {
+    avatarWrap: {
+      marginRight: 12,
+      borderRadius: 8,
+      overflow: 'hidden',
+    },
+    // The address now leads the row, so it carries the primary weight and the
+    // action drops to a subtitle — the reverse of how this read before.
+    rowCounterparty: {
       fontSize: 14,
-      fontFamily: fontFamily.bodyMedium,
+      fontFamily: fontFamily.address,
       color: colors.textPrimary,
     },
-    rowCounterparty: {
+    rowMetaLine: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 3,
+    },
+    rowLabel: {
       fontSize: 12,
+      fontFamily: fontFamily.bodyMedium,
       color: colors.textFaint,
-      marginTop: 2,
-      fontFamily: fontFamily.address,
+    },
+    rowMemo: {
+      fontSize: 11,
+      color: colors.textFaint,
     },
     rowRight: {
       alignItems: 'flex-end',
@@ -207,6 +283,12 @@ const createStyles = (colors: ThemeColors) =>
     rowAmountTeal: {
       color: colors.positive,
       marginTop: 2,
+    },
+    rowWhen: {
+      fontSize: 12,
+      fontFamily: fontFamily.body,
+      color: colors.textFaint,
+      marginTop: 3,
     },
     // Skeleton
     skeletonRow: {
@@ -243,8 +325,6 @@ const createStyles = (colors: ThemeColors) =>
       borderRadius: 16,
       padding: 32,
       alignItems: 'center',
-      borderWidth: 1,
-      borderColor: colors.border,
     },
     emptyText: {
       fontSize: 14,

@@ -193,6 +193,55 @@ export function HomeIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_S
   );
 }
 
+/**
+ * Wallet — the home tab. A billfold with a card pocket, rather than a house:
+ * the tab is not a "home screen", it is the user's money.
+ */
+export function WalletIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Path
+        d="M3 8.5A2.5 2.5 0 0 1 5.5 6h11.5A1.5 1.5 0 0 1 18.5 7.5V9"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M3 8.5v8A2.5 2.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5v-7A1.5 1.5 0 0 0 18.5 9H5.5"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Circle cx="16" cy="14" r="1.15" fill={color} />
+    </Base>
+  );
+}
+
+/**
+ * Yield — a dollar beside a percent, which is what the Earn tab actually pays:
+ * a rate on an amount. The two concentric circles it replaces read as a target
+ * or a coin, neither of which says "interest".
+ */
+export function YieldIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Path d="M8 4.6v14.8" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <Path
+        d="M10.6 8.3c0-1.1-1.1-1.9-2.6-1.9s-2.6.8-2.6 1.9 1 1.6 2.6 1.9 2.6.8 2.6 1.9-1.1 1.9-2.6 1.9-2.6-.8-2.6-1.9"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Path d="M20.2 8.8l-5.4 7.4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <Circle cx="15.5" cy="9.4" r="1.15" stroke={color} strokeWidth={strokeWidth * 0.85} />
+      <Circle cx="19.5" cy="15.6" r="1.15" stroke={color} strokeWidth={strokeWidth * 0.85} />
+    </Base>
+  );
+}
+
 export function AssetsIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
   return (
     <Base size={size}>

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Skeleton } from './Skeleton';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -136,7 +137,10 @@ export function SilverBalanceCard({ balance, usd = null, loading, error }: Silve
             <Text style={styles.errorText}>Couldn’t load your balance.</Text>
           ) : (
             <View style={styles.loadingRow}>
-              <ActivityIndicator color={INK} />
+              {/* Shaped like the value that lands here — a wide amount and the
+                  fiat line under it — so the card does not resize on load. */}
+              <Skeleton width={168} height={30} radius={8} />
+              <Skeleton width={96} height={13} radius={6} style={styles.loadingSub} />
             </View>
           )}
         </View>
@@ -244,6 +248,9 @@ const createStyles = () =>
     loadingRow: {
       paddingVertical: 20,
       alignItems: 'flex-start',
+    },
+    loadingSub: {
+      marginTop: 10,
     },
     errorText: {
       color: INK,

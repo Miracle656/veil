@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 
+import { Skeleton } from './Skeleton';
 import { TokenIcon } from './TokenIcon';
 import { useTheme } from '../hooks/useTheme';
 import { useCurrency } from '../hooks/useCurrency';
@@ -85,7 +86,25 @@ export function AssetsList({
     <View style={styles.card}>
       <Text style={styles.heading}>Assets</Text>
       {holdings === null ? (
-        <Text style={styles.empty}>Loading…</Text>
+        // Shaped like the rows that replace it — icon, name over code, balance
+        // over fiat — so the card keeps its height and nothing jumps on load.
+        <View>
+          {[0, 1, 2].map((i) => (
+            <View key={i} style={[styles.row, i > 0 && styles.rowBorder]}>
+              <View style={styles.left}>
+                <Skeleton width={38} height={38} radius={19} />
+                <View style={styles.skeletonText}>
+                  <Skeleton width={76} height={13} />
+                  <Skeleton width={40} height={11} />
+                </View>
+              </View>
+              <View style={styles.skeletonRight}>
+                <Skeleton width={64} height={13} />
+                <Skeleton width={44} height={11} />
+              </View>
+            </View>
+          ))}
+        </View>
       ) : holdings.length === 0 ? (
         <Text style={styles.empty}>
           {loadError ? "Couldn't load assets — pull to refresh." : 'No assets yet. Fund this wallet to get started.'}
@@ -121,8 +140,8 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     card: {
       backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
+      // TEMP(layout preview): outer border removed — the surface fill already
+      // separates the card from the page. Row dividers below are kept.
       borderRadius: 20,
       paddingHorizontal: 18,
       paddingTop: 12,
@@ -151,6 +170,13 @@ const createStyles = (colors: ThemeColors) =>
     rowBorder: {
       borderTopWidth: 1,
       borderTopColor: colors.border,
+    },
+    skeletonText: {
+      gap: 6,
+    },
+    skeletonRight: {
+      alignItems: 'flex-end',
+      gap: 6,
     },
     pressed: { opacity: 0.6 },
     left: {

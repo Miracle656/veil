@@ -6,13 +6,14 @@ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { AgentIcon, EarnIcon, HomeIcon, SettingsIcon, SwapIcon, type IconProps } from './icons';
+import { AgentIcon, SettingsIcon, SwapIcon, WalletIcon, YieldIcon, type IconProps } from './icons';
 
 type TabMeta = { label: string; Icon: (p: IconProps) => React.JSX.Element };
 
 const META: Record<string, TabMeta> = {
-  dashboard: { label: 'Home', Icon: HomeIcon },
-  earn: { label: 'Earn', Icon: EarnIcon },
+  // "Wallet", not "Home" — the tab is the user's money, not a landing page.
+  dashboard: { label: 'Wallet', Icon: WalletIcon },
+  earn: { label: 'Earn', Icon: YieldIcon },
   agent: { label: 'Agent', Icon: AgentIcon },
   settings: { label: 'Settings', Icon: SettingsIcon },
 };
@@ -96,15 +97,18 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceMd,
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 26,
-      paddingHorizontal: 22,
-      paddingVertical: 12,
+      borderRadius: 14,
+      // Horizontal padding stays low so the four tabs still spread out; the
+      // height comes off the vertical padding instead, which is what was
+      // making the bar look tall.
+      paddingHorizontal: 12,
+      paddingVertical: 8,
     },
     tab: {
       alignItems: 'center',
       justifyContent: 'center',
       gap: 4,
-      width: 56,
+      width: 62,
     },
     label: {
       fontFamily: fontFamily.bodyMedium,
