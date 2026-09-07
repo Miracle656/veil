@@ -12,6 +12,7 @@ import { SilverBalanceCard } from '../../components/SilverBalanceCard';
 import { PayForGrid } from '../../components/PayForGrid';
 import { ServicesDrawer } from '../../components/ServicesDrawer';
 import { AssetsList } from '../../components/AssetsList';
+import { WalletAddressChip } from '../../components/WalletAddressChip';
 import { fontFamily } from '../../theme/typography';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
@@ -25,6 +26,7 @@ import { fetchPrice, usdValue } from '../../lib/fetchPrice';
 import { getNetwork } from '../../lib/network';
 import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
 import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
+import { useNetwork } from '../../hooks/useNetwork';
 
 /** Shorten a Stellar address for the header chip: `GDKF…9QX3`. */
 function shortAddress(addr: string): string {
@@ -59,6 +61,12 @@ export default function DashboardTab() {
   const [balance, setBalance] = useState<string>(() => lastKnown.balance);
   const [price, setPrice] = useState<number | null>(() => lastKnown.price);
   const [refreshing, setRefreshing] = useState(false);
+  // Whether the Horizon activity load has finished once. On testnet the Wraith
+  // feed is deliberately skipped, so `loading` below reports false immediately
+  // and the feed rendered "No transactions yet" while Horizon — the source that
+  // actually fills it there — was still in flight. Tracked separately so the
+  // skeleton covers the real wait rather than only the Wraith one.
+  const [activitySettled, setActivitySettled] = useState(false);
   const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
   const detailSheetRef = useRef<BottomSheetModal>(null);
 
@@ -67,7 +75,13 @@ export default function DashboardTab() {
     detailSheetRef.current?.present();
   }, []);
 
-  const onTestnet = getNetwork().name === 'testnet';
+  // Subscribed, not read once. A tab screen is not remounted on a network
+  // switch, so the address resolved at mount survived the change: the header
+  // kept showing the testnet C-address while /receive, which re-reads on mount,
+  // showed the mainnet one. Same staleness applied to `onTestnet`, which gates
+  // which activity source is used.
+  const { networkName } = useNetwork();
+  const onTestnet = networkName === 'testnet';
 
   // Refetch balance + price and rebuild the activity feed from Horizon + SAC
   // events — on EVERY network (Wraith, when configured, only supplements).
@@ -89,6 +103,10 @@ export default function DashboardTab() {
         hydrateActivityFeed(await loadHorizonActivity(addr), { merge: true });
       } catch {
         // activity stays as-is
+      } finally {
+        // Settled, not "succeeded": a failed load must still stop the skeleton,
+        // otherwise it spins forever with no way to say what went wrong.
+        setActivitySettled(true);
       }
     },
     [],
@@ -97,6 +115,12 @@ export default function DashboardTab() {
   // Load the wallet address (repairing a wrong-network derivation first),
   // then its balance / price / activity on mount.
   useEffect(() => {
+    // Blank the feed on the way in. Clearing only after the new address
+    // resolved meant the previous network's history stayed on screen for as
+    // long as that took — mainnet transactions listed under a testnet wallet,
+    // which is worse than an empty feed.
+    hydrateActivityFeed([]);
+    setActivitySettled(false);
     ensureCorrectWalletAddress()
       .then((addr) => {
         setWalletAddress(addr);
@@ -111,6 +135,7 @@ export default function DashboardTab() {
             setBalance('—');
             setPrice(null);
             hydrateActivityFeed([]);
+            setActivitySettled(false);
           }
           void refreshAll(addr);
           // Backfill the on-chain sign-in record for wallets created before
@@ -119,7 +144,10 @@ export default function DashboardTab() {
         }
       })
       .catch(() => setWalletAddress(null));
-  }, [refreshAll]);
+    // networkName: re-resolve the wallet for the network now active. Each
+    // network has its own wallet (lib/walletStore.ts), so a switch invalidates
+    // the address, the balance and the feed together.
+  }, [refreshAll, networkName]);
 
   // Wraith feed init — skipped on testnet (Horizon covers it in refreshAll).
   const { loading, error, refresh: refreshFeed } = useInitActivityFeed(
@@ -163,7 +191,13 @@ export default function DashboardTab() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
+            // tintColor is iOS-only; Android reads `colors` and paints the
+            // ring on `progressBackgroundColor`. With only tintColor set the
+            // Android spinner fell back to the platform default, which is the
+            // one build most people actually install.
             tintColor={themeColors.accent}
+            colors={[themeColors.accent]}
+            progressBackgroundColor={themeColors.surfaceMd}
           />
         }
       >
@@ -179,11 +213,7 @@ export default function DashboardTab() {
           <VeilLogo size={22} color={themeColors.accent} />
           <Text style={themedStyles.wordmark}>VEIL</Text>
         </Pressable>
-        {walletAddress ? (
-          <View style={themedStyles.addrChip}>
-            <Text style={themedStyles.addrText}>{shortAddress(walletAddress)}</Text>
-          </View>
-        ) : null}
+        {walletAddress ? <WalletAddressChip contractAddress={walletAddress} /> : null}
       </View>
 
       <SilverBalanceCard
@@ -210,7 +240,13 @@ export default function DashboardTab() {
           <Text style={styles.sectionLink}>See all →</Text>
         </Pressable>
       </View>
-      <ActivityFeed filter="all" loading={loading} error={error} onSelectTx={handleSelectTx} limit={3} />
+      <ActivityFeed
+        filter="all"
+        loading={loading || !activitySettled}
+        error={error}
+        onSelectTx={handleSelectTx}
+        limit={3}
+      />
 
       {error ? (
         <View style={styles.errorBanner}>

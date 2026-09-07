@@ -44,7 +44,7 @@ import {
   type ProposalReview,
   type ProposalStatus,
 } from '../../lib/agentMessages';
-import { getNetwork } from '../../lib/network';
+import { useNetwork } from '../../hooks/useNetwork';
 import { signPayloadWithPasskey } from '../../lib/passkey';
 import { getPasskeyId, getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import { useTheme } from '../../hooks/useTheme';
@@ -67,8 +67,6 @@ import { fontFamily, typography } from '../../theme/typography';
  * in `lib/agentSocket.ts` (backlog #65).
  */
 
-const network = getNetwork();
-
 const SUGGESTIONS = [
   "What's my balance?",
   'Swap 100 XLM to USDC',
@@ -79,6 +77,9 @@ const SUGGESTIONS = [
 export default function AgentScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  // Subscribed rather than read once at module load: the network is a runtime
+  // choice, and everything on this screen belongs to exactly one chain.
+  const { network } = useNetwork();
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: nextMessageId('greeting'),
@@ -526,6 +527,10 @@ function ProposalCard({
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  // Named on the approval card itself, so which chain is about to be signed
+  // against is visible at the moment of approval — and stays correct if the
+  // user switches networks with a proposal already on screen.
+  const { network } = useNetwork();
   const { review, status } = message;
 
   return (

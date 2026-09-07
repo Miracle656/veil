@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { SecureKey, getSecureItem, setSecureItem, deleteSecureItem } from './storage';
 import { getNetworkName, hydrateNetwork } from './network';
 
@@ -50,6 +52,31 @@ export async function setPasskeyPublicKey(publicKey: string): Promise<void> {
 }
 
 /**
+ * Whether this network has a wallet that can actually sign.
+ *
+ * Deliberately stricter than "is there an address". A credential id without its
+ * public key produces assertions the wallet contract cannot verify, and the
+ * signer secret is the fallback used by keypair-mode testnet wallets — so a
+ * device can hold an address and still be unable to spend. That combination is
+ * what surfaced as "No passkey found on this device" at the moment of a swap,
+ * long after the network switch that caused it.
+ *
+ * One helper rather than the same three reads inlined per caller, so a screen
+ * cannot drift into checking a weaker condition than the spend path enforces.
+ */
+export async function hasUsableWallet(): Promise<boolean> {
+  const [address, keyId, publicKey, signerSecret] = await Promise.all([
+    getWalletAddress().catch(() => null),
+    getPasskeyId().catch(() => null),
+    getPasskeyPublicKey().catch(() => null),
+    getSignerSecret().catch(() => null),
+  ]);
+  if (!address) return false;
+  // Either a complete passkey credential, or a keypair-mode signer.
+  return (!!keyId && !!publicKey) || !!signerSecret;
+}
+
+/**
  * Adopt a passkey as this device's wallet credential.
  *
  * Both halves are written together — a credential id without its public key
@@ -68,12 +95,29 @@ export async function setSignerSecret(secret: string): Promise<void> {
   return setSecureItem(await key(SecureKey.signerSecret), secret);
 }
 
+/**
+ * The SDK's own AsyncStorage keys, namespaced the same way by the adapter in
+ * components/WalletProvider.tsx. They have to be cleared alongside the secure
+ * store, or a reset leaves the SDK still holding a credential id — which it
+ * then passes as excludeCredentials on the next registration, and the platform
+ * refuses with "one of the excluded credentials exists on the local device".
+ * The result was a wallet that could be reset but never re-created.
+ */
+const SDK_KEYS = [
+  'invisible_wallet_key_id',
+  'invisible_wallet_public_key',
+  'invisible_wallet_address',
+  'invisible_wallet_user_id',
+] as const;
+
 /** Wipe the ACTIVE NETWORK's stored wallet identifiers only. */
 export async function clearWalletStore(): Promise<void> {
+  const suffix = getNetworkName() === 'mainnet' ? '_mainnet' : '';
   await Promise.all([
     key(SecureKey.walletAddress).then(deleteSecureItem),
     key(SecureKey.passkeyId).then(deleteSecureItem),
     key(SecureKey.passkeyPublicKey).then(deleteSecureItem),
     key(SecureKey.signerSecret).then(deleteSecureItem),
+    ...SDK_KEYS.map((k) => AsyncStorage.removeItem(`${k}${suffix}`)),
   ]);
 }

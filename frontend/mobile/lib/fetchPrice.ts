@@ -13,8 +13,46 @@ const LENS_BASE_URL =
   process.env['EXPO_PUBLIC_LENS_URL']?.trim() || 'https://lens-ldtu.onrender.com';
 const TIMEOUT_MS = 5_000;
 
-/** Testnet USDC issuer — everything is quoted against USDC. */
-const USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+/**
+ * Everything is quoted against USDC — but USDC is a different asset on each
+ * network, and asking for the wrong one is indistinguishable from asking for a
+ * pair nobody trades: Lens answers 404 and the wallet shows no price.
+ *
+ * The mainnet issuer is Circle's, confirmed by its home domain (circle.com)
+ * rather than by asset code; Horizon lists many unrelated assets called USDC.
+ * The testnet issuer is the one the Lens deployment actually watches.
+ *
+ * This was previously a single constant holding the *mainnet* issuer under a
+ * comment claiming it was testnet, which is why testnet quotes never resolved.
+ */
+const USDC_ISSUERS = {
+  mainnet: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+  testnet: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+} as const;
+
+/**
+ * Lens gates reads behind an API key (`REQUIRE_API_KEY`). Without one every
+ * request comes back 401, which the wallet cannot tell apart from "no such
+ * pair" — so a perfectly healthy oracle reads as a missing price. Sent when
+ * configured; the fallback estimate covers the case where it is not.
+ *
+ * Public by construction: anything shipped in an app bundle is readable. This
+ * should be a rate-limited read key, never one that can spend.
+ */
+const LENS_API_KEY = process.env['EXPO_PUBLIC_LENS_API_KEY']?.trim() || '';
+
+/**
+ * Resolved lazily: `./network` pulls in the Stellar SDK, and importing that at
+ * module scope drags it into every test that touches pricing.
+ */
+async function usdcIssuer(): Promise<string> {
+  try {
+    const { getNetwork } = await import('./network');
+    return getNetwork().name === 'mainnet' ? USDC_ISSUERS.mainnet : USDC_ISSUERS.testnet;
+  } catch {
+    return USDC_ISSUERS.testnet;
+  }
+}
 
 /**
  * Approximate USD prices used only when the Lens oracle can't answer (402-gated,
@@ -47,14 +85,17 @@ export async function fetchPrice(
   const fallback = FALLBACK_USD[upper] ?? null;
 
   const assetA = assetParam(code, issuer);
-  const assetB = `USDC:${USDC_ISSUER}`;
+  const assetB = `USDC:${await usdcIssuer()}`;
   const url = `${LENS_BASE_URL}/price/${encodeURIComponent(assetA)}/${encodeURIComponent(assetB)}`;
 
   const controller = new AbortController();
   const timerId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: LENS_API_KEY ? { Authorization: `Bearer ${LENS_API_KEY}` } : undefined,
+    });
     // 402 = payment required, 404 = unknown pair — both fall back to an estimate.
     if (!res.ok) return fallback;
     const data = (await res.json()) as Record<string, unknown>;

@@ -16,7 +16,7 @@ import {
   type BlendPool,
   type BlendPosition,
 } from '../../lib/blend';
-import { getNetwork } from '../../lib/network';
+import { useNetwork } from '../../hooks/useNetwork';
 import { requirePasskey } from '../../lib/passkey';
 import { signAndSubmitSorobanXdr } from '../../lib/sorobanTx';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
@@ -29,8 +29,6 @@ import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
  * keychain-backed wallet store in place of session/local storage, and the device
  * passkey standing in for `navigator.credentials`.
  */
-
-const network = getNetwork();
 
 const STROOPS = 1e7;
 
@@ -65,6 +63,9 @@ export default function EarnRoute() {
   const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  // Subscribed rather than read once at module load: the network is a runtime
+  // choice, and everything on this screen belongs to exactly one chain.
+  const { network } = useNetwork();
 
   const [step, setStep] = useState<EarnStep>('pools');
   const [accountAddress, setAccountAddress] = useState<string | null>(null);

@@ -18,6 +18,7 @@ import { getFeePayerAddress } from '../lib/activity';
 import { getFeePayerXlm, type FeePayerXlm } from '../lib/contractSpend';
 import { getNetwork } from '../lib/network';
 import { signAndSubmitSorobanXdr } from '../lib/sorobanTx';
+import { useNetwork } from '../hooks/useNetwork';
 import { requirePasskey } from '../lib/passkey';
 import { getWalletAddress, getSignerSecret } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
@@ -39,7 +40,11 @@ export default function SwapScreen() {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // Soroswap is mainnet-only; on testnet we route through the classic DEX.
-  const onTestnet = getNetwork().name === 'testnet';
+  // Subscribed: this flag picks the venue — SDEX on testnet, Soroswap on
+  // mainnet — so reading it once at render risks routing a swap at the wrong
+  // chain's liquidity if the network changes while this screen is alive.
+  const { networkName } = useNetwork();
+  const onTestnet = networkName === 'testnet';
 
   const [tokenIn, setTokenIn] = useState<Token>(TOKENS[0]!);
   const [tokenOut, setTokenOut] = useState<Token>(TOKENS[1]!);

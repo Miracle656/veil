@@ -18,22 +18,43 @@ import { getNetwork } from './network';
  * network coming from the mobile `getNetwork()`.
  */
 
-const net = getNetwork();
+/**
+ * Resolved per call, never captured at module load.
+ *
+ * The network is a runtime choice in this app — `setNetwork()` persists a
+ * switch and the UI re-renders — so a module-scope `getNetwork()` freezes
+ * whichever chain happened to be active when this file was first imported.
+ * Blend would then keep talking to the old chain after a switch: pools loaded
+ * from testnet, a deposit signed against mainnet, and no error until it fails
+ * on chain.
+ */
+function blendNet(): Network {
+  const net = getNetwork();
+  return { rpc: net.rpcUrl, passphrase: net.networkPassphrase };
+}
 
-const blendNetwork: Network = {
-  rpc: net.rpcUrl,
-  passphrase: net.networkPassphrase,
-};
-
+/**
+ * Pool ids are per network. A Blend pool is a contract, and a contract id on
+ * testnet addresses nothing on mainnet — so one shared list cannot serve both.
+ * The per-network variable wins; the unsuffixed one stays as a fallback for
+ * existing single-network setups.
+ */
 function configuredPoolIds(): string[] {
-  const configured: string = process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] ?? '';
+  const suffix = getNetwork().name.toUpperCase();
+  const configured: string =
+    process.env[`EXPO_PUBLIC_BLEND_POOL_IDS_${suffix}`] ??
+    process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] ??
+    '';
   const ids = configured
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
 
   if (ids.length === 0) {
-    console.warn('[blend] EXPO_PUBLIC_BLEND_POOL_IDS is not configured');
+    console.warn(
+      `[blend] no pools configured for ${getNetwork().name} — ` +
+        `set EXPO_PUBLIC_BLEND_POOL_IDS_${getNetwork().name.toUpperCase()}`,
+    );
   }
 
   return ids;
@@ -175,9 +196,9 @@ export async function buildBlendWithdrawXdr(params: WithdrawParams): Promise<str
 
 async function loadPool(poolId: string): Promise<PoolV1 | PoolV2> {
   try {
-    return await PoolV2.load(blendNetwork, poolId);
+    return await PoolV2.load(blendNet(), poolId);
   } catch {
-    return PoolV1.load(blendNetwork, poolId);
+    return PoolV1.load(blendNet(), poolId);
   }
 }
 
@@ -192,7 +213,7 @@ async function buildBlendSubmitXdr(params: {
   amount: bigint;
 }): Promise<string | null> {
   try {
-    const rpc = new SorobanRpc.Server(net.rpcUrl);
+    const rpc = new SorobanRpc.Server(getNetwork().rpcUrl);
     const sourceAccount = await rpc.getAccount(params.sourceAddress);
 
     const submitArgs = {
@@ -221,7 +242,7 @@ async function buildBlendSubmitXdr(params: {
       new Account(sourceAccount.accountId(), sourceAccount.sequenceNumber()),
       {
         fee: BASE_FEE,
-        networkPassphrase: net.networkPassphrase,
+        networkPassphrase: getNetwork().networkPassphrase,
       }
     )
       .addOperation(operation)
