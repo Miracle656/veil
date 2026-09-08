@@ -1,3 +1,7 @@
+// Side-effect import, first: fills in runtime gaps (AbortSignal.timeout)
+// that screens below assume exist. Must precede anything that fetches.
+import '../lib/polyfills';
+
 import { useEffect, useRef } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
