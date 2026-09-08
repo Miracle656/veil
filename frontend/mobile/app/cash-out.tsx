@@ -257,19 +257,46 @@ export default function CashOutScreen() {
   const maxNGN = rate && usdcBalance ? Math.floor(usdcBalance * rate) : null;
   const overBalance = maxNGN !== null && ngn > maxNGN;
 
-  const handleVerifyBank = async () => {
+  // Verification is a lookup, not a decision. It needs a bank and ten digits
+  // and nothing else, so it runs the moment it has both — a button whose only
+  // job was to say "now" is a step the user has to discover. The ref stops a
+  // failed lookup from retrying itself forever on the same pair.
+  const attempted = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (step !== 'bank') return;
+    const account = accountNumber.trim();
+    if (!bankCode || account.length !== 10) return;
+    const key = `${bankCode}:${account}`;
+    if (attempted.current === key) return;
+    attempted.current = key;
+
+    let cancelled = false;
     setError(null);
     setBusy(true);
-    try {
-      const v = await verifyBankAccount(bankCode, accountNumber.trim());
-      setVerified(v);
-      setStep('review');
-    } catch (err) {
-      setVerified(null);
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
+    verifyBankAccount(bankCode, account)
+      .then((v) => {
+        if (!cancelled) setVerified(v);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setVerified(null);
+        setError(errorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [step, bankCode, accountNumber]);
+
+  /** Any edit to the pair invalidates the name the bank gave us for it. */
+  const clearVerification = () => {
+    setVerified(null);
+    setError(null);
+    attempted.current = null;
   };
 
   const handleCreateOrder = async () => {
@@ -496,7 +523,10 @@ export default function CashOutScreen() {
               <TextInput
                 style={styles.fieldInput}
                 value={accountNumber}
-                onChangeText={setAccountNumber}
+                onChangeText={(t) => {
+                  setAccountNumber(t);
+                  clearVerification();
+                }}
                 keyboardType="number-pad"
                 maxLength={10}
                 placeholder="0000000000"
@@ -507,41 +537,58 @@ export default function CashOutScreen() {
 
             <View style={styles.field}>
               <Text style={styles.eyebrow}>BANK</Text>
-              {/* A searchable list, not a wrap of chips. Fifteen banks as pills
-                  is a wall to scan; typing two letters is faster than reading
-                  all of them, and the list scales when more are added. */}
-              <TextInput
-                style={styles.fieldInput}
-                value={bankQuery}
-                onChangeText={setBankQuery}
-                placeholder="Search banks"
-                placeholderTextColor={colors.textFaint}
-                accessibilityLabel="Search banks"
-              />
-              {bankQuery.trim() === '' ? <Text style={styles.eyebrowSub}>POPULAR</Text> : null}
-              <View>
-                {filteredBanks.map((b, i) => {
-                  const active = bankCode === b.code;
-                  return (
-                    <Pressable
-                      key={b.code}
-                      onPress={() => setBankCode(b.code)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                      style={({ pressed }) => [
-                        styles.bankRow,
-                        i > 0 && styles.bankRowDivider,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.bankName, active && styles.bankNameActive]}>
-                        {b.name}
-                      </Text>
-                      {active ? <Text style={styles.tick}>✓</Text> : null}
-                    </Pressable>
-                  );
-                })}
-              </View>
+              {bankCode ? (
+                // Once a bank is chosen the other fourteen are noise — and
+                // worse, leaving them on screen reads as "still choosing".
+                // The answer stays visible; changing it is one tap away.
+                <View style={styles.bankChosen}>
+                  <Text style={styles.bankName}>{bankName(bankCode)}</Text>
+                  <Pressable
+                    onPress={() => {
+                      setBankCode('');
+                      setBankQuery('');
+                      clearVerification();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change bank"
+                    style={({ pressed }) => [styles.changeHit, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.changeLink}>Change</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <>
+                  {/* A searchable list, not a wrap of chips. Fifteen banks as
+                      pills is a wall to scan; typing two letters is faster
+                      than reading all of them, and the list scales when more
+                      are added. */}
+                  <TextInput
+                    style={styles.fieldInput}
+                    value={bankQuery}
+                    onChangeText={setBankQuery}
+                    placeholder="Search banks"
+                    placeholderTextColor={colors.textFaint}
+                    accessibilityLabel="Search banks"
+                  />
+                  {bankQuery.trim() === '' ? <Text style={styles.eyebrowSub}>POPULAR</Text> : null}
+                  <View>
+                    {filteredBanks.map((b, i) => (
+                      <Pressable
+                        key={b.code}
+                        onPress={() => setBankCode(b.code)}
+                        accessibilityRole="button"
+                        style={({ pressed }) => [
+                          styles.bankRow,
+                          i > 0 && styles.bankRowDivider,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Text style={styles.bankName}>{b.name}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              )}
             </View>
 
             {/* The bank's own answer, in teal. This is the one fact on the
@@ -552,23 +599,26 @@ export default function CashOutScreen() {
                 <Text style={styles.verifiedEyebrow}>ACCOUNT VERIFIED</Text>
                 <Text style={styles.verifiedName}>{verified.accountName.toUpperCase()}</Text>
               </View>
+            ) : busy ? (
+              // The lookup is silent otherwise, and a silent pause after the
+              // last digit is indistinguishable from nothing happening.
+              <View style={styles.verifiedBox}>
+                <Text style={styles.verifiedEyebrow}>CHECKING</Text>
+                <Text style={styles.checkingName}>Asking the bank who owns this account…</Text>
+              </View>
             ) : null}
 
             <Pressable
-              onPress={handleVerifyBank}
-              disabled={busy || !bankCode || accountNumber.trim().length !== 10}
+              onPress={() => setStep('review')}
+              disabled={!verified}
               accessibilityRole="button"
               style={({ pressed }) => [
                 styles.primary,
-                (busy || !bankCode || accountNumber.trim().length !== 10) && styles.primaryDisabled,
+                !verified && styles.primaryDisabled,
                 pressed && styles.pressed,
               ]}
             >
-              {busy ? (
-                <ActivityIndicator color={colors.onAccent} />
-              ) : (
-                <Text style={styles.primaryText}>Verify account</Text>
-              )}
+              <Text style={styles.primaryText}>Continue</Text>
             </Pressable>
           </>
         )}
@@ -870,8 +920,24 @@ const createStyles = (colors: ThemeColors) =>
     },
     bankRowDivider: { borderTopWidth: 1, borderTopColor: colors.border },
     bankName: { color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 15 },
-    bankNameActive: { color: colors.accentText, fontFamily: fontFamily.bodySemiBold },
-    tick: { color: colors.accentText, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    bankChosen: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 14,
+    },
+    changeHit: { paddingVertical: 4, paddingHorizontal: 6, marginRight: -6 },
+    changeLink: {
+      color: colors.accentText,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
+    },
+    checkingName: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      marginTop: 2,
+    },
 
     // Teal, because this is a confirmation from outside the app — the bank's
     // own answer — and it should not look like the gold the user has been
