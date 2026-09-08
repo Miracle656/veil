@@ -36,6 +36,11 @@ import { getFeePayerAddress } from '../lib/activity';
 import { getWalletAddress } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 import { errorMessage } from '../lib/errorMessage';
+import { spendAsset } from '../lib/spendAsset';
+import { useWallet } from '../components/WalletProvider';
+
+/** Circle's USDC on mainnet — the only asset Linq's Stellar leg credits. */
+const USDC_MAINNET_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
 /**
  * Cash out — USDC to a Nigerian bank account.
@@ -119,6 +124,36 @@ export default function CashOutScreen() {
   const [status, setStatus] = useState<string>('initiated');
   const [copied, setCopied] = useState(false);
   const [bankQuery, setBankQuery] = useState('');
+  const [payHash, setPayHash] = useState<string | null>(null);
+  const { wallet } = useWallet();
+
+  /**
+   * Pay the deposit without leaving the screen.
+   *
+   * Handing this to /send meant the order fell out of view at the exact moment
+   * it mattered, and the passkey — the thing that makes this wallet what it is
+   * — appeared on a different screen with none of the order's context. The
+   * routing is shared with the send screen rather than copied, so both spend
+   * from the same source for the same balance.
+   */
+  const payFromWallet = async () => {
+    if (!order) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const hash = await spendAsset({
+        to: order.walletAddress,
+        amount: String(order.amountStableCoin),
+        asset: { code: 'USDC', issuer: USDC_MAINNET_ISSUER },
+        deploy: wallet.deploy,
+      });
+      setPayHash(hash);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // Typed through an in-brand keypad rather than the OS keyboard: this is the
   // only field on the screen, and a system numpad covering the balance and
@@ -623,15 +658,24 @@ export default function CashOutScreen() {
                 point of this app. Sending from elsewhere stays available, but
                 as the quiet alternative rather than the only option. */}
             <Pressable
-              onPress={() =>
-                router.push(
-                  `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC` as never,
-                )
-              }
+              onPress={payFromWallet}
+              disabled={busy || payHash !== null}
               accessibilityRole="button"
-              style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+              style={({ pressed }) => [
+                styles.primary,
+                (busy || payHash !== null) && styles.primaryDisabled,
+                pressed && styles.pressed,
+              ]}
             >
-              <Text style={styles.primaryText}>Pay {order.amountStableCoin} USDC from this wallet</Text>
+              {busy ? (
+                <ActivityIndicator color={colors.onAccent} />
+              ) : (
+                <Text style={styles.primaryText}>
+                  {payHash
+                    ? 'Sent — waiting for Linq'
+                    : `Pay ${order.amountStableCoin} USDC from this wallet`}
+                </Text>
+              )}
             </Pressable>
 
             <Pressable onPress={copyDeposit} accessibilityRole="button" style={styles.secondary}>
@@ -641,18 +685,50 @@ export default function CashOutScreen() {
         )}
 
         {!mainnetOnly && step === 'done' && (
-          <View style={styles.hairlineCard}>
-            <Text style={styles.eyebrow}>{isFailure(status) ? 'NOT COMPLETED' : 'PAID OUT'}</Text>
-            <Text style={[styles.moneyLarge, isFailure(status) ? styles.failed : styles.settled]}>
-              {isFailure(status) ? '—' : `₦${(order?.amountNGN ?? 0).toLocaleString('en-US')}`}
-            </Text>
-            <Text style={styles.hint}>{describeStatus(status)}</Text>
+          <>
+            <View style={styles.hairlineCard}>
+              <Text style={styles.eyebrow}>{isFailure(status) ? 'NOT COMPLETED' : 'PAID OUT'}</Text>
+              <Text style={[styles.moneyLarge, isFailure(status) ? styles.failed : styles.settled]}>
+                {isFailure(status) ? '—' : `₦${(order?.amountNGN ?? 0).toLocaleString('en-US')}`}
+              </Text>
+              <Text style={styles.hint}>{describeStatus(status)}</Text>
+            </View>
+
+            {/* A bare figure is not a receipt. This is the last thing the user
+                sees of a payment they cannot reverse, so it says who was paid,
+                where, and what it cost — the details they would otherwise go
+                looking for in a bank app to confirm it was the right account. */}
+            <View style={styles.rows}>
+              {verified ? (
+                <>
+                  <Row label="To" value={verified.accountName} />
+                  <Row label="Bank" value={verified.bankName || bankName(verified.bankCode)} />
+                  <Row label="Account" value={verified.accountNumber} mono />
+                </>
+              ) : null}
+              {order ? (
+                <>
+                  <Row label="You sent" value={`${order.amountStableCoin} USDC`} />
+                  <Row label="Rate" value={`₦${order.rate.toLocaleString('en-US')} / USDC`} />
+                </>
+              ) : null}
+              <Row label="Network fee" value="Sponsored" accent />
+            </View>
+
             {isFailure(status) ? (
               <Text style={styles.hint}>
                 Any USDC that arrived is refunded to your classic address.
               </Text>
             ) : null}
-          </View>
+
+            <Pressable
+              onPress={() => router.back()}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>Done</Text>
+            </Pressable>
+          </>
         )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
