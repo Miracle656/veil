@@ -233,12 +233,18 @@ export default function DashboardTab() {
         error={!!error}
       />
 
-      {/* Cash out is hidden until the backend answers. The Linq API key lives
-          there, so with it asleep or unconfigured there is no order to create
-          — better to not offer it than to fail after the user has typed an
-          amount and their bank details. */}
+      {/* Cash out is hidden unless the backend answers AND we are on mainnet.
+          The Linq key lives on the backend, so without it there is no order to
+          create; and Linq's Stellar leg is mainnet only — its deposit wallets
+          are mainnet accounts holding Circle's mainnet USDC, which a testnet
+          wallet cannot reach. Better to not offer it than to fail after
+          someone has entered their bank details. */}
       <PayForGrid
-        services={offrampReady ? BILL_SERVICES : BILL_SERVICES.filter((s) => s.id !== 'transfer')}
+        services={
+          offrampReady && !onTestnet
+            ? BILL_SERVICES
+            : BILL_SERVICES.filter((s) => s.id !== 'transfer')
+        }
         onSelect={(service) => {
           if (service.route) router.push(service.route as never);
         }}

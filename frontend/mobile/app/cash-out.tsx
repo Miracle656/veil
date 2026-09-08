@@ -13,9 +13,10 @@ import * as Clipboard from 'expo-clipboard';
 
 import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
+import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { NIGERIAN_BANKS } from '../lib/nigerianBanks';
+import { NIGERIAN_BANKS, bankName } from '../lib/nigerianBanks';
 import {
   OfframpUnavailable,
   createOrder,
@@ -52,6 +53,14 @@ const POLL_MS = 6_000;
 export default function CashOutScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  // Linq's Stellar leg is mainnet only. Their deposit wallets are mainnet
+  // accounts and the asset they credit is Circle's mainnet USDC
+  // (GA5ZSEJY...), so a testnet wallet has nothing that can reach them: the
+  // refund address does not exist on the chain they check, and testnet USDC
+  // cannot be sent to a mainnet account at all. There is no sandbox.
+  const { networkName } = useNetwork();
+  const mainnetOnly = networkName !== 'mainnet';
 
   const [step, setStep] = useState<Step>('amount');
   const [error, setError] = useState<string | null>(null);
@@ -158,7 +167,7 @@ export default function CashOutScreen() {
         amountNGN: ngn,
         bankAccount: verified.accountNumber,
         bankCode: verified.bankCode,
-        bankName: verified.bankName,
+        bankName: verified.bankName || bankName(verified.bankCode),
         accountName: verified.accountName,
         refundAddress: feePayer,
         walletAddress: wallet,
@@ -217,7 +226,18 @@ export default function CashOutScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
-        {step === 'amount' && (
+        {mainnetOnly ? (
+          <View style={styles.card}>
+            <Text style={styles.label}>Switch to mainnet to cash out</Text>
+            <Text style={styles.hint}>
+              Payouts settle in real naira against real USDC, so this only works on
+              mainnet — there is no test mode. Switch network in Settings, then come
+              back.
+            </Text>
+          </View>
+        ) : null}
+
+        {!mainnetOnly && step === 'amount' && (
           <>
             {/* The balance leads. This screen spends USDC but is denominated in
                 naira, so without it the user is asked for a number with no
@@ -293,7 +313,7 @@ export default function CashOutScreen() {
           </>
         )}
 
-        {step === 'bank' && (
+        {!mainnetOnly && step === 'bank' && (
           <>
             <Text style={styles.label}>Which account should we pay?</Text>
 
@@ -346,14 +366,19 @@ export default function CashOutScreen() {
           </>
         )}
 
-        {step === 'review' && verified && (
+        {!mainnetOnly && step === 'review' && verified && (
           <>
             <Text style={styles.label}>Confirm the payout</Text>
             <View style={styles.card}>
               {/* The name is the bank's answer, not the user's typing — it is
                   the whole point of verifying before an order exists. */}
               <Row label="To" value={verified.accountName} />
-              <Row label="Bank" value={verified.bankName} />
+              {/* Linq echoes a bankName, but not always — and the review step is
+                  where the user checks they picked the right bank, so a blank
+                  row there defeats the whole point of confirming. Ours is the
+                  fallback: the code is what Linq matches on, the name is only
+                  ever shown. */}
+              <Row label="Bank" value={verified.bankName || bankName(verified.bankCode)} />
               <Row label="Account" value={verified.accountNumber} />
               <Row label="They receive" value={`₦${ngn.toLocaleString('en-US')}`} />
               <Row
@@ -381,7 +406,7 @@ export default function CashOutScreen() {
           </>
         )}
 
-        {step === 'deposit' && order && (
+        {!mainnetOnly && step === 'deposit' && order && (
           <>
             <Text style={styles.label}>Send exactly this amount</Text>
             <View style={styles.card}>
@@ -405,7 +430,7 @@ export default function CashOutScreen() {
           </>
         )}
 
-        {step === 'done' && (
+        {!mainnetOnly && step === 'done' && (
           <View style={styles.card}>
             <Text style={[styles.bigAmount, isFailure(status) ? styles.failed : styles.settled]}>
               {isFailure(status) ? 'Not completed' : 'Paid out'}
