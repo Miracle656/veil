@@ -56,20 +56,37 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
   // before concluding anything about the account.
   balances = [];
   let loaded = false;
+  let missing = false;
   for (let attempt = 0; attempt < 2 && !loaded; attempt++) {
     try {
       const account = await server.loadAccount(effective);
       balances = account.balances as typeof balances;
       loaded = true;
     } catch (err) {
-      if (isAccountNotFound(err)) break; // definitive: account doesn't exist
+      if (isAccountNotFound(err)) {
+        missing = true; // definitive: the account does not exist
+        break;
+      }
       console.warn('[holdings] loadAccount failed:', err instanceof Error ? `${err.name}: ${err.message}` : err);
       await new Promise((r) => setTimeout(r, 400));
     }
   }
+
+  // "Could not reach Horizon" and "this wallet is empty" are different facts,
+  // and returning [] for both let the worse one be shown as the better-known
+  // one: a funded wallet greeted the user with "No assets yet. Fund this
+  // wallet to get started." — under a balance card that was, at that moment,
+  // correctly reading 5.35 XLM. That is not a cosmetic inconsistency; it is the
+  // wallet telling someone their money is gone.
+  //
+  // A missing account is genuinely empty. An unreachable one is unknown, and
+  // callers get to say so instead of guessing.
+  if (!loaded && !missing) {
+    throw new Error('Could not reach the network to read balances.');
+  }
   if (!loaded) {
-    // Unfunded (or unreachable) classic account: degrade to whatever the
-    // contract itself holds rather than reporting "no assets".
+    // Account does not exist yet: whatever the contract itself holds is the
+    // whole story.
     balances = contractExtraXlm > 0 ? [{ asset_type: 'native', balance: '0' }] : [];
     if (balances.length === 0) return [];
   }
