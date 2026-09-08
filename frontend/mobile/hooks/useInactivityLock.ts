@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
-import { useRouter, useSegments } from 'expo-router';
+import { usePathname, useRouter, useSegments } from 'expo-router';
 
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 
 import { createIdleWatcher } from '../lib/appLock';
+import { rememberLockReturn } from '../lib/lockReturn';
 import { getWalletAddress } from '../lib/walletStore';
 
 /** True in Expo Go, where native passkeys don't exist. */
@@ -17,8 +18,9 @@ const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.Store
  * The countdown lives in `lib/appLock.ts`; this hook wires it to React Native's
  * `AppState` and expo-router. Sending the app to the background locks it
  * immediately; returning to the foreground restarts the idle countdown. Either
- * trigger routes to `/lock`, which re-prompts a biometric. It re-arms itself off
- * the current route so it never fights the lock screen it just pushed.
+ * trigger routes to `/lock`, which re-prompts a biometric and then returns to
+ * the screen the lock covered (lib/lockReturn.ts). It re-arms itself off the
+ * current route so it never fights the lock screen it just pushed.
  *
  * The lock only arms once a wallet exists. Before then there is nothing to
  * protect, and `/lock` would be a dead end — there is no passkey to unlock with —
@@ -31,7 +33,16 @@ const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.Store
 export function useInactivityLock(): void {
   const router = useRouter();
   const segments = useSegments();
+  const pathname = usePathname();
   const onLockRoute = segments[0] === 'lock';
+
+  // Held in a ref rather than read through the effect's closure: the effect
+  // owns the idle countdown, and restarting that on every navigation would
+  // reset the timer each time the user moved between screens.
+  const pathRef = useRef(pathname);
+  useEffect(() => {
+    pathRef.current = pathname;
+  }, [pathname]);
 
   useEffect(() => {
     // Already locked — don't re-arm on top of the lock screen.
@@ -51,7 +62,12 @@ export function useInactivityLock(): void {
       // build / standalone locks normally.
       if (IN_EXPO_GO) return;
 
-      const lock = () => router.replace('/lock');
+      // Note where we are before the replace throws it away, so unlocking can
+      // come back to it instead of dumping the user on the dashboard.
+      const lock = () => {
+        rememberLockReturn(pathRef.current);
+        router.replace('/lock');
+      };
       const watcher = createIdleWatcher({ onLock: lock });
       watcher.start();
 

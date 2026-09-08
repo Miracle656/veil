@@ -11,6 +11,11 @@ import { BackIcon } from './icons';
  * A flow screen's header — a back chevron and a Lora-italic title, matching the
  * redesign's Send / Receive / Swap / Airtime screens. Back defaults to
  * `router.back()`; pass `onBack` to override.
+ *
+ * With nothing to go back to it falls through to the dashboard rather than
+ * doing nothing. A flow screen can be the bottom of the stack — unlocking
+ * returns straight to the screen the lock covered, and a notification tap can
+ * open one cold — and a chevron that visibly does nothing reads as a bug.
  */
 export function FlowHeader({ title, onBack }: { title: string; onBack?: () => void }) {
   const router = useRouter();
@@ -20,7 +25,9 @@ export function FlowHeader({ title, onBack }: { title: string; onBack?: () => vo
   return (
     <View style={styles.row}>
       <Pressable
-        onPress={onBack ?? (() => router.back())}
+        onPress={
+          onBack ?? (() => (router.canGoBack() ? router.back() : router.replace('/dashboard')))
+        }
         accessibilityRole="button"
         accessibilityLabel="Back"
         hitSlop={10}
