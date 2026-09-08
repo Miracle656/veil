@@ -10,7 +10,7 @@ import type { BottomSheetModal } from '@gorhom/bottom-sheet';
 import { VeilLogo } from '../../components/VeilLogo';
 import { SilverBalanceCard } from '../../components/SilverBalanceCard';
 import { PayForGrid, BILL_SERVICES } from '../../components/PayForGrid';
-import { isOfframpAvailable } from '../../lib/offramp';
+import { isOfframpAvailable, lastKnownAvailability } from '../../lib/offramp';
 import { ServicesDrawer } from '../../components/ServicesDrawer';
 import { AssetsList } from '../../components/AssetsList';
 import { WalletAddressChip } from '../../components/WalletAddressChip';
@@ -120,6 +120,11 @@ export default function DashboardTab() {
   // then its balance / price / activity on mount.
   useEffect(() => {
     let alive = true;
+    // Seed from the last known answer so the card renders correctly on first
+    // paint, then confirm. Without it the tile was absent for a beat and the
+    // whole Pay-for card popped in, pushing the layout down — the jump we
+    // removed everywhere else with skeletons.
+    void lastKnownAvailability().then((cached) => { if (alive) setOfframpReady(cached); });
     void isOfframpAvailable().then((ok) => { if (alive) setOfframpReady(ok); });
     return () => { alive = false; };
   }, [networkName]);

@@ -12,7 +12,11 @@
  * mid-flow.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 const BASE_URL = process.env['EXPO_PUBLIC_WRAITH_URL']?.replace(/\/+$/, '') ?? '';
+/** Remembers whether the offramp answered last time, to avoid a layout jump. */
+const AVAILABILITY_KEY = 'veil_offramp_available';
 const TIMEOUT_MS = 20_000;
 
 export class OfframpUnavailable extends Error {}
@@ -93,7 +97,29 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
 export async function isOfframpAvailable(): Promise<boolean> {
   try {
     await call<OfframpRate>('/offramp/rate');
+    void AsyncStorage.setItem(AVAILABILITY_KEY, '1');
     return true;
+  } catch {
+    void AsyncStorage.setItem(AVAILABILITY_KEY, '0');
+    return false;
+  }
+}
+
+/**
+ * The last answer, for rendering before the probe returns.
+ *
+ * Starting from `false` every launch meant the Cash out tile was absent on
+ * first paint and appeared a moment later — and since it is the only live
+ * service, the whole "Pay for" card popped in and pushed the layout down.
+ * Remembering the previous answer makes the common case (it worked last time)
+ * render correctly straight away, and the live probe still corrects it.
+ *
+ * Optimism is bounded: this only ever repeats an answer we actually got, so a
+ * first run still shows nothing rather than offering a flow that may not work.
+ */
+export async function lastKnownAvailability(): Promise<boolean> {
+  try {
+    return (await AsyncStorage.getItem(AVAILABILITY_KEY)) === '1';
   } catch {
     return false;
   }
