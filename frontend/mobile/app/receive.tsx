@@ -13,6 +13,8 @@ import { FlowHeader } from '../components/FlowHeader';
 import { getWalletAddress } from '../lib/walletStore';
 import { getFeePayerAddress } from '../lib/activity';
 import { buildSep7PayUri } from '../lib/sep7';
+import { checkReceiveReadiness, readinessMessage, type ReceiveReadiness } from '../lib/receiveReadiness';
+import { enableUsdc } from '../lib/enableUsdc';
 import { CopyIcon, DownloadIcon, HexagonIcon, ShareIcon } from '../components/icons';
 
 const FALLBACK = 'GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ';
@@ -32,6 +34,9 @@ export default function ReceiveScreen() {
   const [feePayer, setFeePayer] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [copiedFp, setCopiedFp] = useState(false);
+  const [readiness, setReadiness] = useState<ReceiveReadiness | null>(null);
+  const [enabling, setEnabling] = useState(false);
+  const [enableError, setEnableError] = useState<string | null>(null);
   const qrRef = useRef<QRRef>(null);
 
   useEffect(() => {
@@ -43,6 +48,22 @@ export default function ReceiveScreen() {
       .catch(() => undefined);
   }, []);
 
+  // Whether the payable address can actually take a USDC payment today. A
+  // brand new wallet cannot: the account has to exist and hold a trustline
+  // before anyone can pay it, and both cost reserve the user does not have.
+  // Better to say so on this screen than to have someone hand out an address
+  // that silently rejects their payout.
+  useEffect(() => {
+    if (!feePayer) return;
+    let cancelled = false;
+    void checkReceiveReadiness(feePayer).then((r) => {
+      if (!cancelled) setReadiness(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [feePayer]);
+
   async function handleCopyFeePayer() {
     if (!feePayer) return;
     await Clipboard.setStringAsync(feePayer);
@@ -50,11 +71,34 @@ export default function ReceiveScreen() {
     setTimeout(() => setCopiedFp(false), 1200);
   }
 
-  const payUri = buildSep7PayUri({ destination: address });
   const isContract = address.startsWith('C');
 
+  /** Add the USDC trustline with the user's own key, then re-check. */
+  async function handleEnableUsdc() {
+    if (!feePayer) return;
+    setEnableError(null);
+    setEnabling(true);
+    try {
+      await enableUsdc();
+      setReadiness(await checkReceiveReadiness(feePayer));
+    } catch (err) {
+      setEnableError(err instanceof Error ? err.message : 'Could not add the USDC trustline.');
+    } finally {
+      setEnabling(false);
+    }
+  }
+
+  // The address on the QR is the one an ordinary sender can actually pay. For a
+  // smart wallet that is the classic G account, NOT the contract: a classic
+  // payment operation cannot name a contract as its destination, so an exchange
+  // or a payroll tool paying the C address gets a rejection. This screen used
+  // to lead with the C and call it "use this for most senders", which was
+  // exactly backwards.
+  const payable = isContract && feePayer ? feePayer : address;
+  const payUri = buildSep7PayUri({ destination: payable });
+
   async function handleCopy() {
-    await Clipboard.setStringAsync(address);
+    await Clipboard.setStringAsync(payable);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   }
@@ -93,8 +137,12 @@ export default function ReceiveScreen() {
 
         {/* Spending address */}
         <View style={[styles.card, styles.spendingCard]}>
-          <Text style={styles.cardLabel}>Spending address</Text>
-          <Text style={styles.cardSub}>Use this for most senders & exchanges</Text>
+          <Text style={styles.cardLabel}>Your address</Text>
+          <Text style={styles.cardSub}>
+            {isContract
+              ? 'Give this to an exchange, an employer, or anyone paying you'
+              : 'Use this for most senders & exchanges'}
+          </Text>
 
           <View style={styles.qrFrame}>
             <QRCode
@@ -106,7 +154,51 @@ export default function ReceiveScreen() {
             />
           </View>
 
-          <Text testID="receive-address" style={styles.addr}>{shorten(address)}</Text>
+          <Text testID="receive-address" style={styles.addr}>{shorten(payable)}</Text>
+
+          {/* Whether a payment sent here will actually land. Three distinct
+              answers, because "we could not check" must never render as "this
+              cannot receive" — someone waiting on a payout decides whether to
+              send the address based on this line. */}
+          {readiness && readiness.state !== 'ready' && (
+            <View
+              testID="receive-readiness"
+              style={[
+                styles.readiness,
+                readiness.state === 'unknown' ? styles.readinessUnknown : styles.readinessBlocked,
+              ]}
+            >
+              <Text style={styles.readinessTitle}>
+                {readiness.state === 'unknown' ? 'Not checked' : 'Not ready to receive USDC'}
+              </Text>
+              <Text style={styles.readinessBody}>{readinessMessage(readiness)}</Text>
+
+              {/* The one state the app can fix on its own: the account exists
+                  and holds enough XLM, it just does not trust USDC yet. */}
+              {readiness.state === 'needs-trustline' && (
+                <Pressable
+                  testID="receive-enable-usdc"
+                  onPress={handleEnableUsdc}
+                  disabled={enabling}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [
+                    styles.enableBtn,
+                    (enabling || pressed) && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.enableLabel}>
+                    {enabling ? 'Enabling…' : 'Enable USDC'}
+                  </Text>
+                </Pressable>
+              )}
+              {enableError ? <Text style={styles.enableError}>{enableError}</Text> : null}
+            </View>
+          )}
+          {readiness?.state === 'ready' && (
+            <Text testID="receive-readiness" style={styles.readinessOk}>
+              Ready to receive USDC
+            </Text>
+          )}
 
           <View style={styles.tiles}>
             {tiles.map((t) => (
@@ -134,7 +226,8 @@ export default function ReceiveScreen() {
             <View style={{ flexShrink: 1 }}>
               <Text style={styles.contractTitle}>Contract address</Text>
               <Text style={styles.contractSub} numberOfLines={1}>
-                {shorten(address, 6, 6)} · {isContract ? 'Soroban wallets only' : 'classic address'}
+                {shorten(address, 6, 6)} ·{' '}
+                {isContract ? 'Soroban senders only — most cannot pay this' : 'classic address'}
               </Text>
             </View>
           </View>
@@ -143,9 +236,9 @@ export default function ReceiveScreen() {
           </View>
         </Pressable>
 
-        {/* Fee-payer — the classic account that receives bank-style G→G payments
-            and pays fees. Shown so it can be funded directly. */}
-        {feePayer && address.startsWith('C') && (
+        {/* The classic account is now the headline address above, so this row
+            only exists for the case where it is NOT what the QR shows. */}
+        {feePayer && payable !== feePayer && (
           <Pressable onPress={handleCopyFeePayer} style={({ pressed }) => [styles.card, styles.contractRow, pressed && styles.pressed]}>
             <View style={styles.contractLeft}>
               <View style={styles.hexBadge}>
@@ -208,6 +301,63 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 12,
       textAlign: 'center',
       marginTop: 16,
+    },
+    // A payout that cannot land is worth a banner, not a caption. Danger
+    // colours for "this will be rejected"; a neutral surface for "we could not
+    // check", because the two demand different actions from the person reading.
+    readiness: {
+      marginTop: 14,
+      borderRadius: 12,
+      borderWidth: 1,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 3,
+    },
+    readinessBlocked: {
+      backgroundColor: colors.dangerSurface,
+      borderColor: colors.danger,
+    },
+    readinessUnknown: {
+      backgroundColor: colors.surfaceMd,
+      borderColor: colors.border,
+    },
+    readinessTitle: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
+    },
+    readinessBody: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 12.5,
+      lineHeight: 18,
+    },
+    enableBtn: {
+      marginTop: 10,
+      alignSelf: 'flex-start',
+      borderRadius: 999,
+      backgroundColor: colors.accent,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+    },
+    enableLabel: {
+      color: colors.onAccent,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 12.5,
+    },
+    enableError: {
+      color: colors.danger,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 17,
+      marginTop: 8,
+    },
+    readinessOk: {
+      color: colors.positive,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 12.5,
+      textAlign: 'center',
+      marginTop: 12,
     },
     tiles: {
       flexDirection: 'row',
