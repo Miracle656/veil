@@ -46,13 +46,17 @@ const LENS_API_KEY = process.env['EXPO_PUBLIC_LENS_API_KEY']?.trim() || '';
  * Resolved lazily: `./network` pulls in the Stellar SDK, and importing that at
  * module scope drags it into every test that touches pricing.
  */
-async function usdcIssuer(): Promise<string> {
+async function activeNetworkName(): Promise<'testnet' | 'mainnet'> {
   try {
     const { getNetwork } = await import('./network');
-    return getNetwork().name === 'mainnet' ? USDC_ISSUERS.mainnet : USDC_ISSUERS.testnet;
+    return getNetwork().name === 'mainnet' ? 'mainnet' : 'testnet';
   } catch {
-    return USDC_ISSUERS.testnet;
+    return 'testnet';
   }
+}
+
+async function usdcIssuer(): Promise<string> {
+  return (await activeNetworkName()) === 'mainnet' ? USDC_ISSUERS.mainnet : USDC_ISSUERS.testnet;
 }
 
 /**
@@ -90,9 +94,17 @@ export async function fetchPrice(
   // not an estimate.
   if (upper === 'USDC') return 1.0;
 
+  const network = await activeNetworkName();
   const assetA = assetParam(code, issuer);
-  const assetB = `USDC:${await usdcIssuer()}`;
-  const url = `${LENS_BASE_URL}/price/${encodeURIComponent(assetA)}/${encodeURIComponent(assetB)}`;
+  const assetB = `USDC:${USDC_ISSUERS[network]}`;
+  // Lens serves both networks from one deployment and falls back to its own
+  // STELLAR_NETWORK when the caller does not say. That default is testnet, so
+  // asking for mainnet USDC without this returned a testnet quote — XLM at
+  // 1.72 rather than ~0.18, because testnet SDEX has no real liquidity behind
+  // it. The wallet knows which chain it is on; it has to say so.
+  const url =
+    `${LENS_BASE_URL}/price/${encodeURIComponent(assetA)}/${encodeURIComponent(assetB)}` +
+    `?network=${network}`;
 
   const controller = new AbortController();
   const timerId = setTimeout(() => controller.abort(), TIMEOUT_MS);
