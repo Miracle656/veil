@@ -9,7 +9,8 @@ import { TxDetailSheet } from '../../components/TxDetailSheet';
 import type { BottomSheetModal } from '@gorhom/bottom-sheet';
 import { VeilLogo } from '../../components/VeilLogo';
 import { SilverBalanceCard } from '../../components/SilverBalanceCard';
-import { PayForGrid } from '../../components/PayForGrid';
+import { PayForGrid, BILL_SERVICES } from '../../components/PayForGrid';
+import { isOfframpAvailable } from '../../lib/offramp';
 import { ServicesDrawer } from '../../components/ServicesDrawer';
 import { AssetsList } from '../../components/AssetsList';
 import { WalletAddressChip } from '../../components/WalletAddressChip';
@@ -68,6 +69,9 @@ export default function DashboardTab() {
   // skeleton covers the real wait rather than only the Wraith one.
   const [activitySettled, setActivitySettled] = useState(false);
   const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
+  // Probed once per mount rather than per render: a 503 here means "no offramp
+  // on this deployment", which is also what a sleeping backend looks like.
+  const [offrampReady, setOfframpReady] = useState(false);
   const detailSheetRef = useRef<BottomSheetModal>(null);
 
   const handleSelectTx = useCallback((tx: TxRecord) => {
@@ -114,6 +118,12 @@ export default function DashboardTab() {
 
   // Load the wallet address (repairing a wrong-network derivation first),
   // then its balance / price / activity on mount.
+  useEffect(() => {
+    let alive = true;
+    void isOfframpAvailable().then((ok) => { if (alive) setOfframpReady(ok); });
+    return () => { alive = false; };
+  }, [networkName]);
+
   useEffect(() => {
     // Blank the feed on the way in. Clearing only after the new address
     // resolved meant the previous network's history stayed on screen for as
@@ -223,7 +233,17 @@ export default function DashboardTab() {
         error={!!error}
       />
 
-      <PayForGrid onMore={() => setServicesOpen(true)} />
+      {/* Cash out is hidden until the backend answers. The Linq API key lives
+          there, so with it asleep or unconfigured there is no order to create
+          — better to not offer it than to fail after the user has typed an
+          amount and their bank details. */}
+      <PayForGrid
+        services={offrampReady ? BILL_SERVICES : BILL_SERVICES.filter((s) => s.id !== 'transfer')}
+        onSelect={(service) => {
+          if (service.route) router.push(service.route as never);
+        }}
+        onMore={() => setServicesOpen(true)}
+      />
 
       <ServicesDrawer visible={servicesOpen} onClose={() => setServicesOpen(false)} />
 
