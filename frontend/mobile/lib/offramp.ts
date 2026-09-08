@@ -160,6 +160,41 @@ export function getOrderStatus(orderId: string): Promise<OfframpStatus> {
   return call<OfframpStatus>(`/offramp/orders/${encodeURIComponent(orderId)}`);
 }
 
+/**
+ * The order currently in flight, so leaving the screen does not lose it.
+ *
+ * Sending the deposit means leaving this screen — the send flow is elsewhere —
+ * and the order lived only in component state, so coming back produced a blank
+ * form while real money was already on its way to Linq. The order id is enough
+ * to recover everything: the backend holds the rest.
+ */
+const ACTIVE_ORDER_KEY = 'veil_offramp_active_order';
+
+export async function rememberActiveOrder(orderId: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(ACTIVE_ORDER_KEY, orderId);
+  } catch {
+    // Losing the pointer is survivable — the order still settles server-side —
+    // so this must never take the creation flow down with it.
+  }
+}
+
+export async function activeOrderId(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(ACTIVE_ORDER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export async function forgetActiveOrder(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(ACTIVE_ORDER_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 /** Terminal states, from Linq's own vocabulary. Anything else is still moving. */
 export function isTerminal(status: string): boolean {
   const s = status.toLowerCase();

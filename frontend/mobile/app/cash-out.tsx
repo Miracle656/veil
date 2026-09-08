@@ -24,7 +24,10 @@ import {
   getOfframpRate,
   getOrderStatus,
   isFailure,
+  activeOrderId,
+  forgetActiveOrder,
   isTerminal,
+  rememberActiveOrder,
   verifyBankAccount,
   type OfframpOrder,
   type VerifiedBank,
@@ -137,6 +140,48 @@ export default function CashOutScreen() {
     loadRate();
   }, [loadRate]);
 
+  // Resume an order left in flight.
+  //
+  // Sending the deposit means leaving this screen, and coming back used to
+  // land on a blank amount form with the order gone — after real money had
+  // been sent. The id is all that needs remembering; the backend holds the
+  // rest, so the status below is authoritative rather than a local guess.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const id = await activeOrderId();
+      if (!id || !alive) return;
+      try {
+        const live = await getOrderStatus(id);
+        if (!alive) return;
+        setStatus(live.status);
+        if (isTerminal(live.status)) {
+          setStep('done');
+          void forgetActiveOrder();
+          return;
+        }
+        setOrder({
+          id: live.id,
+          walletAddress: live.depositAddress ?? '',
+          coinType: '',
+          chain: 'stellar',
+          coin: 'usdc',
+          amountStableCoin: live.amountStableCoin,
+          amountNGN: live.amountNGN,
+          rate: 0,
+          status: live.status,
+        });
+        setStep('deposit');
+      } catch {
+        // Unreachable backend: leave the fresh form rather than showing an
+        // order we cannot describe.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -204,6 +249,7 @@ export default function CashOutScreen() {
       setOrder(created);
       setStatus(created.status);
       setCreatedAt(Date.now());
+      void rememberActiveOrder(created.id);
       setStep('deposit');
     } catch (err) {
       setError(
@@ -227,7 +273,10 @@ export default function CashOutScreen() {
         const s = await getOrderStatus(order.id);
         if (!alive) return;
         setStatus(s.status);
-        if (isTerminal(s.status)) setStep('done');
+        if (isTerminal(s.status)) {
+          setStep('done');
+          void forgetActiveOrder();
+        }
       } catch {
         // Transient: the next tick tries again rather than showing an error
         // over a screen that is otherwise correct.
