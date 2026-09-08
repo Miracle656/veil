@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 
 import { FlowHeader } from '../components/FlowHeader';
@@ -72,6 +73,7 @@ function describeStatus(status: string): string {
 }
 
 export default function CashOutScreen() {
+  const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -466,6 +468,27 @@ export default function CashOutScreen() {
               <Row label="They receive" value={`₦${order.amountNGN.toLocaleString('en-US')}`} />
               <Row label="Rate" value={`₦${order.rate.toLocaleString('en-US')} / USDC`} />
             </View>
+
+            {/* The screen showed an address and no way to send to it, so the
+                obvious reading was that sending happened automatically — and
+                the ten-minute window closed while the user waited. Sending is
+                the whole action of this step, so it gets the primary button.
+
+                Handed to /send prefilled rather than reimplemented here: that
+                screen already picks the source correctly, so USDC held by the
+                contract goes out over its SAC and USDC on the fee-payer goes
+                out classically, without this screen needing to know which. */}
+            <Pressable
+              onPress={() =>
+                router.push(
+                  `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC` as never,
+                )
+              }
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>Send {order.amountStableCoin} USDC</Text>
+            </Pressable>
 
             <View style={styles.statusRow}>
               <ActivityIndicator color={colors.accent} />
