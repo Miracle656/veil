@@ -28,6 +28,7 @@ import {
   forgetActiveOrder,
   isTerminal,
   rememberActiveOrder,
+  rememberDepositAddress,
   verifyBankAccount,
   type OfframpOrder,
   type VerifiedBank,
@@ -299,6 +300,9 @@ export default function CashOutScreen() {
       setStatus(created.status);
       setCreatedAt(Date.now());
       void rememberActiveOrder(created.id);
+      // So the activity feed can call this "Cashed out" rather than a transfer
+      // to an unknown address.
+      void rememberDepositAddress(created.walletAddress);
       setStep('deposit');
     } catch (err) {
       setError(

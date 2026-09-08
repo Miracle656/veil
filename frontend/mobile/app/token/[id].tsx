@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import type { BottomSheetModal } from '@gorhom/bottom-sheet';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useCurrency } from '../../hooks/useCurrency';
@@ -16,10 +17,12 @@ import { StrKey } from '@stellar/stellar-sdk';
 
 import { fetchPrice } from '../../lib/fetchPrice';
 import { StellarIdenticon } from '../../components/StellarIdenticon';
+import { TxDetailSheet } from '../../components/TxDetailSheet';
 import { loadHorizonActivity } from '../../lib/horizonActivity';
 import type { TxRecord } from '../../lib/activityFeed';
 import { fetchTokenDetail, parseAssetId, type TokenActivity, type TokenDetail } from '../../lib/token';
 import { getWalletAddress } from '../../lib/walletStore';
+import { knownDepositAddresses } from '../../lib/offramp';
 import { fetchContractAssetBalance, getFeePayerAddress } from '../../lib/activity';
 
 const NAMES: Record<string, string> = { XLM: 'Stellar Lumens', USDC: 'USD Coin', EURC: 'Euro Coin' };
@@ -103,6 +106,35 @@ export default function TokenDetailScreen() {
 
   const usd = detail && price !== null ? parseFloat(detail.balance) * price : null;
 
+  const [filter, setFilter] = useState<'all' | 'sent' | 'received'>('all');
+  const [depositAddresses, setDepositAddresses] = useState<string[]>([]);
+
+  useEffect(() => {
+    void knownDepositAddresses().then(setDepositAddresses).catch(() => {});
+  }, []);
+
+  const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
+  const detailSheetRef = useRef<BottomSheetModal>(null);
+
+  const visibleActivity = (detail?.activity ?? []).filter((r) =>
+    filter === 'all' ? true : r.direction === filter,
+  );
+
+  // TokenActivity is this page's shape; the detail sheet speaks TxRecord.
+  // Mapped rather than widened, so the sheet keeps one input.
+  const openDetail = (r: TokenActivity) => {
+    setSelectedTx({
+      id: r.id,
+      type: r.direction,
+      amount: r.amount,
+      asset: asset.code,
+      counterparty: r.counterparty,
+      timestamp: r.timestamp,
+      hash: r.hash,
+    });
+    detailSheetRef.current?.present();
+  };
+
   const actions: Array<{ key: string; label: string; Icon: (p: IconProps) => React.JSX.Element; onPress: () => void }> = [
     { key: 'send', label: 'Send', Icon: PaperPlaneIcon, onPress: () => router.push(`/send?asset=${asset.code}`) },
     { key: 'receive', label: 'Receive', Icon: ReceiveIcon, onPress: () => router.push('/receive') },
@@ -147,21 +179,60 @@ export default function TokenDetailScreen() {
             </View>
 
             {/* Activity */}
-            <Text style={styles.section}>Activity</Text>
-            {detail && detail.activity.length > 0 ? (
+            <View style={styles.activityHead}>
+              <Text style={styles.section}>Activity</Text>
+              {/* The same three filters /transactions has. A token page is
+                  where someone goes to answer "what happened with this
+                  asset", and that question is usually one direction. */}
+              <View style={styles.filterRow}>
+                {(['all', 'received', 'sent'] as const).map((f) => (
+                  <Pressable
+                    key={f}
+                    onPress={() => setFilter(f)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: filter === f }}
+                    style={[styles.filterPill, filter === f && styles.filterPillActive]}
+                  >
+                    <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
+                      {f === 'all' ? 'All' : f === 'sent' ? 'Sent' : 'Received'}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+            {visibleActivity.length > 0 ? (
               <View style={styles.card}>
-                {detail.activity.map((r, i) => (
-                  <TransferRow key={r.id} record={r} styles={styles} last={i === detail.activity.length - 1} />
+                {visibleActivity.map((r, i) => (
+                  <TransferRow
+                    key={r.id}
+                    record={r}
+                    styles={styles}
+                    last={i === visibleActivity.length - 1}
+                    onPress={() => openDetail(r)}
+                    cashedOut={r.direction === 'sent' && depositAddresses.includes(r.counterparty)}
+                  />
                 ))}
               </View>
             ) : (
               <View style={styles.card}>
-                <Text style={styles.empty}>No {asset.code} transfers yet.</Text>
+                {/* An empty filter is not an empty history — saying "no
+                    transfers yet" over a wallet that has plenty, just none
+                    in this direction, is the same absent-vs-none confusion
+                    the balance screens had. */}
+                <Text style={styles.empty}>
+                  {filter === 'all'
+                    ? `No ${asset.code} transfers yet.`
+                    : `No ${filter} ${asset.code} transfers.`}
+                </Text>
               </View>
             )}
           </>
         )}
       </ScrollView>
+
+      {/* Opened by tapping a transfer row, same sheet the dashboard and the
+          full history use. */}
+      <TxDetailSheet ref={detailSheetRef} tx={selectedTx} />
     </SafeAreaView>
   );
 }
@@ -210,10 +281,14 @@ function TransferRow({
   record,
   styles,
   last,
+  onPress,
+  cashedOut,
 }: {
   record: TokenActivity;
   styles: ReturnType<typeof createStyles>;
   last: boolean;
+  onPress?: () => void;
+  cashedOut?: boolean;
 }) {
   const received = record.direction === 'received';
   // Same shape as the dashboard feed: identicon, address first, action beneath,
@@ -221,7 +296,14 @@ function TransferRow({
   // user three different layouts for the same information.
   const when = formatWhen(record.timestamp);
   return (
-    <View style={[styles.row, !last && styles.rowBorder]}>
+    // Tappable, like every other transaction row in the app. These looked
+    // identical to the dashboard feed's rows and did nothing when pressed,
+    // which reads as the app being broken rather than the row being inert.
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      style={({ pressed }) => [styles.row, !last && styles.rowBorder, pressed && styles.pressed]}
+    >
       <View style={styles.rowAvatar}>
         <StellarIdenticon address={record.counterparty} size={34} />
       </View>
@@ -230,7 +312,9 @@ function TransferRow({
           {truncateAddress(record.counterparty, 6, 6)}
         </Text>
         <Text style={styles.rowType}>
-          {received ? '↓ Received' : '↑ Sent'}
+          {/* A cash-out is a send to Linq's deposit address. Left as "Sent"
+              it looks like the user paid a stranger. */}
+          {cashedOut ? '🏦 Cashed out' : received ? '↓ Received' : '↑ Sent'}
         </Text>
       </View>
       <View style={styles.rowRight}>
@@ -240,7 +324,7 @@ function TransferRow({
         </Text>
         {when ? <Text style={styles.rowWhen}>{when}</Text> : null}
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -265,6 +349,27 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 16,
     },
     actionLabel: { color: colors.textPrimary, fontFamily: fontFamily.bodyMedium, fontSize: 13 },
+
+    // The heading and its filters share a line; the filters sit on the
+    // heading's baseline so the section keeps its existing top margin.
+    activityHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    filterRow: { flexDirection: 'row', gap: 6, marginTop: 30, marginBottom: 10 },
+    filterPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    filterPillActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    filterText: { color: colors.textMuted, fontSize: 12 },
+    // Gold-on-gold otherwise.
+    filterTextActive: { color: colors.onAccent },
 
     section: {
       color: colors.textFaint,

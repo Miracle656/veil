@@ -85,6 +85,58 @@ function assetParam(code: string, issuer: string | null | undefined): string {
  * timeout, malformed body). This is intentionally best-effort — callers must
  * handle `null` gracefully rather than blocking the UI.
  */
+
+/**
+ * Mid-price from Stellar's own order book, when Lens cannot answer.
+ *
+ * This is not the estimate that was removed. That was a constant compiled into
+ * the build (0.11 XLM) that valued 5.35 XLM at $0.59 against a real $0.99 and
+ * went stale the day it was written. This is the live mid of the SDEX book
+ * between the asset and Circle's USDC — a real market price, from the same
+ * Horizon the wallet already reads balances from, with no key, no database and
+ * no RPC quota behind it.
+ *
+ * Lens stays the preferred source: it is volume-weighted across venues, where
+ * this is the top of one book. But an unreachable oracle should cost accuracy,
+ * not the number entirely.
+ */
+async function orderBookPrice(
+  code: string,
+  issuer: string | null | undefined,
+  network: 'testnet' | 'mainnet',
+): Promise<number | null> {
+  const horizon =
+    network === 'mainnet' ? 'https://horizon.stellar.org' : 'https://horizon-testnet.stellar.org';
+  const quoteIssuer = USDC_ISSUERS[network];
+
+  const selling =
+    code.toUpperCase() === 'XLM' || !issuer
+      ? 'selling_asset_type=native'
+      : `selling_asset_type=credit_alphanum4&selling_asset_code=${encodeURIComponent(code)}&selling_asset_issuer=${encodeURIComponent(issuer)}`;
+
+  const url =
+    `${horizon}/order_book?${selling}` +
+    `&buying_asset_type=credit_alphanum4&buying_asset_code=USDC` +
+    `&buying_asset_issuer=${encodeURIComponent(quoteIssuer)}&limit=1`;
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!res.ok) return null;
+    const book = (await res.json()) as {
+      bids?: { price?: string }[];
+      asks?: { price?: string }[];
+    };
+    const bid = Number(book.bids?.[0]?.price);
+    const ask = Number(book.asks?.[0]?.price);
+    // Both sides required: a one-sided book has no mid, and taking whichever
+    // side exists would quote a price nobody is willing to trade against.
+    if (!isFinite(bid) || !isFinite(ask) || bid <= 0 || ask <= 0) return null;
+    return (bid + ask) / 2;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchPrice(
   code: string,
   issuer: string | null | undefined,
@@ -116,13 +168,13 @@ export async function fetchPrice(
     });
     // 401 = no API key, 402 = payment required, 404 = unknown pair. None of
     // these is a price, so none of them may become one.
-    if (!res.ok) return null;
+    if (!res.ok) return orderBookPrice(code, issuer, network);
     const data = (await res.json()) as Record<string, unknown>;
     // Lens may return the price under any of several field names.
     const price = data['price'] ?? data['ask'] ?? data['last'] ?? data['close'];
-    return typeof price === 'number' ? price : null;
+    return typeof price === 'number' ? price : orderBookPrice(code, issuer, network);
   } catch {
-    return null; // AbortError (timeout), network error, or parse error.
+    return orderBookPrice(code, issuer, network);
   } finally {
     clearTimeout(timerId);
   }

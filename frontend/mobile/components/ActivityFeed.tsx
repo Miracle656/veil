@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   StyleSheet,
@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { useActivityFeed, type TxRecord } from '../lib/activityFeed';
 import { StellarIdenticon } from './StellarIdenticon';
+import { knownDepositAddresses } from '../lib/offramp';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
@@ -70,6 +71,20 @@ export default function ActivityFeed({
   limit,
 }: ActivityFeedProps) {
   const transactions = useActivityFeed();
+
+  // Addresses we have cashed out to. An offramp is indistinguishable on chain
+  // from any other USDC transfer — the naira leg is off-chain entirely — so
+  // the only thing that can name it is our own record of where we sent it.
+  const [depositAddresses, setDepositAddresses] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void knownDepositAddresses().then((a) => {
+      if (alive) setDepositAddresses(a);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -91,7 +106,8 @@ export default function ActivityFeed({
     const isLast = index === filtered.length - 1;
     const received = item.type === 'received';
     const swapped = item.type === 'swapped';
-    const label = swapped ? 'Swap' : received ? 'Received' : 'Sent';
+    const cashedOut = !received && depositAddresses.includes(item.counterparty);
+    const label = cashedOut ? 'Cashed out' : swapped ? 'Swap' : received ? 'Received' : 'Sent';
     const when = formatWhen(item.timestamp);
 
     return (
@@ -120,7 +136,7 @@ export default function ActivityFeed({
           </Text>
           <View style={styles.rowMetaLine}>
             <Text style={styles.rowLabel}>
-              {swapped ? '⇄ ' : received ? '↓ ' : '↑ '}
+              {cashedOut ? '🏦 ' : swapped ? '⇄ ' : received ? '↓ ' : '↑ '}
               {label}
             </Text>
             {item.memo ? <Text style={styles.rowMemo}>✉</Text> : null}

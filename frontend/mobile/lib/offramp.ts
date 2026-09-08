@@ -195,6 +195,43 @@ export async function forgetActiveOrder(): Promise<void> {
   }
 }
 
+/**
+ * Deposit addresses we have sent to, so the activity feed can name them.
+ *
+ * An offramp leaves the chain looking like any other USDC transfer to a
+ * stranger's G-address — the naira leg happens entirely off-chain, so nothing
+ * on Stellar records that this particular send became a bank payout. Without
+ * this the one transfer type with a real-world counterpart is the least
+ * legible thing in the feed.
+ *
+ * Addresses only, no amounts or bank details: enough to label a row, and
+ * nothing that would turn the device into a record of who was paid.
+ */
+const DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses';
+
+export async function rememberDepositAddress(address: string): Promise<void> {
+  try {
+    const known = await knownDepositAddresses();
+    if (known.includes(address)) return;
+    // Bounded: a wallet that offramps often should not grow this forever, and
+    // the oldest entries are the least likely to still be on screen.
+    const next = [address, ...known].slice(0, 50);
+    await AsyncStorage.setItem(DEPOSIT_ADDRESSES_KEY, JSON.stringify(next));
+  } catch {
+    // Labelling is a nicety; never let it fail an order.
+  }
+}
+
+export async function knownDepositAddresses(): Promise<string[]> {
+  try {
+    const raw = await AsyncStorage.getItem(DEPOSIT_ADDRESSES_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Terminal states, from Linq's own vocabulary. Anything else is still moving. */
 export function isTerminal(status: string): boolean {
   const s = status.toLowerCase();
