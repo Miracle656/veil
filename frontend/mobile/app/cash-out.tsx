@@ -50,6 +50,27 @@ type Step = 'amount' | 'bank' | 'review' | 'deposit' | 'done';
 
 const POLL_MS = 6_000;
 
+/**
+ * Linq's status strings in the user's terms.
+ *
+ * Theirs describe their own internals — "processing: wallet worker on it.."
+ * sounds like work is happening TO the order when it means they are waiting
+ * for a deposit that only the user can make. Left as-is, the screen tells
+ * someone to stand by at the exact moment they need to act.
+ */
+function describeStatus(status: string): string {
+  const s = status.toLowerCase();
+  if (s.includes('wallet worker') || s === 'initiated') {
+    return 'Waiting for your USDC to arrive';
+  }
+  if (s.includes('bank queue')) return 'Deposit received — sending to the bank';
+  if (s.includes('disbursed')) return 'Naira sent to the bank account';
+  if (s.includes('settled')) return 'Complete';
+  if (s.includes('timeout')) return 'Expired — no deposit arrived in time';
+  if (s.includes('failed')) return 'The bank payout failed';
+  return status;
+}
+
 export default function CashOutScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -85,6 +106,11 @@ export default function CashOutScreen() {
   const [verified, setVerified] = useState<VerifiedBank | null>(null);
 
   const [order, setOrder] = useState<OfframpOrder | null>(null);
+  // Linq expires an order 10 minutes after creation if no deposit arrives.
+  // Without a visible clock the screen reads as "working on it" when in fact
+  // it is waiting for the user, and the window closes silently.
+  const [createdAt, setCreatedAt] = useState<number | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [status, setStatus] = useState<string>('initiated');
   const [copied, setCopied] = useState(false);
 
@@ -175,6 +201,7 @@ export default function CashOutScreen() {
       });
       setOrder(created);
       setStatus(created.status);
+      setCreatedAt(Date.now());
       setStep('deposit');
     } catch (err) {
       setError(
@@ -211,6 +238,17 @@ export default function CashOutScreen() {
       clearInterval(id);
     };
   }, [step, order]);
+
+  useEffect(() => {
+    if (step !== 'deposit' || createdAt === null) return;
+    const tick = () => {
+      const left = Math.max(0, 600 - Math.floor((Date.now() - createdAt) / 1000));
+      setSecondsLeft(left);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [step, createdAt]);
 
   const copyDeposit = async () => {
     if (!order) return;
@@ -408,7 +446,17 @@ export default function CashOutScreen() {
 
         {!mainnetOnly && step === 'deposit' && order && (
           <>
-            <Text style={styles.label}>Send exactly this amount</Text>
+            {/* The action is the user's, and the old copy did not say so
+                loudly enough: "processing: wallet worker on it.." reads as the
+                service working when it means the service is WAITING. */}
+            <Text style={styles.label}>Send this USDC now</Text>
+            {secondsLeft !== null ? (
+              <Text style={secondsLeft < 120 ? styles.error : styles.hint}>
+                {secondsLeft > 0
+                  ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')} left — the order expires if nothing arrives.`
+                  : 'This order has expired. Nothing was sent, and no naira was paid.'}
+              </Text>
+            ) : null}
             <View style={styles.card}>
               <Text style={styles.bigAmount}>{order.amountStableCoin} USDC</Text>
               <Text style={styles.hint}>on Stellar — to</Text>
@@ -421,7 +469,7 @@ export default function CashOutScreen() {
 
             <View style={styles.statusRow}>
               <ActivityIndicator color={colors.accent} />
-              <Text style={styles.statusText}>{status}</Text>
+              <Text style={styles.statusText}>{describeStatus(status)}</Text>
             </View>
             <Text style={styles.hint}>
               Sending less than the amount above pays out proportionally less — the payout
