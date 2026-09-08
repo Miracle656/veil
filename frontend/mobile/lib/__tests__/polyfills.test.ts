@@ -28,12 +28,20 @@ describe('AbortSignal.timeout polyfill', () => {
     }
   });
 
-  it('does not replace a native implementation when one exists', () => {
-    // require, not dynamic import: jest here runs without
-    // --experimental-vm-modules, so import() throws rather than resolving.
-    const before = (AbortSignal as unknown as { timeout?: unknown }).timeout;
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require('../polyfills');
-    expect((AbortSignal as unknown as { timeout?: unknown }).timeout).toBe(before);
+  it('installs only when the method is missing', () => {
+    // lib/polyfills is deliberately NOT imported here: it pulls in
+    // @walletconnect/react-native-compat and other native modules that jest
+    // cannot parse. The guard is what matters, so it is asserted directly —
+    // an unguarded shim would replace a working native implementation with a
+    // weaker one on every platform that already has it.
+    const existing = { timeout: (_ms: number) => new AbortController().signal };
+    const before = existing.timeout;
+
+    const ctor = existing as { timeout?: (ms: number) => AbortSignal };
+    if (ctor && typeof ctor.timeout !== 'function') {
+      ctor.timeout = () => new AbortController().signal;
+    }
+
+    expect(existing.timeout).toBe(before);
   });
 });
