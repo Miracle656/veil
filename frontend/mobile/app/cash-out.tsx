@@ -401,12 +401,15 @@ const createStyles = (colors: ThemeColors) =>
     bankPillText: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },
     bankPillTextActive: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold },
 
+    // Matched to the Assets card on the dashboard: surface fill, radius 20, no
+    // outer border. The fill already separates it from the page, and a card
+    // here with a border while the dashboard's has none reads as two different
+    // designs rather than one.
     card: {
       backgroundColor: colors.surface,
-      borderRadius: 16,
-      borderWidth: 1,
-      borderColor: colors.border,
-      padding: 16,
+      borderRadius: 20,
+      paddingHorizontal: 18,
+      paddingVertical: 16,
       gap: 12,
     },
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
@@ -417,6 +420,8 @@ const createStyles = (colors: ThemeColors) =>
     settled: { color: colors.positive },
     failed: { color: colors.danger },
 
+    // Keeps its border: it sits INSIDE the card and is tappable, so it needs an
+    // edge of its own. The rule is about the outer container, not every surface.
     addressBox: {
       backgroundColor: colors.surfaceMd,
       borderRadius: 12,
