@@ -120,7 +120,10 @@ async function fetchTransfers(
   wraithUrl: string,
   address: string,
 ): Promise<TxRecord[]> {
-  const url = `${wraithUrl.replace(/\/+$/, '')}/transfers/${encodeURIComponent(address)}?limit=50`;
+  // /accounts/:address/transfers, not /transfers/:address. The path was
+  // inverted, so every poll 404'd — invisible until EXPO_PUBLIC_WRAITH_URL was
+  // set, because with no URL configured the fetch never ran at all.
+  const url = `${wraithUrl.replace(/\/+$/, '')}/accounts/${encodeURIComponent(address)}/transfers?limit=50`;
   const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   if (!res.ok) {
     throw new Error(`Wraith returned HTTP ${res.status}`);
@@ -232,9 +235,18 @@ export function startPolling(address: string, wraithUrl: string | null): void {
   if (!wraithUrl) return;
 
   const tick = async () => {
-    const fresh = await fetchTransfers(wraithUrl, address);
-    if (fresh.length > 0) {
-      appendActivityFeed(fresh);
+    try {
+      const fresh = await fetchTransfers(wraithUrl, address);
+      if (fresh.length > 0) {
+        appendActivityFeed(fresh);
+      }
+    } catch (err) {
+      // A poll failure is not the caller's problem to handle — it runs on a
+      // timer with nobody awaiting it, so an unhandled rejection here becomes
+      // a red box on the screen every few seconds while the feed itself is
+      // perfectly usable from Horizon. The initial load still throws, because
+      // there the caller CAN distinguish "unreachable" from "no transfers".
+      console.warn('[activity] poll failed:', err instanceof Error ? err.message : err);
     }
   };
 
