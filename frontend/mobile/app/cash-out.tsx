@@ -29,6 +29,7 @@ import {
 } from '../lib/offramp';
 import { getFeePayerAddress } from '../lib/activity';
 import { getWalletAddress } from '../lib/walletStore';
+import { loadHoldings, type Holding } from '../lib/holdings';
 import { errorMessage } from '../lib/errorMessage';
 
 /**
@@ -56,8 +57,19 @@ export default function CashOutScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // 'loading' and 'failed' are separate states. Collapsing both into a null
+  // rate meant a failed fetch showed "Fetching the current rate..." forever,
+  // with no error and nothing to retry — the screen looked busy rather than
+  // broken.
   const [rate, setRate] = useState<number | null>(null);
+  const [rateState, setRateState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [amountNGN, setAmountNGN] = useState('');
+
+  // What the wallet can actually cash out. Read through loadHoldings so it is
+  // the COMBINED figure: a smart wallet holds USDC in two places — the
+  // fee-payer's trustline and the contract's own SAC balance — and showing
+  // either one alone understates what is spendable.
+  const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
 
   const [bankCode, setBankCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
@@ -74,14 +86,44 @@ export default function CashOutScreen() {
     `veil_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
   );
 
-  useEffect(() => {
+  const loadRate = useCallback(() => {
+    setRateState('loading');
     getOfframpRate()
-      .then((r) => setRate(r.rate))
-      .catch(() => setRate(null));
+      .then((r) => {
+        setRate(r.rate);
+        setRateState('ready');
+      })
+      .catch(() => setRateState('failed'));
+  }, []);
+
+  useEffect(() => {
+    loadRate();
+  }, [loadRate]);
+
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const address = await getWalletAddress();
+        if (!address) return;
+        const holdings = await loadHoldings(address);
+        const usdc = holdings.find((h: Holding) => h.code.toUpperCase() === 'USDC');
+        if (alive) setUsdcBalance(usdc ? Number(usdc.balance) : 0);
+      } catch {
+        if (alive) setUsdcBalance(null);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const ngn = Number(amountNGN.replace(/,/g, ''));
   const estimatedUsdc = rate && ngn > 0 ? ngn / rate : null;
+  // The most naira this balance can produce, floored to whole naira so the
+  // suggestion never asks for more USDC than the wallet holds.
+  const maxNGN = rate && usdcBalance ? Math.floor(usdcBalance * rate) : null;
+  const overBalance = maxNGN !== null && ngn > maxNGN;
 
   const handleVerifyBank = async () => {
     setError(null);
@@ -177,6 +219,19 @@ export default function CashOutScreen() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
         {step === 'amount' && (
           <>
+            {/* The balance leads. This screen spends USDC but is denominated in
+                naira, so without it the user is asked for a number with no
+                stated ceiling — and finds out it was too large only after
+                entering their bank details. */}
+            <View style={styles.balanceRow}>
+              <Text style={styles.balanceLabel}>Available to cash out</Text>
+              <Text style={styles.balanceValue}>
+                {usdcBalance === null
+                  ? '—'
+                  : `${usdcBalance.toFixed(2)} USDC${maxNGN !== null ? `  ·  up to ₦${maxNGN.toLocaleString('en-US')}` : ''}`}
+              </Text>
+            </View>
+
             <Text style={styles.label}>How much do you want to receive?</Text>
             <View style={styles.amountRow}>
               <Text style={styles.currency}>₦</Text>
@@ -190,19 +245,46 @@ export default function CashOutScreen() {
                 accessibilityLabel="Amount in naira"
               />
             </View>
-            <Text style={styles.hint}>
-              {estimatedUsdc !== null
-                ? `About ${estimatedUsdc.toFixed(2)} USDC at ₦${rate?.toLocaleString('en-US')} — indicative only. The rate is fixed when the order is created.`
-                : 'Fetching the current rate…'}
-            </Text>
+            {maxNGN !== null && maxNGN > 0 ? (
+              <Pressable
+                onPress={() => setAmountNGN(String(maxNGN))}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.maxPill, pressed && styles.pressed]}
+              >
+                <Text style={styles.maxPillText}>Max · ₦{maxNGN.toLocaleString('en-US')}</Text>
+              </Pressable>
+            ) : null}
+
+            {rateState === 'failed' ? (
+              <Pressable onPress={loadRate} accessibilityRole="button">
+                <Text style={styles.error}>
+                  Couldn&apos;t reach the rate service. Tap to try again.
+                </Text>
+              </Pressable>
+            ) : rateState === 'loading' ? (
+              <Text style={styles.hint}>Fetching the current rate…</Text>
+            ) : (
+              <Text style={styles.hint}>
+                {estimatedUsdc !== null
+                  ? `About ${estimatedUsdc.toFixed(2)} USDC at ₦${rate?.toLocaleString('en-US')} — indicative. The rate is fixed when the order is created.`
+                  : `₦${rate?.toLocaleString('en-US')} per USDC — indicative. The rate is fixed when the order is created.`}
+              </Text>
+            )}
+
+            {overBalance ? (
+              <Text style={styles.error}>
+                That is more than this wallet holds. The most you can cash out is ₦
+                {maxNGN?.toLocaleString('en-US')}.
+              </Text>
+            ) : null}
 
             <Pressable
               onPress={() => setStep('bank')}
-              disabled={!(ngn > 0)}
+              disabled={!(ngn > 0) || overBalance}
               accessibilityRole="button"
               style={({ pressed }) => [
                 styles.primary,
-                !(ngn > 0) && styles.primaryDisabled,
+                (!(ngn > 0) || overBalance) && styles.primaryDisabled,
                 pressed && styles.pressed,
               ]}
             >
@@ -365,6 +447,36 @@ const createStyles = (colors: ThemeColors) =>
     label: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 17 },
     hint: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
     error: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+
+    // The balance sits above the input, styled as a statement rather than a
+    // field: it is context for the number being typed, not another thing to
+    // fill in.
+    balanceRow: {
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      paddingHorizontal: 18,
+      paddingVertical: 14,
+      gap: 4,
+    },
+    balanceLabel: {
+      color: colors.label,
+      fontFamily: fontFamily.accent,
+      fontSize: 11,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+    },
+    balanceValue: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
+
+    maxPill: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    maxPillText: { color: colors.accentText, fontFamily: fontFamily.bodySemiBold, fontSize: 13 },
 
     amountRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     currency: { color: colors.textFaint, fontFamily: fontFamily.heading, fontSize: 34 },
