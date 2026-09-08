@@ -1,5 +1,7 @@
-// Side-effect import, first: fills in runtime gaps (AbortSignal.timeout)
-// that screens below assume exist. Must precede anything that fetches.
+// Also imported from index.js, which runs before expo-router builds its route
+// tree — that is the one that matters, because route modules are required
+// during enumeration, before this file's body ever executes. Kept here too so
+// the shims cannot go missing if the entry point is ever changed back.
 import '../lib/polyfills';
 
 import { useEffect, useRef } from 'react';

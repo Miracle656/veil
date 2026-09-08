@@ -122,10 +122,12 @@ export function PayForGrid({
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    // No outer border, matching the Assets and Activity cards. This card was
+    // never visible before — it returns null while every service is 'soon' —
+    // so it kept a border the rest of the dashboard had already dropped, and
+    // appeared looking like it belonged to a different screen.
     card: {
       backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
       borderRadius: 20,
       paddingHorizontal: 14,
       paddingTop: 14,
