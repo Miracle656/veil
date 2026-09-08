@@ -16,6 +16,8 @@ import { StrKey } from '@stellar/stellar-sdk';
 
 import { fetchPrice } from '../../lib/fetchPrice';
 import { StellarIdenticon } from '../../components/StellarIdenticon';
+import { loadHorizonActivity } from '../../lib/horizonActivity';
+import type { TxRecord } from '../../lib/activityFeed';
 import { fetchTokenDetail, parseAssetId, type TokenActivity, type TokenDetail } from '../../lib/token';
 import { getWalletAddress } from '../../lib/walletStore';
 import { fetchContractAssetBalance, getFeePayerAddress } from '../../lib/activity';
@@ -54,7 +56,7 @@ export default function TokenDetailScreen() {
       // the contract's own XLM (via SAC) is folded into the XLM balance.
       const isContract = StrKey.isValidContract(stored);
       const effective = isContract ? await getFeePayerAddress() : stored;
-      const [d, p, extraXlm] = await Promise.all([
+      const [d, p, extraXlm, feed] = await Promise.all([
         effective
           ? fetchTokenDetail(effective, asset.code, asset.issuer)
           : Promise.resolve({ code: asset.code, issuer: asset.issuer, balance: '0', activity: [] as TokenActivity[] }),
@@ -72,8 +74,21 @@ export default function TokenDetailScreen() {
                 : { code: asset.code, issuer: asset.issuer },
             )
           : Promise.resolve(0),
+        // Classic payments alone cannot describe a smart wallet's history.
+        // fetchTokenDetail asks Horizon for payments to the FEE PAYER, so a
+        // transfer into the contract — an invoke_host_function on the asset's
+        // SAC, addressed to a C-account — appears nowhere in it. That is why
+        // this page listed September 4th and not a receipt from today.
+        //
+        // loadHorizonActivity already merges the classic side with the
+        // contract's SAC events, so reuse it rather than teach a second module
+        // the same lesson.
+        loadHorizonActivity(stored, 50).catch(() => [] as TxRecord[]),
       ]);
-      setDetail(extraXlm > 0 ? { ...d, balance: (Number(d.balance) + extraXlm).toFixed(7) } : d);
+      const merged = mergeActivity(d.activity, feed, asset.code);
+      const withBalance =
+        extraXlm > 0 ? { ...d, balance: (Number(d.balance) + extraXlm).toFixed(7) } : d;
+      setDetail({ ...withBalance, activity: merged });
       setPrice(p);
     } catch {
       // leave last-known
@@ -149,6 +164,32 @@ export default function TokenDetailScreen() {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+/**
+ * Fold the merged wallet feed into this token's classic history.
+ *
+ * The two sources overlap on classic payments, so dedupe by transaction hash
+ * and let the classic row win — it is the richer description of the same
+ * event. Rows without a hash cannot be matched, so they are kept.
+ */
+function mergeActivity(
+  classic: TokenActivity[],
+  feed: TxRecord[],
+  code: string,
+): TokenActivity[] {
+  const seen = new Set(classic.map((a) => a.hash).filter(Boolean));
+  const extra: TokenActivity[] = feed
+    .filter((r) => r.asset === code && (!r.hash || !seen.has(r.hash)))
+    .map((r) => ({
+      id: r.id,
+      direction: r.type === 'received' ? ('received' as const) : ('sent' as const),
+      amount: r.amount.replace(/,/g, ''),
+      counterparty: r.counterparty,
+      timestamp: r.timestamp,
+      hash: r.hash ?? '',
+    }));
+  return [...classic, ...extra].sort((a, b) => b.timestamp - a.timestamp);
 }
 
 /** Today shows a time; anything older shows a date. Timestamps are seconds. */
