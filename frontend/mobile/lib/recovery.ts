@@ -448,7 +448,19 @@ export async function fetchWalletSigners(
   // get_signers returns Map<u32, BytesN<65>>; read the XDR directly rather than
   // through scValToNative, whose output shape varies by SDK version.
   try {
-    return retval.map()?.map((entry) => new Uint8Array(entry.val().bytes())) ?? [];
+    // v17: the XDR unions are discriminated, so the map arm is reached by
+    // narrowing on `.type` rather than calling an accessor that throws for the
+    // wrong arm. A non-map return is not a Veil wallet, which the catch below
+    // already reports.
+    if (retval.type !== 'scvMap') throw new Error('get_signers did not return a map');
+    return (retval.map ?? []).map((entry) => {
+      const val = entry.val;
+      if (val.type !== 'scvBytes') throw new Error('signer entry is not bytes');
+      // v17 brands its byte types (`BytesValue<'ScBytes'>`), so they no longer
+      // describe themselves as iterable even though each is a byte view at
+      // runtime. Copy through that shape so callers own their array.
+      return Uint8Array.from(val.bytes as unknown as Uint8Array);
+    });
   } catch {
     throw new Error('That contract does not look like a Veil wallet: it has no signer map.');
   }

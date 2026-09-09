@@ -64,10 +64,9 @@
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0"
-  },
+  "dependencies": {},
   "peerDependencies": {
+    "@stellar/stellar-sdk": "^17.0.0",
     "@tanstack/react-query": "^5.0.0",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0",
@@ -98,6 +97,7 @@
     }
   },
   "devDependencies": {
+    "@stellar/stellar-sdk": "^17.0.1",
     "@playwright/test": "^1.61.1",
     "@size-limit/preset-small-lib": "^12.1.0",
     "@storybook/addon-essentials": "^8.6.0",
@@ -144,20 +144,33 @@
       "**/tests/**/*.test.ts"
     ],
     "moduleNameMapper": {
-      "^@stellar/stellar-sdk$": "<rootDir>/node_modules/@stellar/stellar-sdk"
+      "^@stellar/stellar-sdk$": "<rootDir>/node_modules/@stellar/stellar-sdk",
+      "^uint8array-extras$": "<rootDir>/__mocks__/uint8array-extras.js",
+      "^@exodus/bytes/(.*)$": "<rootDir>/__mocks__/@exodus/bytes/$1",
+      "^@noble/ed25519$": "<rootDir>/__mocks__/@noble/ed25519.js",
+      "^smol-toml$": "<rootDir>/__mocks__/smol-toml.js",
+      "^@noble/hashes/sha2\\.js$": "<rootDir>/__mocks__/@noble/hashes/sha2.js",
+      "^@noble/hashes/utils\\.js$": "<rootDir>/__mocks__/@noble/hashes/utils.js"
     },
-    "globals": {
-      "ts-jest": {
-        "isolatedModules": true,
-        "diagnostics": false,
-        "tsconfig": {
-          "strict": true,
-          "esModuleInterop": true,
-          "skipLibCheck": true,
-          "resolveJsonModule": true,
-          "ignoreDeprecations": "6.0"
+    "transformIgnorePatterns": [
+      "/node_modules/"
+    ],
+    "transform": {
+      "^.+\\.tsx?$": [
+        "ts-jest",
+        {
+          "isolatedModules": true,
+          "diagnostics": false,
+          "tsconfig": {
+            "strict": true,
+            "esModuleInterop": true,
+            "skipLibCheck": true,
+            "resolveJsonModule": true,
+            "ignoreDeprecations": "6.0"
+          }
         }
-      }
+      ],
+      "^.+\\.jsx?$": "babel-jest"
     }
   },
   "size-limit": [

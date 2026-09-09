@@ -5,6 +5,7 @@ const config = {
   roots: ['<rootDir>'],
   testMatch: ['**/__tests__/**/*.test.ts', '**/tests/**/*.test.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+  resolver: './jest-resolver.cjs',
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       tsconfig: {
@@ -13,18 +14,18 @@ const config = {
         allowSyntheticDefaultImports: true,
       },
     }],
+    '^.+\\.jsx?$': 'babel-jest',
   },
-  // SDK source (compiled from ../../sdk/src) imports @stellar/stellar-sdk and
-  // friends, but its sibling sdk/node_modules isn't installed in the wallet CI
-  // job. Add the wallet's node_modules to the resolver search path (the jest
-  // analog of next.config's resolve.modules prepend) so those imports resolve
-  // to the wallet's copy through normal package resolution — a moduleNameMapper
-  // would instead force a specific build and break jsdom's browser-field logic.
+  transformIgnorePatterns: [
+    // `.*` before the group so a NESTED copy is still transformed. Without it
+    // the pattern matches at the first `/node_modules/`, sees `@stellar/
+    // stellar-sdk` rather than an allowed name, and skips everything beneath —
+    // including `@stellar/stellar-sdk/node_modules/@noble/hashes`, which v17
+    // installs separately and which fails to parse as CommonJS.
+    'node_modules/(?!.*(@stellar/js-xdr|@exodus|@noble)/)',
+  ],
   modulePaths: ['<rootDir>/node_modules'],
-  // Replicate tsconfig paths so Jest resolves workspace aliases
   moduleNameMapper: {
-    // The app-root alias (`@/*` -> `./*` in tsconfig). Without this, any module
-    // under test that imports a sibling via `@/lib/...` fails to resolve.
     '^@/(.*)$':         '<rootDir>/$1',
     '^@veil/utils$':    '<rootDir>/../../sdk/src/utils',
     '^@veil/sdk$':      '<rootDir>/../../sdk/src/index',
@@ -33,6 +34,8 @@ const config = {
     '^@veil/backup$':   '<rootDir>/../../sdk/src/backup',
     '^@veil/sep7$':     '<rootDir>/../../sdk/src/sep7',
     '^@veil/prf$':      '<rootDir>/../../sdk/src/crypto/prf',
+    // Mock ESM-only transitive deps to use native Node.js APIs
+    '^uint8array-extras$': '<rootDir>/__mocks__/uint8array-extras.js',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [

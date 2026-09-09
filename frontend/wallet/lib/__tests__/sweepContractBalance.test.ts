@@ -91,24 +91,19 @@ function makeMockAuthEntry() {
     subInvocations: [],
   })
 
-  const entry = {
-    credentials: jest.fn(),
-    rootInvocation: jest.fn().mockReturnValue(invocation),
+  // v17: credentials, address, nonce, etc. are all readonly properties
+  const credObj = {
+    type: 'sorobanCredentialsAddress',
+    address: {
+      address:                   {},
+      nonce:                     0n,
+      signatureExpirationLedger: 0,
+    },
   }
-  entry.credentials.mockImplementation((newCred?: unknown) => {
-    if (newCred === undefined) {
-      return {
-        switch:  () => ({ value: 1 }), // SOROBAN_CREDENTIALS_ADDRESS = 1
-        address: () => ({
-          address:                   () => ({}),
-          nonce:                     () => 0n,
-          signatureExpirationLedger: () => 0,
-        }),
-      }
-    }
-    // setter invocation — intentional no-op
-  })
-  return entry
+  return {
+    get credentials() { return credObj; },
+    get rootInvocation() { return invocation; },
+  }
 }
 
 const mockAssembled = { sign: jest.fn() }
@@ -150,8 +145,10 @@ describe('sweepContractBalance', () => {
         if (tx && tx.operations && tx.operations[0]) {
           const op = tx.operations[0]
           // Log details of the operation to see its structure
-          console.log('[mockSimulate] op type:', op.type, 'func:', op.func?.invokeContract?.()?.functionName?.()?.toString())
-          const fnName = op.func?.invokeContract?.()?.functionName?.()?.toString()
+          // v17: invokeContract and functionName are properties, not methods
+          const ic = op.func?.invokeContract
+          const fnName = typeof ic?.functionName === 'string' ? ic.functionName : ic?.functionName?.toString?.()
+          console.log('[mockSimulate] op type:', op.type, 'fnName:', fnName)
           isProbe = (fnName === 'get_nonce')
         }
       } catch (err) {

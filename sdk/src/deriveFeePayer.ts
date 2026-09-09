@@ -42,7 +42,14 @@ function base64UrlToUint8Array(value: string): Uint8Array {
     for (let i = 0; i < binary.length; i++) rawId[i] = binary.charCodeAt(i);
     return rawId;
   }
-  return new Uint8Array(Buffer.from(padded, 'base64'));
+  // Node before it had a global `atob`. Reached through globalThis so this file
+  // needs no Node types — and so a React Native bundle, where Buffer is a
+  // polyfill that may not be installed yet, fails loudly rather than at a
+  // `Buffer is not defined` deep inside a decode.
+  const nodeBuffer = (globalThis as { Buffer?: { from(data: string, encoding: string): Uint8Array } })
+    .Buffer;
+  if (nodeBuffer) return new Uint8Array(nodeBuffer.from(padded, 'base64'));
+  throw new Error('No base64 decoder available: neither atob nor Buffer is present.');
 }
 
 /**
@@ -64,5 +71,7 @@ export async function deriveFeePayerKeypair(credentialIdBase64url: string): Prom
     256, // 32 bytes = Ed25519 seed
   );
 
-  return Keypair.fromRawEd25519Seed(Buffer.from(derived));
+  // Uint8Array rather than Buffer: deriveBits hands back an ArrayBuffer, and
+  // the seed never needs to be a Buffer for the SDK to accept it.
+  return Keypair.fromRawEd25519Seed(new Uint8Array(derived));
 }

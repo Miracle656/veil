@@ -240,13 +240,13 @@ export function computeWalletAddress(
     //   The factory contract calls env.crypto().sha256(&public_key_bytes) for the same reason:
     //   Soroban's deployer salt must be exactly 32 bytes (Uint256).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const salt = (stellarHash as any)(Buffer.from(publicKeyBytes)) as Buffer;
+    const salt = stellarHash(publicKeyBytes);
 
     // Step 2: Hash the network passphrase → 32-byte networkId.
     //   Every Stellar network has a unique passphrase, so contract IDs don't collide
     //   between testnet and mainnet even with identical inputs.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const networkId = (stellarHash as any)(Buffer.from(networkPassphrase)) as Buffer;
+    const networkId = stellarHash(new TextEncoder().encode(networkPassphrase));
 
     // Step 3: Decode the factory's strkey → raw 32-byte contract hash.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -271,7 +271,7 @@ export function computeWalletAddress(
 
     // Step 5: SHA-256 the serialised XDR → 32-byte contract ID.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const contractId = (stellarHash as any)(preimage.toXDR()) as Buffer;
+    const contractId = stellarHash(preimage.toXdr());
 
     // Step 6: Encode as a Stellar contract strkey ("C...").
     return StrKey.encodeContract(contractId);

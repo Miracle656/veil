@@ -321,7 +321,10 @@ describe('attachRecoverySignatures', () => {
 
     const unsigned = tx.toXDR();
     tx.sign(keypair);
-    const signature = tx.signatures[0]!.signature().toString('base64');
+    // v17: `signature` is a property rather than an accessor, and the bytes are
+    // wrapped in a branded `Signature` whose payload sits on `.value`.
+    const raw = (tx.signatures[0]!.signature as unknown as { value: Uint8Array }).value;
+    const signature = Buffer.from(raw).toString('base64');
 
     return { xdr: unsigned, signerKey: keypair.publicKey(), signature };
   }

@@ -308,23 +308,27 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   if (authEntries) {
     const networkIdBytes = await sha256(new TextEncoder().encode(network.networkPassphrase));
 
-    for (const parsed of authEntries) {
-      const credentials = parsed.credentials();
-      if (
-        credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
-      ) {
+    // v17 models the XDR unions as discriminated types: `.credentials` is a
+    // property rather than an accessor, the arm is chosen by `.type`, and the
+    // payload objects are frozen — so a signed entry replaces its slot instead
+    // of being mutated in place. The final transaction below is built from this
+    // array afterwards, so replacing an element is what reaches the network.
+    for (let i = 0; i < authEntries.length; i++) {
+      const parsed = authEntries[i]!;
+      const credentials = parsed.credentials;
+      if (credentials.type !== 'sorobanCredentialsAddress') {
         continue;
       }
 
-      const addressCredentials = credentials.address();
-      const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
+      const addressCredentials = credentials.address;
+      const contractAddress = Address.fromScAddress(addressCredentials.address).toString();
       const currentNonce = await getWalletNonce(rpc, contractAddress, network.networkPassphrase, feePayerKeypair.publicKey());
 
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addressCredentials.nonce(),
-          invocation: parsed.rootInvocation(),
+          networkId: networkIdBytes,
+          nonce: addressCredentials.nonce,
+          invocation: parsed.rootInvocation,
           signatureExpirationLedger: validUntilLedger,
         })
       );
@@ -345,16 +349,17 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
         sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
       }
 
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
+      authEntries[i] = new xdr.SorobanAuthorizationEntry({
+        credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
           new xdr.SorobanAddressCredentials({
-            address: addressCredentials.address(),
-            nonce: addressCredentials.nonce(),
+            address: addressCredentials.address,
+            nonce: addressCredentials.nonce,
             signatureExpirationLedger: validUntilLedger,
             signature: xdr.ScVal.scvVec(sigElements),
           })
-        )
-      );
+        ),
+        rootInvocation: parsed.rootInvocation,
+      });
     }
   }
 
