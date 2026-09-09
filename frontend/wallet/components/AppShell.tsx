@@ -38,6 +38,7 @@ const NAV_MAIN: NavItem[] = [
   { href: '/send', label: 'Send', icon: '↗' },
   { href: '/receive', label: 'Receive', icon: '↙' },
   { href: '/swap', label: 'Swap', icon: '⇅' },
+  { href: '/cashout', label: 'Cash out', icon: '⇲' },
   { href: '/earn', label: 'Earn', icon: '◎' },
   { href: '/bills', label: 'Bills & airtime', icon: '▤' },
   { href: '/agent', label: 'Agent', icon: '✦' },

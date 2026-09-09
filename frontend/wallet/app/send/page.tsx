@@ -54,6 +54,26 @@ export default function SendPage() {
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
+
+  /**
+   * Prefill from the query string, so another screen can hand off a payment it
+   * already knows the details of. Cash out uses this to send the deposit: the
+   * address and amount come from the order, and retyping either is a way to
+   * lose money to a typo.
+   *
+   * Read once on mount rather than watched. These are an opening position, not
+   * a binding: whatever the user does to the fields afterwards stands.
+   */
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const q = new URLSearchParams(window.location.search)
+    const to = q.get('to')
+    const amt = q.get('amount')
+    const m = q.get('memo')
+    if (to) setRecipient(to)
+    if (amt) setAmount(amt)
+    if (m) setMemo(m)
+  }, [])
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
   const [showPicker, setShowPicker]   = useState(false)
