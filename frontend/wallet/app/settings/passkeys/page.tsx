@@ -26,12 +26,18 @@ export default function PasskeysPage() {
     return Keypair.fromSecret(secret)
   }
 
+  /** 'loading' | 'ready' | an error message. */
+  const [loadState, setLoadState] = useState<string>('loading')
+
   const fetchSigners = useCallback(async () => {
+    setLoadState('loading')
     try {
       const list = await wallet.getSigners()
       setSigners(list)
+      setLoadState('ready')
     } catch (e) {
       console.error('Failed to fetch signers', e)
+      setLoadState(e instanceof Error ? e.message : 'Could not read the passkeys on this wallet.')
     }
   }, [wallet.getSigners])
 
@@ -116,9 +122,34 @@ export default function PasskeysPage() {
 
         {/* Signers list */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '1.5rem' }}>
-          {signers.length === 0 && (
+          {/* Three states, not one. A failed read used to render as "Loading
+              passkeys…" and stay there, so a wallet whose signers could not be
+              fetched looked like a wallet that was still thinking about it,
+              forever. On a screen about the keys that control the account, the
+              difference between "none" and "we could not tell" matters. */}
+          {signers.length === 0 && loadState === 'loading' && (
             <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
               <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.3)' }}>Loading passkeys…</p>
+            </div>
+          )}
+          {signers.length === 0 && loadState === 'ready' && (
+            <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
+              <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.45)' }}>
+                No passkeys registered on this wallet yet.
+              </p>
+            </div>
+          )}
+          {signers.length === 0 && loadState !== 'loading' && loadState !== 'ready' && (
+            <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--danger)', marginBottom: '0.5rem' }}>
+                Could not read this wallet&rsquo;s passkeys.
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
+                {loadState}
+              </p>
+              <button className="btn-secondary" style={{ marginTop: '0.875rem' }} onClick={() => void fetchSigners()}>
+                Try again
+              </button>
             </div>
           )}
 

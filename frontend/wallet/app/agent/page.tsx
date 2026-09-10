@@ -402,6 +402,14 @@ export default function AgentPage() {
 
         <main className="wallet-main" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingTop: '2rem' }}>
 
+          {/* The page's own title, above the wizard rather than inside its
+              first step. It was nested in step 0, so naming yourself and then
+              answering two more questions happened on a screen with no title
+              on it, which reads as having fallen out of the app. */}
+          <div style={{ marginBottom: '1.25rem' }}>
+            <PageHeader eyebrow="Assistant" title="Agent" />
+          </div>
+
           {/* Progress dots */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
             {[0, 1, 2].map(i => (
@@ -416,9 +424,6 @@ export default function AgentPage() {
           {/* Step 0: Name */}
           {onboardingStep === 0 && (
             <>
-              <div style={{ marginBottom: '1.75rem' }}>
-          <PageHeader eyebrow="Assistant" title="Agent" />
-        </div>
               <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.5)', textAlign: 'center', lineHeight: 1.6 }}>
                 Your agent will greet you by name and personalize conversations.
               </p>
