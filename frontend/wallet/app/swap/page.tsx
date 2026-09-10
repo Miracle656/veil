@@ -377,6 +377,8 @@ export default function SwapPage() {
       : null
 
   const slippageTolerance = slippageBps / 10000
+  /** Same derivation the send screen uses, so the two quote the fee alike. */
+  const feeXlm = (Number(inclusionFee()) / 10_000_000).toFixed(7)
 
   const flip = resolveFlip(sourceAsset?.code, destAsset.code, sourceBalances, DEFAULT_USDC.issuer)
 
@@ -595,36 +597,49 @@ export default function SwapPage() {
             </div>
 
             <div className="vw-swapside">
-            {/* Quote panel */}
-            {rate && !errorMsg && (
+            {/* Route panel.
+                Always rendered, with a dash where a figure is not known yet.
+                It was gated on having a quote, so the whole right-hand column
+                was empty until an amount was typed and then appeared all at
+                once. Showing the shape of the answer before there is one also
+                tells the user what they will be told before they commit: which
+                venue, how much impact, what the fee is. */}
               <Card>
-                <SectionLabel tone="dim" className="mb-3">Quote details</SectionLabel>
+                <SectionLabel tone="dim" className="mb-3">Route</SectionLabel>
                 <div className="flex flex-col gap-2">
-                  <Row label="Rate" value={`1 ${sourceAsset?.code} ≈ ${rate} ${destAsset.code}`} />
-                  {usingSoroswap && quote && (
-                    <>
-                      <Row
-                        label="Price impact"
-                        value={
-                          quote.priceImpact < 0.005
-                            ? '< 0.01%'
-                            : `${(quote.priceImpact * 100).toFixed(2)}%`
-                        }
-                      />
-                      <Row label="Route" value={quote.protocols.join(' · ')} />
-                    </>
-                  )}
-                  {!usingSoroswap && (
-                    <Row label="Route" value="SDEX" />
-                  )}
+                  <Row
+                    label="Rate"
+                    value={rate ? `1 ${sourceAsset?.code} ≈ ${rate} ${destAsset.code}` : '—'}
+                  />
+                  <Row
+                    label="Venue"
+                    value={rate ? (usingSoroswap && quote ? quote.protocols.join(' · ') : 'SDEX') : '—'}
+                  />
+                  <Row
+                    label="Price impact"
+                    value={
+                      usingSoroswap && quote && rate
+                        ? quote.priceImpact < 0.005
+                          ? '< 0.01%'
+                          : `${(quote.priceImpact * 100).toFixed(2)}%`
+                        : '—'
+                    }
+                  />
                   <Row label="Slippage" value={`${slippageBps / 100}%`} />
+                  {/* Just the figure. The longer "paid by fee-payer" broke
+                      mid-word in this column, and the confirm step says who
+                      pays it anyway. */}
+                  <Row label="Network fee" value={`${feeXlm} XLM`} />
                   <Row
                     label="Min. received"
-                    value={`${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${destAsset.code}`}
+                    value={
+                      rate && destAmount
+                        ? `${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${destAsset.code}`
+                        : '—'
+                    }
                   />
                 </div>
               </Card>
-            )}
             </div>
           </div>
         )}
