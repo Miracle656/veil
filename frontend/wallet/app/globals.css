@@ -458,9 +458,22 @@ body {
 .veil-app-shell .wallet-shell { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .veil-app-shell .wallet-main { padding-left: 0; padding-right: 0; }
 
-/* ── Home screen (Veil Web design) ──────────────────────────────────────
-   The dashboard is the one screen that uses the full shell width; every
-   other screen keeps the narrow 480px measure. */
+/* ── Measure inside the shell ────────────────────────────────────────────
+   `.wallet-main` is 480px because these pages were a phone-width column
+   before there was a sidebar. Only the three screens rebuilt from the Veil
+   Web design were widened; the other fourteen kept the phone measure and
+   render as a narrow strip down the middle of a 1440px desktop, with the
+   sidebar on the left and a field of empty black to the right.
+
+   The design fills the shell on every screen, so inside the shell the measure
+   opens up and aligns left. Pages outside the shell (onboarding, lock,
+   recovery) keep the narrow centred column, which is right for them. */
+.veil-app-shell .wallet-main {
+  max-width: 1180px;
+  margin-left: 0;
+  margin-right: 0;
+}
+
 .wallet-main--wide { max-width: none; }
 
 .vw-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap; }
@@ -610,7 +623,11 @@ body {
 @media (max-width: 1180px) { .vw-swapcol { width: 100%; } }
 
 /* ── Send screen ─────────────────────────────────────────────────────── */
-.vw-sendcol { width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 1rem; }
+/* The send CTA is sticky at the bottom of the viewport. Without room to scroll
+   past it, it sat permanently on top of the memo field and the fee row, which
+   made both unreachable rather than merely obscured. The padding gives the
+   column somewhere to scroll to. */
+.vw-sendcol { width: 600px; flex-shrink: 0; display: flex; flex-direction: column; gap: 1rem; padding-bottom: 96px; }
 @media (max-width: 1180px) { .vw-sendcol { width: 100%; } }
 
 .vw-fieldlabel {
@@ -1273,4 +1290,32 @@ body {
    would be a column of dashes squeezed to nothing, so it stacks under instead. */
 @media (max-width: 900px) {
   .cashout-grid { grid-template-columns: 1fr !important; }
+}
+
+/* ── Receive: address on the left, what it does on the right ───────────── */
+.vw-recv-row { display: flex; gap: 20px; align-items: flex-start; }
+.vw-recv-main { flex: 0 0 560px; max-width: 560px; min-width: 0; }
+.vw-recv-side { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.vw-recv-auto {
+  background: rgba(0,167,181,0.07);
+  border: 1px solid rgba(0,167,181,0.28);
+  border-radius: 20px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.vw-recv-auto__head {
+  font-family: var(--font-lora), 'Lora', Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+  font-size: 19px;
+  line-height: 1.35;
+  color: var(--off-white);
+}
+.vw-recv-auto__body { font-size: 13px; line-height: 1.6; color: rgba(246,247,248,0.6); }
+
+@media (max-width: 1023px) {
+  .vw-recv-row { flex-direction: column; }
+  .vw-recv-main { flex: 1 1 auto; max-width: none; width: 100%; }
 }

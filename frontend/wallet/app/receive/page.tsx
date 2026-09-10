@@ -293,7 +293,12 @@ export default function ReceivePage() {
         {!ready ? (
           <div className="spinner spinner-light" style={{ width: '2rem', height: '2rem', margin: '4rem auto' }} />
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          // Two columns, as the design draws it: the address people scan on the
+          // left, and everything that is about the address, rather than the
+          // address itself, on the right. Stacked, the contract row sat far
+          // enough below the QR to read as a second, competing address.
+          <div className="vw-recv-row">
+            <div className="vw-recv-main">
               {feePayerAddress ? (
                 <SpendingCard address={feePayerAddress} />
               ) : (
@@ -303,8 +308,21 @@ export default function ReceivePage() {
                   </p>
                 </div>
               )}
+            </div>
 
+            <div className="vw-recv-side">
               {contractAddress && <ContractRow address={contractAddress} />}
+
+              {/* Why anything sent here is not just sitting still. */}
+              <div className="vw-recv-auto">
+                <p className="vw-label" style={{ color: 'var(--teal)' }}>Automatic</p>
+                <p className="vw-recv-auto__head">Incoming funds start earning immediately.</p>
+                <p className="vw-recv-auto__body">
+                  Anything deposited here joins the Blend USDC pool. Nothing is locked up, and
+                  you withdraw whenever you like.
+                </p>
+              </div>
+            </div>
           </div>
         )}
       </main>
