@@ -20,6 +20,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { PageHeader } from '@/components/ui/primitives'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { NIGERIAN_BANKS, bankName } from '@/lib/nigerianBanks'
+import { getNetwork } from '@/lib/network'
 import {
   OfframpUnavailable,
   createOrder,
@@ -95,6 +96,8 @@ export default function CashOutPage() {
 
   const [contractAddress, setContractAddress] = useState<string | null>(null)
   const [feePayer, setFeePayer] = useState<string | null>(null)
+  /** null means "not known", never "zero" — the two lead to different actions. */
+  const [usdcBalance, setUsdcBalance] = useState<number | null>(null)
 
   // The refund address must be the CLASSIC account. A Veil wallet is a
   // contract, which cannot hold a trustline, so a refund sent there could never
@@ -136,6 +139,27 @@ export default function CashOutPage() {
       cancelled = true
     }
   }, [])
+
+  // The spendable USDC on the classic account, which is the one that can send
+  // to Linq's deposit address. Left null when Horizon cannot be reached: an
+  // unknown balance shown as 0.00 tells the user they have nothing, which is a
+  // different and much worse claim than saying we could not check.
+  useEffect(() => {
+    if (!feePayer) return
+    let cancelled = false
+    const horizon = getNetwork().horizonUrl.replace(/\/+$/, '')
+    fetch(`${horizon}/accounts/${encodeURIComponent(feePayer)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((acct: { balances?: Array<{ asset_code?: string; balance: string }> }) => {
+        if (cancelled) return
+        const usdc = acct.balances?.find((b) => b.asset_code === 'USDC')
+        setUsdcBalance(usdc ? Number(usdc.balance) : 0)
+      })
+      .catch(() => !cancelled && setUsdcBalance(null))
+    return () => {
+      cancelled = true
+    }
+  }, [feePayer])
 
   const ngn = Number(amountNGN.replace(/[^0-9.]/g, ''))
   const estimatedUsdc = rate && ngn > 0 ? ngn / rate : null
@@ -282,14 +306,11 @@ export default function CashOutPage() {
       <PageHeader
         eyebrow="Off-ramp"
         title="Cash out to bank"
-        action={
-          step === 'deposit' || step === 'done' ? undefined : (
-            <span style={{ ...eyebrow, whiteSpace: 'nowrap' }}>{`STEP ${stepNumber} OF 3`}</span>
-          )
-        }
       />
 
-      <main style={{ padding: '0 1.5rem 3rem', maxWidth: 620 }}>
+      <main style={{ padding: '0 1.5rem 3rem' }}>
+       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: '1.5rem', alignItems: 'start' }} className="cashout-grid">
+        <div style={{ ...panel, padding: '1.5rem' }}>
         {/* Three segments, filled to the step reached. */}
         {step !== 'done' && (
           <div style={{ marginBottom: '1.75rem' }}>
@@ -325,48 +346,73 @@ export default function CashOutPage() {
         {step === 'amount' && (
           <>
             <p style={eyebrow}>THEY RECEIVE</p>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 6 }}>
-              <span style={{ fontSize: '1.75rem', color: 'rgba(246,247,248,0.5)' }}>₦</span>
-              <input
-                value={amountNGN}
-                onChange={(e) => setAmountNGN(e.target.value.replace(/[^0-9]/g, ''))}
-                inputMode="numeric"
-                placeholder="0"
-                aria-label="Amount in naira"
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  outline: 'none',
-                  color: 'var(--off-white)',
-                  fontSize: '2.5rem',
-                  fontWeight: 600,
-                  width: '100%',
-                  padding: 0,
-                }}
-              />
-            </div>
-            <p style={{ margin: '0.5rem 0 0', color: 'rgba(246,247,248,0.55)', fontSize: '0.875rem' }}>
-              {rate === null
-                ? rateError
-                  ? 'Rate unavailable right now.'
-                  : 'Fetching the current rate…'
-                : `You send ≈ ${estimatedUsdc ? estimatedUsdc.toFixed(2) : '0.00'} USDC @ ₦${rate.toLocaleString('en-NG')}`}
-            </p>
 
-            <div style={{ display: 'flex', gap: 8, marginTop: '1.25rem', flexWrap: 'wrap' }}>
-              {QUICK_AMOUNTS.map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setAmountNGN(String(v))}
+            {/* The amount is the subject of the screen, so it gets its own
+                surface and the centre of it. */}
+            <div style={{ ...inset, marginTop: 10, textAlign: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: 2 }}>
+                <span style={{ fontSize: '2rem', color: 'rgba(246,247,248,0.45)', fontWeight: 500 }}>₦</span>
+                <input
+                  value={amountNGN}
+                  onChange={(e) => setAmountNGN(e.target.value.replace(/[^0-9]/g, ''))}
+                  inputMode="numeric"
+                  placeholder="0"
+                  aria-label="Amount in naira"
+                  size={Math.max(1, amountNGN.length || 1)}
                   style={{
-                    ...chip,
-                    borderColor: ngn === v ? 'rgba(253,218,36,0.5)' : 'rgba(255,255,255,0.1)',
-                    background: ngn === v ? 'rgba(253,218,36,0.1)' : 'rgba(255,255,255,0.03)',
+                    background: 'none',
+                    border: 'none',
+                    outline: 'none',
+                    color: 'var(--off-white)',
+                    fontSize: '3rem',
+                    fontWeight: 600,
+                    letterSpacing: '-0.02em',
+                    padding: 0,
+                    minWidth: '1ch',
                   }}
-                >
-                  ₦{v.toLocaleString('en-NG')}
-                </button>
-              ))}
+                />
+              </div>
+              <p style={{ margin: '0.5rem 0 0', color: 'rgba(246,247,248,0.5)', fontSize: '0.8125rem' }}>
+                {rate === null
+                  ? rateError
+                    ? 'Rate unavailable right now.'
+                    : 'Fetching the current rate…'
+                  : `You send ≈ ${estimatedUsdc ? estimatedUsdc.toFixed(2) : '0.00'} USDC @ ₦${rate.toLocaleString('en-NG')}`}
+              </p>
+
+              {/* The balance gets its own line. Sharing a row with four chips
+                  forced a wrap that dropped the last one onto a line of its
+                  own, which reads as a broken layout rather than a fourth
+                  option. */}
+              <p style={{ margin: '1.25rem 0 0', fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)' }}>
+                {usdcBalance === null ? 'Balance unknown' : `Available ${usdcBalance.toFixed(2)} USDC`}
+              </p>
+
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  marginTop: '0.625rem',
+                }}
+              >
+                {QUICK_AMOUNTS.map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setAmountNGN(String(v))}
+                    style={{
+                      ...chip,
+                      borderColor: ngn === v ? 'rgba(253,218,36,0.5)' : 'rgba(255,255,255,0.1)',
+                      background: ngn === v ? 'rgba(253,218,36,0.1)' : 'rgba(255,255,255,0.04)',
+                      color: ngn === v ? 'var(--gold)' : 'var(--off-white)',
+                    }}
+                  >
+                    ₦{v.toLocaleString('en-NG')}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div style={{ ...panel, marginTop: '1.5rem', display: 'flex', gap: 12 }}>
@@ -380,7 +426,7 @@ export default function CashOutPage() {
             <button
               onClick={() => setStep('bank')}
               disabled={!(ngn > 0) || rate === null}
-              style={{ ...primary, marginTop: '1.75rem', opacity: ngn > 0 && rate !== null ? 1 : 0.45 }}
+              style={ngn > 0 && rate !== null ? { ...primary, marginTop: '1.75rem' } : { ...primaryOff, marginTop: '1.75rem' }}
             >
               Continue
             </button>
@@ -473,7 +519,7 @@ export default function CashOutPage() {
               <button
                 onClick={() => setStep('review')}
                 disabled={!verified}
-                style={{ ...primary, flex: 1, opacity: verified ? 1 : 0.45 }}
+                style={verified ? { ...primary, flex: 1 } : { ...primaryOff, flex: 1 }}
               >
                 Continue
               </button>
@@ -591,7 +637,58 @@ export default function CashOutPage() {
             </button>
           </div>
         )}
+        </div>
+
+        {/* Summary rail. Every figure that governs the payout, visible the
+            whole way through, so nothing is only ever seen once on a step the
+            user has already left behind. Dashes until a value is real: an
+            invented placeholder here is a number about somebody's money. */}
+        <aside style={{ display: 'grid', gap: '1rem' }}>
+          <div style={{ ...panel, display: 'grid', gap: 12 }}>
+            <p style={eyebrow}>SUMMARY</p>
+            <SummaryRow label="They receive" value={ngn > 0 ? `₦${ngn.toLocaleString('en-NG')}` : '—'} />
+            <SummaryRow
+              label="You send"
+              value={estimatedUsdc ? `${estimatedUsdc.toFixed(2)} USDC` : '—'}
+            />
+            <SummaryRow label="Rate" value={rate ? `₦${rate.toLocaleString('en-NG')} / USDC` : '—'} />
+            <SummaryRow label="Bank" value={verified ? verified.bankName || bankName(verified.bankCode) : '—'} />
+            <SummaryRow label="Account name" value={verified?.accountName.toUpperCase() ?? '—'} />
+            <SummaryRow
+              label="Deposit window"
+              value={
+                secondsLeft === null
+                  ? '10 min once created'
+                  : secondsLeft > 0
+                    ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')} left`
+                    : 'Closed'
+              }
+            />
+            <SummaryRow label="Still earning" value={order ? 'No, USDC has left' : 'Yes, until it leaves'} />
+          </div>
+        </aside>
+       </div>
       </main>
+    </div>
+  )
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  const pending = value === '—'
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'baseline' }}>
+      <span style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.45)', flexShrink: 0 }}>{label}</span>
+      <span
+        style={{
+          fontSize: '0.8125rem',
+          fontWeight: pending ? 400 : 600,
+          color: pending ? 'rgba(246,247,248,0.3)' : 'var(--off-white)',
+          textAlign: 'right',
+          wordBreak: 'break-word',
+        }}
+      >
+        {value}
+      </span>
     </div>
   )
 }
@@ -618,6 +715,13 @@ const panel: React.CSSProperties = {
   border: '1px solid rgba(255,255,255,0.08)',
   borderRadius: 16,
   padding: '1.125rem 1.25rem',
+}
+
+/** A surface nested inside a panel: one step lighter, no border. */
+const inset: React.CSSProperties = {
+  background: 'rgba(255,255,255,0.03)',
+  borderRadius: 14,
+  padding: '1.5rem 1.25rem',
 }
 
 const field: React.CSSProperties = {
@@ -655,6 +759,25 @@ const primary: React.CSSProperties = {
   width: '100%',
 }
 
+/**
+ * The not-yet state of the primary action.
+ *
+ * Gold at 45% opacity over a dark ground turns olive, which reads as a
+ * differently-coloured button rather than the same button unavailable. A muted
+ * surface with muted text says "not yet" without inventing a new colour.
+ */
+const primaryOff: React.CSSProperties = {
+  background: 'rgba(255,255,255,0.06)',
+  color: 'rgba(246,247,248,0.35)',
+  border: '1px solid rgba(255,255,255,0.08)',
+  borderRadius: 999,
+  padding: '0.875rem 1.5rem',
+  fontSize: '0.9375rem',
+  fontWeight: 600,
+  cursor: 'not-allowed',
+  width: '100%',
+}
+
 const secondary: React.CSSProperties = {
   background: 'transparent',
   color: 'var(--off-white)',
@@ -669,7 +792,8 @@ const secondary: React.CSSProperties = {
 const chip: React.CSSProperties = {
   border: '1px solid rgba(255,255,255,0.1)',
   borderRadius: 999,
-  padding: '0.5rem 0.875rem',
+  padding: '0.4375rem 0.75rem',
+  whiteSpace: 'nowrap',
   color: 'var(--off-white)',
   fontSize: '0.8125rem',
   cursor: 'pointer',

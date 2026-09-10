@@ -1236,3 +1236,9 @@ body {
   .vw-recv-tile--gold:active,
   .vw-contract-row:active { transform: none; }
 }
+
+/* Cash out puts the flow beside a live summary. Below the breakpoint the rail
+   would be a column of dashes squeezed to nothing, so it stacks under instead. */
+@media (max-width: 900px) {
+  .cashout-grid { grid-template-columns: 1fr !important; }
+}
