@@ -694,53 +694,13 @@ function DashboardPageContent() {
           </div>
           <div className="vw-actions">
             <button className="vw-pill" onClick={() => setHideAmounts(v => !v)}>
-              {hideAmounts ? 'Show amounts' : 'Hide amounts'}
+              {hideAmounts ? 'Show balances' : 'Hide balances'}
             </button>
             <button className="vw-pill" onClick={() => setSep24Modal('deposit')}>Add money</button>
+            <button className="vw-pill" onClick={() => router.push('/send')}>
+              <span aria-hidden="true">↗</span> Send
+            </button>
           </div>
-        </div>
-
-        {/* ── Primary action cards (Send / Receive / Swap / Buy) ─────────── */}
-        <div className="vw-actions-grid">
-          <button className="vw-action-card" onClick={() => router.push('/send')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span>Send</span>
-          </button>
-          <button className="vw-action-card" onClick={() => router.push('/receive')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span>Receive</span>
-          </button>
-          <button className="vw-action-card" onClick={() => router.push('/swap')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M7 16l-4-4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M17 8l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M3 12h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
-            <span>Swap</span>
-          </button>
-          <button className="vw-action-card" onClick={() => router.push('/buy')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span>Buy</span>
-          </button>
-        </div>
-
-        {/* ── Secondary actions — horizontally scrollable chip row ────────── */}
-        <div className="vw-more vw-more--scroll">
-          <button className="vw-chip" onClick={() => router.push('/assets')}>Assets</button>
-          <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
-          <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
-          <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
-          <button className="vw-chip" onClick={() => router.push('/nfts')}>NFTs</button>
-          {multisigAvailable ? (
-            <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
-          ) : null}
-          <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>Connect dApp</button>
         </div>
 
         {/* ── Fee-payer missing banner (after cache clear) ── */}
@@ -851,9 +811,13 @@ function DashboardPageContent() {
         )}
 
 
-        {/* ── Three-column layout: center + right rail ── */}
-        <div className="vw-center-col">
-          {/* ── Balance plate + earning (center top) ── */}
+        {/* ── Three-column layout: center + right rail ──
+            The row container. `.vw-center-col` and `.vw-rail` were written as
+            flex children and left as plain siblings, so they stacked and the
+            rail rendered full width under the activity feed instead of beside
+            it. The CSS for the layout was there the whole time; nothing put the
+            two columns in a row. */}
+        {/* ── Balance plate and earning: full width, above the columns ── */}
           <div className="vw-balance-row">
             <div className="vw-silver">
               <div className="vw-silver__sheen" />
@@ -890,7 +854,16 @@ function DashboardPageContent() {
             </div>
           </div>
 
-          {/* ── Activity feed (center middle) ── */}
+
+        {/* ── Two columns below the balance: assets wide on the left,
+            activity and the agent narrow on the right, as the design has it.
+            `.vw-center-col` and `.vw-rail` were written as flex children and
+            left as plain siblings, so they stacked and the rail rendered full
+            width under the feed. The layout CSS was there the whole time;
+            nothing put the two columns in a row. */}
+        <div className="vw-dash-row">
+        <div className="vw-center-col">
+          {/* ── Activity feed ── */}
           <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 4px' }}>
               <div className="vw-label">Activity</div>
@@ -981,7 +954,23 @@ function DashboardPageContent() {
             })}
           </div>
         </div>
+        </div>
 
+        {/* ── The routes the sidebar does not carry ───────────────────────
+            Below the balance, not above it. The design opens on the money;
+            these are somewhere to go afterwards, and they are the only way to
+            reach Assets, Vault, Pools, NFTs and dApp connections at all. */}
+        <div className="vw-more vw-more--scroll">
+          <button className="vw-chip" onClick={() => router.push('/assets')}>Assets</button>
+          <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
+          <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
+          <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
+          <button className="vw-chip" onClick={() => router.push('/nfts')}>NFTs</button>
+          {multisigAvailable ? (
+            <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
+          ) : null}
+          <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>Connect dApp</button>
+        </div>
 
       </main>
 
