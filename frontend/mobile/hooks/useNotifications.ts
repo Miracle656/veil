@@ -13,6 +13,7 @@
 import { useEffect, useRef } from 'react';
 
 import { movementKey, subscribeActivityFeed, type TxRecord } from '../lib/activityFeed';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { useRouter, useSegments } from 'expo-router';
 
@@ -37,6 +38,43 @@ const seenIds = new Set<string>();
  * poll updates should.
  */
 let initialised = false;
+
+/**
+ * The seen set, on disk.
+ *
+ * Holding it only in memory was not enough. `subscribeActivityFeed` replays the
+ * current records to a new subscriber immediately, and on a fresh JS context
+ * that is an empty array — so the "first snapshot" that seeds the set seeded
+ * nothing, marked itself done, and every historical transfer then arrived
+ * looking brand new. One notification per past payment, on every Metro reload
+ * and on every cold start after a force-quit.
+ *
+ * Persisting it fixes both, and keeps the one case that must still work: a
+ * transfer that genuinely arrives while the app is closed is not in the stored
+ * set, so it still notifies.
+ */
+const SEEN_KEY = 'veil_notified_movements';
+/** Enough to cover any plausible backlog; the feed itself only holds 50. */
+const SEEN_LIMIT = 300;
+
+async function loadSeen(): Promise<Set<string> | null> {
+  try {
+    const raw = await AsyncStorage.getItem(SEEN_KEY);
+    if (raw === null) return null; // never stored: a fresh install
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((k) => typeof k === 'string')) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveSeen(seen: Set<string>): Promise<void> {
+  try {
+    await AsyncStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-SEEN_LIMIT)));
+  } catch {
+    /* storage full or unavailable: worst case a notification repeats */
+  }
+}
 
 export function useNotifications(): void {
   const router = useRouter();
@@ -89,15 +127,37 @@ export function useNotifications(): void {
   }, [router, segments]);
 
   useEffect(() => {
-    const unsubscribe = subscribeActivityFeed((records) => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    // Nothing may be judged new until the stored set is back. Subscribing first
+    // would hand us the whole history with an empty set to compare it against,
+    // which is the flood this exists to prevent.
+    void loadSeen().then((stored) => {
+      if (cancelled) return;
+      if (stored) {
+        for (const k of stored) seenRef.current.add(k);
+        // A stored set means we already know what the user has been told about,
+        // so the next snapshot is judged, not swallowed.
+        initRef.current = true;
+        initialised = true;
+      }
+      unsubscribe = subscribeActivityFeed(onSnapshot);
+    });
+
+    function onSnapshot(records: TxRecord[]) {
       if (!initRef.current) {
-        // First snapshot: seed the seen set without firing notifications.
+        // Fresh install. Seed from the first snapshot that actually carries
+        // something: an empty one says nothing about what the user has seen,
+        // and treating it as the seed is what let the history through.
+        if (records.length === 0) return;
         for (const r of records) seenRef.current.add(movementKey(r));
         initRef.current = true;
         // Write through to the module-level flag as well. `useRef` copied the
         // value at first render, so without this the hook re-seeds on every
         // remount — and a transfer landing during one would be swallowed.
         initialised = true;
+        void saveSeen(seenRef.current);
         return;
       }
 
@@ -130,8 +190,15 @@ export function useNotifications(): void {
         // 'swapped' records are intentionally not notified — they are
         // internal wallet operations, not external transfers.
       }
-    });
 
-    return unsubscribe;
+      // Persist after each judged snapshot, so a reload or a force-quit picks
+      // up where this left off rather than starting from nothing.
+      void saveSeen(seenRef.current);
+    }
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, []);
 }

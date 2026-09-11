@@ -44,6 +44,19 @@
       "env": {
         "APP_ENV": "production"
       }
+    },
+    "community": {
+      "extends": "preview",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_ENV": "production",
+        "EXPO_PUBLIC_NETWORK": "mainnet",
+        "EXPO_PUBLIC_MAINNET_RPC_URL": "https://app.useveilapp.xyz/api/rpc/mainnet",
+        "EXPO_PUBLIC_WRAITH_URL": "https://wraith-0jo1.onrender.com"
+      }
     }
   },
   "submit": {

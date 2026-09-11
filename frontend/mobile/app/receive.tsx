@@ -97,6 +97,21 @@ export default function ReceiveScreen() {
   const payable = isContract && feePayer ? feePayer : address;
   const payUri = buildSep7PayUri({ destination: payable });
 
+  /**
+   * Copy the CONTRACT address, which is what the row showing it says it does.
+   *
+   * This row used to share `handleCopy` with the QR, back when the QR was also
+   * the contract. The QR now carries the payable classic address, so sharing
+   * the handler meant the row labelled "Contract address" quietly copied the
+   * other one.
+   */
+  const [copiedContract, setCopiedContract] = useState(false);
+  async function handleCopyContract() {
+    await Clipboard.setStringAsync(address);
+    setCopiedContract(true);
+    setTimeout(() => setCopiedContract(false), 1200);
+  }
+
   async function handleCopy() {
     await Clipboard.setStringAsync(payable);
     setCopied(true);
@@ -218,7 +233,7 @@ export default function ReceiveScreen() {
         </View>
 
         {/* Contract address */}
-        <Pressable onPress={handleCopy} style={({ pressed }) => [styles.card, styles.contractRow, pressed && styles.pressed]}>
+        <Pressable onPress={handleCopyContract} style={({ pressed }) => [styles.card, styles.contractRow, pressed && styles.pressed]}>
           <View style={styles.contractLeft}>
             <View style={styles.hexBadge}>
               <HexagonIcon size={16} color={colors.lilac} />
@@ -227,7 +242,11 @@ export default function ReceiveScreen() {
               <Text style={styles.contractTitle}>Contract address</Text>
               <Text style={styles.contractSub} numberOfLines={1}>
                 {shorten(address, 6, 6)} ·{' '}
-                {isContract ? 'Soroban senders only — most cannot pay this' : 'classic address'}
+                {copiedContract
+                  ? 'copied'
+                  : isContract
+                    ? 'Soroban senders only — most cannot pay this'
+                    : 'classic address'}
               </Text>
             </View>
           </View>
