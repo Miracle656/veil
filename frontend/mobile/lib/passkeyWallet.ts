@@ -63,14 +63,22 @@ export async function createPasskeyWallet(wallet: Registerable): Promise<Created
   const recoverable = feePayer !== null;
   if (!feePayer) feePayer = Keypair.random();
 
+  // Friendbot only exists on testnet; on mainnet this returns false at once.
   const funded = await fundWithFriendbot(feePayer.publicKey());
 
   // On-chain breadcrumbs (best-effort): make "sign in with passkey" work on a
   // fresh device by recording the C-address + passkey public key as data
-  // entries on the (deterministic) fee-payer account. Needs funding first.
-  if (funded) {
-    void writeBreadcrumbs(feePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
-  }
+  // entries on the (deterministic) fee-payer account.
+  //
+  // Deliberately NOT gated on the Friendbot result. That gate asked "did a
+  // faucet just fund this?", and the answer on mainnet is always no, so every
+  // mainnet wallet was created with no on-chain record of itself and no way to
+  // be found again from a fresh device. The write needs a funded account, not a
+  // faucet, and it already fails harmlessly when there is none — the account
+  // simply does not load. `ensureBreadcrumbs` retries on dashboard load, which
+  // is what covers the mainnet order of events: the account is funded after the
+  // wallet is created, not before.
+  void writeBreadcrumbs(feePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
 
   await Promise.all([
     setWalletAddress(walletAddress),

@@ -19,9 +19,10 @@
  * with the user's own key, because a sponsored trustline would need the user's
  * signature in the same transaction as ours and that means a co-signing service.
  *
- * Cost per recipient: 1 XLM locked as the account's base reserve, 0.5 XLM locked
- * once the trustline exists, and a little slack for fees. Reserve is refundable
- * (a later account merge returns it), so this is a float, not a spend.
+ * Cost per recipient: 2.5 XLM of refundable reserve once the account, its USDC
+ * trustline and its two recovery data entries all exist, plus a little slack
+ * for fees. Reserve is refundable (a later account merge returns it), so this
+ * is a float, not a spend.
  *
  * Usage
  * -----
@@ -51,8 +52,22 @@ const NETWORKS = {
   testnet: { horizon: 'https://horizon-testnet.stellar.org', passphrase: Networks.TESTNET },
 };
 
-/** 1 XLM base reserve + 0.5 for the trustline the wallet adds + fee slack. */
-const DEFAULT_STARTING_BALANCE = '1.6';
+/**
+ * What a recoverable, payable wallet actually costs to open.
+ *
+ *   1.0  account base reserve
+ *   0.5  the USDC trustline the wallet adds from the app
+ *   1.0  two data entries holding the passkey public key, which are what let
+ *        "sign in with passkey" find this wallet from a new device
+ *   0.1  fee slack
+ *
+ * This was 1.6, which covers the first two and not the third. That funds a
+ * wallet somebody can be paid into and cannot recover if they lose the phone —
+ * the worst of the two failures to choose, and invisible until the phone is
+ * gone. The reserve is refundable either way, so the extra XLM is float, not
+ * cost.
+ */
+const DEFAULT_STARTING_BALANCE = '2.6';
 
 function parseArgs(argv) {
   const args = { network: 'mainnet', dryRun: false, amount: DEFAULT_STARTING_BALANCE, file: null };
@@ -205,6 +220,7 @@ async function main() {
     process.exit(1);
   }
   console.log('Each recipient now opens the app, goes to Receive, and taps Enable USDC.');
+  console.log('Opening the dashboard once writes their recovery entries on-chain.');
 }
 
 main().catch((err) => {
