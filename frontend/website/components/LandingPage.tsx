@@ -4,6 +4,7 @@ import { LandingAgent } from './LandingAgent'
 import { FlowShowcase } from './LandingFlow'
 import { Capabilities, Faq, Trust } from './LandingSections'
 import { LandingHero } from './LandingHero'
+import { MobileIsLive } from './MobileIsLive'
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
@@ -611,6 +612,9 @@ export default function LandingPage({ locale }: { locale: Locale }) {
       <Navbar t={t} locale={locale} />
       <main>
         <LandingHero t={t} />
+        {/* Directly under the hero: shipping is the news, and the phone is the
+            proof that the rest of the page is describing something real. */}
+        <MobileIsLive t={t} />
         <HowItWorks t={t} />
         <WhyVeil t={t} />
         <FlowShowcase t={t} />

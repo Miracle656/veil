@@ -292,5 +292,19 @@
       }
     ],
     "index": "[ 04 OF 06 ] · THE AGENT"
+  },
+  "mobileLive": {
+    "badge": "NOW SHIPPING",
+    "titleLead": "Mobile is",
+    "titleAccent": "live",
+    "body": "The whole wallet in your pocket. Open it with the same fingerprint that opens your bank app, spend in naira, and keep earning on the balance you have not spent yet.",
+    "points": [
+      "No seed phrase to restore on a new phone",
+      "Cash out to a Nigerian bank in under a minute",
+      "0 XLM needed for your first transaction"
+    ],
+    "ctaPrimary": "Download for Android",
+    "ctaSecondary": "iPhone: join the TestFlight list",
+    "qrLabel": "Scan to install"
   }
 }
