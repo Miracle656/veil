@@ -612,9 +612,6 @@ export default function LandingPage({ locale }: { locale: Locale }) {
       <Navbar t={t} locale={locale} />
       <main>
         <LandingHero t={t} />
-        {/* Directly under the hero: shipping is the news, and the phone is the
-            proof that the rest of the page is describing something real. */}
-        <MobileIsLive t={t} />
         <HowItWorks t={t} />
         <WhyVeil t={t} />
         <FlowShowcase t={t} />
@@ -627,6 +624,11 @@ export default function LandingPage({ locale }: { locale: Locale }) {
         <BuiltOnStellar t={t} />
         <DevQuickstart t={t} />
         <Faq t={t} />
+        {/* Second to last, immediately before the sign-up. By here the page has
+            made its case; the phone is the closing proof and the download sits
+            next to the form, so the two ways in are side by side rather than a
+            screen apart. */}
+        <MobileIsLive t={t} />
         <EarlyAccess t={t} />
       </main>
       <Footer t={t} locale={locale} />

@@ -11,9 +11,12 @@
  * actually show — 0 XLM, under a minute, no phrase — because every one of them
  * is checkable by installing it.
  *
- * The screen inside the phone is drawn, not screenshotted. A PNG of a wallet
- * goes stale the moment the wallet changes, and at this size the detail that
- * survives is the shape of the thing: a balance, four actions, a feed.
+ * The screen inside the phone is drawn, not screenshotted, so it cannot go
+ * stale the way a PNG of a wallet does. It is drawn from the real dashboard
+ * though, not invented: the silver balance card with Send and Receive inside
+ * it, the Pay-for grid with Cash out live and the rest marked soon, the assets
+ * row, the three-item activity feed, and the app's four actual tabs. A mockup
+ * that shows controls the app does not have is worse than no mockup.
  */
 
 import { motion, useReducedMotion } from 'framer-motion'
@@ -45,81 +48,103 @@ const POINTS = [
 function PhoneScreen() {
   return (
     <div className="flex h-full flex-col bg-[#0F0F0F] text-off-white">
-      {/* status strip */}
-      <div className="flex items-center justify-between px-4 pt-3 pb-2">
-        <span className="font-anton text-[11px] tracking-[0.14em]" style={{ color: GOLD }}>
+      {/* header: wordmark + the address chip the app actually shows */}
+      <div className="flex items-center justify-between px-3 pt-4 pb-3">
+        <span className="font-anton text-[10px] tracking-[0.16em]" style={{ color: GOLD }}>
           VEIL
         </span>
         <span
-          className="rounded-full px-2 py-[3px] text-[7px] tracking-[0.1em]"
-          style={{ background: 'rgba(253,218,36,0.14)', color: GOLD }}
+          className="rounded-full px-[7px] py-[3px] font-mono text-[6px] tracking-wide"
+          style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(246,247,248,0.55)' }}
         >
           C4B3…9QX3
         </span>
       </div>
 
-      {/* balance plate */}
-      <div className="mx-3 rounded-2xl bg-gradient-to-br from-[#d8dade] via-[#f2f3f5] to-[#b9bcc1] p-3 text-[#0F0F0F]">
-        <p className="text-[7px] font-semibold tracking-[0.16em] opacity-55">TOTAL BALANCE</p>
-        <p className="mt-1 font-lora text-[22px] font-semibold leading-none">₦642,268</p>
-        <div className="mt-2 flex items-center justify-between">
-          <span className="text-[7px] opacity-60">412.98 USDC</span>
-          <span
-            className="rounded-full px-[6px] py-[2px] text-[7px] font-semibold"
-            style={{ background: 'rgba(15,15,15,0.85)', color: TEAL }}
-          >
-            6.2% APY
+      {/* the silver balance card, Send and Receive inside it as in the app */}
+      <div className="mx-3 rounded-[18px] bg-gradient-to-br from-[#e9eaec] via-[#fbfbfc] to-[#c2c5ca] px-3 pb-3 pt-[10px] text-[#0F0F0F]">
+        <p className="text-[6px] font-semibold tracking-[0.18em] opacity-50">TOTAL BALANCE</p>
+        <p className="mt-[3px] font-lora text-[23px] font-semibold leading-none tracking-tight">
+          ₦642,268
+        </p>
+        <p className="mt-[3px] font-mono text-[6.5px] opacity-55">412.98 USDC · earning 6.2%</p>
+        <div className="mt-[10px] grid grid-cols-2 gap-[6px]">
+          <span className="rounded-full bg-[#0F0F0F] py-[5px] text-center text-[7px] font-semibold text-off-white">
+            Send
+          </span>
+          <span className="rounded-full border border-[#0F0F0F]/25 py-[5px] text-center text-[7px] font-semibold">
+            Receive
           </span>
         </div>
       </div>
 
-      {/* actions */}
-      <div className="mt-3 grid grid-cols-4 gap-[6px] px-3">
-        {['Send', 'Swap', 'Bills', 'Cash out'].map((label) => (
+      {/* pay for — Cash out is the live one, the rest are marked soon */}
+      <p className="mt-4 px-3 text-[6px] font-semibold tracking-[0.18em] opacity-40">PAY FOR</p>
+      <div className="mt-[6px] grid grid-cols-4 gap-[5px] px-3">
+        {[
+          ['Cash out', 'To any bank', true],
+          ['Airtime', 'All networks', false],
+          ['Data', 'Bundles', false],
+          ['TV', 'DStv', false],
+        ].map(([label, hint, live]) => (
           <div
-            key={label}
-            className="rounded-xl border border-white/[0.07] bg-white/[0.04] py-2 text-center"
+            key={label as string}
+            className="rounded-[10px] border px-[4px] py-[6px] text-center"
+            style={{
+              borderColor: live ? 'rgba(253,218,36,0.32)' : 'rgba(255,255,255,0.07)',
+              background: live ? 'rgba(253,218,36,0.07)' : 'rgba(255,255,255,0.03)',
+            }}
           >
-            <span className="block text-[9px] leading-none" style={{ color: GOLD }}>
-              ◆
+            <span
+              className="block text-[7px] font-semibold leading-tight"
+              style={{ color: live ? GOLD : 'rgba(246,247,248,0.8)' }}
+            >
+              {label}
             </span>
-            <span className="mt-1 block text-[6.5px] opacity-80">{label}</span>
+            <span className="mt-[1px] block text-[5px] leading-tight opacity-40">{hint}</span>
           </div>
         ))}
       </div>
 
-      {/* earning strip */}
-      <div
-        className="mx-3 mt-3 rounded-xl px-3 py-2"
-        style={{ background: 'rgba(0,167,181,0.10)', border: '1px solid rgba(0,167,181,0.24)' }}
-      >
-        <p className="text-[6.5px] font-semibold tracking-[0.14em]" style={{ color: TEAL }}>
-          EARNING NOW
-        </p>
-        <div className="mt-[2px] flex items-baseline justify-between">
-          <span className="text-[8px] opacity-85">412.98 USDC at 6.2%</span>
-          <span className="text-[8px] font-semibold" style={{ color: TEAL }}>
-            +₦109/day
+      {/* assets */}
+      <p className="mt-4 px-3 text-[6px] font-semibold tracking-[0.18em] opacity-40">ASSETS</p>
+      <div className="mx-3 mt-[6px] flex items-center justify-between rounded-[12px] border border-white/[0.06] bg-white/[0.03] px-[10px] py-[7px]">
+        <span className="flex items-center gap-[6px]">
+          <span
+            className="flex h-[15px] w-[15px] items-center justify-center rounded-full text-[7px] font-bold"
+            style={{ background: 'rgba(0,167,181,0.18)', color: TEAL }}
+          >
+            $
           </span>
-        </div>
+          <span>
+            <span className="block text-[7.5px] font-semibold leading-tight">USDC</span>
+            <span className="block font-mono text-[5.5px] opacity-45">412.98</span>
+          </span>
+        </span>
+        <span className="text-[7.5px] font-semibold">₦642,268</span>
       </div>
 
-      {/* feed */}
-      <p className="mt-3 px-4 text-[6.5px] font-semibold tracking-[0.16em] opacity-40">RECENT</p>
-      <div className="mt-1 flex-1 space-y-[10px] px-4">
+      {/* activity */}
+      <div className="mt-4 flex items-baseline justify-between px-3">
+        <span className="text-[6px] font-semibold tracking-[0.18em] opacity-40">ACTIVITY</span>
+        <span className="text-[5.5px]" style={{ color: GOLD }}>
+          See all →
+        </span>
+      </div>
+      <div className="mt-[6px] flex-1 space-y-[9px] px-3">
         {[
-          ['Cash out', 'Kuda · 2683', '−₦61,240', 'text-off-white'],
-          ['Airtime', 'MTN · 4567', '−₦2,000', 'text-off-white'],
-          ['Received', 'drips.network', '+₦640,430', ''],
-        ].map(([title, sub, amt, cls]) => (
+          ['Cashed out', 'Kuda · 2683', '−₦61,240', false],
+          ['Sent', 'GBQ4…TSK4', '−₦2,000', false],
+          ['Received', 'drips.network', '+₦640,430', true],
+        ].map(([title, sub, amt, isIn]) => (
           <div key={title as string} className="flex items-start justify-between">
             <span>
-              <span className="block text-[8px] font-medium leading-tight">{title}</span>
-              <span className="block text-[6px] opacity-45">{sub}</span>
+              <span className="block text-[7.5px] font-medium leading-tight">{title}</span>
+              <span className="block font-mono text-[5.5px] opacity-40">{sub}</span>
             </span>
             <span
-              className={`text-[8px] font-semibold ${cls}`}
-              style={cls ? undefined : { color: TEAL }}
+              className="text-[7.5px] font-semibold"
+              style={{ color: isIn ? TEAL : 'rgba(246,247,248,0.9)' }}
             >
               {amt}
             </span>
@@ -127,13 +152,13 @@ function PhoneScreen() {
         ))}
       </div>
 
-      {/* tab bar */}
-      <div className="flex items-center justify-around border-t border-white/[0.06] px-4 py-[7px]">
-        {['Home', 'Earn', 'Agent', 'You'].map((tab, i) => (
+      {/* the app's four tabs */}
+      <div className="mt-3 flex items-center justify-around border-t border-white/[0.07] px-2 py-[7px]">
+        {['Home', 'Earn', 'Agent', 'Settings'].map((tab, i) => (
           <span
             key={tab}
-            className="text-[6.5px]"
-            style={{ color: i === 0 ? GOLD : 'rgba(246,247,248,0.38)' }}
+            className="text-[6px]"
+            style={{ color: i === 0 ? GOLD : 'rgba(246,247,248,0.35)' }}
           >
             {tab}
           </span>
