@@ -80,7 +80,12 @@ export default function SendScreen() {
   // the user can choose to spend from the contract (a __check_auth transfer).
   const [contractAddr, setContractAddr] = useState<string | null>(null);
   /** The contract's balance of the currently selected asset, not just XLM. */
-  const [contractHeld, setContractHeld] = useState(0);
+  /**
+   * What the CONTRACT holds of the selected asset. `null` means not read yet,
+   * which is different from zero: until it is known we cannot split the
+   * combined holding into what each side can actually send.
+   */
+  const [contractHeld, setContractHeld] = useState<number | null>(null);
   const [fromContract, setFromContract] = useState(false);
 
   useEffect(() => {
@@ -123,9 +128,14 @@ export default function SendScreen() {
       selected && !selected.native && selected.issuer
         ? { code: selected.code, issuer: selected.issuer }
         : undefined;
-    void fetchContractAssetBalance(contractAddr, asset).then((x) => {
-      if (alive) setContractHeld(x);
-    });
+    setContractHeld(null);
+    void fetchContractAssetBalance(contractAddr, asset)
+      .then((x) => {
+        if (alive) setContractHeld(x);
+      })
+      .catch(() => {
+        if (alive) setContractHeld(null);
+      });
     return () => { alive = false; };
   }, [contractAddr, selected?.code, selected?.issuer, selected?.native]);
 
@@ -135,14 +145,32 @@ export default function SendScreen() {
   const balanceNum = selected ? Number(selected.balance) : 0;
   // Any asset the contract actually holds can be its source — a SAC transfer
   // is asset-agnostic and needs no trustline on the contract side.
-  const contractSource = fromContract && !!contractAddr && contractHeld > 0;
+  const held = contractHeld ?? 0;
+  const contractSource = fromContract && !!contractAddr && held > 0;
+
+  /**
+   * What the CLASSIC account alone holds.
+   *
+   * `selected.balance` is the COMBINED holding — `loadHoldings` adds the
+   * contract's SAC balance to the fee payer's trustline on purpose, because
+   * "what do I own" is one number. It is the wrong number the moment a source
+   * is chosen, and using it here is what produced an `op_underfunded` on a
+   * send of 10.3 from an account holding 10.2946 while the screen said 10.5546:
+   * the missing 0.26 was in the contract, which this send was never going to
+   * touch. Never show a number the app cannot honour.
+   *
+   * `null` while the contract side is still being read, so nothing is offered
+   * on a split we have not measured yet.
+   */
+  const classicHeld = contractHeld === null ? null : Math.max(0, balanceNum - contractHeld);
+
   // Native sends must leave ~1.5 XLM for the base reserve + fee.
   const spendable = contractSource
-    ? contractHeld
-    : selected
+    ? held
+    : selected && classicHeld !== null
       ? selected.native
-        ? Math.max(0, balanceNum - 1.5)
-        : balanceNum
+        ? Math.max(0, classicHeld - 1.5)
+        : classicHeld
       : null;
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
   const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient;
@@ -156,9 +184,11 @@ export default function SendScreen() {
   }, []);
 
   const handleQuick = (frac: number) => {
-    if (!selected || !isFinite(balanceNum) || balanceNum <= 0) return;
-    // Leave a little XLM for fees/reserve when maxing native.
-    const usable = selected.native && frac === 1 ? Math.max(0, balanceNum - 1.5) : balanceNum * frac;
+    // Off the SOURCE's spendable, not the combined holding. `spendable`
+    // already carries the native reserve deduction, so Max is an amount the
+    // chosen account can actually pay.
+    if (spendable === null || !isFinite(spendable) || spendable <= 0) return;
+    const usable = spendable * frac;
     setAmount(usable.toFixed(usable >= 1 ? 2 : 4));
   };
 
@@ -313,7 +343,7 @@ export default function SendScreen() {
         </Pressable>
 
         {/* Source — shown whenever the contract holds some of this asset */}
-        {contractAddr && contractHeld > 0 && (
+        {contractAddr && held > 0 && (
           <>
             <Text style={styles.section}>From</Text>
             <View style={styles.sourceRow}>
@@ -330,7 +360,7 @@ export default function SendScreen() {
                 style={[styles.sourcePill, fromContract && styles.sourcePillActive]}
               >
                 <Text style={[styles.sourceText, fromContract && styles.sourceTextActive]}>
-                  Smart wallet · {contractHeld.toLocaleString('en-US', { maximumFractionDigits: 2 })}{' '}
+                  Smart wallet · {held.toLocaleString('en-US', { maximumFractionDigits: 2 })}{' '}
                   {selected?.code ?? 'XLM'}
                 </Text>
               </Pressable>
@@ -363,15 +393,22 @@ export default function SendScreen() {
           <Text style={styles.amountFiat}>{fiatOfAmount ? `≈ ${fiatOfAmount}` : ' '}</Text>
           <Text style={[styles.balanceLine, insufficient && styles.balanceWarn]}>
             {(() => {
-              const shown = contractSource ? contractHeld.toFixed(2) : selected?.balance;
-              return insufficient && shown
-                ? `Not enough ${assetCode} — ${contractSource ? 'smart wallet has' : 'you have'} ${mask(fmtAmount(shown))}`
-                : `Balance ${shown ? `${mask(fmtAmount(shown))} ${assetCode}` : '—'}`;
+              // The balance of the chosen source, never the combined holding.
+              // Quoting the total here is what let someone type an amount the
+              // selected account could not cover.
+              const shown =
+                spendable === null ? null : (contractSource ? held : spendable).toFixed(4);
+              if (shown === null) return 'Checking balance…';
+              return insufficient
+                ? `Not enough ${assetCode} — ${contractSource ? 'smart wallet has' : 'spending has'} ${mask(fmtAmount(shown))}`
+                : `Balance ${mask(fmtAmount(shown))} ${assetCode}`;
             })()}
           </Text>
           <View style={styles.chips}>
             {QUICK.map((q) => {
-              const target = q.frac === 1 ? balanceNum : balanceNum * q.frac;
+              // Same basis as handleQuick, so the highlighted chip is the one
+              // that actually produced the amount in the field.
+              const target = (spendable ?? 0) * q.frac;
               const active = amtNum > 0 && Math.abs(amtNum - target) < Math.max(0.0001, target * 0.02);
               return (
                 <Pressable
