@@ -72,10 +72,11 @@ android {
 }
 
 dependencies {
-  // The uniffi-generated Kotlin loads libspp_prover.so through JNA, which
-  // needs its Android helper shipped alongside.
+  // The uniffi-generated Kotlin loads libspp_prover.so through JNA. The
+  // @aar classifier is the Android packaging of JNA (Java classes + native
+  // helper); plain "com.sun.jna:jna" is not a published coordinate and fails
+  // dependency resolution at :app level.
   implementation "net.java.dev.jna:jna:5.13.0@aar"
-  implementation "com.sun.jna:jna:5.13.0"
 }
 
 // ── Rust ────────────────────────────────────────────────────────────────────
