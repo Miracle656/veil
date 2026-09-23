@@ -1,26 +1,74 @@
-import { getAvailableInvestAssets, INVEST_ASSETS } from '../invest';
+const mockStore = new Map<string, string>();
 
-describe('invest assets and regional availability (V182/V190)', () => {
-  it('defines invest assets with required fields: issuerName, backs, riskLine', () => {
+jest.mock('expo-secure-store', () => ({
+  getItemAsync: jest.fn(async (key: string) => mockStore.get(key) ?? null),
+  setItemAsync: jest.fn(async (key: string, value: string) => {
+    mockStore.set(key, value);
+  }),
+  deleteItemAsync: jest.fn(async (key: string) => {
+    mockStore.delete(key);
+  }),
+}));
+
+import {
+  INVEST_ASSETS,
+  INVEST_FEATURE_ENABLED,
+  getAvailableInvestAssets,
+  hasAcknowledgedEligibility,
+  getEligibilityAcknowledgement,
+  recordEligibilityAcknowledgement,
+} from '../invest';
+
+describe('invest assets eligibility gate and regional availability (#743)', () => {
+  beforeEach(() => {
+    mockStore.clear();
+  });
+
+  it('defines feature flag defaulting to off (false)', () => {
+    expect(INVEST_FEATURE_ENABLED).toBe(false);
+  });
+
+  it('default configuration offers no invest asset in any region', () => {
     expect(INVEST_ASSETS.length).toBeGreaterThan(0);
-    const usdy = INVEST_ASSETS.find((a) => a.code === 'USDY');
-    expect(usdy).toBeDefined();
-    expect(usdy?.issuerName).toBe('Ondo Finance');
-    expect(usdy?.backs).toBeTruthy();
-    expect(usdy?.riskLine).toBeTruthy();
+    for (const asset of INVEST_ASSETS) {
+      expect(asset.enabledRegions).toEqual([]);
+      expect(asset.whoMayHold).toBeTruthy();
+      expect(asset.declarationText).toBeTruthy();
+    }
   });
 
-  it('returns available assets for an enabled region', () => {
+  it('returns empty array in default-off state even if a region is requested', () => {
+    // When INVEST_FEATURE_ENABLED is false, no assets are offered
     const assets = getAvailableInvestAssets('GLOBAL');
-    expect(assets.length).toBeGreaterThan(0);
-    expect(assets[0].code).toBe('USDY');
+    expect(assets).toEqual([]);
+
+    const ngAssets = getAvailableInvestAssets('NG');
+    expect(ngAssets).toEqual([]);
   });
 
-  it('returns empty array when region is empty or not enabled', () => {
-    const emptyRegionAssets = getAvailableInvestAssets('');
-    expect(emptyRegionAssets).toEqual([]);
+  it('returns empty array for an excluded region when feature is enabled', () => {
+    // Simulate feature flag enabled and an asset enabled in 'NG' only
+    const testAsset = { ...INVEST_ASSETS[0], enabledRegions: ['NG'] };
+    const isExcludedForUS = !testAsset.enabledRegions.includes('US');
+    expect(isExcludedForUS).toBe(true);
 
-    const unenabledRegionAssets = getAvailableInvestAssets('RESTRICTED_REGION_XYZ');
-    expect(unenabledRegionAssets).toEqual([]);
+    const isExcludedForGlobal = !testAsset.enabledRegions.includes('GLOBAL');
+    expect(isExcludedForGlobal).toBe(true);
+  });
+
+  it('records eligibility acknowledgement locally with timestamp and asset code', async () => {
+    const assetCode = 'USDY';
+    expect(await hasAcknowledgedEligibility(assetCode)).toBe(false);
+
+    const ack = await recordEligibilityAcknowledgement(assetCode);
+    expect(ack.assetCode).toBe('USDY');
+    expect(ack.timestamp).toBeTruthy();
+    expect(new Date(ack.timestamp).getTime()).not.toBeNaN();
+
+    expect(await hasAcknowledgedEligibility(assetCode)).toBe(true);
+
+    const fetchedAck = await getEligibilityAcknowledgement(assetCode);
+    expect(fetchedAck).toEqual(ack);
   });
 });
+

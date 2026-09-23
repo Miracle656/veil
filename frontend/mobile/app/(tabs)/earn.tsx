@@ -36,7 +36,12 @@ import { useWallet } from '../../components/WalletProvider';
 import { requirePasskey } from '../../lib/passkey';
 import { signAndSubmitSorobanXdr } from '../../lib/sorobanTx';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
-import { getAvailableInvestAssets, type InvestAsset } from '../../lib/invest';
+import {
+  getAvailableInvestAssets,
+  hasAcknowledgedEligibility,
+  recordEligibilityAcknowledgement,
+  type InvestAsset,
+} from '../../lib/invest';
 import { fetchHeldAssets, USDY_MAINNET_ISSUER } from '../../lib/assets';
 import { enableUsdy, NotEnoughXlm, AccountNotFunded } from '../../lib/enableUsdc';
 
@@ -118,6 +123,8 @@ export default function EarnRoute() {
   const [hasUsdyTrustline, setHasUsdyTrustline] = useState(false);
   const [enablingUsdyCode, setEnablingUsdyCode] = useState<string | null>(null);
   const [investNotice, setInvestNotice] = useState<string | null>(null);
+  const [ackAsset, setAckAsset] = useState<InvestAsset | null>(null);
+  const [pendingInvestAction, setPendingInvestAction] = useState<{ isBuy: boolean; asset: InvestAsset } | null>(null);
 
   const [selected, setSelected] = useState<Selected | null>(null);
   const [balances, setBalances] = useState<EarnBalances | null>(null);
@@ -176,6 +183,36 @@ export default function EarnRoute() {
       setEnablingUsdyCode(null);
     }
   }, [accountAddress, loadData]);
+
+  const handleInvestPress = useCallback(
+    async (asset: InvestAsset, isBuy: boolean) => {
+      const acknowledged = await hasAcknowledgedEligibility(asset.code);
+      if (!acknowledged) {
+        setPendingInvestAction({ isBuy, asset });
+        setAckAsset(asset);
+        return;
+      }
+      if (isBuy) {
+        router.push({ pathname: '/swap', params: { outputAsset: asset.code } } as any);
+      } else {
+        await handleEnableUsdy();
+      }
+    },
+    [router, handleEnableUsdy],
+  );
+
+  const confirmAcknowledgement = useCallback(async () => {
+    if (!ackAsset) return;
+    await recordEligibilityAcknowledgement(ackAsset.code);
+    const action = pendingInvestAction;
+    setAckAsset(null);
+    setPendingInvestAction(null);
+    if (action?.isBuy) {
+      router.push({ pathname: '/swap', params: { outputAsset: action.asset.code } } as any);
+    } else {
+      await handleEnableUsdy();
+    }
+  }, [ackAsset, pendingInvestAction, router, handleEnableUsdy]);
 
   // ── Load session ──
   useEffect(() => {
@@ -431,53 +468,99 @@ export default function EarnRoute() {
 
                   {investNotice ? <Text style={styles.investNoticeText}>{investNotice}</Text> : null}
 
-                  {investAssets.map((asset) => (
-                    <Card key={asset.code} style={styles.investCard}>
+                  {ackAsset ? (
+                    <Card style={styles.investCard}>
                       <View style={styles.rowBetween}>
                         <View style={styles.investTitleGroup}>
                           <Text style={[typography.heading, styles.cardTitle]}>
-                            {asset.name} ({asset.code})
+                            Eligibility Acknowledgement
                           </Text>
-                          <Text style={styles.issuerText}>Issuer: {asset.issuerName}</Text>
+                          <Text style={styles.issuerText}>
+                            {ackAsset.name} ({ackAsset.code})
+                          </Text>
                         </View>
-                        <Text style={[typography.accent, styles.investBadge]}>Treasury</Text>
                       </View>
 
                       <View style={styles.investDetailGroup}>
                         <View style={styles.investDetailRow}>
+                          <Text style={styles.detailLabel}>Issuer:</Text>
+                          <Text style={styles.detailValue}>
+                            {ackAsset.issuerName} ({ackAsset.homeDomain})
+                          </Text>
+                        </View>
+                        <View style={styles.investDetailRow}>
                           <Text style={styles.detailLabel}>Backing:</Text>
-                          <Text style={styles.detailValue}>{asset.backs}</Text>
+                          <Text style={styles.detailValue}>{ackAsset.backs}</Text>
                         </View>
                         <View style={styles.investDetailRow}>
                           <Text style={styles.detailLabel}>Risk:</Text>
-                          <Text style={styles.riskValue}>{asset.riskLine}</Text>
+                          <Text style={styles.riskValue}>{ackAsset.riskLine}</Text>
                         </View>
                         <View style={styles.investDetailRow}>
-                          <Text style={styles.detailLabel}>Yield:</Text>
-                          <Text style={styles.yieldValue}>{asset.yieldDescription}</Text>
+                          <Text style={styles.detailLabel}>Eligible Holders:</Text>
+                          <Text style={styles.detailValue}>{ackAsset.whoMayHold}</Text>
                         </View>
                       </View>
 
-                      {hasUsdyTrustline ? (
-                        <Button
-                          label={`Buy ${asset.code}`}
-                          onPress={() =>
-                            router.push({ pathname: '/swap', params: { outputAsset: asset.code } } as any)
-                          }
-                        />
-                      ) : (
-                        <Button
-                          label={
-                            enablingUsdyCode === asset.code
-                              ? 'Enabling…'
-                              : `Enable ${asset.code} (${asset.reserveXlm} XLM reserve)`
-                          }
-                          disabled={enablingUsdyCode === asset.code}
-                          onPress={handleEnableUsdy}
-                        />
-                      )}
+                      <Text style={styles.investNoticeText}>{ackAsset.declarationText}</Text>
+
+                      <Button label="I Confirm & Acknowledge" onPress={confirmAcknowledgement} />
+                      <Button
+                        label="Cancel"
+                        variant="ghost"
+                        onPress={() => {
+                          setAckAsset(null);
+                          setPendingInvestAction(null);
+                        }}
+                      />
                     </Card>
-                  ))}
+                  ) : (
+                    investAssets.map((asset) => (
+                      <Card key={asset.code} style={styles.investCard}>
+                        <View style={styles.rowBetween}>
+                          <View style={styles.investTitleGroup}>
+                            <Text style={[typography.heading, styles.cardTitle]}>
+                              {asset.name} ({asset.code})
+                            </Text>
+                            <Text style={styles.issuerText}>Issuer: {asset.issuerName}</Text>
+                          </View>
+                          <Text style={[typography.accent, styles.investBadge]}>Treasury</Text>
+                        </View>
+
+                        <View style={styles.investDetailGroup}>
+                          <View style={styles.investDetailRow}>
+                            <Text style={styles.detailLabel}>Backing:</Text>
+                            <Text style={styles.detailValue}>{asset.backs}</Text>
+                          </View>
+                          <View style={styles.investDetailRow}>
+                            <Text style={styles.detailLabel}>Risk:</Text>
+                            <Text style={styles.riskValue}>{asset.riskLine}</Text>
+                          </View>
+                          <View style={styles.investDetailRow}>
+                            <Text style={styles.detailLabel}>Yield:</Text>
+                            <Text style={styles.yieldValue}>{asset.yieldDescription}</Text>
+                          </View>
+                        </View>
+
+                        {hasUsdyTrustline ? (
+                          <Button
+                            label={`Buy ${asset.code}`}
+                            onPress={() => handleInvestPress(asset, true)}
+                          />
+                        ) : (
+                          <Button
+                            label={
+                              enablingUsdyCode === asset.code
+                                ? 'Enabling…'
+                                : `Enable ${asset.code} (${asset.reserveXlm} XLM reserve)`
+                            }
+                            disabled={enablingUsdyCode === asset.code}
+                            onPress={() => handleInvestPress(asset, false)}
+                          />
+                        )}
+                      </Card>
+                    ))
+                  )}
                 </View>
               ) : null}
             </>
