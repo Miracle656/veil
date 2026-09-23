@@ -192,6 +192,9 @@ export default function AssetsPage() {
 
         {/* Featured USDY enable card */}
         {!hasUsdy && !loading && (
+        {/* Featured USDY enable card. Mainnet only — USDY's issuer does not
+            exist on testnet, where changeTrust would fail with op_no_issuer. */}
+        {!hasUsdy && !loading && network.name === 'mainnet' && (
           <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(212,175,55,0.3)', background: 'rgba(212,175,55,0.05)' }}>
             <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
             <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
