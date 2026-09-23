@@ -12,6 +12,8 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon } from '@stellar/stellar-sdk';
+import { verifyAsset, type AssetVerification } from './assetRegistry';
+import { getNetwork } from './network';
 
 import { getNetwork } from './network';
 
@@ -78,7 +80,10 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   },
 };
 
-export function getRegisteredAsset(code: string, network?: 'mainnet' | 'testnet'): RegisteredAsset | null {
+export function getRegisteredAsset(
+  code: string,
+  network?: 'mainnet' | 'testnet'
+): RegisteredAsset | null {
   const asset = ASSET_REGISTRY[code.toUpperCase()] ?? null;
   if (!asset) return null;
   if (network && asset.network !== 'all' && asset.network !== network) {
@@ -87,7 +92,10 @@ export function getRegisteredAsset(code: string, network?: 'mainnet' | 'testnet'
   return asset;
 }
 
-export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'mainnet'): string | null {
+export function getAssetIssuer(
+  code: string,
+  network: 'mainnet' | 'testnet' = 'mainnet'
+): string | null {
   // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
   // for testnet returns null and every branch below becomes unreachable.
   if (code.toUpperCase() === 'USDC' && network === 'testnet') {
@@ -101,7 +109,11 @@ export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'm
   return asset.issuer;
 }
 
-export function isRegisteredIssuer(code: string, issuer: string, network: 'mainnet' | 'testnet' = 'mainnet'): boolean {
+export function isRegisteredIssuer(
+  code: string,
+  issuer: string,
+  network: 'mainnet' | 'testnet' = 'mainnet'
+): boolean {
   // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
   // for testnet returns null and every branch below becomes unreachable.
   if (code.toUpperCase() === 'USDC') {
@@ -128,7 +140,7 @@ export function isRegisteredIssuer(code: string, issuer: string, network: 'mainn
 export function verifiedAsset(
   code: string,
   issuer: string | null | undefined,
-  network: 'mainnet' | 'testnet',
+  network: 'mainnet' | 'testnet'
 ): RegisteredAsset | null {
   if (!issuer) return null;
   const registered = ASSET_REGISTRY[code.toUpperCase()];
@@ -143,6 +155,7 @@ export interface HeldAsset {
   balance: string;
   assetType: string;
   name?: string;
+  verification: AssetVerification;
 }
 
 /**
@@ -152,15 +165,18 @@ export interface HeldAsset {
  */
 export function parseHeldAssets(balances: HorizonBalanceLike[]): HeldAsset[] {
   return balances
-    .filter(
-      (b) => b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12',
-    )
+    .filter((b) => b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12')
     .filter((b) => b.asset_code && b.asset_issuer)
     .map((b) => ({
       code: b.asset_code as string,
       issuer: b.asset_issuer as string,
       balance: b.balance,
       assetType: b.asset_type,
+      verification: verifyAsset(
+        b.asset_code as string,
+        b.asset_issuer as string,
+        getNetwork().name
+      ),
     }));
 }
 
