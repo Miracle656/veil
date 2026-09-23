@@ -19,6 +19,9 @@ import {
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
+import { USDY_MAINNET_ISSUER, getRegisteredAsset } from '@/lib/assets'
+import { fetchPrice } from '@/lib/fetchPrice'
+
 const Server = Horizon.Server
 const network = getNetwork()
 
@@ -41,6 +44,7 @@ export default function AssetsPage() {
   const [balances, setBalances] = useState<HorizonBalanceLike[]>([])
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
+  const [prices, setPrices] = useState<Record<string, number | null>>({})
 
   // Add-asset form
   const [domain, setDomain] = useState('')
@@ -63,7 +67,17 @@ export default function AssetsPage() {
       const pubKey = Keypair.fromSecret(secret).publicKey()
       setSignerAddress(pubKey)
       const account = await server.loadAccount(pubKey)
-      setBalances(account.balances as unknown as HorizonBalanceLike[])
+      const rawBalances = account.balances as unknown as HorizonBalanceLike[]
+      setBalances(rawBalances)
+
+      const parsedLines = parseTrustlines(rawBalances)
+      const priceMap: Record<string, number | null> = {}
+      await Promise.all(
+        parsedLines.map(async (line) => {
+          priceMap[`${line.code}:${line.issuer}`] = await fetchPrice(line.code, line.issuer)
+        }),
+      )
+      setPrices(priceMap)
     } catch (err) {
       setStatus({ kind: 'error', message: errorMessage(err) })
     } finally {
@@ -135,6 +149,7 @@ export default function AssetsPage() {
   }, [manualCode, manualIssuer, submitChangeTrust])
 
   const busy = status.kind === 'busy'
+  const hasUsdy = hasTrustline(balances, 'USDY', USDY_MAINNET_ISSUER)
 
   return (
     <div className="wallet-shell">
@@ -175,6 +190,24 @@ export default function AssetsPage() {
           </div>
         )}
 
+        {/* Featured USDY enable card. Mainnet only — USDY's issuer does not
+            exist on testnet, where changeTrust would fail with op_no_issuer. */}
+        {!hasUsdy && !loading && network.name === 'mainnet' && (
+          <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(212,175,55,0.3)', background: 'rgba(212,175,55,0.05)' }}>
+            <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
+            <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+              Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
+            </p>
+            <button
+              onClick={() => void submitChangeTrust('USDY', USDY_MAINNET_ISSUER, false)}
+              disabled={busy}
+              style={primaryButtonStyle(busy)}
+            >
+              {busy ? 'Enabling USDY…' : 'Enable USDY (0.5 XLM reserve)'}
+            </button>
+          </section>
+        )}
+
         {/* Existing trustlines */}
         <section style={{ marginBottom: '2rem' }}>
           <h2 style={sectionHeadingStyle}>Your trustlines</h2>
@@ -183,25 +216,31 @@ export default function AssetsPage() {
           ) : trustlines.length === 0 ? (
             <p style={mutedTextStyle}>No trustlines yet. Add one below.</p>
           ) : (
-            trustlines.map((line) => (
-              <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
-                <div style={{ minWidth: 0 }}>
-                  <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{line.code}</p>
-                  <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
-                    {line.issuer}
-                  </p>
-                  <p style={mutedTextStyle}>Balance: {line.balance}</p>
+            trustlines.map((line) => {
+              const price = prices[`${line.code}:${line.issuer}`]
+              const usdVal = price != null ? Number(line.balance) * price : null
+              return (
+                <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{line.code}</p>
+                    <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
+                      {line.issuer}
+                    </p>
+                    <p style={mutedTextStyle}>
+                      Balance: {line.balance} {usdVal != null ? `(~$${usdVal.toFixed(2)} USD)` : ''}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
+                    disabled={busy || !canRemoveTrustline(line)}
+                    title={canRemoveTrustline(line) ? 'Remove trustline' : 'Balance must be zero to remove'}
+                    style={removeButtonStyle(busy || !canRemoveTrustline(line))}
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
-                  disabled={busy || !canRemoveTrustline(line)}
-                  title={canRemoveTrustline(line) ? 'Remove trustline' : 'Balance must be zero to remove'}
-                  style={removeButtonStyle(busy || !canRemoveTrustline(line))}
-                >
-                  Remove
-                </button>
-              </div>
-            ))
+              )
+            })
           )}
         </section>
 

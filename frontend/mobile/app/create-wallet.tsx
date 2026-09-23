@@ -10,7 +10,12 @@ import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
 import { createTestnetWallet, importTestnetWallet, type CreatedWallet } from '../lib/testnetWallet';
-import { createPasskeyWallet, retryRecoveryBinding, type RecoveryRetry } from '../lib/passkeyWallet';
+import {
+  createPasskeyWallet,
+  recreatePasskeyWallet,
+  retryRecoveryBinding,
+  type RecoveryRetry,
+} from '../lib/passkeyWallet';
 import { getNetwork } from '../lib/network';
 import { useWallet } from '../components/WalletProvider';
 
@@ -41,7 +46,34 @@ export default function CreateWallet() {
   const [importing, setImporting] = useState(false);
   const [secret, setSecret] = useState('');
   const [binding, setBinding] = useState(false);
+  const [recreating, setRecreating] = useState(false);
   const [bindIssue, setBindIssue] = useState<Extract<RecoveryRetry, { bound: false }>['issue'] | null>(null);
+
+  const recoveryIssue = bindIssue ?? result?.recoveryIssue ?? 'failed';
+  const busyRepairing = binding || recreating;
+
+  /**
+   * Swap this wallet for one built on a fresh passkey. The old address is
+   * abandoned, which only holds up while it is still empty — it is empty here
+   * because the user has not left the creation screen yet.
+   */
+  async function recreate() {
+    setRecreating(true);
+    setError(null);
+    try {
+      const again = await recreatePasskeyWallet(wallet);
+      if (!again.ok) {
+        setBindIssue('funded');
+        return;
+      }
+      setResult(again.wallet);
+      setBindIssue(again.wallet.recoverable === false ? (again.wallet.recoveryIssue ?? 'failed') : null);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setRecreating(false);
+    }
+  }
 
   async function retryBinding() {
     setBinding(true);
@@ -88,16 +120,34 @@ export default function CreateWallet() {
             </Text>
             {result.recoverable === false && (
               <>
-                <Text style={[styles.fund, { color: colors.danger }]}>
-                  {recoveryMessage(bindIssue ?? result.recoveryIssue ?? 'failed')}
-                </Text>
-                {bindIssue !== 'funded' && (
+                <Text style={[styles.fund, { color: colors.danger }]}>{recoveryMessage(recoveryIssue)}</Text>
+                {/*
+                  Which repair to offer depends on why it failed. Asking the same
+                  manager again is pointless once it has answered without PRF, and
+                  a manager that has none will never grow one — that case needs a
+                  different passkey, not another attempt.
+                */}
+                {recoveryIssue === 'unsupported' ? (
+                  <Pressable
+                    testID="create-wallet-recreate"
+                    accessibilityRole="button"
+                    disabled={busyRepairing}
+                    onPress={recreate}
+                    style={({ pressed }) => [styles.ctaSecondary, busyRepairing && styles.disabled, pressed && styles.pressed]}
+                  >
+                    {recreating ? (
+                      <ActivityIndicator color={colors.textPrimary} />
+                    ) : (
+                      <Text style={styles.ctaSecondaryText}>Use a different passkey</Text>
+                    )}
+                  </Pressable>
+                ) : recoveryIssue !== 'funded' ? (
                   <Pressable
                     testID="create-wallet-retry-recovery"
                     accessibilityRole="button"
-                    disabled={binding}
+                    disabled={busyRepairing}
                     onPress={retryBinding}
-                    style={({ pressed }) => [styles.ctaSecondary, binding && styles.disabled, pressed && styles.pressed]}
+                    style={({ pressed }) => [styles.ctaSecondary, busyRepairing && styles.disabled, pressed && styles.pressed]}
                   >
                     {binding ? (
                       <ActivityIndicator color={colors.textPrimary} />
@@ -105,7 +155,23 @@ export default function CreateWallet() {
                       <Text style={styles.ctaSecondaryText}>Try setting up recovery again</Text>
                     )}
                   </Pressable>
-                )}
+                ) : null}
+                {/*
+                  Always reachable, and on a manager without PRF it is the way
+                  out that cannot fail: the backup carries the wallet's address
+                  and passkey public key, which is what a fresh device needs to
+                  find this wallet again and rebind a signer to it.
+                */}
+                <Pressable
+                  testID="create-wallet-save-backup"
+                  accessibilityRole="button"
+                  disabled={busyRepairing}
+                  onPress={() => router.push('/settings/backup')}
+                  style={styles.linkBtn}
+                >
+                  <Text style={styles.link}>Save a recovery file instead</Text>
+                </Pressable>
+                {error && <Text style={[styles.fund, { color: colors.danger }]}>{error}</Text>}
               </>
             )}
             {result.recoverable === true && result.recoveryIssue === undefined && bindIssue === null && binding === false && (
@@ -217,15 +283,20 @@ export default function CreateWallet() {
  * What went wrong with the recovery secret, in terms of what to do about it.
  * The old single warning could not tell a manager that will never support
  * recovery from a prompt that was simply closed.
+ *
+ * None of these send the user into device settings. Being told to go and delete
+ * a credential by hand before the wallet is usable is how testers on phones
+ * whose stock password manager has no PRF got stuck, and every case here has a
+ * repair that lives on this screen instead.
  */
 function recoveryMessage(issue: 'unsupported' | 'cancelled' | 'failed' | 'funded'): string {
   switch (issue) {
     case 'unsupported':
-      return "Your passkey was saved in a password manager that can't bind a recovery secret, so this wallet can't be restored on another phone from the passkey alone. Before adding money: delete this passkey, create the wallet again, and choose Google Password Manager when your phone asks where to save it.";
+      return "Your passkey was saved in a password manager that can't hold a recovery secret, so on a new phone the passkey alone would not be enough to find this wallet. Use a different passkey, or save a recovery file — either one fixes it. Do it before adding money.";
     case 'cancelled':
       return "Recovery isn't set up yet: the second passkey prompt was closed before it finished. Try again and approve it.";
     case 'funded':
-      return "Recovery can't be set up for this wallet any more, because its spending account is already on chain. Keep this device safe, or set up recovery servers in Settings.";
+      return "Recovery can't be bound to this wallet any more, because its spending account is already on chain and replacing that key would strand what it holds. Save a recovery file so this wallet can be found from another phone, or set up recovery servers in Settings.";
     default:
       return "Recovery couldn't be set up on this attempt, so this wallet can't yet be restored on another phone from the passkey alone. Try again before adding money.";
   }

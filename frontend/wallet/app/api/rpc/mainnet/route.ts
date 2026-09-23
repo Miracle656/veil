@@ -18,6 +18,8 @@
 
 import { forwardWithFailover, mainnetUpstreams } from '@/lib/rpcFailover'
 
+import { ALLOWED_METHODS, disallowedMethod } from '@/lib/rpcAllowlist'
+
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
@@ -27,32 +29,18 @@ export const dynamic = 'force-dynamic'
  * upstream endpoint is metered and this route is public by construction, so an
  * open relay would let anyone drain the quota. Unknown methods are rejected
  * rather than passed through.
+ *
+ * SPP audit (V133): the SPP web SDK delegates to the Rust SDK's RpcClient
+ * (`sdk/native/src/chain/rpc.rs`) — init/sync via `getLatestLedger` +
+ * `getEvents` (probe in `chain/indexer.rs::Indexer::init`, rounds in
+ * `fetch_contract_events`), state via `getLedgerEntries`
+ * (`get_contract_data_bulk`, `get_account`, `get_trustline_balance`), reads
+ * via `simulateTransaction` (`get_token_balance`), submit via
+ * `sendTransaction` (`chain/submit.rs::submit_tx`), confirm via
+ * `getTransaction` (`chain/submit.rs::confirm_tx`). The bootnode probe is
+ * plain HTTPS to `bootnodeUrl`, never this proxy. All six are already in the
+ * allow-list below, so no extension was needed.
  */
-const ALLOWED_METHODS = new Set([
-  'getHealth',
-  'getNetwork',
-  'getVersionInfo',
-  'getLatestLedger',
-  'getFeeStats',
-  'getLedgerEntries',
-  'getEvents',
-  'getTransaction',
-  'getTransactions',
-  'simulateTransaction',
-  'sendTransaction',
-])
-
-type JsonRpcCall = { method?: unknown; id?: unknown }
-
-function disallowedMethod(payload: unknown): string | null {
-  const calls: JsonRpcCall[] = Array.isArray(payload) ? payload : [payload as JsonRpcCall]
-  for (const call of calls) {
-    const method = typeof call?.method === 'string' ? call.method : ''
-    if (!ALLOWED_METHODS.has(method)) return method || '(missing)'
-  }
-  return null
-}
-
 export async function POST(request: Request): Promise<Response> {
   const upstreams = mainnetUpstreams()
 
