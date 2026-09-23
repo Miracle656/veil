@@ -41,7 +41,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # The action's default package list includes the legacy `tools` package,
+      # which Google removed from the SDK repository — `sdkmanager tools` now
+      # exits 1 ("Failed to find package 'tools'") and fails the job before
+      # Gradle ever runs. platform-tools (adb, for the install step below) is
+      # the only thing needed; license acceptance still happens so Gradle can
+      # fetch the platforms/build-tools the prebuild project requires.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install dependencies
         run: npm ci
