@@ -1,0 +1,14 @@
+// Root project file for the spp-native Android module.
+//
+// The real configuration lives in build.gradle.kts; this Groovy file exists
+// only so older tooling that cannot evaluate Kotlin DSL fails with a clear
+// message rather than a parse error.
+//
+// Expo modules-autolinking (Expo SDK 54) evaluates build.gradle.kts directly,
+// so this file is never read in the normal build path.
+
+logger.warn(
+    "[spp-native] build.gradle was read instead of build.gradle.kts. " +
+        "Expo SDK 54 evaluates the Kotlin DSL file directly; if you are seeing this, " +
+        "your Gradle version predates Kotlin DSL support."
+)

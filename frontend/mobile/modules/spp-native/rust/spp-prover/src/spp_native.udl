@@ -1,0 +1,87 @@
+namespace spp_native {
+  // Outcomes, not raised errors: UDL error enums cannot carry payloads, and
+  // the detail (which field was wrong, how far off) is what the UI needs.
+  // Each outcome carries a machine error_code plus human detail; the Kotlin
+  // bridge maps them to promise resolve/reject.
+  ProveOutcome prove(ProveRequest request);
+  VerifyOutcome verify(bytes proof, bytes public_inputs);
+  SyncOutcome sync_to(SyncCheckpoint checkpoint, u64 to_height, sequence<bytes> leaves);
+};
+
+dictionary ProveRequest {
+  SppTransaction transaction;
+  sequence<SpendNote> notes;
+  sequence<MerklePath> merkle_paths;
+  OutputNote change_note;
+  bytes blinding;
+};
+
+dictionary ProveResult {
+  bytes proof;
+  bytes public_inputs;
+  u64 native_ms;
+};
+
+dictionary ProveOutcome {
+  ProveResult result;
+  string error_code;
+  string detail;
+};
+
+dictionary VerifyOutcome {
+  boolean verified;
+  string error_code;
+  string detail;
+};
+
+dictionary SyncOutcome {
+  SyncCheckpoint checkpoint;
+  string error_code;
+  string detail;
+};
+
+dictionary SyncCheckpoint {
+  u64 scanned_height;
+  bytes commitment_root;
+  u64 note_count;
+};
+
+dictionary SppTransaction {
+  bytes anchor;
+  sequence<Input> inputs;
+  sequence<Output> outputs;
+  u64 fee;
+  u32 expiry_ledger;
+};
+
+dictionary Input {
+  bytes nullifier;
+  u64 leaf_index;
+};
+
+dictionary Output {
+  bytes commitment;
+  u64 amount;
+  string asset;
+  string recipient;
+};
+
+dictionary SpendNote {
+  bytes note_key;
+  bytes rho;
+  u64 amount;
+  string asset;
+  bytes commitment;
+};
+
+dictionary MerklePath {
+  u8 depth;
+  sequence<bytes> siblings;
+  sequence<boolean> index_bits;
+};
+
+dictionary OutputNote {
+  bytes note_key;
+  bytes rho;
+  bytes commitment;
+};

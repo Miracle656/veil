@@ -161,6 +161,27 @@ submitted. Dismissing the prompt is a decline, not an error. A transaction sourc
 from any account other than this wallet's fee payer is refused before the prompt
 is ever raised.
 
+## SPP native prover
+
+`modules/spp-native/` is the V141 native path: SPP's Rust prover (arkworks,
+Groth16 over BLS12-381) exposed to JS through uniffi and an Expo Android
+module. Proving runs parallel on-device, which is the point — the WASM path
+in a WebView is single-threaded and slower on the same hardware. See the
+module's own [README](modules/spp-native/README.md) for the build wiring.
+
+The app treats the module as optional everywhere. `lib/sppProver.ts` loads
+it with `requireOptionalNativeModule` and returns typed `E_UNAVAILABLE`
+errors when the binary does not carry it, so a build without the module
+still launches — the same contract the background task follows with
+`expo-background-task`. Screens that need proving check
+`isSppNativeAvailable()` first and fall back to the WASM path otherwise.
+
+The V141 benchmark lives at `/privacy/benchmark` (from Settings → Privacy):
+it proves the fixture transaction natively on-device and shows the timing,
+which is the input to the native-vs-WASM decision record. The fixture is
+duplicated in `rust/spp-prover/src/tests.rs` and `lib/sppBenchmark.ts` so
+both layers exercise identical bytes, and the test suites keep them honest.
+
 ## Branded assets
 
 `assets/images/` holds the app icon, Android adaptive icon layers (foreground /

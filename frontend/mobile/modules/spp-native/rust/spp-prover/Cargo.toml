@@ -1,0 +1,37 @@
+[package]
+name = "spp-prover"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "SPP note-format prover for the Veil mobile wallet (Android, via uniffi)"
+
+[lib]
+name = "spp_prover"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+ark-bls12-381 = "0.5"
+ark-ec = "0.5"
+ark-ff = { version = "0.5", features = ["parallel"] }
+ark-groth16 = { version = "0.5", features = ["parallel"] }
+ark-relations = "0.5"
+ark-serialize = "0.5"
+ark-std = { version = "0.5", features = ["parallel"] }
+sha2 = "0.10"
+thiserror = "2"
+uniffi = { version = "0.29", features = ["cli"] }
+
+[dev-dependencies]
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["uniffi/cli"]

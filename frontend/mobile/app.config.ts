@@ -157,6 +157,14 @@ const config: ExpoConfig = {
         color: '#FDDA24',
       },
     ],
+    // The SPP native prover (Rust/uniffi, Android-first). Listed explicitly
+    // even though expo-modules-autolinking would find `modules/spp-native` by
+    // scanning: a local module with native code must appear in `plugins` for
+    // `expo prebuild` to include its Gradle project on every platform the
+    // config generates, and listing it here is what makes the "binary without
+    // the module still launches" contract testable — an older binary simply
+    // predates this entry.
+    './modules/spp-native',
   ],
   experiments: {
     typedRoutes: true,
