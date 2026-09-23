@@ -14,6 +14,7 @@ import {
   type HeldAsset,
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
+import { getNetworkName } from '../lib/network';
 import { enableUsdy, AccountNotFunded, NotEnoughXlm } from '../lib/enableUsdc';
 
 type State =
@@ -95,6 +96,8 @@ export default function AssetsScreen() {
 
   const usdyRegistered = getRegisteredAsset('USDY');
 
+  const onMainnet = getNetworkName() === 'mainnet';
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
       <View style={styles.header}>
@@ -105,6 +108,9 @@ export default function AssetsScreen() {
 
       {/* Featured USDY One-Tap Trustline Action */}
       {state.kind === 'ready' && !hasUsdy && (
+      {/* Featured USDY One-Tap Trustline Action. Mainnet only — USDY's issuer
+          does not exist on testnet. */}
+      {state.kind === 'ready' && !hasUsdy && onMainnet && (
         <View style={styles.usdyBanner}>
           <View style={styles.usdyInfo}>
             <Text style={styles.usdyTitle}>Enable USDY</Text>

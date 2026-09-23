@@ -6,6 +6,8 @@ import {
   isProviderRefusal,
   mainnetUpstreams,
 } from '../rpcFailover'
+import { ALLOWED_METHODS, SPP_REQUIRED_METHODS, disallowedMethod } from '@/lib/rpcAllowlist'
+import { GET } from '@/app/api/rpc/mainnet/route'
 
 function reply(status: number, body: unknown) {
   return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -92,5 +94,71 @@ describe('forwardWithFailover', () => {
   it('returns null when nothing can be reached', async () => {
     const fetchImpl = jest.fn().mockRejectedValue(new Error('offline'))
     await expect(forwardWithFailover(['a', 'b'], '{}', fetchImpl)).resolves.toBeNull()
+  })
+})
+
+describe('spp rpc coverage (V133)', () => {
+  it.each([...SPP_REQUIRED_METHODS])('proxies the SPP method %s', (method) => {
+    expect(ALLOWED_METHODS.has(method)).toBe(true)
+    expect(disallowedMethod({ jsonrpc: '2.0', id: 1, method })).toBeNull()
+  })
+
+  it('proxies a batched SPP sync payload (getLatestLedger + getEvents + getLedgerEntries)', () => {
+    const payload = [
+      { jsonrpc: '2.0', id: 1, method: 'getLatestLedger', params: {} },
+      { jsonrpc: '2.0', id: 2, method: 'getEvents', params: { filters: [], pagination: { limit: 100 } } },
+      { jsonrpc: '2.0', id: 3, method: 'getLedgerEntries', params: { keys: [] } },
+    ]
+    expect(disallowedMethod(payload)).toBeNull()
+  })
+
+  it('proxies the SPP transact sequence (simulate + send + confirm)', () => {
+    const payload = [
+      { jsonrpc: '2.0', id: 1, method: 'simulateTransaction', params: {} },
+      { jsonrpc: '2.0', id: 2, method: 'sendTransaction', params: {} },
+      { jsonrpc: '2.0', id: 3, method: 'getTransaction', params: {} },
+    ]
+    expect(disallowedMethod(payload)).toBeNull()
+  })
+
+  it('still rejects testnet-only and unknown methods (requestAirdrop, getLedgers)', () => {
+    expect(disallowedMethod({ jsonrpc: '2.0', id: 1, method: 'requestAirdrop' })).toBe('requestAirdrop')
+    expect(disallowedMethod({ jsonrpc: '2.0', id: 1, method: 'getLedgers' })).toBe('getLedgers')
+    expect(
+      disallowedMethod([
+        { jsonrpc: '2.0', id: 1, method: 'getEvents' },
+        { jsonrpc: '2.0', id: 2, method: 'requestAirdrop' },
+      ]),
+    ).toBe('requestAirdrop')
+  })
+
+  it('scans events through each public upstream in order', async () => {
+    const scanBody = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getEvents',
+      params: { startLedger: 1, filters: [], pagination: { limit: 100 } },
+    })
+    const page = { jsonrpc: '2.0', id: 1, result: { events: [], latestLedger: 2 } }
+    const fetchImpl = jest.fn().mockImplementation(async (url: string) => {
+      if (url !== PUBLIC_MAINNET_RPCS[PUBLIC_MAINNET_RPCS.length - 1]) {
+        throw new Error('unreachable')
+      }
+      return reply(200, page)
+    })
+    const result = await forwardWithFailover([...PUBLIC_MAINNET_RPCS], scanBody, fetchImpl)
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([...PUBLIC_MAINNET_RPCS])
+    expect(fetchImpl.mock.calls.every(([, init]) => (init as RequestInit).body === scanBody)).toBe(true)
+    expect(result?.upstreamIndex).toBe(PUBLIC_MAINNET_RPCS.length - 1)
+    expect(JSON.parse(result!.body)).toEqual(page)
+  })
+
+  it('GET exposes counts only, never upstream URLs or keys', async () => {
+    const response = await GET()
+    const body = await response.json()
+    expect(Object.keys(body).sort()).toEqual(['configured', 'upstreams'])
+    expect(typeof body.configured).toBe('boolean')
+    expect(typeof body.upstreams).toBe('number')
+    expect(JSON.stringify(body)).not.toMatch(/https?:\/\//)
   })
 })
