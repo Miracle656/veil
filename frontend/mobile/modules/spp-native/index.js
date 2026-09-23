@@ -5,4 +5,4 @@
  * surface and adds the fallback/failure handling. Kept in place so the
  * module resolves as a normal package if Metro ever links it by name.
  */
-export { SppProverModule, isSppNativeAvailable } from './src';
+export { SppProverModule, isSppNativeAvailable } from './src/index';

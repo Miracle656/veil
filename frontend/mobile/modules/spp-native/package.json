@@ -6,7 +6,6 @@
   "private": true,
   "keywords": ["expo", "react-native", "uniffi", "rust"],
   "expo": {
-    "platforms": ["android"],
-    "plugin": "./app.plugin.js"
+    "platforms": ["android"]
   }
 }
