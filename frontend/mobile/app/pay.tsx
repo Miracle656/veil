@@ -16,11 +16,12 @@ export default function Pay() {
     to?: string;
     amount?: string;
     asset?: string;
+    asset_issuer?: string;
     memo?: string;
   }>();
 
   const forwarded: Record<string, string> = {};
-  for (const key of ["to", "amount", "asset", "memo"] as const) {
+  for (const key of ["to", "amount", "asset", "asset_issuer", "memo"] as const) {
     const value = params[key];
     if (typeof value === "string" && value) forwarded[key] = value;
   }

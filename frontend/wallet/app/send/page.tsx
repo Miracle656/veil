@@ -8,8 +8,9 @@ import { useRouter } from 'next/navigation'
 
 import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation,
-  Contract, rpc as SorobanRpc, nativeToScVal, Horizon,
+  Contract, rpc as SorobanRpc, nativeToScVal, Horizon, Memo,
 } from '@stellar/stellar-sdk'
+import { resolvePaymentAsset } from '@/lib/deepLinks'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
 import { ContactPicker } from '@/components/ContactPicker'
@@ -54,6 +55,14 @@ export default function SendPage() {
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
+  const [assetError, setAssetError]   = useState<string | null>(null)
+  const [requestedAsset, setRequestedAsset] = useState<{ code?: string; issuer?: string } | null>(() => {
+    if (typeof window === 'undefined') return null
+    const q = new URLSearchParams(window.location.search)
+    const code = q.get('asset') || undefined
+    const issuer = q.get('asset_issuer') || undefined
+    return code || issuer ? { code, issuer } : null
+  })
 
   /**
    * Prefill from the query string, so another screen can hand off a payment it
@@ -70,9 +79,12 @@ export default function SendPage() {
     const to = q.get('to')
     const amt = q.get('amount')
     const m = q.get('memo')
+    const ast = q.get('asset')
+    const astIssuer = q.get('asset_issuer')
     if (to) setRecipient(to)
     if (amt) setAmount(amt)
     if (m) setMemo(m)
+    if (ast || astIssuer) setRequestedAsset({ code: ast || undefined, issuer: astIssuer || undefined })
   }, [])
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
@@ -131,7 +143,23 @@ export default function SendPage() {
         }
       })
       setAssets(list)
-      if (list.length > 0) setSelectedAsset(list[0])
+      if (requestedAsset?.code) {
+        const res = resolvePaymentAsset(
+          { asset: requestedAsset.code, asset_issuer: requestedAsset.issuer },
+          list
+        )
+        if (res.status === 'resolved') {
+          setSelectedAsset(res.asset as WalletAsset)
+          setAssetError(null)
+        } else if (res.status === 'unresolved') {
+          setSelectedAsset(null)
+          setAssetError(res.error)
+        } else {
+          if (list.length > 0) setSelectedAsset(list[0])
+        }
+      } else {
+        if (list.length > 0) setSelectedAsset(list[0])
+      }
     }).catch(() => {
       const xlm: WalletAsset = { code: 'XLM', issuer: null, contractId: getNativeAssetContractId(), balance: '0' }
       setAssets([xlm])
@@ -183,13 +211,30 @@ export default function SendPage() {
       }
 
       const value = codes[0].rawValue.trim()
-      const isAddress = (value.startsWith('G') || value.startsWith('C')) && value.length === 56
-      if (!isAddress) {
-        setImgError(`QR decoded "${value.slice(0, 20)}…" — doesn't look like a Stellar address.`)
+      const parsed = parseQrValue(value)
+      if (!parsed) {
+        setImgError(`QR decoded "${value.slice(0, 20)}…" — not a valid Stellar address or payment request.`)
         return
       }
 
-      setRecipient(value)
+      if ('destination' in parsed && parsed.destination) {
+        setRecipient(parsed.destination)
+        if ('amount' in parsed && parsed.amount) setAmount(parsed.amount)
+        if ('memo' in parsed && parsed.memo) setMemo(parsed.memo)
+        if ('assetCode' in parsed && parsed.assetCode) {
+          const res = resolvePaymentAsset(
+            { asset: parsed.assetCode, asset_issuer: parsed.assetIssuer },
+            assets
+          )
+          if (res.status === 'resolved') {
+            setSelectedAsset(res.asset as WalletAsset)
+            setAssetError(null)
+          } else if (res.status === 'unresolved') {
+            setSelectedAsset(null)
+            setAssetError(res.error)
+          }
+        }
+      }
       setImgError(null)
     } catch {
       setImgError('Could not read the image. Please try a different file.')
@@ -204,7 +249,7 @@ export default function SendPage() {
     const validAddress = (recipient.startsWith('G') || recipient.startsWith('C')) && recipient.length === 56
     if (!validAddress) return false
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return false
-    if (!selectedAsset) return false
+    if (!selectedAsset || !!assetError) return false
     return true
   }
 
@@ -244,17 +289,27 @@ export default function SendPage() {
 
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
-        const tx = new TransactionBuilder(account, {
+        const sendAsset = selectedAsset?.issuer
+          ? new Asset(selectedAsset.code, selectedAsset.issuer)
+          : Asset.native()
+
+        const txBuilder = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
           .addOperation(Operation.payment({
             destination: recipient,
-            asset: Asset.native(),
+            asset: sendAsset,
             amount,
           }))
           .setTimeout(30)
-          .build()
+
+        const memoText = memo.trim()
+        if (memoText) {
+          txBuilder.addMemo(Memo.text(memoText))
+        }
+
+        const tx = txBuilder.build()
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
         setTxHash(result.hash)
@@ -348,7 +403,7 @@ export default function SendPage() {
                       <span className="vw-meta">
                         {selectedAsset
                           ? `${parseFloat(selectedAsset.balance).toFixed(4)} available`
-                          : 'Loading…'}
+                          : assetError ? 'Select an asset' : 'Loading…'}
                       </span>
                     </span>
                   </span>
@@ -359,6 +414,11 @@ export default function SendPage() {
                   </svg>
                 )}
               </button>
+              {assetError && (
+                <p style={{ fontSize: '0.75rem', color: 'rgba(255,100,100,0.9)', marginTop: '0.375rem', lineHeight: 1.4 }}>
+                  {assetError}
+                </p>
+              )}
               {showAssets && assets.length > 1 && (
                 <div className="vw-assetlist" role="listbox" aria-label="Select asset">
                   {assets.map((a) => (
@@ -367,7 +427,7 @@ export default function SendPage() {
                       type="button"
                       role="option"
                       aria-selected={selectedAsset ? assetKey(a) === assetKey(selectedAsset) : false}
-                      onClick={() => { setSelectedAsset(a); setShowAssets(false) }}
+                      onClick={() => { setSelectedAsset(a); setAssetError(null); setShowAssets(false) }}
                     >
                       <span className="vw-assetcard__left">
                         <span className="vw-avatar">{a.code.slice(0, 1)}</span>
@@ -679,19 +739,24 @@ export default function SendPage() {
             const parsed = parseQrValue(value)
             if (!parsed) return
 
-            if ('destination' in parsed) {
-              if (parsed.destination) setRecipient(parsed.destination)
+            if ('destination' in parsed && parsed.destination) {
+              setRecipient(parsed.destination)
               if ('amount' in parsed && parsed.amount) setAmount(parsed.amount)
-            } else {
-              // Sep7Parsed
-              if (parsed.destination) setRecipient(parsed.destination)
-              if (parsed.amount) setAmount(parsed.amount)
-
-              // If asset info is present, we could later auto-select asset.
+              if ('memo' in parsed && parsed.memo) setMemo(parsed.memo)
+              if ('assetCode' in parsed && parsed.assetCode) {
+                const res = resolvePaymentAsset(
+                  { asset: parsed.assetCode, asset_issuer: parsed.assetIssuer },
+                  assets
+                )
+                if (res.status === 'resolved') {
+                  setSelectedAsset(res.asset as WalletAsset)
+                  setAssetError(null)
+                } else if (res.status === 'unresolved') {
+                  setSelectedAsset(null)
+                  setAssetError(res.error)
+                }
+              }
             }
-
-            // If SEP-7 URI provided a memo, we can also fill it.
-            if (typeof parsed !== 'string' && 'memo' in parsed && parsed.memo) setMemo(parsed.memo)
 
             setShowScanner(false)
           }}

@@ -1,6 +1,8 @@
-import { FALLBACK_ROUTE, MAX_DEEP_LINK_LENGTH, resolveDeepLink } from '../deepLinks';
+import { FALLBACK_ROUTE, MAX_DEEP_LINK_LENGTH, resolveDeepLink, resolvePaymentAsset } from '../deepLinks';
 
 const DESTINATION = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+const UNKNOWN_ISSUER = 'GCZST3QOXDYMRM4BCYV3E4STXQZCVX6Z3DCLJ6222FXXZ55E4Y4WUKY3';
 
 describe('resolveDeepLink — veil:// custom scheme', () => {
   it('routes a bare screen link', () => {
@@ -144,5 +146,124 @@ describe('resolveDeepLink — cold start vs warm resume', () => {
     expect(resolveDeepLink(link, { initial: true })).toBe(
       resolveDeepLink(link, { initial: false }),
     );
+  });
+});
+
+describe('resolveDeepLink — asset_issuer and memo carrying', () => {
+  it('carries asset and asset_issuer through veil://pay', () => {
+    const link = `veil://pay?to=${DESTINATION}&amount=50&asset=USDC&asset_issuer=${ISSUER}&memo=inv-99`;
+    expect(resolveDeepLink(link)).toBe(
+      `/pay?to=${DESTINATION}&amount=50&asset=USDC&asset_issuer=${ISSUER}&memo=inv-99`,
+    );
+  });
+
+  it('carries asset and asset_issuer through veil://send', () => {
+    const link = `veil://send?to=${DESTINATION}&amount=10&asset=USDC&asset_issuer=${ISSUER}&memo=rent`;
+    expect(resolveDeepLink(link)).toBe(
+      `/send?to=${DESTINATION}&amount=10&asset=USDC&asset_issuer=${ISSUER}&memo=rent`,
+    );
+  });
+
+  it('carries asset_issuer through universal links', () => {
+    const link = `https://app.useveilapp.xyz/pay?to=${DESTINATION}&asset=USDC&asset_issuer=${ISSUER}`;
+    expect(resolveDeepLink(link)).toBe(
+      `/pay?to=${DESTINATION}&asset=USDC&asset_issuer=${ISSUER}`,
+    );
+  });
+
+  it('maps asset_issuer and memo from SEP-7 URIs', () => {
+    const uri = `web+stellar:pay?destination=${DESTINATION}&amount=25&asset_code=USDC&asset_issuer=${ISSUER}&memo=deposit-ref`;
+    const target = resolveDeepLink(uri);
+
+    expect(target.startsWith('/pay?')).toBe(true);
+    const query = new URLSearchParams(target.slice(target.indexOf('?') + 1));
+    expect(query.get('to')).toBe(DESTINATION);
+    expect(query.get('amount')).toBe('25');
+    expect(query.get('asset')).toBe('USDC');
+    expect(query.get('asset_issuer')).toBe(ISSUER);
+    expect(query.get('memo')).toBe('deposit-ref');
+    expect(query.get('uri')).toBe(uri);
+  });
+});
+
+describe('resolvePaymentAsset — code and issuer resolution', () => {
+  const holdings = [
+    { code: 'XLM', issuer: null, balance: '100', native: true },
+    { code: 'USDC', issuer: ISSUER, balance: '500', name: 'USD Coin' },
+  ];
+
+  it('resolves a non-native asset when code and issuer match', () => {
+    const result = resolvePaymentAsset(
+      { asset: 'USDC', asset_issuer: ISSUER },
+      holdings,
+    );
+    expect(result).toEqual({
+      status: 'resolved',
+      asset: holdings[1],
+    });
+  });
+
+  it('is case-insensitive for the asset code', () => {
+    const result = resolvePaymentAsset(
+      { asset: 'usdc', asset_issuer: ISSUER },
+      holdings,
+    );
+    expect(result.status).toBe('resolved');
+  });
+
+  it('rejects a link naming an asset with an unknown issuer (says so rather than picking one)', () => {
+    const result = resolvePaymentAsset(
+      { asset: 'USDC', asset_issuer: UNKNOWN_ISSUER },
+      holdings,
+    );
+    expect(result.status).toBe('unresolved');
+    if (result.status === 'unresolved') {
+      expect(result.code).toBe('USDC');
+      expect(result.issuer).toBe(UNKNOWN_ISSUER);
+      expect(result.error).toContain('Unknown issuer');
+      expect(result.error).toContain(UNKNOWN_ISSUER);
+      expect(result.error).toContain('You do not hold this asset');
+    }
+  });
+
+  it('rejects a link naming a non-native asset without an issuer (says so rather than picking one)', () => {
+    const result = resolvePaymentAsset(
+      { asset: 'USDC' },
+      holdings,
+    );
+    expect(result.status).toBe('unresolved');
+    if (result.status === 'unresolved') {
+      expect(result.code).toBe('USDC');
+      expect(result.issuer).toBeUndefined();
+      expect(result.error).toContain('cannot be resolved to a specific issuer');
+      expect(result.error).toContain('Anyone can issue an asset called USDC');
+    }
+  });
+
+  it('resolves native XLM without requiring an issuer', () => {
+    const result = resolvePaymentAsset(
+      { asset: 'XLM' },
+      holdings,
+    );
+    expect(result.status).toBe('resolved');
+    if (result.status === 'resolved') {
+      expect(result.asset.code).toBe('XLM');
+    }
+  });
+
+  it('rejects XLM with an unknown non-native issuer', () => {
+    const result = resolvePaymentAsset(
+      { asset: 'XLM', asset_issuer: UNKNOWN_ISSUER },
+      holdings,
+    );
+    expect(result.status).toBe('unresolved');
+    if (result.status === 'unresolved') {
+      expect(result.error).toContain('Unknown issuer');
+    }
+  });
+
+  it('returns none when no asset is requested', () => {
+    const result = resolvePaymentAsset({}, holdings);
+    expect(result).toEqual({ status: 'none' });
   });
 });
