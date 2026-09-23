@@ -1,3 +1,9 @@
+if (typeof TextEncoder === 'undefined') {
+  const { TextEncoder, TextDecoder } = require('util')
+  global.TextEncoder = TextEncoder
+  global.TextDecoder = TextDecoder
+}
+
 import { buildSponsoredFeeBumpTransaction } from '../feeBump'
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
 

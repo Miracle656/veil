@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, ShieldCheck } from 'lucide-react'
+import { ChevronLeft, ShieldCheck, Shield, ArrowRight } from 'lucide-react'
 import { getSentryOptIn, setSentryOptIn, initSentry } from '@/lib/sentry'
 
 export default function PrivacySettingsPage() {
@@ -99,10 +99,49 @@ export default function PrivacySettingsPage() {
           </div>
         </button>
 
-        <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.25)', marginTop: '0.75rem', lineHeight: 1.6 }}>
+        <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.25)', marginTop: '0.75rem', lineHeight: 1.6, marginBottom: '2rem' }}>
           Reports are sent to Sentry and contain only stack traces with wallet addresses and
           amounts stripped out. You can opt out at any time.
         </p>
+
+        {/* Private Payments (SPP) Section */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', marginBottom: '0.5rem' }}>
+          <Shield size={16} color="var(--teal)" strokeWidth={1.75} />
+          <p style={{ fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', fontSize: '0.75rem', color: 'rgba(246,247,248,0.5)' }}>
+            PRIVATE PAYMENTS (SPP)
+          </p>
+        </div>
+        <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', lineHeight: 1.6, marginBottom: '1rem' }}>
+          Stellar Private Payments moves value inside shielded pools on testnet using zero-knowledge proofs.
+          Neither the amount nor the recipient is visible on chain.
+        </p>
+
+        <button
+          type="button"
+          onClick={() => router.push('/privacy/send')}
+          className="card"
+          style={{
+            textAlign: 'left',
+            cursor: 'pointer',
+            width: '100%',
+            border: '1px solid var(--border-dim)',
+            background: 'var(--surface)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: '1rem 1.25rem',
+          }}
+        >
+          <div>
+            <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--off-white)' }}>
+              Open Private Send
+            </p>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+              Send shielded assets with zero on-chain disclosure
+            </p>
+          </div>
+          <ArrowRight size={18} color="var(--teal)" />
+        </button>
       </div>
     </div>
   )

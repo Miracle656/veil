@@ -3,6 +3,7 @@
 import { useActivityFeed } from '@/lib/activityFeed'
 import { inclusionFee } from '@/lib/fees'
 import { Nav, PageHeader } from '@/components/ui/primitives'
+import { Shield } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
@@ -326,6 +327,43 @@ export default function SendPage() {
         <div style={{ marginBottom: '1.75rem' }}>
           <PageHeader eyebrow="Transfer" title="Send money" />
         </div>
+
+        {step === 'form' && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '0.75rem 1rem',
+              borderRadius: '0.75rem',
+              background: 'rgba(0,167,181,0.08)',
+              border: '1px solid rgba(0,167,181,0.25)',
+              marginBottom: '1.25rem',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Shield size={16} color="var(--teal)" />
+              <span style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.85)' }}>
+                Want to send with hidden amount and recipient?
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => router.push(`/privacy/send${recipient ? `?to=${encodeURIComponent(recipient)}` : ''}`)}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--teal)',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                padding: '0.25rem 0.5rem',
+              }}
+            >
+              Private Send →
+            </button>
+          </div>
+        )}
 
         {step === 'form' && (
           <div className="vw-send-stage vw-row vw-row--first" style={{ alignItems: 'flex-start' }}>
