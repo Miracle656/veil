@@ -1,14 +1,148 @@
-// Root project file for the spp-native Android module.
+// spp-native Android module build.
 //
-// The real configuration lives in build.gradle.kts; this Groovy file exists
-// only so older tooling that cannot evaluate Kotlin DSL fails with a clear
-// message rather than a parse error.
+// Follows the Expo SDK 54 module pattern (see expo-haptics): the
+// expo-module-gradle-plugin supplies the Android library scaffold, SDK
+// versions from the app project, and the expo-modules-core dependency, so
+// this file only adds what the module actually builds: the Rust prover
+// (cargo-ndk per ABI) and the uniffi Kotlin bindings.
 //
-// Expo modules-autolinking (Expo SDK 54) evaluates build.gradle.kts directly,
-// so this file is never read in the normal build path.
+// Note: only `build.gradle` — no `build.gradle.kts`. Gradle prefers a Groovy
+// build file over the Kotlin DSL when both exist, and a file pair makes one
+// of the two silently dead.
 
-logger.warn(
-    "[spp-native] build.gradle was read instead of build.gradle.kts. " +
-        "Expo SDK 54 evaluates the Kotlin DSL file directly; if you are seeing this, " +
-        "your Gradle version predates Kotlin DSL support."
-)
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'xyz.veil.wallet'
+version = '0.1.0'
+
+def rustDir = file("${projectDir}/../rust")
+def cargoManifest = file("${rustDir}/Cargo.toml")
+def jniLibsDir = file("${buildDir}/jniLibs")
+def uniffiOutDir = file("${buildDir}/generated/uniffi")
+
+// ABIs the APK ships. arm64-v8a covers every modern device; armeabi-v7a
+// keeps 2016-era phones working. x86_64 exists so emulators can run the
+// benchmark screen without a physical device.
+def rustTargets = [
+  [abi: 'arm64-v8a', triple: 'aarch64-linux-android'],
+  [abi: 'armeabi-v7a', triple: 'armv7-linux-androideabi'],
+  [abi: 'x86_64', triple: 'x86_64-linux-android'],
+]
+
+// Toolchain probe at configuration time. If cargo is missing (a bare gradle
+// run on a machine without Rust) the Rust tasks skip with a warning — the
+// app builds without the .so, the JS layer detects the missing module, and
+// everything falls back to WASM, exactly like a binary built before this
+// module existed. CI and EAS always install the toolchain.
+def cargoAvailable = {
+  try {
+    def proc = ['which', 'cargo'].execute()
+    proc.waitFor()
+    proc.exitValue() == 0
+  } catch (IOException ignored) {
+    false
+  }
+}()
+
+android {
+  namespace "xyz.veil.wallet.spp"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+
+  lint {
+    abortOnError false
+  }
+
+  sourceSets {
+    main {
+      // Generated uniffi bindings land here; the generateUniffiBindings task
+      // runs before compilation, so the folder exists by the time Kotlin
+      // compiles.
+      java.srcDirs uniffiOutDir.absolutePath
+      // Compiled .so files, moved into jniLibs/<abi>/lib*.so by the tasks
+      // below.
+      jniLibs.srcDirs jniLibsDir.absolutePath
+    }
+  }
+}
+
+dependencies {
+  // The uniffi-generated Kotlin loads libspp_prover.so through JNA, which
+  // needs its Android helper shipped alongside.
+  implementation "net.java.dev.jna:jna:5.13.0@aar"
+  implementation "com.sun.jna:jna:5.13.0"
+}
+
+// ── Rust ────────────────────────────────────────────────────────────────────
+//
+// Why cargo-ndk and not hand-rolled cargo invocations: it pins the correct
+// linker per ABI and produces the jniLibs layout in one pass, per target.
+
+rustTargets.each { target ->
+  tasks.register("buildRust${target.abi}", Exec) {
+    group = 'spp'
+    description = "Compiles the Rust SPP prover for ${target.abi}"
+    onlyIf { cargoAvailable }
+    workingDir rustDir
+    commandLine 'cargo', 'ndk',
+      '-t', target.triple,
+      '-o', jniLibsDir.absolutePath,
+      '--manifest-path', cargoManifest.absolutePath,
+      '--', 'build', '--release', '-p', 'spp-prover'
+    environment CARGO_TERM_COLOR: 'never',
+      // Deterministic builds: embed no absolute paths.
+      RUSTFLAGS: "--remap-path-prefix=${System.getProperty('user.home')}=~"
+    doFirst {
+      if (!cargoAvailable) {
+        logger.warn("[spp-native] cargo not found — skipping Rust build for ${target.abi}. " +
+          "The app will launch without the native prover and fall back to WASM.")
+      }
+    }
+    doLast {
+      // cargo-ndk emits to $jniLibsDir/<triple>/libspp_prover.so; move it
+      // into the jniLibs layout Android expects (jniLibs/<abi>/lib*.so).
+      def soName = 'libspp_prover.so'
+      def produced = new File(jniLibsDir, target.triple)
+      def dest = new File(jniLibsDir, target.abi)
+      if (produced.isDirectory()) {
+        produced.listFiles()?.findAll { it.name == soName }?.each { f ->
+          dest.mkdirs()
+          f.renameTo(new File(dest, soName))
+        }
+        produced.deleteRecursively()
+      }
+    }
+  }
+}
+
+// Generate the uniffi Kotlin bindings from the compiled host library.
+tasks.register('generateUniffiBindings', Exec) {
+  group = 'spp'
+  description = 'Generates Kotlin bindings from spp_native.udl'
+  onlyIf { cargoAvailable }
+  workingDir rustDir
+  def hostLib = file("${rustDir}/target/release/libspp_prover.so")
+  doFirst {
+    if (!org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_UNIX)) {
+      throw new IllegalStateException('uniffi codegen requires a Unix host (CI/EAS provide one)')
+    }
+  }
+  commandLine 'cargo', 'run', '--release', '-p', 'spp-prover', '--bin', 'uniffi-bindgen',
+    '--', 'generate',
+    '--library', hostLib.absolutePath,
+    '--language', 'kotlin',
+    '--out-dir', uniffiOutDir.absolutePath
+}
+
+// Wire the Rust tasks ahead of the Kotlin compile. `preBuild` is the earliest
+// hook every android variant depends on, so the .so files and bindings exist
+// before either compiles.
+tasks.matching { it.name == 'preBuild' }.configureEach {
+  dependsOn 'generateUniffiBindings'
+  rustTargets.each { target -> dependsOn "buildRust${target.abi}" }
+}

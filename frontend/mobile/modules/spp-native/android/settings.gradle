@@ -1,5 +1,0 @@
-// Standalone settings for evaluating just this module (IDE indexing, gradle
-// doctor). In the app build, expo-modules-autolinking includes this project
-// as ":veil-spp-native" and its own settings file governs.
-
-rootProject.name = "veil-spp-native"

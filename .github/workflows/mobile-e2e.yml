@@ -51,6 +51,19 @@ jobs:
         with:
           packages: platform-tools
 
+      # The spp-native module's Gradle graph compiles the Rust prover per ABI
+      # with cargo-ndk and generates uniffi bindings from a host build. Without
+      # a toolchain, gradle silently skips those tasks (by design, so bare
+      # `gradle` runs work without Rust) and CI would never exercise the
+      # module — the emulator would test the WASM fallback and pass. The
+      # toolchain itself and the android targets come from dtolnay/rust-toolchain
+      # (host compiler) and the module's postinstall hook (targets + cargo-ndk);
+      # rust-cache keeps the prover's build artifacts between runs.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend/mobile/modules/spp-native/rust
+
       - name: Install dependencies
         run: npm ci
 
