@@ -1,3 +1,4 @@
+import { rejectionFromResult } from './networkErrors';
 import { errorMessage } from './errorMessage';
 import './polyfills';
 import { assertRoundTrips, simulationErrorMessage } from './simulationError';
@@ -398,7 +399,7 @@ async function signAndSubmitXdr(xdrString: string): Promise<string> {
   const sendResult = await rpc.sendTransaction(signedTx);
   if (sendResult.status === 'ERROR') {
     throw new Error(
-      `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown'}`
+      rejectionFromResult(sendResult.errorResult)
     );
   }
   return sendResult.hash;

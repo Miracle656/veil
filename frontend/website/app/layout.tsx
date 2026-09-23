@@ -1,4 +1,6 @@
+import { SITE_NAME, SITE_URL } from '@/lib/site'
 import type { Metadata } from 'next'
+import { socialMetadata } from '@/lib/metadata'
 import { Lora, Inter, Inconsolata, Anton } from 'next/font/google'
 import './globals.css'
 
@@ -20,26 +22,19 @@ const anton = Anton({ weight: '400', subsets: ['latin'], display: 'swap', variab
 
 const fontVars = [lora.variable, inter.variable, inconsolata.variable, anton.variable].join(' ')
 
-const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ??
-  (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000')
-
 export const metadata: Metadata = {
-  metadataBase: new URL(siteUrl),
+  // Never the deployment URL — see lib/site.ts for what that cost.
+  metadataBase: new URL(SITE_URL),
+  applicationName: SITE_NAME,
   title: 'Veil — Passkey-Powered Stellar Wallets',
   description:
     'A seedless, biometric-native smart wallet built on Stellar Soroban. No seed phrases. No private keys. Just your fingerprint.',
   keywords: ['Stellar', 'Soroban', 'WebAuthn', 'passkey', 'smart wallet', 'crypto', 'biometric'],
-  openGraph: {
+  ...socialMetadata({
     title: 'Veil — Passkey-Powered Stellar Wallets',
     description: 'Your biometric IS your key. Seedless smart accounts on Stellar Soroban.',
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: 'Veil — Passkey-Powered Stellar Wallets',
-    description: 'No seed phrases. No private keys. Just your fingerprint.',
-  },
+    path: '/',
+  }),
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

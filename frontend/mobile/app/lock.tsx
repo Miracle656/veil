@@ -8,13 +8,15 @@ import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { VeilLogo } from '../components/VeilLogo';
+import { takeLockReturn } from '../lib/lockReturn';
 
 /**
  * Lock screen — brand treatment of the web wallet's lock page: the Drape mark
  * over near-black, Lora title, gold unlock action. Reached after an inactivity
  * timeout or a long background stay (hooks/useInactivityLock.ts). Unlocking
- * prompts the device biometric (passcode fallback) and returns to the
- * dashboard directly, skipping the splash.
+ * prompts the device biometric (passcode fallback) and returns to the screen
+ * the lock covered, skipping the splash — the dashboard only when there is no
+ * such screen (a cold start straight into the lock).
  */
 export default function LockScreen() {
   const { colors } = useTheme();
@@ -28,10 +30,17 @@ export default function LockScreen() {
     setError(null);
     setIsUnlocking(true);
     try {
-      const hasHardware = await LocalAuthentication.hasHardwareAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-      if (!hasHardware || !isEnrolled) {
-        setError('No biometric or device passcode is set up. Add one in system settings.');
+      // `isEnrolledAsync` only reports a saved fingerprint or face — Expo's own
+      // docs say so. It is false on a phone secured by a PIN or pattern alone,
+      // so this screen told those users no passcode was set up and then
+      // refused them indefinitely: a lock with no key, over their own money.
+      // The enrolled LEVEL counts a PIN as the security it is.
+      const level = await LocalAuthentication.getEnrolledLevelAsync();
+      if (level === LocalAuthentication.SecurityLevel.NONE) {
+        // Nothing on this device can answer a prompt. The app lock cannot add
+        // protection a phone with no screen lock does not have, and keeping
+        // this screen up would only strand the user. Let them through.
+        router.replace((takeLockReturn() ?? '/dashboard') as never);
         return;
       }
 
@@ -42,9 +51,11 @@ export default function LockScreen() {
       });
 
       if (result.success) {
-        // Straight to the dashboard — routing through the splash re-runs the
-        // whole entry sequence and reads as a second loading screen.
-        router.replace('/dashboard');
+        // Back to whatever the lock covered. Never through the splash, which
+        // re-runs the whole entry sequence and reads as a second loading
+        // screen; and never to the dashboard by default, which silently threw
+        // away a swap or a cash-out the user was in the middle of.
+        router.replace((takeLockReturn() ?? '/dashboard') as never);
         return;
       }
       setError('Unlock failed. Please try again.');

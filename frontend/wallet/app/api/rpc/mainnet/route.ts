@@ -1,28 +1,26 @@
 /**
  * Same-origin proxy for the mainnet Soroban RPC endpoint.
  *
- * Mainnet Soroban RPC has no free public provider, so the URL we use carries an
- * account key. The browser needs to reach *some* RPC, but shipping that URL to
- * the browser via `NEXT_PUBLIC_MAINNET_RPC_URL` would publish the key to every
- * visitor of the live site — and the current endpoint is a metered trial, so a
- * leaked key is a real, immediate cost. This route keeps the URL in a
- * server-only variable and forwards JSON-RPC calls on the client's behalf.
+ * Upstreams are tried in order (lib/rpcFailover.ts): whatever is configured
+ * first, then free public Stellar RPCs. A configured URL may carry an account
+ * key, which is why the browser never sees any of them and this route forwards
+ * JSON-RPC calls on the client's behalf.
  *
- * Set `MAINNET_RPC_URL` (note: no NEXT_PUBLIC_ prefix) in the deployment
- * environment. Without it this route reports 503 and the UI keeps mainnet
- * disabled rather than failing halfway through a transaction.
+ * Optional server-only settings (no NEXT_PUBLIC_ prefix):
+ *   MAINNET_RPC_URL / MAINNET_RPC_URLS  preferred endpoints, tried first
+ *   MAINNET_RPC_PUBLIC_FALLBACK=off     never use the public endpoints
+ *
+ * With nothing set, the public endpoints serve mainnet on their own. That used
+ * to be impossible: this route had one upstream, a QuickNode trial with a hard
+ * end date, and returned 503 without it — so the trial lapsing would have taken
+ * mainnet down for web and mobile together.
  */
+
+import { forwardWithFailover, mainnetUpstreams } from '@/lib/rpcFailover'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-function upstreamUrl(): string {
-  return (
-    process.env.MAINNET_RPC_URL?.trim()
-    || process.env.SOROBAN_MAINNET_RPC_URL?.trim()
-    || ''
-  )
-}
 
 /**
  * Only the JSON-RPC methods the wallet actually calls are forwarded. The
@@ -56,13 +54,7 @@ function disallowedMethod(payload: unknown): string | null {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const upstream = upstreamUrl()
-  if (!upstream) {
-    return Response.json(
-      { error: 'Mainnet RPC is not configured on this deployment. Set MAINNET_RPC_URL.' },
-      { status: 503 },
-    )
-  }
+  const upstreams = mainnetUpstreams()
 
   let payload: unknown
   try {
@@ -76,24 +68,21 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: `JSON-RPC method not allowed: ${rejected}` }, { status: 403 })
   }
 
-  let upstreamResponse: Response
-  try {
-    upstreamResponse = await fetch(upstream, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      cache: 'no-store',
-    })
-  } catch {
-    // Never echo the upstream URL — it carries the key.
+  // Tried in order, so a provider that is down, rate limited or out of plan
+  // hands over to the next instead of failing every wallet at once.
+  const result = await forwardWithFailover(upstreams, JSON.stringify(payload))
+  if (!result) {
     return Response.json({ error: 'Mainnet RPC provider is unreachable.' }, { status: 502 })
   }
+  if (result.upstreamIndex > 0) {
+    // The index, never the URL: a configured upstream carries its API key in the path.
+    console.warn(`[rpc/mainnet] answered by fallback upstream #${result.upstreamIndex}`)
+  }
 
-  const body = await upstreamResponse.text()
-  return new Response(body, {
-    status: upstreamResponse.status,
+  return new Response(result.body, {
+    status: result.status,
     headers: {
-      'content-type': upstreamResponse.headers.get('content-type') ?? 'application/json',
+      'content-type': result.contentType,
       'cache-control': 'no-store',
     },
   })
@@ -101,5 +90,7 @@ export async function POST(request: Request): Promise<Response> {
 
 /** Lets the UI check whether mainnet is usable before offering the switch. */
 export async function GET(): Promise<Response> {
-  return Response.json({ configured: upstreamUrl().length > 0 })
+  // Counts only. The URLs stay server-side: a keyed one carries its key.
+  const upstreams = mainnetUpstreams()
+  return Response.json({ configured: upstreams.length > 0, upstreams: upstreams.length })
 }

@@ -22,6 +22,10 @@ import { InstallBanner } from './InstallBanner'
 import { SentryInit } from './SentryInit'
 
 export const metadata: Metadata = {
+  // Absolute URLs for og:image and friends. Never derived from the deployment:
+  // that is how the marketing site ended up with canonicals pointing at a
+  // login-protected, noindex preview URL.
+  metadataBase: new URL('https://app.useveilapp.xyz'),
   title: 'Veil Wallet',
   description: 'Your passkey-powered Stellar wallet. No seed phrases. No private keys. Just your fingerprint.',
   keywords: ['Stellar', 'Soroban', 'WebAuthn', 'passkey', 'wallet', 'biometric'],
@@ -30,6 +34,15 @@ export const metadata: Metadata = {
     title: 'Veil Wallet',
     description: 'Passkey-powered Stellar smart wallet.',
     type: 'website',
+    url: '/',
+    siteName: 'Veil',
+    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Veil — a passkey smart wallet on Stellar.' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Veil Wallet',
+    description: 'Passkey-powered Stellar smart wallet. No seed phrases. No private keys.',
+    images: ['/og.png'],
   },
 }
 

@@ -292,5 +292,19 @@
       }
     ],
     "index": "[ 04 DE 06 ] · EL AGENTE"
+  },
+  "mobileLive": {
+    "badge": "YA DISPONIBLE",
+    "titleLead": "El móvil ya está",
+    "titleAccent": "aquí",
+    "body": "La cartera entera en tu bolsillo. Ábrela con la misma huella que abre tu app del banco, paga en tu moneda y sigue generando rendimiento sobre lo que aún no has gastado.",
+    "points": [
+      "Sin frase semilla para restaurar en un teléfono nuevo",
+      "Retira a una cuenta bancaria en menos de un minuto",
+      "0 XLM para tu primera transacción"
+    ],
+    "ctaPrimary": "Descargar para Android",
+    "ctaSecondary": "iPhone: apúntate a la lista de TestFlight",
+    "qrLabel": "Escanea para instalar"
   }
 }

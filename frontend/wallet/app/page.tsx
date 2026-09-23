@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Horizon, Keypair } from '@stellar/stellar-sdk'
+import { Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { OnboardingTutorial } from '@/components/OnboardingTutorial'
 import { useInvisibleWallet } from '@veil/sdk'
@@ -12,7 +12,6 @@ import { trackWalletCreated } from '@/lib/supabase'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const network = getNetwork()
-const HorizonServer = Horizon.Server
 
 type Step = 'landing' | 'registering' | 'deploying' | 'done'
 
@@ -76,45 +75,32 @@ export default function OnboardingPage() {
       // funding retries regardless of derivation mode.
       walletLocal.setItem('veil_signer_public_key', signerKeypair.publicKey())
 
+      // Testnet only: give the spending account some XLM so the wallet is
+      // usable straight away. Best-effort — a faucet hiccup must not stop a
+      // wallet from being created, since nothing below depends on it.
       const friendbotUrl = buildFriendbotUrl(signerKeypair.publicKey())
       if (friendbotUrl) {
-        const friendbotRes = await fetch(friendbotUrl)
-        if (!friendbotRes.ok) throw new Error('Friendbot funding failed — try again')
-      } else {
-        const horizonServer = new HorizonServer(network.horizonUrl)
-        try {
-          await horizonServer.loadAccount(signerKeypair.publicKey())
-        } catch {
-          throw new Error(
-            `Mainnet deployment requires a funded signer account. Fund ${signerKeypair.publicKey()} with XLM for fees, then tap Create wallet again.`
-          )
-        }
+        await fetch(friendbotUrl).catch(() => null)
       }
 
-      // Pass secret string so the SDK uses its own Keypair instance internally,
-      // avoiding XDR type mismatches between two stellar-sdk copies.
-      const deployed = await wallet.deploy(signerSecret)
+      // No deploy here. The wallet address is a pure function of the factory,
+      // the network and the passkey's public key — `register` already computed
+      // and stored it — so it exists and can receive before the contract does.
+      // Deploying at creation put a brand new mainnet user in front of "fund
+      // this signer account" before they had a wallet at all. The contract is
+      // deployed on first use instead (lib/walletDeployment.ts), as on mobile.
+      const walletAddress = walletLocal.getItem('invisible_wallet_address')
+      if (!walletAddress) throw new Error('Could not work out your wallet address. Try again.')
 
-      // Persist minimal session to sessionStorage for the dashboard. The
-      // fee-payer secret is already in sessionStorage (ensureFeePayer set it).
-      walletSession.setItem('invisible_wallet_address', deployed.walletAddress)
-      setAddress(deployed.walletAddress)
+      walletSession.setItem('invisible_wallet_address', walletAddress)
+      setAddress(walletAddress)
       setStep('done')
       success = true
 
       // Track wallet creation (fire-and-forget — never blocks the flow)
-      trackWalletCreated(deployed.walletAddress, signerKeypair.publicKey())
+      trackWalletCreated(walletAddress, signerKeypair.publicKey())
     } catch (err: unknown) {
-      let msg = err instanceof Error ? err.message : String(err)
-      if (
-        !network.friendbotUrl
-        && signerKeypair
-        && !msg.includes(signerKeypair.publicKey())
-        && /account|source|balance|insufficient/i.test(msg)
-      ) {
-        msg = `Mainnet deployment requires a funded signer account. Fund ${signerKeypair.publicKey()} with XLM for fees, then tap Create wallet again.`
-      }
-      setError(msg)
+      setError(err instanceof Error ? err.message : String(err))
       setStep('landing')
     }
 
@@ -195,7 +181,7 @@ export default function OnboardingPage() {
                 <div className="spinner spinner-light" />
               </div>
               <p style={{ fontFamily: 'Inter', fontWeight: 500, color: 'var(--off-white)' }}>
-                {step === 'registering' ? 'Waiting for biometric...' : 'Deploying wallet on-chain...'}
+                {step === 'registering' ? 'Waiting for biometric...' : 'Setting up your wallet...'}
               </p>
               <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.5rem' }}>
                 {step === 'registering'

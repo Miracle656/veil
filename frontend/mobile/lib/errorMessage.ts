@@ -23,6 +23,7 @@
  */
 
 import { horizonErrorMessage } from './horizonError';
+import { translateNetworkError } from './networkErrors';
 
 /** Keys that carry a human-readable message, most specific first. */
 const MESSAGE_KEYS = ['message', 'error', 'description', 'reason', 'error_description'] as const;
@@ -56,7 +57,7 @@ function httpBodyMessage(error: unknown, depth: number): string | null {
     const horizon = horizonErrorMessage(data);
     if (horizon) return horizon;
 
-    const message = errorMessage(data, depth + 1);
+    const message = rawErrorMessage(data, depth + 1);
     if (message !== FALLBACK) return message;
   }
 
@@ -76,7 +77,7 @@ function firstString(source: Record<string, unknown>, keys: readonly string[]): 
  *
  * @param depth Guards against a cyclic or deeply nested error chain.
  */
-export function errorMessage(error: unknown, depth = 0): string {
+function rawErrorMessage(error: unknown, depth = 0): string {
   if (typeof error === 'string' && error.trim() !== '') return error.trim();
 
   // Before the Error's own message: an HTTP body says why, a status line does not.
@@ -99,7 +100,7 @@ export function errorMessage(error: unknown, depth = 0): string {
     for (const key of MESSAGE_KEYS) {
       const nested = source[key];
       if (nested && typeof nested === 'object') {
-        const message = errorMessage(nested, depth + 1);
+        const message = rawErrorMessage(nested, depth + 1);
         if (message !== FALLBACK) return message;
       }
     }
@@ -120,4 +121,15 @@ export function errorMessage(error: unknown, depth = 0): string {
   if (typeof error === 'number' || typeof error === 'boolean') return String(error);
 
   return FALLBACK;
+}
+
+/**
+ * A displayable message for any thrown value, in plain English where the error
+ * came back from the network in machine form (see lib/networkErrors.ts).
+ *
+ * @param depth Guards against a cyclic or deeply nested error chain.
+ */
+export function errorMessage(error: unknown, depth = 0): string {
+  const message = rawErrorMessage(error, depth);
+  return depth === 0 ? translateNetworkError(message) : message;
 }

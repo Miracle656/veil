@@ -7,9 +7,10 @@ import { getNetwork } from './network'
  * Mainnet surge-prices inclusion — the Soroban lane especially — and the
  * 100-stroop BASE_FEE gets rejected outright with txINSUFFICIENT_FEE.
  *
- * Overbidding is safe on Stellar: the ledger charges the effective market
- * rate, not the bid, so a generous mainnet bid (0.1 XLM) costs approximately
- * nothing in practice while surviving surges. Testnet keeps the minimum.
+ * The bid itself comes from @veil/sdk: 0.01 XLM on mainnet. It must stay
+ * affordable, because an account has to cover its whole bid above its reserve
+ * or the network rejects the transaction with tx_insufficient_balance.
+ * Testnet keeps the minimum.
  */
 export function inclusionFee(): string {
   return sdkInclusionFee(getNetwork())

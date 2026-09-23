@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -33,7 +33,8 @@ import {
 } from '../lib/recovery';
 import { hexToUint8Array } from '../lib/webauthn';
 import { setPasskeyCredential, setWalletAddress } from '../lib/walletStore';
-import { colors } from '../theme/colors';
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
 import { fontFamily, typography } from '../theme/typography';
 
 /**
@@ -60,6 +61,8 @@ type ServerDraft = { baseUrl: string; authToken: string };
 
 export default function RecoverScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [stage, setStage] = useState<Stage>('wallet');
   const [busy, setBusy] = useState<string | null>(null);
@@ -280,7 +283,7 @@ export default function RecoverScreen() {
             <TextInput
               style={styles.input}
               placeholder="C..."
-              placeholderTextColor="rgba(246,247,248,0.3)"
+              placeholderTextColor={colors.textFaint}
               value={walletInput}
               onChangeText={(value) => {
                 setWalletInput(value.trim());
@@ -328,7 +331,7 @@ export default function RecoverScreen() {
                   <TextInput
                     style={styles.input}
                     placeholder="Session token (optional)"
-                    placeholderTextColor="rgba(246,247,248,0.3)"
+                    placeholderTextColor={colors.textFaint}
                     value={draft.authToken}
                     onChangeText={(value) =>
                       setDrafts((current) =>
@@ -349,7 +352,7 @@ export default function RecoverScreen() {
               <TextInput
                 style={styles.input}
                 placeholder="https://recovery.example.com"
-                placeholderTextColor="rgba(246,247,248,0.3)"
+                placeholderTextColor={colors.textFaint}
                 value={newServerUrl}
                 onChangeText={setNewServerUrl}
                 autoCapitalize="none"
@@ -405,7 +408,7 @@ export default function RecoverScreen() {
                 <TextInput
                   style={styles.input}
                   placeholder="G..."
-                  placeholderTextColor="rgba(246,247,248,0.3)"
+                  placeholderTextColor={colors.textFaint}
                   value={recoveryAddress}
                   onChangeText={(value) => {
                     setRecoveryAddress(value.trim());
@@ -509,7 +512,7 @@ export default function RecoverScreen() {
 
         {busy && (
           <View style={styles.busy}>
-            <ActivityIndicator color={colors.gold} />
+            <ActivityIndicator color={colors.accent} />
             <Text style={styles.hint}>{busy}…</Text>
           </View>
         )}
@@ -532,119 +535,124 @@ function formatUnlock(unlockAt: number): string {
   return `on ${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`;
 }
 
-const styles = StyleSheet.create({
-  content: {
-    gap: 16,
-    paddingVertical: 24,
-  },
-  title: {
-    color: colors.offWhite,
-  },
-  subtitle: {
-    fontFamily: fontFamily.body,
-    fontSize: 14,
-    lineHeight: 20,
-    color: colors.textMuted,
-    marginTop: -8,
-  },
-  card: {
-    padding: 16,
-    gap: 12,
-  },
-  label: {
-    fontFamily: fontFamily.accent,
-    fontSize: 12,
-    letterSpacing: 1,
-    color: 'rgba(246,247,248,0.4)',
-  },
-  body: {
-    fontFamily: fontFamily.body,
-    fontSize: 14,
-    lineHeight: 21,
-    color: colors.offWhite,
-  },
-  hint: {
-    fontFamily: fontFamily.body,
-    fontSize: 12,
-    lineHeight: 18,
-    color: colors.textMuted,
-  },
-  address: {
-    fontFamily: fontFamily.address,
-    fontSize: 12,
-    lineHeight: 18,
-    color: colors.gold,
-  },
-  input: {
-    fontFamily: fontFamily.address,
-    fontSize: 13,
-    color: colors.offWhite,
-    backgroundColor: colors.surfaceMd,
-    borderWidth: 1,
-    borderColor: colors.borderDim,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-  },
-  serverRow: {
-    gap: 8,
-  },
-  serverUrl: {
-    fontFamily: fontFamily.bodyMedium,
-    fontSize: 13,
-    color: colors.offWhite,
-  },
-  resultRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  resultText: {
-    flex: 1,
-    gap: 2,
-  },
-  resultOk: {
-    fontFamily: fontFamily.accent,
-    fontSize: 11,
-    letterSpacing: 1,
-    color: colors.teal,
-    marginTop: 2,
-  },
-  resultFailed: {
-    fontFamily: fontFamily.accent,
-    fontSize: 11,
-    letterSpacing: 1,
-    color: '#f87171',
-    marginTop: 2,
-  },
-  busy: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  notice: {
-    fontFamily: fontFamily.body,
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.textMuted,
-  },
-  errorCard: {
-    padding: 16,
-    borderColor: 'rgba(248,113,113,0.35)',
-  },
-  errorText: {
-    fontFamily: fontFamily.body,
-    fontSize: 13,
-    lineHeight: 19,
-    color: '#f87171',
-  },
-  discard: {
-    alignSelf: 'center',
-    paddingVertical: 8,
-  },
-  discardText: {
-    fontFamily: fontFamily.bodyMedium,
-    fontSize: 13,
-    color: colors.textMuted,
-  },
-});
+// Theme-derived, like every other screen. This was the last file (with
+// OnboardingTutorial) still importing the fixed dark palette from theme/colors,
+// which meant near-white text on a near-white background in light mode: the
+// screen rendered correctly and was simply unreadable.
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    content: {
+      gap: 16,
+      paddingVertical: 24,
+    },
+    title: {
+      color: colors.textPrimary,
+    },
+    subtitle: {
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 20,
+      color: colors.textMuted,
+      marginTop: -8,
+    },
+    card: {
+      padding: 16,
+      gap: 12,
+    },
+    label: {
+      fontFamily: fontFamily.accent,
+      fontSize: 12,
+      letterSpacing: 1,
+      color: colors.textFaint,
+    },
+    body: {
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 21,
+      color: colors.textPrimary,
+    },
+    hint: {
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 18,
+      color: colors.textMuted,
+    },
+    address: {
+      fontFamily: fontFamily.address,
+      fontSize: 12,
+      lineHeight: 18,
+      color: colors.accentText,
+    },
+    input: {
+      fontFamily: fontFamily.address,
+      fontSize: 13,
+      color: colors.textPrimary,
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+    },
+    serverRow: {
+      gap: 8,
+    },
+    serverUrl: {
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 13,
+      color: colors.textPrimary,
+    },
+    resultRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    resultText: {
+      flex: 1,
+      gap: 2,
+    },
+    resultOk: {
+      fontFamily: fontFamily.accent,
+      fontSize: 11,
+      letterSpacing: 1,
+      color: colors.positive,
+      marginTop: 2,
+    },
+    resultFailed: {
+      fontFamily: fontFamily.accent,
+      fontSize: 11,
+      letterSpacing: 1,
+      color: colors.danger,
+      marginTop: 2,
+    },
+    busy: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    notice: {
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      color: colors.textMuted,
+    },
+    errorCard: {
+      padding: 16,
+      borderColor: colors.danger,
+    },
+    errorText: {
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      color: colors.danger,
+    },
+    discard: {
+      alignSelf: 'center',
+      paddingVertical: 8,
+    },
+    discardText: {
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 13,
+      color: colors.textMuted,
+    },
+    });

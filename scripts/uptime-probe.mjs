@@ -29,7 +29,9 @@
 
 const WRAITH = (process.env.WRAITH_URL ?? "https://wraith-0jo1.onrender.com").replace(/\/+$/, "");
 const LENS = (process.env.LENS_URL ?? "https://lens-ldtu.onrender.com").replace(/\/+$/, "");
-const AGENT = (process.env.AGENT_URL ?? "https://veil-agent.onrender.com").replace(/\/+$/, "");
+// The agent is a serverless route in the wallet deployment now, not its own
+// Render service.
+const AGENT = (process.env.AGENT_URL ?? "https://app.useveilapp.xyz/api/agent").replace(/\/+$/, "");
 
 /**
  * Render free-tier instances sleep and can take the better part of a minute to
@@ -94,9 +96,14 @@ const TARGETS = [
         : { degraded: true, note: "no price_requests_total in output" },
   },
   {
-    name: "agent /health",
-    url: `${AGENT}/health`,
+    name: "agent",
+    url: AGENT,
     critical: false,
+    // Up but useless without a model key: GET reports whether one is set.
+    inspect: (body) =>
+      body?.ok
+        ? { degraded: false, note: `model ${body.model}` }
+        : { degraded: true, note: "no model key configured (OPENROUTER_API_KEY or ANTHROPIC_API_KEY)" },
   },
 ];
 

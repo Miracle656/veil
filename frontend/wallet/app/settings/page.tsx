@@ -7,6 +7,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
+import { ensureWalletDeployed, getDeploymentState } from '@/lib/walletDeployment'
 import { walletConfig } from '@/lib/network'
 import { isMultisigAvailable } from '@/lib/multisigConfig'
 import { useWalletConnect } from '@/lib/walletConnect'
@@ -206,6 +207,8 @@ export default function SettingsPage() {
       
       // 2. Register derived key as a signer on-chain
       const signerKeypair = getSignerKeypair()
+      // Adding a signer is a call the contract answers, so it has to exist.
+      await ensureWalletDeployed(wallet.deploy, address)
       const res = await wallet.addSigner(signerKeypair, publicKey)
       
       // 3. Encrypt and store in IndexedDB
@@ -277,12 +280,18 @@ export default function SettingsPage() {
 
   const fetchSigners = useCallback(async () => {
     try {
+      // An undeployed wallet has no signer list on chain to read yet. That is
+      // a normal state now (deploy-on-first-use), not a failure to report.
+      if ((await getDeploymentState(address)) === 'undeployed') {
+        setSigners([])
+        return
+      }
       const list = await wallet.getSigners();
       setSigners(list)
     } catch (e) {
       console.error('Failed to fetch signers', e)
     }
-  }, [wallet.getSigners]);
+  }, [wallet.getSigners, address]);
 
   useEffect(() => {
     if (address && section === 'overview') {
@@ -306,6 +315,7 @@ export default function SettingsPage() {
       const signerKeypair = getSignerKeypair()
       const result = await wallet.register()
       if (!result?.publicKeyBytes) throw new Error('Registration returned no public key')
+      await ensureWalletDeployed(wallet.deploy, address)
       const res = await wallet.addSigner(signerKeypair, result.publicKeyBytes)
       setStatus(`New signer added at index ${res.signerIndex}`)
       await fetchSigners()
@@ -322,6 +332,7 @@ export default function SettingsPage() {
     setStatus(null)
     try {
       const signerKeypair = getSignerKeypair()
+      await ensureWalletDeployed(wallet.deploy, address)
       await wallet.removeSigner(signerKeypair, index)
       setStatus(`Signer #${index} removed`)
       await fetchSigners()
@@ -341,6 +352,8 @@ export default function SettingsPage() {
     setStatus(null)
     try {
       const signerKeypair = getSignerKeypair()
+      // Setting a guardian is stored by the contract, so it has to be on chain.
+      await ensureWalletDeployed(wallet.deploy, address)
       await wallet.setGuardian(signerKeypair, guardianAddress)
       setStatus('Guardian set successfully')
       setGuardianAddress('')

@@ -4,6 +4,7 @@ import { LandingAgent } from './LandingAgent'
 import { FlowShowcase } from './LandingFlow'
 import { Capabilities, Faq, Trust } from './LandingSections'
 import { LandingHero } from './LandingHero'
+import { MobileIsLive } from './MobileIsLive'
 import { useState } from 'react'
 import { motion } from 'framer-motion'
 import Link from 'next/link'
@@ -623,6 +624,11 @@ export default function LandingPage({ locale }: { locale: Locale }) {
         <BuiltOnStellar t={t} />
         <DevQuickstart t={t} />
         <Faq t={t} />
+        {/* Second to last, immediately before the sign-up. By here the page has
+            made its case; the phone is the closing proof and the download sits
+            next to the form, so the two ways in are side by side rather than a
+            screen apart. */}
+        <MobileIsLive t={t} />
         <EarlyAccess t={t} />
       </main>
       <Footer t={t} locale={locale} />

@@ -64,7 +64,14 @@ export const NETWORKS: Record<VeilNetworkName, VeilNetwork> = {
     displayName: 'Stellar Mainnet',
     networkPassphrase: Networks.PUBLIC,
     horizonUrl: process.env['EXPO_PUBLIC_MAINNET_HORIZON_URL']?.trim() || 'https://horizon.stellar.org',
-    rpcUrl: process.env['EXPO_PUBLIC_MAINNET_RPC_URL']?.trim() || '',
+    // Veil's own RPC proxy by default. It holds no key the app could leak and
+    // fails over across several providers (frontend/wallet/lib/rpcFailover.ts),
+    // so a build that forgot this variable still reaches mainnet. Pointing it
+    // straight at a single keyed endpoint instead — as a local .env did with the
+    // QuickNode trial — bypasses that failover and breaks when the plan ends.
+    rpcUrl:
+      process.env['EXPO_PUBLIC_MAINNET_RPC_URL']?.trim() ||
+      'https://app.useveilapp.xyz/api/rpc/mainnet',
     factoryContractId:
       process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID_MAINNET']?.trim() ||
       // Deployed 2026-08-21; wallet WASM hash b485f817… matches
@@ -189,9 +196,10 @@ export async function clearNetworkOverride(): Promise<void> {
 // ── Derived helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Whether the active network has everything it needs to talk to a chain. Mainnet
- * ships with no default RPC or factory, so selecting it in a build that was not
- * configured for it would fail later, in a request, with a worse error message.
+ * Whether the active network has everything it needs to talk to a chain. Both
+ * networks now ship defaults for the RPC and the factory; this still catches an
+ * override that blanks one, which would otherwise fail later in a request with
+ * a worse error message.
  */
 export function isNetworkConfigured(network = getNetwork()): boolean {
   return network.rpcUrl.length > 0 && network.factoryContractId.length > 0;

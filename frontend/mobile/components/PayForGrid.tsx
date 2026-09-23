@@ -28,6 +28,8 @@ export type BillService = {
   status: 'live' | 'soon';
   /** Highlight in gold. Reserved for a service we want to draw the eye to. */
   accent?: boolean;
+  /** Route to push when tapped. Absent means the caller handles selection. */
+  route?: string;
 };
 
 /**
@@ -48,7 +50,11 @@ export const BILL_SERVICES: BillService[] = [
   { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'soon' },
   { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
   { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'soon' },
-  { id: 'transfer', label: 'Transfer', hint: 'To any bank', Icon: BankIcon, status: 'soon' },
+  // The offramp: USDC out to a Nigerian bank account, via Linq. Live rather
+  // than 'soon' because the flow behind it exists — but the dashboard still
+  // hides it when the backend that holds the API key is unreachable, since
+  // there is no order to create without it.
+  { id: 'transfer', label: 'Cash out', hint: 'To any bank', Icon: BankIcon, status: 'live', route: '/cash-out' },
   { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
 ];
 
@@ -116,10 +122,12 @@ export function PayForGrid({
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    // No outer border, matching the Assets and Activity cards. This card was
+    // never visible before — it returns null while every service is 'soon' —
+    // so it kept a border the rest of the dashboard had already dropped, and
+    // appeared looking like it belonged to a different screen.
     card: {
       backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
       borderRadius: 20,
       paddingHorizontal: 14,
       paddingTop: 14,

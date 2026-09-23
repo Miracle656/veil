@@ -1,11 +1,21 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Keypair } from '@stellar/stellar-sdk';
+import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
-import { nativePrfEvaluator } from './passkey';
+import { getNetwork } from './network';
+import { evaluatePrf } from './passkey';
+import type { PrfOutcome } from './prfOutcome';
 import { fundWithFriendbot } from './testnetWallet';
 import { writeBreadcrumbs } from './walletBreadcrumbs';
-import { setWalletAddress, setSignerSecret, setPasskeyId, setPasskeyCredential } from './walletStore';
+import {
+  getPasskeyPublicKey,
+  getSignerSecret,
+  getWalletAddress,
+  setPasskeyCredential,
+  setPasskeyId,
+  setSignerSecret,
+  setWalletAddress,
+} from './walletStore';
 import type { CreatedWallet } from './testnetWallet';
 
 /**
@@ -48,13 +58,18 @@ export async function createPasskeyWallet(wallet: Registerable): Promise<Created
 
   const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
   let feePayer: Keypair | null = null;
+  let issue: Exclude<PrfOutcome, 'ok'> = 'failed';
   if (keyId) {
     // The PRF output is what makes the wallet recoverable from the passkey
-    // alone — retry once before giving up on it.
+    // alone — retry once before giving up on it. Not after `unsupported`: the
+    // passkey already answered without PRF, and asking again gets the same.
     for (let attempt = 0; attempt < 2 && !feePayer; attempt++) {
-      const prf = await nativePrfEvaluator(keyId)(FEE_PAYER_PRF_SALT).catch(() => null);
-      if (prf && prf.length >= 32) {
-        feePayer = Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32)));
+      const result = await evaluatePrf(keyId, FEE_PAYER_PRF_SALT);
+      if (result.outcome === 'ok' && result.output) {
+        feePayer = Keypair.fromRawEd25519Seed(Buffer.from(result.output.subarray(0, 32)));
+      } else {
+        issue = result.outcome === 'ok' ? 'unsupported' : result.outcome;
+        if (issue === 'unsupported') break;
       }
     }
   }
@@ -63,14 +78,22 @@ export async function createPasskeyWallet(wallet: Registerable): Promise<Created
   const recoverable = feePayer !== null;
   if (!feePayer) feePayer = Keypair.random();
 
+  // Friendbot only exists on testnet; on mainnet this returns false at once.
   const funded = await fundWithFriendbot(feePayer.publicKey());
 
   // On-chain breadcrumbs (best-effort): make "sign in with passkey" work on a
   // fresh device by recording the C-address + passkey public key as data
-  // entries on the (deterministic) fee-payer account. Needs funding first.
-  if (funded) {
-    void writeBreadcrumbs(feePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
-  }
+  // entries on the (deterministic) fee-payer account.
+  //
+  // Deliberately NOT gated on the Friendbot result. That gate asked "did a
+  // faucet just fund this?", and the answer on mainnet is always no, so every
+  // mainnet wallet was created with no on-chain record of itself and no way to
+  // be found again from a fresh device. The write needs a funded account, not a
+  // faucet, and it already fails harmlessly when there is none — the account
+  // simply does not load. `ensureBreadcrumbs` retries on dashboard load, which
+  // is what covers the mainnet order of events: the account is funded after the
+  // wallet is created, not before.
+  void writeBreadcrumbs(feePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
 
   await Promise.all([
     setWalletAddress(walletAddress),
@@ -82,5 +105,59 @@ export async function createPasskeyWallet(wallet: Registerable): Promise<Created
         : Promise.resolve(),
   ]);
 
-  return { address: walletAddress, funded, recoverable };
+  return { address: walletAddress, funded, recoverable, ...(recoverable ? {} : { recoveryIssue: issue }) };
+}
+
+async function accountExists(address: string): Promise<boolean> {
+  try {
+    await new Horizon.Server(getNetwork().horizonUrl).loadAccount(address);
+    return true;
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    // Only a definite 404 means "not on chain". Anything else is unknown, and
+    // unknown must count as existing, since the answer decides whether a key
+    // that may control money gets replaced.
+    return !(status === 404 || (err instanceof Error && err.name === 'NotFoundError'));
+  }
+}
+
+export type RecoveryRetry =
+  | { bound: true }
+  | { bound: false; issue: Exclude<PrfOutcome, 'ok'> | 'funded' };
+
+/**
+ * Try again to bind the recovery secret to a freshly created wallet.
+ *
+ * When PRF failed at creation, the spending account got a random key, which no
+ * other device can re-derive. If PRF works now, that key is replaced with the
+ * passkey-derived one, so recovery works as designed.
+ *
+ * Only while the random account is not on chain. Once it exists it may hold
+ * XLM or trustlines, and swapping its key would strand them; that case refuses
+ * with `funded` and changes nothing. The smart wallet's own address never
+ * changes, because it comes from the passkey's public key, not this key.
+ */
+export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
+  const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+  const walletAddress = await getWalletAddress();
+  if (!keyId || !walletAddress) return { bound: false, issue: 'failed' };
+
+  const result = await evaluatePrf(keyId, FEE_PAYER_PRF_SALT);
+  if (result.outcome !== 'ok' || !result.output) {
+    return { bound: false, issue: result.outcome === 'ok' ? 'unsupported' : result.outcome };
+  }
+  const derived = Keypair.fromRawEd25519Seed(Buffer.from(result.output.subarray(0, 32)));
+
+  const currentSecret = await getSignerSecret();
+  if (currentSecret && currentSecret !== derived.secret()) {
+    if (await accountExists(Keypair.fromSecret(currentSecret).publicKey())) {
+      return { bound: false, issue: 'funded' };
+    }
+  }
+
+  await setSignerSecret(derived.secret());
+  const pubHex = await getPasskeyPublicKey().catch(() => null);
+  const pub = pubHex && /^[0-9a-fA-F]{130}$/.test(pubHex) ? new Uint8Array(Buffer.from(pubHex, 'hex')) : null;
+  void writeBreadcrumbs(derived.secret(), walletAddress, pub).catch(() => undefined);
+  return { bound: true };
 }

@@ -1,0 +1,7 @@
+# Veil docs are public reference material: every page may be crawled,
+# including by AI search crawlers, which is how developers increasingly find SDKs.
+User-agent: *
+Allow: /
+Disallow: /pagefind/
+
+Sitemap: https://docs.useveilapp.xyz/sitemap.xml

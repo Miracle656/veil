@@ -1,26 +1,20 @@
 import 'dotenv/config'
-import Anthropic from '@anthropic-ai/sdk'
 import express from 'express'
 import cors from 'cors'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createServer, type IncomingMessage } from 'http'
 import { timingSafeEqual } from 'crypto'
-import { Keypair } from '@stellar/stellar-sdk'
 import { runAgent, type UserProfile } from './agent.js'
+import { providerFromEnv, type ChatTurn } from './llm.js'
+import { NETWORK } from './network.js'
 
-// ── Agent keypair (Ed25519 — for x402 payments only, never signs wallet txs) ──
-if (!process.env.AGENT_KEYPAIR_SECRET) {
-  console.error('[agent] AGENT_KEYPAIR_SECRET is required')
-  process.exit(1)
-}
-const agentKeypair = Keypair.fromSecret(process.env.AGENT_KEYPAIR_SECRET)
-console.log(`[agent] Agent keypair: ${agentKeypair.publicKey()}`)
-
-// ── Shared Anthropic client ──────────────────────────────────────────────────
-const anthropicClient = new Anthropic()
+// ── Model provider ───────────────────────────────────────────────────────────
+// Claude, or free OpenRouter models when OPENROUTER_API_KEY is set (llm.ts).
+const llm = providerFromEnv()
+console.log(`[agent] ${NETWORK} · model ${llm.label}`)
 
 // ── Per-wallet conversation history ──────────────────────────────────────────
-const conversations = new Map<string, Anthropic.MessageParam[]>()
+const conversations = new Map<string, ChatTurn[]>()
 
 // ── Access control ────────────────────────────────────────────────────────────
 // Allowed browser origins for both CORS and the WebSocket handshake. Set
@@ -83,7 +77,7 @@ const MAX_CONVERSATIONS = 1000
 const RATE_WINDOW_MS = 60_000
 const RATE_MAX_MESSAGES = 30
 
-function rememberConversation(walletAddress: string, history: Anthropic.MessageParam[]): void {
+function rememberConversation(walletAddress: string, history: ChatTurn[]): void {
   conversations.set(walletAddress, history.slice(-20))
   if (conversations.size > MAX_CONVERSATIONS) {
     // Map preserves insertion order → evict the oldest tracked wallet.
@@ -98,7 +92,7 @@ app.use(cors({ origin: ALLOWED_ORIGINS }))
 app.use(express.json())
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, agentAddress: agentKeypair.publicKey() })
+  res.json({ ok: true, network: NETWORK, model: llm.label })
 })
 
 const httpServer = createServer(app)
@@ -158,11 +152,10 @@ wss.on('connection', (ws: WebSocket) => {
         const { response, pendingTxXdr, pendingTxSummary } = await runAgent(
           userMessage,
           walletAddress,
-          agentKeypair,
           history,
           feePayerAddress,
           profile,
-          anthropicClient,
+          llm,
         )
 
         // Update conversation history (keep last 20 turns, bounded wallet count)

@@ -1,5 +1,7 @@
 import type { Metadata } from 'next'
+import { socialMetadata } from '@/lib/metadata'
 import LandingPage from '@/components/LandingPage'
+import { SiteJsonLd } from '@/components/JsonLd'
 import { getMessages } from '@/lib/i18n'
 
 const t = getMessages('es')
@@ -11,19 +13,19 @@ export const metadata: Metadata = {
     canonical: '/es',
     languages: { en: '/', es: '/es' },
   },
-  openGraph: {
+  ...socialMetadata({
     title: t.metadata.ogTitle,
     description: t.metadata.ogDescription,
+    path: '/es',
     locale: 'es_ES',
-    type: 'website',
-  },
-  twitter: {
-    card: 'summary_large_image',
-    title: t.metadata.twitterTitle,
-    description: t.metadata.twitterDescription,
-  },
+  }),
 }
 
 export default function EsPage() {
-  return <LandingPage locale="es" />
+  return (
+    <>
+      <SiteJsonLd />
+      <LandingPage locale="es" />
+    </>
+  )
 }

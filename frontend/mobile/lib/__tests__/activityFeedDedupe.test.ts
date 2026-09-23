@@ -127,3 +127,35 @@ describe('replace still wipes', () => {
     expect(getActivityFeed()).toEqual([]);
   });
 });
+
+/**
+ * The indexer path was inverted — /transfers/:address instead of
+ * /accounts/:address/transfers — so every poll 404'd. It stayed hidden because
+ * EXPO_PUBLIC_WRAITH_URL was unset, which skips the fetch entirely: the code
+ * was wrong for as long as it was unreachable, and only broke once it was
+ * pointed at a real server.
+ */
+describe('wraith transfers URL', () => {
+  const build = (base: string, address: string) =>
+    `${base.replace(/\/+$/, '')}/accounts/${encodeURIComponent(address)}/transfers?limit=50`;
+
+  it('addresses the account, not a bare transfers collection', () => {
+    expect(build('https://w.example.com', 'GABC')).toBe(
+      'https://w.example.com/accounts/GABC/transfers?limit=50',
+    );
+  });
+
+  it('does not use the inverted path that 404d', () => {
+    expect(build('https://w.example.com', 'GABC')).not.toContain('/transfers/GABC');
+  });
+
+  it('tolerates a trailing slash on the configured base url', () => {
+    expect(build('https://w.example.com/', 'GABC')).toBe(
+      'https://w.example.com/accounts/GABC/transfers?limit=50',
+    );
+  });
+
+  it('encodes the address rather than interpolating it raw', () => {
+    expect(build('https://w.example.com', 'G/BC')).toContain('G%2FBC');
+  });
+});

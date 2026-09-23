@@ -10,7 +10,7 @@ import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
 import { createTestnetWallet, importTestnetWallet, type CreatedWallet } from '../lib/testnetWallet';
-import { createPasskeyWallet } from '../lib/passkeyWallet';
+import { createPasskeyWallet, retryRecoveryBinding, type RecoveryRetry } from '../lib/passkeyWallet';
 import { getNetwork } from '../lib/network';
 import { useWallet } from '../components/WalletProvider';
 
@@ -40,6 +40,23 @@ export default function CreateWallet() {
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [secret, setSecret] = useState('');
+  const [binding, setBinding] = useState(false);
+  const [bindIssue, setBindIssue] = useState<Extract<RecoveryRetry, { bound: false }>['issue'] | null>(null);
+
+  async function retryBinding() {
+    setBinding(true);
+    try {
+      const retry = await retryRecoveryBinding();
+      if (retry.bound) {
+        setResult((prev) => (prev ? { ...prev, recoverable: true, recoveryIssue: undefined } : prev));
+        setBindIssue(null);
+      } else {
+        setBindIssue(retry.issue);
+      }
+    } finally {
+      setBinding(false);
+    }
+  }
 
   async function run(fn: () => Promise<CreatedWallet>) {
     setStatus('busy');
@@ -70,11 +87,29 @@ export default function CreateWallet() {
                   : 'Send XLM to your wallet to activate it — mainnet has no faucet'}
             </Text>
             {result.recoverable === false && (
-              <Text style={[styles.fund, { color: colors.danger }]}>
-                Heads up: this device couldn&apos;t bind the recovery secret to your passkey, so this
-                wallet can&apos;t be restored on another phone from the passkey alone. Keep this device
-                safe or set up recovery servers in Settings.
-              </Text>
+              <>
+                <Text style={[styles.fund, { color: colors.danger }]}>
+                  {recoveryMessage(bindIssue ?? result.recoveryIssue ?? 'failed')}
+                </Text>
+                {bindIssue !== 'funded' && (
+                  <Pressable
+                    testID="create-wallet-retry-recovery"
+                    accessibilityRole="button"
+                    disabled={binding}
+                    onPress={retryBinding}
+                    style={({ pressed }) => [styles.ctaSecondary, binding && styles.disabled, pressed && styles.pressed]}
+                  >
+                    {binding ? (
+                      <ActivityIndicator color={colors.textPrimary} />
+                    ) : (
+                      <Text style={styles.ctaSecondaryText}>Try setting up recovery again</Text>
+                    )}
+                  </Pressable>
+                )}
+              </>
+            )}
+            {result.recoverable === true && result.recoveryIssue === undefined && bindIssue === null && binding === false && (
+              <Text style={[styles.fund, { color: colors.positive }]}>Recovery is bound to your passkey ✓</Text>
             )}
           </View>
           <View style={styles.spacer} />
@@ -176,6 +211,24 @@ export default function CreateWallet() {
       </View>
     </SafeAreaView>
   );
+}
+
+/**
+ * What went wrong with the recovery secret, in terms of what to do about it.
+ * The old single warning could not tell a manager that will never support
+ * recovery from a prompt that was simply closed.
+ */
+function recoveryMessage(issue: 'unsupported' | 'cancelled' | 'failed' | 'funded'): string {
+  switch (issue) {
+    case 'unsupported':
+      return "Your passkey was saved in a password manager that can't bind a recovery secret, so this wallet can't be restored on another phone from the passkey alone. Before adding money: delete this passkey, create the wallet again, and choose Google Password Manager when your phone asks where to save it.";
+    case 'cancelled':
+      return "Recovery isn't set up yet: the second passkey prompt was closed before it finished. Try again and approve it.";
+    case 'funded':
+      return "Recovery can't be set up for this wallet any more, because its spending account is already on chain. Keep this device safe, or set up recovery servers in Settings.";
+    default:
+      return "Recovery couldn't be set up on this attempt, so this wallet can't yet be restored on another phone from the passkey alone. Try again before adding money.";
+  }
 }
 
 const createStyles = (colors: ThemeColors) =>

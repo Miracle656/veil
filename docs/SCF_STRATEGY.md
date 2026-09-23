@@ -168,6 +168,8 @@ Answering the actual required content categories surfaced in recon (the handbook
 
 ## 6. The shielded-pool play
 
+> **Superseded in part (2026-09-14) — see `docs/PRIVACY_COST.md`.** SDF and Nethermind now ship Stellar Private Payments, a shielded pool with compliance controls (testnet developer preview, unaudited). Integrating it replaces the fork-and-harden plan below: no circuits, trusted setup or pool contracts of our own. Measured fee is ~0.017 XLM (≈ $0.003) per private transaction; integration is ~9–15 engineer-weeks, mobile being the hard part. The framing guidance (compliance-aware, testnet tranche, no mainnet promise) still stands.
+
 **Feasibility verdict (recon, HIGH confidence): buildable on Soroban today.** The hardest question — *does a real zk-SNARK verify on-chain inside budget?* — is answered YES by a working Stellar prototype: Groth16 verify costs **~40M instructions (~40% of the ~100M budget)** using native BLS12-381 host functions, leaving headroom for Merkle/nullifier logic and the token transfer in the same tx. A near-complete open-source reference (`soroban-privacy-pools`, Groth16/BLS12-381/Poseidon/Circom, plus `circom2soroban`) already exists. **This is fork-and-harden, not greenfield: ~4–10 engineer-weeks to a solid testnet MVP.**
 
 **How to frame it in the application — flagship, without over-promising:**

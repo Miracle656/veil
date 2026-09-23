@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
+    "prebuild": "node scripts/generate-sitemap.mjs",
     "build": "next build",
     "postbuild": "pagefind --site .next/static --output-path public/pagefind || true",
     "start": "next start"

@@ -17,6 +17,7 @@ import * as Notifications from 'expo-notifications';
 import { useRouter, useSegments } from 'expo-router';
 
 import { fireTransferNotification, routeForNotificationResponse } from '../lib/notifications';
+import { loadNotifiedMovements, notifiedMovements, saveNotifiedMovements } from '../lib/notifiedMovements';
 import { consumePendingRoute, setPendingRoute } from '../lib/pendingRoute';
 
 /**
@@ -28,8 +29,11 @@ import { consumePendingRoute, setPendingRoute } from '../lib/pendingRoute';
  * fee-payer's classic Horizon operation once it is indexed. Keyed by id, the
  * second arrival looks like a new payment and notifies about a transfer the
  * user was already told about.
+ *
+ * Shared with the background check (lib/notifiedMovements.ts), so a payment it
+ * announced while the app was closed is not announced again on opening.
  */
-const seenIds = new Set<string>();
+const seenIds = notifiedMovements();
 
 /**
  * Whether the very first snapshot has been received. The initial hydration
@@ -89,15 +93,36 @@ export function useNotifications(): void {
   }, [router, segments]);
 
   useEffect(() => {
-    const unsubscribe = subscribeActivityFeed((records) => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    // Nothing may be judged new until the stored set is back. Subscribing first
+    // would hand us the whole history with an empty set to compare it against,
+    // which is the flood this exists to prevent.
+    void loadNotifiedMovements().then((stored) => {
+      if (cancelled) return;
+      if (stored) {
+        // A stored set means we already know what the user has been told about,
+        // so the next snapshot is judged, not swallowed.
+        initRef.current = true;
+        initialised = true;
+      }
+      unsubscribe = subscribeActivityFeed(onSnapshot);
+    });
+
+    function onSnapshot(records: TxRecord[]) {
       if (!initRef.current) {
-        // First snapshot: seed the seen set without firing notifications.
+        // Fresh install. Seed from the first snapshot that actually carries
+        // something: an empty one says nothing about what the user has seen,
+        // and treating it as the seed is what let the history through.
+        if (records.length === 0) return;
         for (const r of records) seenRef.current.add(movementKey(r));
         initRef.current = true;
         // Write through to the module-level flag as well. `useRef` copied the
         // value at first render, so without this the hook re-seeds on every
         // remount — and a transfer landing during one would be swallowed.
         initialised = true;
+        void saveNotifiedMovements();
         return;
       }
 
@@ -130,8 +155,15 @@ export function useNotifications(): void {
         // 'swapped' records are intentionally not notified — they are
         // internal wallet operations, not external transfers.
       }
-    });
 
-    return unsubscribe;
+      // Persist after each judged snapshot, so a reload or a force-quit picks
+      // up where this left off rather than starting from nothing.
+      void saveNotifiedMovements();
+    }
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, []);
 }

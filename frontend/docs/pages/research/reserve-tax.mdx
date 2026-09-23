@@ -1,0 +1,354 @@
+---
+title: 'The Reserve Tax'
+description: What passkey-native smart accounts cost their users, measured on Stellar mainnet. An engineering measurement report on Veil.
+---
+
+import { Callout } from 'nextra/components'
+
+# The Reserve Tax
+
+**What passkey-native smart accounts cost their users, measured on Stellar mainnet**
+
+<Callout type="info">
+Engineering measurement report. Subject system: Veil, an open-source passkey wallet on
+Soroban. Measurements taken on Stellar mainnet, protocol 27, 22 August to 5 September 2026.
+Source and data: [github.com/Miracle656/veil](https://github.com/Miracle656/veil).
+</Callout>
+
+## Abstract
+
+Passkey-native smart accounts are usually evaluated on whether they work: can a contract
+verify a WebAuthn assertion on-chain, and can a user transact without a seed phrase. Both
+questions are now settled affirmatively on Stellar. We argue that the interesting
+constraint has moved elsewhere, and that it is being systematically under-reported.
+
+We report measurements from a production passkey wallet on Stellar mainnet showing that
+the binding constraint on usability is not cryptographic cost but **minimum-balance
+economics**. Stellar reserves 0.5 XLM per account subentry, and a passkey wallet
+necessarily creates subentries in order to be recoverable without a custodian. In one
+measured account, 3.00 of 4.00 XLM held were locked reserve, of which 1.50 was
+attributable to the wallet's own recovery index rather than to any asset the user owned.
+The user could spend 0.95 XLM of their 4.00.
+
+We formalise this as a **reserve tax**, decompose it by cause, and give a cost model for
+transferring it to an operator via CAP-33 sponsorship. We also report a redundancy result:
+one of the three index entries stored a value that is a pure function of the other two, a
+strictly dominated design that cost every user 0.5 XLM until removed. We argue that this
+class of error is invisible during testnet development, where the reserve is paid in free
+tokens, and that reserve accounting should therefore be a reported quantity in
+account-abstraction work rather than an implementation detail.
+
+## 1. Introduction
+
+A smart account that authenticates with a platform passkey removes the two most cited
+obstacles to self-custody: the recovery phrase and the need to hold a network token before
+transacting. Implementations now exist on several chains, and on Stellar the necessary
+primitives are in the protocol: a contract may implement `__check_auth` to define its own
+authorisation predicate, and a host function verifies P-256 signatures cheaply enough to be
+practical inside one.
+
+The literature and the engineering write-ups that follow such systems tend to stop at
+feasibility. They demonstrate that the signature verifies, that the account deploys, and
+that a transaction settles. What they rarely report is the standing cost the design imposes
+on the user's balance for as long as the account exists.
+
+On Stellar that cost is explicit and measurable, because the protocol states it: an account
+must retain a minimum balance that grows with the number of subentries it holds. A
+self-custodial passkey wallet cannot avoid creating subentries, because the information
+needed to rediscover a user's account from their passkey alone has to live somewhere, and
+the only trustless somewhere is the ledger.
+
+### Contributions
+
+1. A decomposition of the minimum-balance requirement of a production passkey wallet into
+   protocol-mandated, user-elected, and **design-attributable** components (§4), with
+   measurements from live mainnet accounts (§5).
+2. A redundancy result (§6): the wallet's on-chain recovery index stored its contract
+   address alongside the public key from which that address is derived. We show the
+   derivation, and we quantify the cost of the redundancy at 0.5 XLM per user.
+3. A cost model for sponsorship (§7) that converts the per-user reserve tax into an
+   operator liability, with projected figures at three population scales.
+4. An argument (§8) that testnet development structurally conceals this class of cost, and
+   a proposal that reserve accounting be a reported quantity in account-abstraction work.
+
+<Callout type="warning">
+**On what this is.** This is an engineering measurement report on a single production
+system, not a controlled study or a survey of the field. The sample is two accounts
+observed over two weeks. We state the limits of that in §9 rather than in a footnote,
+because the limits are material to how much weight the numbers can carry.
+</Callout>
+
+## 2. Background
+
+### 2.1 Authorisation on Soroban
+
+A Soroban contract may export `__check_auth`, which the host invokes when the contract's
+address is required to authorise an invocation. It receives a 32-byte payload hash
+committing to the invocation tree, an opaque signature value, and the authorisation
+contexts. The contract decides what constitutes a valid signature. This is the mechanism
+that makes an account a program rather than a key.
+
+### 2.2 WebAuthn assertions
+
+A WebAuthn assertion produced by a platform authenticator yields three artefacts: the
+authenticator data, the client data JSON, and an ECDSA signature over
+`SHA-256(authData ‖ SHA-256(clientDataJSON))`. The client data carries the challenge and
+the ceremony type; the authenticator data carries the relying-party hash and a flags byte
+recording user presence and user verification. Verification therefore requires both a
+signature check and several structural checks, and omitting any of the structural checks
+admits a distinct attack.
+
+### 2.3 The Stellar minimum balance
+
+Every Stellar account must hold a minimum balance. Writing `s` for the number of subentries
+(trustlines, data entries, offers, and signers beyond the master key) and `B` for the base
+reserve, currently 0.5 XLM:
+
+```
+R(s) = (2 + s) · B = 1 + 0.5s   XLM                                  (1)
+```
+
+The purpose is anti-spam: every account and subentry occupies validator state indefinitely,
+so the protocol requires a deposit against it. The deposit is refundable. Removing a
+subentry releases its 0.5 XLM; merging an account releases all of it. It is not a fee. It
+is, however, balance the user cannot spend, and that distinction is invisible in a balance
+display that reports only the total.
+
+## 3. System under measurement
+
+Veil is an open-source wallet in which a user's account is a Soroban contract authorised
+solely by a WebAuthn passkey. Two on-chain identities exist per user: the smart account
+(`C…`), which holds funds, and a classic fee-payer account (`G…`), which sources
+transactions so that the user needs no XLM to transact. Both are derived from the same
+passkey, the smart account address from a hash of the public key and the fee payer from the
+passkey's PRF output.
+
+The contract performs the full assertion check on-chain before releasing funds: it rejects
+any client data whose type is not `webauthn.get`, requires the challenge to equal the
+base64url encoding of the Soroban payload hash, requires the user-presence and
+user-verification flags to be set, and verifies the P-256 signature through the host's
+`secp256r1_verify`. The implementation documents the reason for using the host function
+rather than a Wasm P-256 library as a difference of roughly four orders of magnitude in CPU
+instructions, which is the difference between fitting a ledger's resource budget and not.
+
+Recovery without a custodian requires that a fresh device, holding only the passkey, can
+rediscover the account. The passkey yields the fee payer deterministically, but a WebAuthn
+assertion never reveals the public key, and the smart account address is a function of that
+key. The wallet therefore writes the public key to the fee payer as manage-data entries.
+Those entries are subentries, and this is the origin of the cost we measure.
+
+## 4. Decomposing the reserve
+
+We partition an account's subentries by what causes them, because the three classes have
+very different standing under scrutiny:
+
+```
+s = s_proto + s_asset + s_design                                     (2)
+```
+
+- **`s_proto`** — the account itself, contributing the constant 1 XLM in (1). Unavoidable
+  on Stellar.
+- **`s_asset`** — trustlines for assets the user chose to hold. Attributable to the user,
+  and arguably a fair cost: they elected to hold USDC.
+- **`s_design`** — subentries the wallet creates for its own purposes, chiefly the recovery
+  index. The user did not ask for these and cannot see them.
+
+We define the **reserve tax** of a wallet design as the portion attributable to the third
+class:
+
+```
+T = 0.5 · s_design   XLM per user                                    (3)
+```
+
+And the spendable balance actually available to a user holding `b` XLM, with selling
+liabilities `L` and a fee buffer `f`:
+
+```
+spendable(b, s) = max(0, b − R(s) − L − f)                           (4)
+```
+
+The clamp at zero is not cosmetic. An account can hold a positive balance and have nothing
+spendable, which is the condition that produced the user-visible failure described in §5.
+
+## 5. Measurements
+
+All figures below were read from Stellar mainnet via Horizon. Account A was observed at
+three points as its balance and subentry count changed through ordinary use; account B is
+an independently created wallet observed once.
+
+**Table 1.** Measured accounts. Spendable computed per (4) with `f = 0.05`.
+
+| Obs. | Balance | s | Composition | R(s) | Spendable |
+| --- | ---: | ---: | --- | ---: | ---: |
+| A t₀ | 1.0000 | 0 | — | 1.00 | 0.00 |
+| A t₁ | 4.0000 | 4 | 3 data + 1 trustline | 3.00 | 0.95 |
+| A t₂ | 3.1000 | 4 | 3 data + 1 trustline | 3.00 | 0.05 |
+| B | 6.3504 | 3 | 2 data + 1 trustline | 2.50 | 3.80 |
+
+Observation A t₀ is instructive on its own. A freshly funded fee payer holding exactly
+1 XLM has a spendable balance of zero, because the account reserve consumes the entire
+balance. Every operation attempted from it fails, and the failure surfaces as
+`tx_insufficient_balance`, a result code whose plain reading — that the account is empty —
+is false.
+
+Decomposing A t₁ by (2):
+
+**Table 2.** Account A at t₁: 4.00 XLM held, 0.95 spendable.
+
+| Component | Class | XLM | Share of balance |
+| --- | --- | ---: | ---: |
+| Account base reserve | `s_proto` | 1.00 | 25.0% |
+| Recovery index (3 data entries) | `s_design` | 1.50 | 37.5% |
+| USDC trustline | `s_asset` | 0.50 | 12.5% |
+| **Total locked** | — | **3.00** | **75.0%** |
+
+The reserve tax `T` for this design, by (3), was **1.50 XLM per user**: 37.5% of this
+user's balance, held against entries they never elected and could not observe. The
+protocol's own share was smaller than the wallet's.
+
+## 6. A redundancy result
+
+The recovery index consisted of three entries: two holding the halves of the 65-byte
+uncompressed P-256 public key, and one holding the smart account's contract address. We
+show the third is redundant.
+
+The factory deploys each wallet with a salt derived from the public key, so the contract
+address is fully determined by the factory, the network, and the key:
+
+```
+salt    = sha256(0x04 ‖ X ‖ Y)
+address = strkey(sha256(HashIdPreimage::ContractId {
+            networkId: sha256(networkPassphrase),
+            contractIdPreimage: FromAddress { factory, salt }
+          }))
+```
+
+Since `X` and `Y` are exactly what the other two entries store, the address is computable
+from them. Evaluated against account A's live entries:
+
+```
+derived  CABCH3GZPGJOOZXPLN4EBXTLZSV6BUGFBXIKMNO2VJIPZ7ERENL7PCJ7
+stored   CABCH3GZPGJOOZXPLN4EBXTLZSV6BUGFBXIKMNO2VJIPZ7ERENL7PCJ7
+```
+
+The stored entry therefore carried no information, and reducing `s_design` from 3 to 2
+lowers `T` from 1.50 to 1.00 XLM per user with no loss of recoverability. The remaining two
+are irreducible under the current encoding: a 65-byte key does not fit in Stellar's 64-byte
+data value, so the split is forced by the format.
+
+### Why it survived review
+
+The entry was written by well-commented code, and the comment gave a correct reason for
+storing the address: that a WebAuthn assertion never reveals the public key, so the address
+cannot be re-derived. That statement is true in isolation. It stopped being true when the
+same commit began storing the public key two entries away, and nothing in the code or its
+comments recorded that the justification had lapsed.
+
+We flag this as a general hazard for on-chain state: a justification for storing a value
+can be invalidated by an unrelated change elsewhere in the same system, and the resulting
+cost is silent, standing, and paid by users rather than by the developer.
+
+## 7. Sponsorship as cost transfer
+
+Stellar provides a mechanism to move reserve obligations from one account to another:
+subentries created between `BeginSponsoringFutureReserves` and
+`EndSponsoringFutureReserves` are charged to the sponsor, and released back to the sponsor
+when removed. The sponsored user's own balance stays fully spendable.
+
+Applied to account A at t₁, sponsorship converts 0.95 spendable XLM into approximately
+3.05, at no cost to the user. The obligation becomes an operator liability linear in the
+user population:
+
+```
+C(N) = N · [ 1 + 0.5(s_design + s_asset) ]   XLM                     (5)
+```
+
+**Table 3.** Projected sponsorship liability, with `s_design = 2` and `s_asset = 1` (one
+stablecoin trustline), i.e. 2.5 XLM per user. USD at a mainnet-quoted 1 XLM = 0.1798 USDC.
+**Projection, not measurement.**
+
+| Users | XLM locked | ≈ USD |
+| ---: | ---: | ---: |
+| 1,000 | 2,500 | 449 |
+| 10,000 | 25,000 | 4,495 |
+| 100,000 | 250,000 | 44,950 |
+
+Two properties of this liability matter for anyone planning around it. It is
+**recoverable** rather than spent, so it is a working-capital requirement rather than an
+expense, and it unwinds as accounts close. But it is **denominated in XLM**, so an operator
+sponsoring at scale carries price exposure on a position they did not choose to take, which
+is a consideration we have not seen discussed in account-abstraction work and which grows
+precisely as adoption succeeds.
+
+## 8. Why this goes unreported
+
+We believe this class of cost is systematically under-reported for a structural reason
+rather than a careless one.
+
+Development happens on testnet. On testnet, XLM is free and unlimited: a developer funds an
+account from a faucet, and the reserve is paid in a token with no price. Every measurement
+in Table 1 would read identically on testnet and mean nothing. The design decision that
+creates a third data entry is invisible at the moment it is made, and remains invisible
+through every test, every review, and every demo.
+
+It becomes visible exactly once: when a real user with a real balance is refused a
+transaction they can afford. In the case documented here, the user held 4 XLM, requested a
+swap of 1 XLM, and was refused. The refusal was arithmetically correct and, from the user's
+position, indistinguishable from a bug.
+
+We therefore suggest that work presenting account-abstraction or smart-account designs on
+reserve-bearing chains report `s_design` as a stated quantity, in the way that gas costs are
+conventionally reported. It is a small number, it is easy to compute, and its absence hides
+a standing charge on users.
+
+## 9. Threats to validity
+
+- **Sample size.** Two accounts, one system, one chain. The decomposition in §4 generalises
+  by construction; the specific magnitudes in Table 2 do not.
+- **Single implementation.** A different recovery design would produce a different
+  `s_design`. A wallet delegating recovery to a custodian or a server would have
+  `s_design = 0` and a materially weaker trust model, which is precisely the trade this
+  paper is about and not a refutation of it.
+- **Protocol parameters are not constants.** The base reserve is a network parameter and
+  has changed historically. All figures assume 0.5 XLM.
+- **Price exposure.** Table 3's USD column depends on a single quoted rate at one moment
+  and should be read as an order of magnitude.
+- **Self-reporting.** The authors built the system measured. The redundancy in §6 is our
+  own defect, reported by us; readers should weight that accordingly, and the derivation is
+  given in full so it can be checked independently.
+
+## 10. Related specifications
+
+We cite specifications rather than a literature survey, since the relevant prior art for
+this system is normative rather than academic.
+
+- **W3C Web Authentication.** Assertion structure, client data, and the authenticator flags
+  relied on in §3.
+- **CAP-33, Sponsored Reserves.** The sponsorship mechanism modelled in §7.
+- **CAP-46 series, Soroban.** Contract authorisation, including the `__check_auth` entry
+  point.
+- **SEP-30, Account Recovery.** Recovery-server protocol, an alternative to the guardian
+  mechanism.
+- **EIP-4337, Account Abstraction.** The comparable design space on EVM chains, notable
+  here for lacking an analogous per-subentry reserve and therefore lacking this cost class
+  entirely.
+
+## 11. Conclusion
+
+Whether a contract can verify a passkey is no longer the interesting question on Stellar;
+it can, cheaply, and the transactions are on mainnet. The question that decides whether such
+a wallet is usable by someone holding four dollars rather than four hundred is how much of
+their balance the design quietly immobilises.
+
+For the system measured here the answer was 37.5%, of which a third was pure redundancy.
+Both figures were discovered by a user being refused a transaction, not by testing, because
+testnet cannot express them. We think that is the generalisable finding: on chains that
+charge for state, the cost of a self-custodial recovery design falls on the user's spendable
+balance, and it should be measured and published rather than left for them to discover.
+
+<Callout type="info">
+Every account figure in this report was read from Stellar mainnet during writing, and the
+derivation in §6 was executed against the live entries it describes. Table 3 is explicitly a
+projection. Corrections welcome as issues on
+[the repository](https://github.com/Miracle656/veil/issues).
+</Callout>

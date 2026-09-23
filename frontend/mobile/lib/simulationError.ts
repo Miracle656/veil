@@ -14,6 +14,8 @@
 
 import { TransactionBuilder } from '@stellar/stellar-sdk';
 
+import { friendlyHostError } from './networkErrors';
+
 /** A well-formed base64 envelope is never this short; empty is the failure we can name locally. */
 const MIN_PLAUSIBLE_XDR = 80;
 
@@ -89,6 +91,15 @@ export function simulationErrorMessage(params: {
   network: string;
   xdrLength: number;
 }): string {
+  // A contract error we can name gets a sentence the user can act on; the
+  // full context still goes to the console. Anything unrecognised keeps the
+  // detailed form below, which is what a developer needs to place it.
+  const friendly = friendlyHostError(params.error);
+  if (friendly) {
+    console.warn(`[simulation] ${params.flow} (${params.network}): ${params.error}`);
+    return friendly;
+  }
+
   let host = 'unknown host';
   try {
     host = new URL(params.rpcUrl).host;

@@ -31,7 +31,7 @@ type HorizonFailure = {
  * data entry it holds. An account showing 0.6 XLM with a trustline already open
  * has nothing spendable at all.
  */
-const TRANSACTION_CODES: Record<string, string> = {
+export const TRANSACTION_CODES: Record<string, string> = {
   tx_insufficient_balance:
     "This account doesn't have enough XLM. Stellar locks 1 XLM per account plus 0.5 for each trustline, and the balance can't drop below that.",
   tx_insufficient_fee: 'The network fee offered was too low. Try again in a moment.',

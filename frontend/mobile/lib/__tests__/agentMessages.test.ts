@@ -22,8 +22,8 @@ import {
   describeSubmissionError,
   isProposalForFeePayer,
   nextMessageId,
-  parseAgentServerEvent,
   parseInlineMarkup,
+  proposalRefusal,
   reviewProposedTransaction,
   shortenAddress,
   type ProposalReview,
@@ -37,58 +37,6 @@ function builder(source: Keypair) {
     networkPassphrase: Networks.TESTNET,
   });
 }
-
-// ── Wire protocol ────────────────────────────────────────────────────────────
-
-describe('parseAgentServerEvent', () => {
-  it('accepts the frames the agent service sends', () => {
-    expect(parseAgentServerEvent('{"type":"thinking"}')).toEqual({ type: 'thinking' });
-    expect(parseAgentServerEvent('{"type":"history_cleared"}')).toEqual({
-      type: 'history_cleared',
-    });
-    expect(parseAgentServerEvent('{"type":"error","message":"boom"}')).toEqual({
-      type: 'error',
-      message: 'boom',
-    });
-    expect(parseAgentServerEvent('{"type":"response","message":"hi"}')).toEqual({
-      type: 'response',
-      message: 'hi',
-    });
-  });
-
-  it('carries a pending transaction and its summary', () => {
-    expect(
-      parseAgentServerEvent(
-        '{"type":"response","message":"Ready","pendingTxXdr":"AAAA","pendingTxSummary":"Send 5 XLM"}'
-      )
-    ).toEqual({
-      type: 'response',
-      message: 'Ready',
-      pendingTxXdr: 'AAAA',
-      pendingTxSummary: 'Send 5 XLM',
-    });
-  });
-
-  it('ignores an empty transaction rather than offering an empty approval', () => {
-    const event = parseAgentServerEvent('{"type":"response","message":"Ready","pendingTxXdr":""}');
-
-    expect(event).toEqual({ type: 'response', message: 'Ready' });
-  });
-
-  it('rejects frames it does not understand', () => {
-    expect(parseAgentServerEvent('not json')).toBeNull();
-    expect(parseAgentServerEvent('null')).toBeNull();
-    expect(parseAgentServerEvent('"a string"')).toBeNull();
-    expect(parseAgentServerEvent('{"type":"future_feature"}')).toBeNull();
-    // A response has to have prose; a message-less one is malformed.
-    expect(parseAgentServerEvent('{"type":"response"}')).toBeNull();
-    expect(parseAgentServerEvent('{"type":"error"}')).toBeNull();
-    // A non-string XDR must not reach the approval path.
-    expect(
-      parseAgentServerEvent('{"type":"response","message":"hi","pendingTxXdr":{"evil":true}}')
-    ).toEqual({ type: 'response', message: 'hi' });
-  });
-});
 
 describe('nextMessageId', () => {
   it('never repeats an id', () => {
@@ -265,5 +213,46 @@ describe('shortenAddress', () => {
 
     expect(shortenAddress(address)).toBe(`${address.slice(0, 6)}…${address.slice(-6)}`);
     expect(shortenAddress('GABC')).toBe('GABC');
+  });
+});
+
+describe('proposalRefusal', () => {
+  const owner = Keypair.random();
+  const stranger = Keypair.random();
+
+  function review(build: (b: TransactionBuilder) => TransactionBuilder, source = owner) {
+    const xdr = build(builder(source)).setTimeout(60).build().toXDR();
+    return reviewProposedTransaction(xdr, Networks.TESTNET);
+  }
+
+  const payment = (b: TransactionBuilder) =>
+    b.addOperation(
+      Operation.payment({ destination: stranger.publicKey(), asset: Asset.native(), amount: '1' })
+    );
+
+  it("allows a payment from this wallet's own fee payer", () => {
+    expect(proposalRefusal(review(payment), owner.publicKey())).toBeNull();
+  });
+
+  it('refuses a transaction it could not decode', () => {
+    expect(proposalRefusal(null, owner.publicKey())).toMatch(/could not be decoded/);
+  });
+
+  it("refuses a transaction sourced from someone else's account", () => {
+    expect(proposalRefusal(review(payment, stranger), owner.publicKey())).toMatch(/not this wallet's fee payer/);
+  });
+
+  it('refuses when this device has no fee payer to compare with', () => {
+    expect(proposalRefusal(review(payment), null)).not.toBeNull();
+  });
+
+  it('refuses an operation the screen cannot show — the kind a manipulated agent slips in', () => {
+    const takeover = (b: TransactionBuilder) =>
+      payment(b).addOperation(Operation.setOptions({ masterWeight: 0 }));
+    expect(proposalRefusal(review(takeover), owner.publicKey())).toMatch(/cannot show you/);
+
+    const merge = (b: TransactionBuilder) =>
+      b.addOperation(Operation.accountMerge({ destination: stranger.publicKey() }));
+    expect(proposalRefusal(review(merge), owner.publicKey())).toMatch(/cannot show you/);
   });
 });

@@ -38,6 +38,8 @@ export type CreatedWallet = {
    * Absent for plain keypair wallets, where the question doesn't apply.
    */
   recoverable?: boolean;
+  /** Why the recovery secret could not be bound, when `recoverable` is false. */
+  recoveryIssue?: 'unsupported' | 'cancelled' | 'failed';
 };
 
 /**

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://docs.useveilapp.xyz</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/agent-integration</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/architecture</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/contract-api</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/contract-upgrades</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/cookbook</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/cookbook/in-app-tipping</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/cookbook/payroll-batch</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/cookbook/subscription-billing</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/getting-started</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/guides/fees</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/guides/networks</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/guides/wallet-features</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/guides/when-not-veil</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/local-dev</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/research/reserve-tax</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/sdk-errors</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/sdk-reference</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/security</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/security/key-rotation</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/threat-model</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/troubleshooting</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/troubleshooting/passkeys</loc></url>
+</urlset>

@@ -37,3 +37,24 @@ TODO.md
 frontend/wallet/__sep*probe*.mjs
 frontend/wallet/__sep45probe.mjs
 frontend/wallet/__shot.mjs
+
+# Secrets and signing material. `*.env` does not match `.env.local`, so these
+# were reachable by a plain `git add -A` until 2026-09-18.
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+*.jks
+*.keystore
+*.p12
+
+# Security review working files. This repository is public; verification notes
+# and embargoed issue drafts describe unfixed defects and must not be pushed.
+security-review/
+veil-assessment-*.pdf
+
+# Agent build output. `npm start` builds first (prestart), so a committed dist/
+# can only ever be stale: the one removed here was from April and ran none of
+# the August hardening (origin allowlist, token, rate limit).
+packages/agent/dist/

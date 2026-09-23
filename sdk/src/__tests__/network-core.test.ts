@@ -64,10 +64,10 @@ describe('SDK Core Modules', () => {
   });
 
   describe('fees', () => {
-    it('returns standard BASE_FEE for testnet and 1000000 stroops for mainnet', () => {
+    it('returns standard BASE_FEE for testnet and 100000 stroops (0.01 XLM) for mainnet', () => {
       expect(inclusionFee('testnet')).toBe('100');
-      expect(inclusionFee('mainnet')).toBe('1000000');
-      expect(inclusionFee(NETWORKS.mainnet)).toBe('1000000');
+      expect(inclusionFee('mainnet')).toBe('100000');
+      expect(inclusionFee(NETWORKS.mainnet)).toBe('100000');
       expect(inclusionFee()).toBe('100');
     });
   });
