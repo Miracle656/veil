@@ -1,5 +1,8 @@
 import { buildSponsoredFeeBumpTransaction } from '../feeBump'
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
+import { TextEncoder } from 'util'
+
+global.TextEncoder = TextEncoder as any
 
 jest.mock('@stellar/stellar-sdk', () => {
   const sponsorKeypair = {
@@ -24,6 +27,7 @@ jest.mock('@stellar/stellar-sdk', () => {
       buildFeeBumpTransaction: jest.fn(() => feeBump),
     },
     xdr: {},
+    Horizon: { Server: jest.fn() },
   }
 })
 

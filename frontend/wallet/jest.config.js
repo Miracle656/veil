@@ -34,6 +34,7 @@ const config = {
     '^@veil/sep7$':     '<rootDir>/../../sdk/src/sep7',
     '^@veil/prf$':      '<rootDir>/../../sdk/src/crypto/prf',
   },
+  setupFiles: ['<rootDir>/jest.setup.js'],
   setupFilesAfterEnv: [],
   collectCoverageFrom: [
     'lib/**/*.ts',

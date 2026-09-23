@@ -3,7 +3,7 @@
 import { inclusionFee } from './fees'
 import { useState, useEffect, useCallback } from 'react'
 import { Core } from '@walletconnect/core'
-import { Web3Wallet, type IWeb3Wallet } from '@walletconnect/web3wallet'
+import { WalletKit, type IWalletKit } from '@reown/walletkit'
 import { getSdkError } from '@walletconnect/utils'
 import {
   Keypair,
@@ -76,7 +76,7 @@ export type WalletConnectProposal = {
 type SessionListener = (sessions: WalletConnectSession[]) => void
 type ProposalListener = (proposal: WalletConnectProposal | null) => void
 
-let _client: IWeb3Wallet | null = null
+let _client: IWalletKit | null = null
 let _sessions: WalletConnectSession[] = []
 let _pendingProposal: WalletConnectProposal | null = null
 
@@ -127,7 +127,7 @@ function notifyProposal(): void {
   for (const listener of proposalListeners) listener(_pendingProposal)
 }
 
-async function syncSessionsFromClient(client: IWeb3Wallet): Promise<void> {
+async function syncSessionsFromClient(client: IWalletKit): Promise<void> {
   const active = client.getActiveSessions()
   _sessions = Object.values(active).map(parseSession)
   persistSessions(_sessions)
@@ -446,7 +446,7 @@ export function getPendingWalletConnectProposal(): WalletConnectProposal | null 
   return _pendingProposal
 }
 
-export async function getWalletConnectClient(): Promise<IWeb3Wallet> {
+export async function getWalletConnectClient(): Promise<IWalletKit> {
   if (_client) return _client
 
   if (typeof window === 'undefined') {
@@ -462,7 +462,7 @@ export async function getWalletConnectClient(): Promise<IWeb3Wallet> {
   }
 
   const core = new Core({ projectId })
-  _client = await Web3Wallet.init({
+  _client = await WalletKit.init({
     core,
     metadata: {
       name: 'Veil Wallet',
