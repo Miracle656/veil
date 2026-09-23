@@ -424,3 +424,51 @@ network with `EXPO_PUBLIC_SOROBAN_RPC_URL` and `EXPO_PUBLIC_NETWORK_PASSPHRASE`
 amount conversion, owner and duplicate-approval checks, and whether the next
 approval is the deciding one — so a rejection arrives immediately instead of as
 a contract panic after a fee.
+
+## Shielded-pool circuits
+
+Proving against a shielded payment pool (SPP) policy needs its circuit
+artifacts — an 8.1 MB r1cs plus a 4.1 MB proving key, about 12 MB in total for
+the block-list pool. They must not ship inside the APK (every install would pay
+for one pool's circuits, frozen at build time), and a tampered file must never
+be used, so `lib/privacy/circuits.ts` downloads them on first use, caches them
+on the device, and verifies every byte against SPP's published checksums — the
+circuit lockfile — before handing anything to the prover.
+
+`ensureCircuits(policy, { onProgress })` is the only way to get artifact
+paths, and it never returns one it has not just checked:
+
+```ts
+const bytes = await estimateCircuitDownload('block-list'); // lockfile only
+const hint = circuitDownloadHint(connectionType, bytes); // Wi-Fi hint on cellular
+
+const circuits = await ensureCircuits('block-list', { onProgress: report });
+// circuits.r1cs.uri / circuits.provingKey.uri — verified file:// paths
+```
+
+- **Checksum mismatch → refuse.** A file whose SHA-256 differs from the
+  lockfile (in transit, at rest, or when lockfile and server disagree) is
+  deleted and raises `CircuitChecksumError`; there is no code path that proves
+  with an unverified circuit. Network failures instead raise
+  `CircuitDownloadError` and keep what was received.
+- **Resumable.** Bytes arrive as ranged chunk requests appended to a
+  `<policy>.<artifact>.part` file, so a dropped connection costs only the chunk
+  in flight — the next `ensureCircuits` call continues from the last byte
+  written rather than starting over (a server that ignores `Range` forces a
+  one-time restart, then verification still applies).
+- **Wi-Fi hint.** `estimateCircuitDownload` quotes the policy's total from the
+  lockfile alone, and `circuitDownloadHint(useConnectivity().connectionType,
+  bytes)` turns that into "12.2 MB over mobile data — Wi-Fi recommended."
+  exactly when the connection is cellular.
+- **Lockfile is the root of trust.** It is fetched over https from
+  `EXPO_PUBLIC_SPP_LOCKFILE_URL` (defaulting to the app domain's published
+  location) and validated strictly — schema generation, key shape, size, hex
+  SHA-256. A copy of the last lockfile that validated is kept, so an offline
+  device can still verify the circuits it already holds.
+- **APK size unchanged.** No asset, no new dependency — the artifacts live on
+  the device's document directory (`veil-circuits/`), not in the bundle.
+
+The suite in `lib/__tests__/circuits.test.ts` drives the module through an
+in-memory store and a scripted range-serving host, and pins the acceptance
+criteria directly: mismatch deletes and refuses, interruption resumes from the
+saved offset, and a verified cache makes no further artifact requests.
