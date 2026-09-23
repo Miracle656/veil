@@ -31,6 +31,13 @@ const mockOperationPathPayment: any = jest.fn()
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockOperationChangeTrust: any = jest.fn()
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockStrictSendPaths: any = jest.fn().mockReturnValue({
+  call: (jest.fn() as any).mockResolvedValue({
+    records: [{ path: [], destination_amount: '100' }],
+  }),
+})
+
 // ── ESM mock (must precede dynamic import of txBuilder) ───────────────────────
 
 jest.unstable_mockModule('@stellar/stellar-sdk', () => {
@@ -47,7 +54,10 @@ jest.unstable_mockModule('@stellar/stellar-sdk', () => {
 
   return {
     Horizon: {
-      Server: jest.fn().mockImplementation(() => ({ loadAccount: mockLoadAccount })),
+      Server: jest.fn().mockImplementation(() => ({
+        loadAccount: mockLoadAccount,
+        strictSendPaths: mockStrictSendPaths,
+      })),
     },
     TransactionBuilder: jest.fn().mockImplementation(() => mockTxInstance),
     Networks: {

@@ -14,31 +14,100 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  VEIL_BUILD_IMAGE: rust:1.85.0-bookworm@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e
+
 jobs:
   reproducible-build:
     name: Reproducible WASM build & hash verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source (first build)
+        uses: actions/checkout@v4
 
       # Acceptance: CI fails if the build drifts from the committed hash.
       - name: Build & verify against committed hashes
-        run: scripts/reproducible-build.sh
-
-      # Acceptance: deterministic build — the same source yields the same hash
-      # across two independent builds. We regenerate the hash document twice and
-      # assert the two are byte-identical.
-      - name: Determinism — build twice and compare
         run: |
           set -euo pipefail
+          scripts/reproducible-build.sh
           cp contracts/expected-hashes.json /tmp/run-1.json
-          rm -f contracts/expected-hashes.json
-          scripts/reproducible-build.sh --update
-          cp contracts/expected-hashes.json /tmp/run-2.json
-          # Restore the committed file so the working tree stays clean.
-          git checkout -- contracts/expected-hashes.json
-          if ! diff -u /tmp/run-1.json /tmp/run-2.json; then
-            echo "::error::Non-deterministic build — two runs produced different hashes." >&2
+
+      # Acceptance: second build starts from a clean checkout and an empty target/
+      # with zero shared state from the first build.
+      - name: Clean checkout (independent second build)
+        uses: actions/checkout@v4
+        with:
+          path: clean-rebuild
+          clean: true
+
+      - name: Determinism — rebuild from clean checkout and compare
+        working-directory: clean-rebuild
+        run: |
+          set -euo pipefail
+          # Assert that target/ does not exist so the rebuild is truly clean and unshared
+          if [ -d contracts/target ]; then
+            echo "::error::Verification build directory must start with an empty/non-existent target/" >&2
             exit 1
           fi
-          echo "Build is deterministic: both runs produced identical hashes."
+          scripts/reproducible-build.sh --update
+          cp contracts/expected-hashes.json /tmp/run-2.json
+          if ! diff -u /tmp/run-1.json /tmp/run-2.json; then
+            echo "::error::Non-deterministic build — two independent runs produced different hashes." >&2
+            exit 1
+          fi
+          echo "Build is deterministic: both independent runs produced identical hashes."
+
+      # Acceptance: Record the resulting WASM hashes in the job summary and verify match.
+      - name: Record WASM hashes in job summary
+        run: |
+          python3 - << 'PY'
+          import json, os, sys
+
+          with open("/tmp/run-1.json") as f1, open("/tmp/run-2.json") as f2, open("contracts/expected-hashes.json") as fe:
+              r1 = json.load(f1)
+              r2 = json.load(f2)
+              expected = json.load(fe)
+
+          artifacts1 = r1.get("artifacts", {})
+          artifacts2 = r2.get("artifacts", {})
+          exp_artifacts = expected.get("artifacts", {})
+
+          if artifacts1 != artifacts2:
+              print("::error::Hashes differ between run 1 and run 2", file=sys.stderr)
+              sys.exit(1)
+
+          if artifacts1 != exp_artifacts:
+              print("::error::Hashes do not match contracts/expected-hashes.json", file=sys.stderr)
+              sys.exit(1)
+
+          lines = [
+              "## Reproducible WASM Build & Hash Verification",
+              "",
+              "The Soroban contract WASM was built deterministically in a container pinned by digest across two genuinely independent builds.",
+              "",
+              "| Contract WASM | SHA-256 Digest | Status |",
+              "| --- | --- | --- |",
+          ]
+
+          for name in sorted(exp_artifacts.keys()):
+              digest = exp_artifacts[name]
+              lines.append(f"| `{name}` | `{digest}` | :white_check_mark: Verified Match |")
+
+          image = r1.get("image", os.environ.get("VEIL_BUILD_IMAGE", "pinned"))
+          lines.extend([
+              "",
+              f"- **Build Image (pinned by digest):** `{image}`",
+              f"- **Target:** `{r1.get('target', 'wasm32-unknown-unknown')}`",
+              f"- **Toolchain:** `{r1.get('toolchain', '1.85.0')}`",
+              "- **Independent Rebuild:** Second build started from a clean checkout with an empty `target/` directory.",
+              "- **Byte-for-byte Match:** All release artifacts match `contracts/expected-hashes.json` identically.",
+              "",
+          ])
+
+          output = "\n".join(lines)
+          print(output)
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a") as f:
+                  f.write(output + "\n")
+          PY
