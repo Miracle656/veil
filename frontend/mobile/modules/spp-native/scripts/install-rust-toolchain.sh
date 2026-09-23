@@ -29,14 +29,25 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 TARGETS="aarch64-linux-android armv7-linux-androideabi x86_64-linux-android"
-CARGO_NDK_VERSION="3.5.7"
+CARGO_NDK_VERSION="4.1.2"
+
+# Prefer the pinned version; fall back to the latest available one if the pin
+# disappears (cargo-ndk 3.5.7 was yanked from crates.io mid-flight and broke
+# a CI run at exactly this step).
+install_cargo_ndk() {
+  if cargo ndk --version >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! cargo install cargo-ndk --locked --version "$CARGO_NDK_VERSION"; then
+    echo "[spp-native] cargo-ndk $CARGO_NDK_VERSION unavailable (yanked?) — installing the latest release instead"
+    cargo install cargo-ndk --locked
+  fi
+}
 
 if command -v cargo >/dev/null 2>&1; then
   echo "[spp-native] cargo already available: $(cargo --version)"
   rustup target add $TARGETS
-  if ! cargo ndk --version >/dev/null 2>&1; then
-    cargo install cargo-ndk --locked --version "$CARGO_NDK_VERSION"
-  fi
+  install_cargo_ndk
   exit 0
 fi
 
@@ -49,7 +60,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
 
 export PATH="$CARGO_HOME/bin:$PATH"
 rustup target add $TARGETS
-cargo install cargo-ndk --locked --version "$CARGO_NDK_VERSION"
+install_cargo_ndk
 
 linked=0
 for bin in "$CARGO_HOME"/bin/*; do
