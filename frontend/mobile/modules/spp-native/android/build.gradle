@@ -121,11 +121,29 @@ rustTargets.each { target ->
   }
 }
 
+// uniffi-bindgen reads its metadata from the compiled host cdylib, so that
+// library has to exist first. `cargo run --bin uniffi-bindgen` only builds the
+// rlib the binary links against — never the cdylib — so without this task the
+// `generate` step below fails with "No such file or directory" for
+// target/release/libspp_prover.so. A plain host `cargo build` of the package
+// emits every crate-type (cdylib, staticlib, rlib) plus the bin, so the
+// subsequent `cargo run` finds it all cached.
+tasks.register('buildRustHost', Exec) {
+  group = 'spp'
+  description = 'Builds the host cdylib uniffi-bindgen reads metadata from'
+  onlyIf { cargoAvailable }
+  workingDir rustDir
+  commandLine 'cargo', 'build', '--release', '-p', 'spp-prover'
+  environment CARGO_TERM_COLOR: 'never',
+    RUSTFLAGS: "--remap-path-prefix=${System.getProperty('user.home')}=~"
+}
+
 // Generate the uniffi Kotlin bindings from the compiled host library.
 tasks.register('generateUniffiBindings', Exec) {
   group = 'spp'
   description = 'Generates Kotlin bindings from spp_native.udl'
   onlyIf { cargoAvailable }
+  dependsOn 'buildRustHost'
   workingDir rustDir
   def hostLib = file("${rustDir}/target/release/libspp_prover.so")
   doFirst {
