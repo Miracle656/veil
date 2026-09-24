@@ -23,21 +23,21 @@ dictionary ProveResult {
 };
 
 dictionary ProveOutcome {
-  ProveResult result;
-  string error_code;
-  string detail;
+  ProveResult? result;
+  string? error_code;
+  string? detail;
 };
 
 dictionary VerifyOutcome {
   boolean verified;
-  string error_code;
-  string detail;
+  string? error_code;
+  string? detail;
 };
 
 dictionary SyncOutcome {
-  SyncCheckpoint checkpoint;
-  string error_code;
-  string detail;
+  SyncCheckpoint? checkpoint;
+  string? error_code;
+  string? detail;
 };
 
 dictionary SyncCheckpoint {

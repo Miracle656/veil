@@ -7,11 +7,9 @@
 
 use std::fmt;
 
-use uniffi::Record;
-
 /// One input being consumed: a nullifier (the note, revealed) and the Merkle
 /// path that proves it existed at `anchor`.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct Input {
     /// 32-byte nullifier — unique per note, prevents double-spend.
     pub nullifier: Vec<u8>,
@@ -21,7 +19,7 @@ pub struct Input {
 
 /// One output being created: a fresh commitment the recipient (or change
 /// wallet) will later spend against.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct Output {
     /// 32-byte note commitment: hash(note_key, amount, rho).
     pub commitment: Vec<u8>,
@@ -34,7 +32,7 @@ pub struct Output {
 }
 
 /// The V141 SPP transaction.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct SppTransaction {
     /// Merkle root the input notes existed at. Zeroed for a pure mint.
     pub anchor: Vec<u8>,

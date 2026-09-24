@@ -24,6 +24,6 @@ pub(crate) fn verify(_proof: &[u8], _public_inputs: &[u8]) -> VerifyOutcome {
     let _ = SPP_CIRCUITS_LOCKFILE;
     VerifyOutcome::err(
         error_codes::PROVER,
-        "canonical SPP verification is not available through the legacy Veil proof shape",
+        "canonical SPP verification is not available through the legacy Veil proof shape".to_string(),
     )
 }

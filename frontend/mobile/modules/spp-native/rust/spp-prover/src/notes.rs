@@ -7,13 +7,11 @@
 
 use sha2::{Digest, Sha256};
 
-use uniffi::Record;
-
 use crate::circ_err::Error;
 use crate::ProverError;
 
 /// A note this wallet can spend.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct SpendNote {
     /// The note's secret spending key.
     pub note_key: Vec<u8>,
@@ -54,7 +52,7 @@ impl SpendNote {
 
 /// A Merkle authentication path: the sibling hashes from the note's leaf up
 /// to the root, plus which side each sibling sits on.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct MerklePath {
     /// Depth of the tree the path climbs (path length).
     pub depth: u8,
@@ -108,7 +106,7 @@ impl MerklePath {
 
 /// A note this transaction creates, carried into `prove` so the nullifier
 /// binding can include the outputs' preimages without them being public.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct OutputNote {
     /// The note's secret spending key, held by the recipient.
     pub note_key: Vec<u8>,

@@ -5,6 +5,8 @@
 //! single place those invariants are checked, so the JS layer cannot
 //! accidentally rewind the wallet's view of the chain.
 
+use sha2::Digest;
+
 use crate::{ProverError, SyncCheckpoint};
 
 /// Advance `checkpoint` to `to_height` against `leaves`, the commitment

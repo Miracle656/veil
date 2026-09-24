@@ -26,14 +26,18 @@ mod spp_adapter;
 mod state;
 mod uniffi_support;
 
-use uniffi::Record;
+// The uniffi scaffolding (included at the bottom of this file) references every
+// UDL dictionary type by bare name at the crate root, so the record types that
+// live in submodules have to be re-exported here.
+pub use notes::{MerklePath, OutputNote, SpendNote};
+pub use payload::{Input, Output, SppTransaction};
 
 /// Everything the prover needs to produce one SPP proof.
 ///
 /// The JS layer serialises this from `lib/sppProver.ts`, so the field set
 /// must stay in lockstep with `SppProveRequest` there — uniffi will fail the
 /// build if the UDL and this struct drift.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct ProveRequest {
     /// The SPP transaction being proven (V141 shape).
     pub transaction: payload::SppTransaction,
@@ -48,7 +52,7 @@ pub struct ProveRequest {
 }
 
 /// The proof and the public inputs the verifier will re-derive on-chain.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct ProveResult {
     /// Serialised Groth16 proof (arkworks' canonical byte encoding).
     pub proof: Vec<u8>,
@@ -61,7 +65,7 @@ pub struct ProveResult {
 
 /// Result of a `prove` call. `result` is null exactly when `error_code` is
 /// set — the pair is checked, never trusted.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct ProveOutcome {
     /// The proof, on success.
     pub result: Option<ProveResult>,
@@ -83,7 +87,7 @@ impl ProveOutcome {
 }
 
 /// Result of a `verify` call — same shape rules as `ProveOutcome`.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct VerifyOutcome {
     /// Whether the proof verified. Meaningless when `error_code` is set.
     pub verified: bool,
@@ -102,7 +106,7 @@ impl VerifyOutcome {
 }
 
 /// Result of a `sync_to` call — same shape rules as `ProveOutcome`.
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct SyncOutcome {
     /// The advanced checkpoint, on success.
     pub checkpoint: Option<SyncCheckpoint>,
@@ -121,7 +125,7 @@ impl SyncOutcome {
 }
 
 /// Sync checkpoint for the SPP state machine (`state.rs`).
-#[derive(Debug, Clone, Record)]
+#[derive(Debug, Clone)]
 pub struct SyncCheckpoint {
     /// Height the state has scanned through.
     pub scanned_height: u64,
@@ -142,8 +146,11 @@ pub fn prove(request: ProveRequest) -> ProveOutcome {
 
 /// Verify a proof against the public inputs — cheap, used to sanity-check a
 /// proof before it is submitted.
-pub fn verify(proof: &[u8], public_inputs: &[u8]) -> VerifyOutcome {
-    spp_adapter::verify(proof, public_inputs)
+///
+/// uniffi's UDL `bytes` maps to `Vec<u8>` on the Rust side, so the exported
+/// signature takes owned buffers; the adapter still works on slices.
+pub fn verify(proof: Vec<u8>, public_inputs: Vec<u8>) -> VerifyOutcome {
+    spp_adapter::verify(&proof, &public_inputs)
 }
 
 /// Advance the sync state machine to `to_height` against the given
@@ -178,5 +185,5 @@ pub(crate) mod error_codes {
     pub const INVALID_SYNC: &str = "invalid_sync";
 }
 
-/// uniffi scaffolding for the `spp_native` library.
+// uniffi scaffolding for the `spp_native` library.
 uniffi::include_scaffolding!("spp_native");
