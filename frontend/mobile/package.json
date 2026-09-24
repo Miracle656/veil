@@ -1,6 +1,6 @@
 {
   "name": "veil-mobile",
-  "main": "expo-router/entry",
+  "main": "index.js",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -13,9 +13,9 @@
     "test": "jest",
     "e2e": "maestro test .maestro",
     "e2e:device": "maestro test --include-tags device .maestro",
-    "build:android:dev": "eas build -p android --profile development",
-    "build:android:preview": "eas build -p android --profile preview",
-    "build:android:production": "eas build -p android --profile production"
+    "build:android:dev": "npx --yes eas-cli@latest build -p android --profile development",
+    "build:android:preview": "npx --yes eas-cli@latest build -p android --profile preview",
+    "build:android:production": "npx --yes eas-cli@latest build -p android --profile production"
   },
   "dependencies": {
     "@blend-capital/blend-sdk": "^3.3.0",
@@ -37,6 +37,7 @@
     "buffer": "^6.0.3",
     "expo": "~54.0.0",
     "expo-application": "~7.0.8",
+    "expo-background-task": "~1.0.10",
     "expo-camera": "~17.0.10",
     "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.14",
@@ -49,12 +50,14 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-local-authentication": "~17.0.9",
+    "expo-notifications": "~0.32.17",
     "expo-router": "~6.0.24",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "expo-system-ui": "~6.0.9",
+    "expo-task-manager": "~14.0.9",
     "expo-web-browser": "~15.0.11",
     "invisible-wallet-sdk": "file:../../sdk",
     "react": "19.1.0",

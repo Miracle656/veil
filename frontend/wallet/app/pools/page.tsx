@@ -564,8 +564,8 @@ export default function PoolsPage() {
                       width: '100%',
                       textAlign: 'left',
                       cursor: 'pointer',
-                      borderColor: isSelected ? 'rgba(253,218,36,0.35)' : 'var(--border-dim)',
-                      background: isSelected ? 'rgba(253,218,36,0.05)' : 'var(--surface)',
+                      borderColor: isSelected ? 'var(--gold)' : 'var(--border-dim)',
+                      background: isSelected ? 'var(--surface-md)' : 'var(--surface)',
                     }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.65rem' }}>
@@ -640,9 +640,9 @@ export default function PoolsPage() {
                       borderRadius: 999,
                       border: '1px solid',
                       cursor: 'pointer',
-                      background: mode === item ? 'var(--gold)' : 'transparent',
-                      borderColor: mode === item ? 'var(--gold)' : 'rgba(246,247,248,0.12)',
-                      color: mode === item ? 'var(--near-black)' : 'var(--off-white)',
+                      background: mode === item ? 'var(--surface-md)' : 'transparent',
+                      borderColor: mode === item ? 'var(--gold)' : 'var(--border-dim)',
+                      color: mode === item ? 'var(--gold)' : 'var(--off-white)',
                       fontSize: '0.875rem',
                       fontWeight: 600,
                     }}

@@ -1,0 +1,158 @@
+name: Mobile APK (community)
+
+# Builds the community APK testers install, on GitHub's runner instead of EAS's
+# cloud. `eas build --local` does not use the Expo account's cloud build
+# allowance, and GitHub Actions minutes are free for this public repo.
+#
+# Same account, same key: with EXPO_TOKEN set, the build pulls the Android
+# keystore and the production environment variables from the existing Expo
+# project, and bumps the remote versionCode, so the APK installs over the
+# current app. A build signed with any other key could not, and passkeys would
+# break: Android only allows them for app.useveilapp.xyz when the signing
+# certificate matches assetlinks.json. The verify step below fails the run
+# before the APK is published if that ever stops being true.
+#
+# Manual only. Nothing here runs on pull requests, so the token is never
+# exposed to forks, and only people with write access can start a build.
+on:
+  workflow_dispatch:
+
+permissions:
+  # Write, because a successful build is published as a release below.
+  contents: write
+
+concurrency:
+  group: mobile-apk
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: Build community APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: frontend/mobile
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EAS_SKIP_AUTO_FINGERPRINT: '1'
+      APK_PATH: ${{ github.workspace }}/veil-community.apk
+    steps:
+      # Runs before checkout, so it cannot use the frontend/mobile default.
+      - name: Require EXPO_TOKEN
+        working-directory: .
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::error::Add the EXPO_TOKEN secret (Settings → Secrets and variables → Actions) before building."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/mobile/package-lock.json
+
+      # The runner image ships Android build tools; Java is pinned to the
+      # version React Native 0.81 / Expo SDK 54 builds against.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Plain npm, not --legacy-peer-deps: the mobile lockfile is kept that way.
+      - name: Install app dependencies
+        run: npm ci || npm install
+
+      - name: Install EAS CLI
+        run: npm install --global eas-cli@latest
+
+      # Expo's generated android/gradle.properties caps the Gradle daemon at
+      # 2 GB, and packaging this APK (four ABIs, ~120 MB) ran out of heap after
+      # 23 minutes of compiling. The user-level file overrides the project one;
+      # the runner has 16 GB.
+      - name: Give Gradle enough memory
+        working-directory: .
+        run: |
+          dir="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$dir"
+          echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8" >> "$dir/gradle.properties"
+          echo "kotlin.daemon.jvmargs=-Xmx2g" >> "$dir/gradle.properties"
+          cat "$dir/gradle.properties"
+
+      - name: Build APK locally with EAS
+        run: >-
+          eas build
+          --platform android
+          --profile community
+          --local
+          --non-interactive
+          --output "$APK_PATH"
+
+      # Fail closed: the certificate must be the one assetlinks.json publishes.
+      # Build 3 (2026-09-14) was checked the same way and is 0F:DA:A5:8B….
+      - name: Verify signing certificate matches assetlinks.json
+        working-directory: .
+        run: |
+          # Read from the APK's v2/v3 signing block directly. The first version
+          # of this step parsed apksigner's output and read nothing, which failed
+          # a good build; this script was checked against build 3 first.
+          actual=$(python3 scripts/apk-cert-sha256.py "$APK_PATH")
+          expected=$(jq -r '.[] | select(.target.namespace == "android_app" and .target.package_name == "xyz.veil.wallet") | .target.sha256_cert_fingerprints[0]' \
+            frontend/wallet/public/.well-known/assetlinks.json | tr -d ':' | tr 'a-f' 'A-F')
+          echo "APK certificate SHA-256:         $actual"
+          echo "assetlinks.json certificate:     $expected"
+          if [ -z "$actual" ] || [ "$actual" != "$expected" ]; then
+            echo "::error::Signing certificate does not match assetlinks.json. Do not distribute this APK: it would not install over the current app, and passkeys would fail."
+            exit 1
+          fi
+          {
+            echo "### Community APK"
+            echo ""
+            echo "- Signing certificate matches assetlinks.json: \`$actual\`"
+            echo "- Size: $(du -h "$APK_PATH" | cut -f1)"
+            echo "- Download it from **Artifacts** below (available for 7 days)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: veil-community-apk-${{ github.run_number }}
+          path: ${{ env.APK_PATH }}
+          retention-days: 7
+          if-no-files-found: error
+
+      # Artifacts above need a GitHub login and expire after 7 days, so the app
+      # cannot point testers at them. A release is public and permanent, and the
+      # About screen reads this list to answer "am I on the latest build?".
+      # Tagged by versionCode, which is what the app compares against.
+      - name: Publish the APK as a release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          aapt2="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"
+          if [ -z "$aapt2" ]; then
+            echo "::error::aapt2 not found in the Android SDK; not publishing a release."
+            exit 1
+          fi
+          badging=$("$aapt2" dump badging "$APK_PATH")
+          code=$(echo "$badging" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -1)
+          name=$(echo "$badging" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -1)
+          if [ -z "$code" ]; then
+            echo "::error::Could not read versionCode from the APK; not publishing a release."
+            exit 1
+          fi
+          tag="mobile-v$code"
+          cp "$APK_PATH" "veil-$tag.apk"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists; replacing its APK."
+            gh release upload "$tag" "veil-$tag.apk" --clobber
+          else
+            gh release create "$tag" "veil-$tag.apk" \
+              --target "$GITHUB_SHA" \
+              --title "Veil Android $name (build $code)" \
+              --notes "Community build $code, from ${{ github.sha }}. Installs over any earlier Veil build; your wallet and passkey stay as they are."
+          fi
+          echo "- Release: $tag" >> "$GITHUB_STEP_SUMMARY"

@@ -15,5 +15,8 @@
         ]
       }
     ]
+  },
+  "webcredentials": {
+    "apps": ["APPLE_TEAM_ID.xyz.veil.wallet"]
   }
 }

@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import config from '../../app.config';
 import {
   ASSOCIATED_DOMAINS,
@@ -106,4 +109,47 @@ describe('app.config.ts — identifiers', () => {
   it('sets an identifier at all, without which neither link type can be claimed', () => {
     expect(config.ios?.bundleIdentifier).toBeTruthy();
   });
+});
+
+/**
+ * The entitlement and the server-side file are two halves of one claim, and
+ * either half alone silently does nothing.
+ *
+ * `associatedDomains` above is what the *app* asks for. Apple only grants it if
+ * the domain serves a matching `.well-known/apple-app-site-association`, and
+ * the two are declared in different repositories' worth of code with nothing
+ * connecting them. The failure mode is quiet: passkey registration just falls
+ * back to a non-shared credential, and the app appears to work.
+ */
+describe('apple-app-site-association agrees with the entitlement', () => {
+    const aasa = JSON.parse(
+        readFileSync(
+            resolve(__dirname, '../../../wallet/public/.well-known/apple-app-site-association'),
+            'utf8',
+        ),
+    ) as {
+        applinks?: { details?: Array<{ appIDs?: string[] }> };
+        webcredentials?: { apps?: string[] };
+    };
+
+    it('serves a webcredentials block, which is what actually enables passkeys', () => {
+        // Claiming `webcredentials:<domain>` in the app while the domain serves
+        // only `applinks` is the exact gap this test exists to catch: universal
+        // links work, passkeys do not, and nothing reports an error.
+        expect(aasa.webcredentials?.apps ?? []).not.toHaveLength(0);
+    });
+
+    it('names the same app ID for webcredentials as for applinks', () => {
+        const appLinkIds = aasa.applinks?.details?.[0]?.appIDs ?? [];
+        expect(aasa.webcredentials?.apps).toEqual(appLinkIds);
+    });
+
+    it('uses the bundle identifier the app config declares', () => {
+        const bundleId = config.ios?.bundleIdentifier;
+        expect(bundleId).toBeTruthy();
+        for (const appId of aasa.webcredentials?.apps ?? []) {
+            // appIDs are "<TEAM_ID>.<bundle identifier>".
+            expect(appId.endsWith(`.${bundleId}`)).toBe(true);
+        }
+    });
 });

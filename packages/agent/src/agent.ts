@@ -1,26 +1,34 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { Keypair } from '@stellar/stellar-sdk'
-import { createX402Fetch } from './x402Client.js'
-import { buildSwap, buildPayment, getBalances } from './txBuilder.js'
+import {
+  anthropicProvider,
+  openRouterProvider,
+  type ChatTurn,
+  type LlmProvider,
+  type ToolSpec,
+} from './llm.js'
+import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { getPrice } from './price.js'
+import { buildPayment, getBalances } from './txBuilder.js'
 
 // ── Agent configuration ──────────────────────────────────────────────────────
 
 export interface AgentConfig {
   /** Anthropic API key. Falls back to ANTHROPIC_API_KEY env var. */
   anthropicApiKey?: string
-  /** Stellar secret key for x402 micropayments. */
-  agentKeypairSecret: string
-  /** Price oracle URL (x402-enabled). */
-  oracleUrl: string
-  /** Transfer indexer URL (x402-enabled). */
-  wraithUrl: string
-  /** Horizon URL. Default: testnet. */
+  /** OpenRouter API key. When set, free OpenRouter models are used instead of Claude. */
+  openRouterApiKey?: string
+  /** OpenRouter model ids, in preference order. Default: llm.ts DEFAULT_FREE_MODELS. */
+  models?: string[]
+  /** A ready-made provider; overrides the keys above. */
+  provider?: LlmProvider
+  /** Optional transfer indexer (Wraith) for Soroban token history. Horizon covers classic payments. */
+  wraithUrl?: string
+  /** Horizon URL. Default: follows STELLAR_NETWORK (mainnet unless set to testnet). */
   horizonUrl?: string
-  /** Soroban RPC URL. Default: testnet. */
+  /** Soroban RPC URL. Default: follows STELLAR_NETWORK. */
   sorobanRpcUrl?: string
-  /** Stellar network: "testnet" or "mainnet". Default: "testnet". */
+  /** Stellar network: "testnet" or "mainnet". Default: STELLAR_NETWORK, else "mainnet". */
   network?: string
-  /** Claude model ID. Default: "claude-sonnet-4-6". */
+  /** Claude model ID (Anthropic provider only). Default: CLAUDE_MODEL, else "claude-opus-5". */
   model?: string
   /** Max conversation history turns to keep per wallet. Default: 20. */
   maxHistoryTurns?: number
@@ -29,45 +37,45 @@ export interface AgentConfig {
 // ── Resolved config (with defaults filled in) ────────────────────────────────
 
 interface ResolvedConfig {
-  anthropicApiKey?: string
-  agentKeypair: Keypair
-  oracleUrl: string
+  llm: LlmProvider
   wraithUrl: string
   horizonUrl: string
   sorobanRpcUrl: string
   network: string
-  model: string
   maxHistoryTurns: number
 }
 
 function resolveConfig(config: AgentConfig): ResolvedConfig {
   return {
-    anthropicApiKey: config.anthropicApiKey,
-    agentKeypair: Keypair.fromSecret(config.agentKeypairSecret),
-    oracleUrl: config.oracleUrl,
-    wraithUrl: config.wraithUrl,
-    horizonUrl: config.horizonUrl ?? 'https://horizon-testnet.stellar.org',
-    sorobanRpcUrl: config.sorobanRpcUrl ?? 'https://soroban-testnet.stellar.org',
-    network: config.network ?? 'testnet',
-    model: config.model ?? 'claude-sonnet-4-6',
+    llm:
+      config.provider ??
+      (config.openRouterApiKey
+        ? openRouterProvider({ apiKey: config.openRouterApiKey, models: config.models })
+        : anthropicProvider({ apiKey: config.anthropicApiKey, model: config.model })),
+    wraithUrl: config.wraithUrl ?? '',
+    horizonUrl: config.horizonUrl ?? HORIZON_URL,
+    sorobanRpcUrl: config.sorobanRpcUrl ?? SOROBAN_RPC_URL,
+    network: config.network ?? NETWORK,
     maxHistoryTurns: config.maxHistoryTurns ?? 20,
   }
 }
 
+/** Model rounds per user message before the agent gives up. */
+const MAX_TOOL_ROUNDS = 8
+
 // ── Tools ────────────────────────────────────────────────────────────────────
 
-const tools: Anthropic.Tool[] = [
+const tools: ToolSpec[] = [
   {
     name: 'get_price',
     description:
-      'Get the current best price and swap route for an asset pair on Stellar. ' +
-      'Returns VWAP, SDEX price, AMM price, 24h volume, and best execution route. ' +
-      'Costs a small USDC fee via x402 micropayment (auto-paid).',
+      'Get the current price of one asset in terms of another on the Stellar DEX: ' +
+      'how many units of asset_b one unit of asset_a sells for right now, and how many hops the best route takes.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        asset_a: { type: 'string', description: 'First asset: "XLM" or "CODE:ISSUER"' },
-        asset_b: { type: 'string', description: 'Second asset: "XLM" or "CODE:ISSUER"' },
+        asset_a: { type: 'string', description: 'Asset to price: "XLM", "USDC" or "CODE:ISSUER"' },
+        asset_b: { type: 'string', description: 'Asset to price it in: "XLM", "USDC" or "CODE:ISSUER"' },
       },
       required: ['asset_a', 'asset_b'],
     },
@@ -99,23 +107,20 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
-    name: 'build_swap',
+    name: 'open_swap',
     description:
-      'Build a Stellar path payment transaction to swap one asset for another at the best available rate. ' +
-      'ALWAYS call get_price first, and ALWAYS call request_user_approval after building — never execute without approval.',
+      'Hand a swap to the wallet\'s Swap screen, filled in with the assets and amount. ' +
+      'The Swap screen fetches its own live quote across Soroswap, Phoenix, Aqua and the Stellar DEX, ' +
+      'shows the route and slippage, and the user confirms there with their passkey. ' +
+      'Use this for every swap — do not build swap transactions yourself.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        from_asset: { type: 'string', description: '"XLM" or "CODE:ISSUER"' },
-        to_asset: { type: 'string', description: '"XLM" or "CODE:ISSUER"' },
-        amount: { type: 'number', description: 'Amount of from_asset to swap' },
-        min_received: {
-          type: 'number',
-          description: 'Minimum to_asset to accept for slippage protection. Default: amount * estimated_price * 0.995',
-        },
-        wallet_address: { type: 'string' },
+        from_asset: { type: 'string', description: 'Asset code to sell: XLM, USDC, EURC or AQUA' },
+        to_asset: { type: 'string', description: 'Asset code to buy: XLM, USDC, EURC or AQUA' },
+        amount: { type: 'string', description: 'Amount of from_asset to sell, e.g. "10" (omit if the user did not say)' },
       },
-      required: ['from_asset', 'to_asset', 'amount', 'wallet_address'],
+      required: ['from_asset', 'to_asset'],
     },
   },
   {
@@ -204,7 +209,7 @@ const SYSTEM_PROMPT = (walletAddress: string, feePayerAddress: string, profile?:
 You are a helpful AI agent embedded in the Veil passkey smart wallet on Stellar.
 
 The user's wallet contract address is: ${walletAddress}
-The user's fee-payer address (use this as wallet_address in ALL build_swap and build_payment calls): ${feePayerAddress}
+The user's fee-payer address (use this as wallet_address in ALL build_payment calls): ${feePayerAddress}
 ${nameClause}
 ${langClause}
 ${personaClause}
@@ -212,18 +217,36 @@ ${roleClause}
 
 You help users:
 - Check their balance and recent transfers
-- Get live prices and swap routes (SDEX vs AMM)
-- Execute swaps and payments — always with biometric approval
+- Get live prices
+- Set up swaps (opened in the Swap screen) and payments — the user always approves with their passkey
 
 RULES:
-1. Before recommending any swap, call get_price to get the live rate.
-2. Before executing any transaction, ALWAYS call request_user_approval — never skip this.
-3. For swaps, set min_received = estimated_output * 0.995 (0.5% slippage) unless user specifies otherwise.
-4. Inform the user when a small x402 micropayment is being auto-paid to fetch data.
+1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
+2. Before a payment executes, ALWAYS call request_user_approval — never skip this.
+3. Use get_price when the user asks about a price or wants to weigh a swap first.
+4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters.
 5. Format amounts clearly: "500 XLM", "47.3 USDC".
 6. If you need a recipient address and the user hasn't provided one, ask before building.
 7. Keep responses concise. Use bullet points for multi-step flows.
-8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_swap or build_payment.`
+8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.`
+}
+
+/**
+ * Soroban token transfers from Wraith, when it is configured and free to call.
+ *
+ * Wraith used to be called through an x402 client that paid per request from a
+ * funded agent key. The agent no longer holds a key: a paywalled or failing
+ * Wraith now just means no Soroban transfers in the answer, and Horizon still
+ * supplies classic payments.
+ */
+async function fetchWraith(baseUrl: string, path: string): Promise<unknown[]> {
+  if (!baseUrl) return []
+  const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) return []
+  const body = await res.json()
+  return Array.isArray(body) ? body : []
 }
 
 // ── Core agent loop ──────────────────────────────────────────────────────────
@@ -232,7 +255,22 @@ export interface AgentResult {
   response: string
   pendingTxXdr?: string
   pendingTxSummary?: string
+  /**
+   * A swap for the app's Swap screen to open, pre-filled. The agent does not
+   * build swaps: the Swap screen quotes across more venues than a single path
+   * payment reaches and has its own review, so the agent hands off to it.
+   */
+  swapIntent?: SwapIntent
 }
+
+export interface SwapIntent {
+  from: string
+  to: string
+  amount?: string
+}
+
+/** Assets the apps' Swap screens offer. */
+const SWAP_CODES = new Set(['XLM', 'USDC', 'EURC', 'AQUA'])
 
 /**
  * Run a single agent turn. Used internally by both the server and createVeilAgent.
@@ -240,25 +278,20 @@ export interface AgentResult {
 export async function runAgent(
   userMessage: string,
   walletAddress: string,
-  agentKeypair: Keypair,
-  conversationHistory: Anthropic.MessageParam[],
+  conversationHistory: ChatTurn[],
   feePayerAddress: string | undefined,
   profile: UserProfile | undefined,
-  /** Pass an Anthropic client instance for reuse. */
-  client: Anthropic,
+  /** The model provider (see llm.ts). Reuse one per process. */
+  llm: LlmProvider,
   /** Service URLs — if not provided, falls back to process.env. */
-  urls?: { oracleUrl?: string; wraithUrl?: string; horizonUrl?: string },
-  /** Model override. */
-  model?: string,
+  urls?: { wraithUrl?: string; horizonUrl?: string },
 ): Promise<AgentResult> {
-  const { fetchWithPayment } = createX402Fetch(agentKeypair)
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
+  let swapIntent: SwapIntent | undefined
 
-  const oracleUrl = urls?.oracleUrl ?? process.env.ORACLE_URL ?? ''
   const wraithUrl = urls?.wraithUrl ?? process.env.WRAITH_URL ?? ''
-  const horizonUrl = urls?.horizonUrl ?? process.env.HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-  const claudeModel = model ?? process.env.CLAUDE_MODEL ?? 'claude-sonnet-4-6'
+  const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
 
   // ── SLASH COMMAND INTERCEPTION ─────────────────────────────────────────────
   const trimmedMessage = userMessage.trim();
@@ -270,9 +303,7 @@ export async function runAgent(
 
     try {
       const [wraithResult, horizonResult] = await Promise.allSettled([
-        fetchWithPayment(
-          `${wraithUrl}/transfers/address/${targetAddress}?direction=both&limit=${count}`,
-        ),
+        fetchWraith(wraithUrl, `/transfers/address/${targetAddress}?direction=both&limit=${count}`),
         fetch(`${horizonUrl}/accounts/${targetAddress}/payments?limit=${count}&order=desc`)
           .then((r) => r.json()),
       ]);
@@ -316,9 +347,7 @@ export async function runAgent(
   async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
       case 'get_price': {
-        const url = `${oracleUrl}/price/${input.asset_a}/${input.asset_b}`
-        const data = await fetchWithPayment(url)
-        return JSON.stringify(data)
+        return JSON.stringify(await getPrice(String(input.asset_a), String(input.asset_b)))
       }
 
       case 'get_transfer_history': {
@@ -326,8 +355,9 @@ export async function runAgent(
         const horizonAddr = feePayerAddress ?? (input.address as string)
 
         const [wraithResult, horizonResult] = await Promise.allSettled([
-          fetchWithPayment(
-            `${wraithUrl}/transfers/address/${input.address}?direction=${input.direction}&limit=${limit}`,
+          fetchWraith(
+            wraithUrl,
+            `/transfers/address/${input.address}?direction=${input.direction}&limit=${limit}`,
           ),
           fetch(`${horizonUrl}/accounts/${horizonAddr}/payments?limit=${limit}&order=desc`)
             .then(r => r.json()),
@@ -348,13 +378,18 @@ export async function runAgent(
         return JSON.stringify(balances)
       }
 
-      case 'build_swap': {
-        const swapInput = {
-          ...(input as unknown as Parameters<typeof buildSwap>[0]),
-          wallet_address: feePayerAddress ?? (input as any).wallet_address,
+      case 'open_swap': {
+        const from = String(input.from_asset ?? '').trim().toUpperCase()
+        const to = String(input.to_asset ?? '').trim().toUpperCase()
+        const amount = input.amount === undefined ? undefined : String(input.amount).trim()
+        if (!SWAP_CODES.has(from) || !SWAP_CODES.has(to) || from === to) {
+          return JSON.stringify({ error: 'Swaps support XLM, USDC, EURC and AQUA, between two different assets.' })
         }
-        const xdr = await buildSwap(swapInput)
-        return JSON.stringify({ transaction_xdr: xdr, status: 'built' })
+        if (amount !== undefined && !/^\d+(\.\d{1,7})?$/.test(amount)) {
+          return JSON.stringify({ error: 'amount must be a plain number like "10" or "2.5"' })
+        }
+        swapIntent = { from, to, ...(amount ? { amount } : {}) }
+        return JSON.stringify({ status: 'swap_screen_ready' })
       }
 
       case 'build_payment': {
@@ -377,54 +412,59 @@ export async function runAgent(
     }
   }
 
-  const messages: Anthropic.MessageParam[] = [
-    ...conversationHistory,
-    { role: 'user', content: userMessage },
-  ]
-
-  let response = await client.messages.create({
-    model: claudeModel,
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT(walletAddress, feePayerAddress ?? walletAddress, profile),
+  const session = llm.start(
+    SYSTEM_PROMPT(walletAddress, feePayerAddress ?? walletAddress, profile),
+    conversationHistory,
+    userMessage,
     tools,
-    messages,
-  })
+  )
 
-  // Agentic loop — keep going until no more tool calls
-  while (response.stop_reason === 'tool_use') {
-    const toolUseBlocks = response.content.filter(
-      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
-    )
+  // Agentic loop, bounded. Each round is a paid or rate-limited model call, so a
+  // model that keeps calling tools — or a prompt written to make it — must not
+  // be able to loop forever.
+  let turn = await session.next()
+  let rounds = 0
+  while (turn.toolCalls.length > 0) {
+    if (++rounds > MAX_TOOL_ROUNDS) {
+      return {
+        response:
+          "I couldn't finish that in one go. Try asking for one thing at a time.",
+        pendingTxXdr,
+        pendingTxSummary,
+        swapIntent,
+      }
+    }
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = []
-    for (const toolUse of toolUseBlocks) {
+    const results: { id: string; content: string }[] = []
+    for (const call of turn.toolCalls) {
       let content: string
       try {
-        content = await executeTool(toolUse.name, toolUse.input as Record<string, unknown>)
+        content = await executeTool(call.name, call.input)
       } catch (err) {
         content = JSON.stringify({ error: (err as Error).message })
       }
-      toolResults.push({ type: 'tool_result', tool_use_id: toolUse.id, content })
+      results.push({ id: call.id, content })
     }
-
-    messages.push({ role: 'assistant', content: response.content })
-    messages.push({ role: 'user', content: toolResults })
-
-    response = await client.messages.create({
-      model: claudeModel,
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT(walletAddress, feePayerAddress ?? walletAddress, profile),
-      tools,
-      messages,
-    })
+    session.addToolResults(results)
+    try {
+      turn = await session.next()
+    } catch (err) {
+      // The work is done — a swap to open or a payment to approve — and only the
+      // model's closing sentence failed. Hand the user the result rather than an
+      // error that throws it away.
+      if (swapIntent || pendingTxXdr) {
+        return {
+          response: swapIntent ? 'Your swap is ready in the Swap screen.' : 'Your transaction is ready to review.',
+          pendingTxXdr,
+          pendingTxSummary,
+          swapIntent,
+        }
+      }
+      throw err
+    }
   }
 
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map(b => b.text)
-    .join('')
-
-  return { response: text, pendingTxXdr, pendingTxSummary }
+  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────
@@ -440,8 +480,6 @@ export interface VeilAgent {
   chat: (message: string, options: ChatOptions) => Promise<AgentResult>
   /** Clear conversation history for a wallet. */
   clearHistory: (walletAddress: string) => void
-  /** The agent's Stellar public key (used for x402 payments). */
-  publicKey: string
 }
 
 /**
@@ -453,9 +491,7 @@ export interface VeilAgent {
  *
  * const agent = createVeilAgent({
  *   anthropicApiKey: 'sk-ant-...',
- *   agentKeypairSecret: 'S...',
- *   oracleUrl: 'https://oracle.example.com',
- *   wraithUrl: 'https://wraith.example.com',
+ *   openRouterApiKey: 'sk-or-...', // or anthropicApiKey for Claude
  * })
  *
  * const result = await agent.chat('What is my balance?', {
@@ -473,14 +509,9 @@ export interface VeilAgent {
 export function createVeilAgent(config: AgentConfig): VeilAgent {
   const resolved = resolveConfig(config)
 
-  const client = new Anthropic({
-    apiKey: resolved.anthropicApiKey,
-  })
-
-  const conversations = new Map<string, Anthropic.MessageParam[]>()
+  const conversations = new Map<string, ChatTurn[]>()
 
   return {
-    publicKey: resolved.agentKeypair.publicKey(),
 
     async chat(message: string, options: ChatOptions): Promise<AgentResult> {
       const { walletAddress, feePayerAddress, profile } = options
@@ -489,17 +520,14 @@ export function createVeilAgent(config: AgentConfig): VeilAgent {
       const result = await runAgent(
         message,
         walletAddress,
-        resolved.agentKeypair,
         history,
         feePayerAddress,
         profile,
-        client,
+        resolved.llm,
         {
-          oracleUrl: resolved.oracleUrl,
           wraithUrl: resolved.wraithUrl,
           horizonUrl: resolved.horizonUrl,
         },
-        resolved.model,
       )
 
       // Update conversation history

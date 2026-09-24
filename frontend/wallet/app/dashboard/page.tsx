@@ -6,7 +6,6 @@ export const dynamic = 'force-dynamic'
 import { inclusionFee } from '@/lib/fees'
 import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Image from 'next/image'
 import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
   TransactionBuilder, BASE_FEE, Networks, Asset, nativeToScVal, scValToNative,
@@ -17,15 +16,18 @@ import { WalletConnectApprovalModal } from '@/components/WalletConnectApprovalMo
 import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { ensureFeePayer } from '@/lib/feePayer'
+import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
-import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName } from '@/lib/network'
+import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName, walletConfig } from '@/lib/network'
+import { isMultisigAvailable } from '@/lib/multisigConfig'
 import { sweepContractBalance } from '@/lib/sweepContractBalance'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
-import type { WebAuthnSignature } from '@veil/sdk'
+import { useInvisibleWallet, type WebAuthnSignature } from '@veil/sdk'
+import { ensureWalletDeployed } from '@/lib/walletDeployment'
 import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
 import { VeilMark } from '@/components/ui/VeilMark'
+import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 
@@ -111,6 +113,7 @@ function DashboardPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   useInactivityLock()
+  const wallet = useInvisibleWallet(walletConfig)
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
@@ -135,6 +138,9 @@ function DashboardPageContent() {
   const [wraithOutCursor, setWraithOutCursor] = useState<string | null>(null)
   const [hasMorePages, setHasMorePages]       = useState(false)
   const [isLoadingMore, setIsLoadingMore]     = useState(false)
+  // PRF downgrade: surfaced as a dismissible banner (issue #629).
+  const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
+  const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
 
   // Shoulder-surfing guard. Persisted, but read after mount so the server and
   // client render the same first paint.
@@ -206,6 +212,8 @@ function DashboardPageContent() {
 
   const recent = transactions.slice(0, 4)
 
+  const [multisigAvailable, setMultisigAvailable] = useState(false)
+
   const horizonNextRef = useRef<(() => Promise<any>) | null>(null)
 
   useEffect(() => {
@@ -213,10 +221,20 @@ function DashboardPageContent() {
     if (!stored) { router.replace('/lock'); return }
     setWalletAddress(stored)
 
+    // The chip is the main way into /multisig, and that route is gated on
+    // networks where the contract is not installed (#672) — so offering the
+    // chip there would just bounce the user straight back here. Resolved after
+    // mount because the active network lives in localStorage.
+    setMultisigAvailable(isMultisigAvailable())
+
     // Establish the fee-payer for this session (idempotent, fire-and-forget).
     // PRF wallets keep the seed in sessionStorage only — never copied to
     // localStorage — so the lock protects it at rest (ADR 0003, C3).
-    void ensureFeePayer()
+    void ensureFeePayer().then(() => {
+      // After the fee-payer is established, check whether a silent PRF→legacy
+      // downgrade occurred (issue #629). Show a banner if so.
+      setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
+    })
   }, [router])
 
   const fetchData = useCallback(async () => {
@@ -597,6 +615,11 @@ function DashboardPageContent() {
         }
       }
 
+      // Moving the contract's own balance is a call `__check_auth` answers, so
+      // the contract must exist. Wallets are deployed on first use; funds can
+      // sit at an undeployed address, and this is exactly that first use.
+      await ensureWalletDeployed(wallet.deploy, walletAddress)
+
       await sweepContractBalance(
         walletAddress!,
         feePayerKp,
@@ -678,50 +701,13 @@ function DashboardPageContent() {
           </div>
           <div className="vw-actions">
             <button className="vw-pill" onClick={() => setHideAmounts(v => !v)}>
-              {hideAmounts ? 'Show amounts' : 'Hide amounts'}
+              {hideAmounts ? 'Show balances' : 'Hide balances'}
             </button>
             <button className="vw-pill" onClick={() => setSep24Modal('deposit')}>Add money</button>
+            <button className="vw-pill" onClick={() => router.push('/send')}>
+              <span aria-hidden="true">↗</span> Send
+            </button>
           </div>
-        </div>
-
-        {/* ── Primary action cards (Send / Receive / Swap / Buy) ─────────── */}
-        <div className="vw-actions-grid">
-          <button className="vw-action-card" onClick={() => router.push('/send')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span>Send</span>
-          </button>
-          <button className="vw-action-card" onClick={() => router.push('/receive')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span>Receive</span>
-          </button>
-          <button className="vw-action-card" onClick={() => router.push('/swap')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M7 16l-4-4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M17 8l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M3 12h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
-            <span>Swap</span>
-          </button>
-          <button className="vw-action-card" onClick={() => router.push('/buy')}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
-              <path d="M12 1v22M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-            <span>Buy</span>
-          </button>
-        </div>
-
-        {/* ── Secondary actions — horizontally scrollable chip row ────────── */}
-        <div className="vw-more vw-more--scroll">
-          <button className="vw-chip" onClick={() => router.push('/assets')}>Assets</button>
-          <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
-          <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
-          <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
-          <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
-          <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>Connect dApp</button>
         </div>
 
         {/* ── Fee-payer missing banner (after cache clear) ── */}
@@ -729,8 +715,8 @@ function DashboardPageContent() {
           <div style={{
             marginBottom: '1.5rem',
             padding: '1rem 1.25rem',
-            background: 'rgba(253,218,36,0.07)',
-            border: '1px solid rgba(253,218,36,0.25)',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
             borderRadius: '12px',
           }}>
             <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', marginBottom: '0.5rem', fontWeight: 500 }}>
@@ -740,10 +726,10 @@ function DashboardPageContent() {
               Your browser storage was cleared. Tap below to set up a new fee-payer account so you can send, swap, and use the agent.
             </p>
             <button
-              className="btn-gold"
+              className="btn-secondary"
               onClick={handleFund}
               disabled={isFunding}
-              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', color:'var(--color-muted)', }}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
             >
               {isFunding
                 ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
@@ -755,13 +741,49 @@ function DashboardPageContent() {
           </div>
         )}
 
+        {/* ── PRF downgrade warning banner (issue #629) ── */}
+        {!loading && showPrfDowngrade && !prfDowngradeDismissed && (
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'rgba(220,38,38,0.06)',
+            border: '1px solid rgba(220,38,38,0.3)',
+            borderRadius: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
+                Fee payer: PRF unavailable on this device
+              </p>
+              <button
+                id="dashboard-prf-downgrade-dismiss"
+                onClick={() => setPrfDowngradeDismissed(true)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-muted)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              This wallet requested a WebAuthn PRF result but the authenticator didn&apos;t provide one. It fell back to the legacy fee payer, which will look like a different wallet on a PRF-capable device. If this is unexpected, copy the diagnostics in Settings → Fee Payer and share them.
+            </p>
+            <button
+              id="dashboard-prf-downgrade-details"
+              className="btn-gold"
+              onClick={() => router.push('/settings/fee-payer')}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', color: 'var(--color-muted)' }}
+            >
+              View diagnostics
+            </button>
+          </div>
+        )}
+
         {/* ── Sweep prompt: contract SAC balance detected ── */}
         {!loading && contractXlm > 0 && !sweepDismissed && (
           <div style={{
             marginBottom: '1.5rem',
             padding: '1rem 1.25rem',
-            background: 'rgba(253,218,36,0.07)',
-            border: '1px solid rgba(253,218,36,0.25)',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
             borderRadius: '12px',
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -783,10 +805,10 @@ function DashboardPageContent() {
               <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginBottom: '0.625rem' }}>{sweepError}</p>
             )}
             <button
-              className="btn-gold"
+              className="btn-secondary"
               onClick={handleSweep}
               disabled={isSweeping}
-              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem' }}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
             >
               {isSweeping
                 ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
@@ -796,9 +818,13 @@ function DashboardPageContent() {
         )}
 
 
-        {/* ── Three-column layout: center + right rail ── */}
-        <div className="vw-center-col">
-          {/* ── Balance plate + earning (center top) ── */}
+        {/* ── Three-column layout: center + right rail ──
+            The row container. `.vw-center-col` and `.vw-rail` were written as
+            flex children and left as plain siblings, so they stacked and the
+            rail rendered full width under the activity feed instead of beside
+            it. The CSS for the layout was there the whole time; nothing put the
+            two columns in a row. */}
+        {/* ── Balance plate and earning: full width, above the columns ── */}
           <div className="vw-balance-row">
             <div className="vw-silver">
               <div className="vw-silver__sheen" />
@@ -835,7 +861,16 @@ function DashboardPageContent() {
             </div>
           </div>
 
-          {/* ── Activity feed (center middle) ── */}
+
+        {/* ── Two columns below the balance: assets wide on the left,
+            activity and the agent narrow on the right, as the design has it.
+            `.vw-center-col` and `.vw-rail` were written as flex children and
+            left as plain siblings, so they stacked and the rail rendered full
+            width under the feed. The layout CSS was there the whole time;
+            nothing put the two columns in a row. */}
+        <div className="vw-dash-row">
+        <div className="vw-center-col">
+          {/* ── Activity feed ── */}
           <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 4px' }}>
               <div className="vw-label">Activity</div>
@@ -846,7 +881,7 @@ function DashboardPageContent() {
                 {loading ? 'Loading…' : 'Nothing yet.'}
               </p>
             ) : recent.map((tx) => (
-              <button key={tx.id} className="vw-listrow" style={{ padding: '14px 0' }} onClick={() => setSelectedTx(tx)}>
+              <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
                   <span style={{ fontSize: '14px', fontWeight: 500 }}>
                     {tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'}
@@ -857,12 +892,12 @@ function DashboardPageContent() {
                       : tx.counterparty}
                   </span>
                 </span>
-                <span style={{ fontSize: '14px', fontWeight: 600, flexShrink: 0, color: tx.type === 'received' ? 'var(--teal)' : 'var(--off-white)' }}>
+                <Amount className={`text-sm font-semibold shrink-0 ${tx.type === 'received' ? 'text-teal' : 'text-off-white'}`}>
                   {hideAmounts
                     ? '••••'
                     : (tx.type === 'sent' ? '-' : tx.type === 'received' ? '+' : '') + tx.amount + ' ' + tx.asset}
-                </span>
-              </button>
+                </Amount>
+              </Row>
             ))}
           </div>
 
@@ -891,7 +926,7 @@ function DashboardPageContent() {
         <div className="vw-rail">
           <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
-              <div className="vw-label">Assets</div>
+              <Label className="vw-label">Assets</Label>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
             </div>
             {loading && assets.length === 0 ? (
@@ -904,7 +939,7 @@ function DashboardPageContent() {
               const price = priceOf(asset)
               const value = price != null ? parseFloat(asset.balance) * price : null
               return (
-                <button
+                <Row
                   key={asset.code + '-' + (asset.issuer ?? 'native')}
                   className="vw-listrow"
                   onClick={() => router.push(asset.issuer ? '/token/' + asset.code + '?issuer=' + asset.issuer : '/token/' + asset.code)}
@@ -918,15 +953,31 @@ function DashboardPageContent() {
                       </span>
                     </span>
                   </span>
-                  <span style={{ fontSize: '15px', fontWeight: 600, flexShrink: 0 }}>
+                  <Amount className="text-[15px] font-semibold shrink-0">
                     {hideAmounts ? '••••' : (value != null ? usd(value) : '—')}
-                  </span>
-                </button>
+                  </Amount>
+                </Row>
               )
             })}
           </div>
         </div>
+        </div>
 
+        {/* ── The routes the sidebar does not carry ───────────────────────
+            Below the balance, not above it. The design opens on the money;
+            these are somewhere to go afterwards, and they are the only way to
+            reach Assets, Vault, Pools, NFTs and dApp connections at all. */}
+        <div className="vw-more vw-more--scroll">
+          <button className="vw-chip" onClick={() => router.push('/assets')}>Assets</button>
+          <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
+          <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
+          <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
+          <button className="vw-chip" onClick={() => router.push('/nfts')}>NFTs</button>
+          {multisigAvailable ? (
+            <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
+          ) : null}
+          <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>Connect dApp</button>
+        </div>
 
       </main>
 
@@ -952,7 +1003,7 @@ function DashboardPageContent() {
             transform: 'translateX(-50%)',
             zIndex: 70,
             background: 'rgba(32, 34, 38, 0.95)',
-            border: '1px solid rgba(253,218,36,0.25)',
+            border: '1px solid var(--border-dim)',
             borderRadius: '999px',
             padding: '0.625rem 0.95rem',
             color: 'var(--off-white)',
@@ -981,27 +1032,6 @@ export default function DashboardPage() {
     <Suspense fallback={<div className="wallet-shell"><main className="wallet-main" /></div>}>
       <DashboardPageContent />
     </Suspense>
-  )
-}
-
-const TOKEN_LOGOS: Record<string, string> = {
-  XLM:  '/tokens/xlm.png',
-  USDC: '/tokens/usdc.png',
-}
-
-function TokenIcon({ code, size = 32 }: { code: string; size?: number }) {
-  const src = TOKEN_LOGOS[code.toUpperCase()]
-  if (src) {
-    return (
-      <div style={{ width: size, height: size, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, background: code === 'XLM' ? '#000' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Image src={src} alt={code} width={size} height={size} style={{ objectFit: 'contain', ...(code === 'XLM' ? { filter: 'invert(1)', padding: '4px' } : {}) }} />
-      </div>
-    )
-  }
-  return (
-    <div style={{ width: size, height: size, borderRadius: '50%', background: 'rgba(253,218,36,0.12)', border: '1px solid rgba(253,218,36,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: size * 0.38, fontWeight: 700, color: 'var(--gold)', flexShrink: 0 }}>
-      {code[0]}
-    </div>
   )
 }
 

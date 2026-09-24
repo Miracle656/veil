@@ -1,4 +1,4 @@
-import { WALLET_KEYS, namespaceKey, namespacedStorageAdapter } from './network'
+import { WALLET_KEYS, getNetworkName, namespaceKey, namespacedStorageAdapter } from './network'
 
 /**
  * Per-network wallet storage.
@@ -88,6 +88,48 @@ export function clearActiveNetworkWallet(): void {
   for (const key of WALLET_KEYS) {
     walletLocal.removeItem(key)
     walletSession.removeItem(key)
+  }
+}
+
+/**
+ * The keys that describe the PASSKEY, not a network.
+ *
+ * A passkey's credential id and public key are the same on testnet and mainnet;
+ * only the wallet contract, its address and the fee-payer's ledger account
+ * differ. Namespacing these alongside everything else meant switching network
+ * made the browser forget it had a passkey at all: the lock page read an empty
+ * mainnet slot and told a user with a working passkey to "register again",
+ * which would have created a second one.
+ */
+const PASSKEY_IDENTITY_KEYS = [
+  'invisible_wallet_key_id',
+  'invisible_wallet_public_key',
+  'invisible_wallet_portable_signer',
+] as const
+
+/**
+ * Bring the passkey across from the other network's slot when this one has
+ * none. Copies identity only — never an address or a fee-payer secret, which
+ * genuinely are per network. Returns whether anything was adopted.
+ */
+export function adoptPasskeyFromOtherNetwork(): boolean {
+  const local = safeStorage('local')
+  if (!local) return false
+  const active = getNetworkName()
+  const other = active === 'mainnet' ? 'testnet' : 'mainnet'
+  try {
+    if (local.getItem(namespaceKey('invisible_wallet_key_id', active)) !== null) return false
+    const otherKeyId = local.getItem(namespaceKey('invisible_wallet_key_id', other))
+    if (otherKeyId === null) return false
+    for (const key of PASSKEY_IDENTITY_KEYS) {
+      const value = local.getItem(namespaceKey(key, other))
+      if (value !== null && local.getItem(namespaceKey(key, active)) === null) {
+        local.setItem(namespaceKey(key, active), value)
+      }
+    }
+    return true
+  } catch {
+    return false
   }
 }
 

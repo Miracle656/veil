@@ -51,13 +51,35 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // (signer keypair) in expo-secure-store so the fee-payer secret survives the
   // app being backgrounded or killed by the OS.  (The web wallet keeps the
   // signer keypair in React state only.)
-  const storage: StorageAdapter = AsyncStorage;
+  // Namespaced per network, matching lib/walletStore.ts. The SDK writes its
+  // credential id, public key and address under fixed keys, so with a raw
+  // AsyncStorage adapter both networks shared one set. Two consequences, both
+  // seen in practice:
+  //
+  //   • Registering on one network passed the OTHER network's credential id as
+  //     excludeCredentials, and since that passkey really is on the device the
+  //     platform refused with "one of the excluded credentials exists on the
+  //     local device" — leaving no way to create the second wallet at all.
+  //   • "Reset wallet" cleared the namespaced secure-store keys but not these,
+  //     so a reset did not actually reset.
+  //
+  // Testnet keeps the bare keys so existing installs are untouched; mainnet
+  // takes the suffix. Same convention as walletStore, deliberately.
+  const networkName = useSyncExternalStore(subscribeToNetwork, getNetworkName, getNetworkName);
+
+  const storage: StorageAdapter = useMemo(() => {
+    const scope = (k: string) => (networkName === 'mainnet' ? `${k}_mainnet` : k);
+    return {
+      getItem: (k: string) => AsyncStorage.getItem(scope(k)),
+      setItem: (k: string, v: string) => AsyncStorage.setItem(scope(k), v),
+      removeItem: (k: string) => AsyncStorage.removeItem(scope(k)),
+    };
+  }, [networkName]);
 
   // LIVE per-network SDK config. The old module-level walletConfig const was
   // evaluated before the stored network override hydrated, so on mainnet the
   // SDK silently kept TESTNET factory/rpc/passphrase — wallet addresses were
   // derived with the wrong network and deploys hit the wrong Horizon.
-  const networkName = useSyncExternalStore(subscribeToNetwork, getNetworkName, getNetworkName);
   const liveConfig = useMemo(() => {
     const net = getNetwork();
     return {

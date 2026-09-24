@@ -47,6 +47,7 @@ async function getWalletNonce(
 import type { WebAuthnSignature } from '@veil/sdk'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import { getNetwork } from './network'
+import { WalletNotActivatedError, getDeploymentState } from './walletDeployment'
 
 const SESSION_STORAGE_KEY = 'veil_walletconnect_sessions'
 const METHODS = ['stellar_signXDR', 'stellar_signAndSubmitXDR']
@@ -262,6 +263,17 @@ async function signXdrPayload(
 
       const addrCred = cred.address()
       const contractAddr = Address.fromScAddress(addrCred.address()).toString()
+
+      // A dApp can only be answered by a contract that exists: `__check_auth`
+      // runs on chain. Wallets are deployed on first use now, so stop here with
+      // a sentence about what to do, instead of asking for a passkey signature
+      // the network is guaranteed to reject.
+      if (
+        contractAddr === walletLocal.getItem('invisible_wallet_address')
+        && (await getDeploymentState(contractAddr)) === 'undeployed'
+      ) {
+        throw new WalletNotActivatedError(feePayerKeypair.publicKey())
+      }
       const currentNonce = await getWalletNonce(rpc, contractAddr, network.networkPassphrase)
 
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(

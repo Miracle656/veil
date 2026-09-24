@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import {
@@ -161,7 +162,7 @@ export default function WithdrawScreen() {
       await WebBrowser.openBrowserAsync(result.url);
       startPolling(result.id);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       setError(msg);
       setStep('error');
     }
@@ -204,7 +205,7 @@ export default function WithdrawScreen() {
       setSweepHash(result.hash);
       setStep('polling');
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       // A sweep failure doesn't necessarily abort the withdrawal — the user
       // may already hold enough on the classic account. Keep polling so
       // completion can still be observed, but surface the problem.

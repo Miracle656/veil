@@ -36,17 +36,17 @@ describe('resolveDeepLink — veil:// custom scheme', () => {
 
 describe('resolveDeepLink — universal / app links', () => {
   it('routes an associated-domain link', () => {
-    expect(resolveDeepLink(`https://app.veil.xyz/pay?to=${DESTINATION}`)).toBe(
+    expect(resolveDeepLink(`https://app.useveilapp.xyz/pay?to=${DESTINATION}`)).toBe(
       `/pay?to=${DESTINATION}`,
     );
   });
 
   it('ignores the port', () => {
-    expect(resolveDeepLink('https://app.veil.xyz:443/receive')).toBe('/receive');
+    expect(resolveDeepLink('https://app.useveilapp.xyz:443/receive')).toBe('/receive');
   });
 
   it('matches the host case-insensitively', () => {
-    expect(resolveDeepLink('https://APP.VEIL.XYZ/send')).toBe('/send');
+    expect(resolveDeepLink('https://APP.USEVEILAPP.XYZ/send')).toBe('/send');
   });
 
   it('rejects a foreign host', () => {
@@ -54,11 +54,11 @@ describe('resolveDeepLink — universal / app links', () => {
   });
 
   it('rejects a look-alike subdomain', () => {
-    expect(resolveDeepLink('https://app.veil.xyz.evil.example/pay')).toBe(FALLBACK_ROUTE);
+    expect(resolveDeepLink('https://app.useveilapp.xyz.evil.example/pay')).toBe(FALLBACK_ROUTE);
   });
 
   it('rejects userinfo smuggling', () => {
-    expect(resolveDeepLink('https://app.veil.xyz@evil.example/pay')).toBe(FALLBACK_ROUTE);
+    expect(resolveDeepLink('https://app.useveilapp.xyz@evil.example/pay')).toBe(FALLBACK_ROUTE);
   });
 });
 
@@ -135,7 +135,7 @@ describe('resolveDeepLink — hostile and malformed input', () => {
 describe('resolveDeepLink — cold start vs warm resume', () => {
   const links = [
     'veil://pay?to=' + DESTINATION,
-    'https://app.veil.xyz/receive',
+    'https://app.useveilapp.xyz/receive',
     'web+stellar:pay?destination=' + DESTINATION,
     'veil://create-wallet',
   ];

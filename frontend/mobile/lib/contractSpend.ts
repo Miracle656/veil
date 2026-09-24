@@ -10,6 +10,7 @@
  * just builds the unsigned transfer and routes it through.
  */
 
+import { rejectionFromResult } from './networkErrors';
 import {
   Asset,
   BASE_FEE,
@@ -49,10 +50,33 @@ export async function isWalletDeployed(contractAddress: string): Promise<boolean
  * each lock 0.5; the wallet's recovery breadcrumbs alone are 3 entries) minus
  * selling liabilities, minus a small fee buffer. 0 when missing/unreachable.
  */
-export async function getFeePayerSpendableXlm(): Promise<number> {
+export type FeePayerXlm = {
+  /** Everything the fee payer holds. */
+  balance: number;
+  /** Subentries on the account; each locks a further 0.5 XLM. */
+  subentries: number;
+  /** Minimum the account must keep: (2 + subentries) x 0.5. */
+  reserve: number;
+  /** Held minus reserve, liabilities and a small fee buffer. Never negative. */
+  spendable: number;
+};
+
+/**
+ * The fee payer's XLM, split into what it holds and what it may actually spend.
+ *
+ * Returned as a breakdown rather than a single number because the difference
+ * needs explaining wherever it is shown. An account holding 4 XLM with four
+ * subentries can spend 0.95 of it, and a screen that reports the shortfall
+ * without the reason reads as a bug.
+ *
+ * Zeroed on any failure, so a caller treats an unreachable Horizon the same as
+ * an empty account: refuse the spend rather than let it fail on-chain.
+ */
+export async function getFeePayerXlm(): Promise<FeePayerXlm> {
+  const empty = { balance: 0, subentries: 0, reserve: 0, spendable: 0 };
   try {
     const feePayer = await getFeePayerAddress();
-    if (!feePayer) return 0;
+    if (!feePayer) return empty;
     const server = new Horizon.Server(getNetwork().horizonUrl);
     const account = await server.loadAccount(feePayer);
     const native = (account.balances as Array<{ asset_type: string; balance: string; selling_liabilities?: string }>).find(
@@ -63,21 +87,46 @@ export async function getFeePayerSpendableXlm(): Promise<number> {
     const reserve = (2 + subentries) * 0.5;
     const liabilities = Number(native?.selling_liabilities ?? '0');
     const feeBuffer = 0.05;
-    return Math.max(0, balance - reserve - liabilities - feeBuffer);
+    return {
+      balance,
+      subentries,
+      reserve,
+      spendable: Math.max(0, balance - reserve - liabilities - feeBuffer),
+    };
   } catch {
-    return 0;
+    return empty;
   }
 }
 
+/** Just the spendable figure, for callers that only gate on it. */
+export async function getFeePayerSpendableXlm(): Promise<number> {
+  return (await getFeePayerXlm()).spendable;
+}
+
+/** An issued asset, or `undefined`/native for XLM. */
+export type SpendAsset = { code: string; issuer: string } | undefined;
+
 /**
- * Send `amount` XLM out of the smart wallet's own balance to `destination`
- * (classic or contract). Prompts the passkey for the auth-entry signature; the
- * fee-payer wraps and pays the fee. Resolves with the transaction hash.
+ * Send `amount` of `asset` out of the smart wallet's own balance to
+ * `destination` (classic or contract). Prompts the passkey for the auth-entry
+ * signature; the fee-payer wraps and pays the fee.
+ *
+ * Works for any asset, not just XLM, and that needs no contract change: the
+ * wallet's `__check_auth` verifies a passkey signature over the authorization
+ * payload and never inspects which asset is moving. Soroban invokes it whenever
+ * this contract is the `from` of a SAC transfer, so USDC's SAC calls it exactly
+ * as the native one does.
+ *
+ * Nor does the contract need a trustline. Per Stellar's SAC docs, a contract's
+ * balance and authorization state live in contract storage rather than a
+ * trustline — trustlines are a classic-account concept, and classic operations
+ * cannot address a contract at all.
  */
-export async function sendXlmFromContract(
+export async function sendAssetFromContract(
   contractAddress: string,
   destination: string,
   amount: string,
+  asset?: SpendAsset,
 ): Promise<string> {
   const network = getNetwork();
   const server = new SorobanRpc.Server(network.rpcUrl);
@@ -85,9 +134,12 @@ export async function sendXlmFromContract(
   const feePayer = await getFeePayerAddress();
   if (!feePayer) throw new Error('No fee-payer key on this device.');
 
-  // The native SAC id is deterministic per network — no config needed.
-  const nativeSac = Asset.native().contractId(network.networkPassphrase);
-  const contract = new Contract(nativeSac);
+  // SAC ids are derived from the asset and the network passphrase, so every
+  // asset resolves without configuration — and derivation is verifiable:
+  // Asset('USDC', GA5ZSEJY…).contractId(PUBLIC) is the CCW67TSZ… that Horizon
+  // reports as USDC's contract.
+  const sacAsset = asset ? new Asset(asset.code, asset.issuer) : Asset.native();
+  const contract = new Contract(sacAsset.contractId(network.networkPassphrase));
 
   const account = await server.getAccount(feePayer);
   const unsigned = new TransactionBuilder(account, {
@@ -112,10 +164,22 @@ export async function sendXlmFromContract(
     const signedTx = TransactionBuilder.fromXDR(signedXdr, network.networkPassphrase);
     const sendResult = await server.sendTransaction(signedTx);
     if (sendResult.status === 'ERROR') {
-      throw new Error(`Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown'}`);
+      throw new Error(rejectionFromResult(sendResult.errorResult));
     }
     return await pollForResult(server, sendResult.hash);
   } finally {
     unregister();
   }
+}
+
+/**
+ * @deprecated Prefer {@link sendAssetFromContract}. Kept so existing callers
+ * keep compiling; XLM is just the no-asset case.
+ */
+export function sendXlmFromContract(
+  contractAddress: string,
+  destination: string,
+  amount: string,
+): Promise<string> {
+  return sendAssetFromContract(contractAddress, destination, amount);
 }

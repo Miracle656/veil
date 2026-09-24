@@ -14,12 +14,12 @@ import {
   Operation
 } from '@stellar/stellar-sdk';
 import { getNetwork } from './network';
+import { getMultisigWasmHash } from './multisigConfig';
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const network = getNetwork();
 const RPC_URL = network.rpcUrl;
 const NETWORK_PASSPHRASE = network.networkPassphrase;
-const MULTISIG_WASM_HASH = '7eb63568a7a41c19f5d85c55b5ec88c6f95ef840bcf98d1797850ace2dd3cf24';
 
 export interface ProposalDetails {
   id: number;
@@ -77,6 +77,11 @@ export async function deployAndInitMultisig(params: {
   threshold: number;
   feePayerSecret?: string;
 }): Promise<string> {
+  // Resolved before anything is funded or signed: on a network where the
+  // multisig WASM is not installed this throws with the network named, rather
+  // than building a transaction that can only fail at the signature (#672).
+  const multisigWasmHash = getMultisigWasmHash();
+
   const server = new SorobanRpc.Server(RPC_URL);
   const feePayer = await getOrFundFeePayer(params.feePayerSecret);
   const account = await server.getAccount(feePayer.publicKey());
@@ -84,7 +89,7 @@ export async function deployAndInitMultisig(params: {
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const createOp = Operation.createCustomContract({
     address: feePayer.publicKey() as any,
-    wasmHash: Buffer.from(MULTISIG_WASM_HASH, 'hex'),
+    wasmHash: Buffer.from(multisigWasmHash, 'hex'),
     salt: Buffer.from(salt),
   });
 

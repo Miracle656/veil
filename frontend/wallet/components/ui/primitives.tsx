@@ -10,7 +10,104 @@
  * These are presentation only — no data fetching, no wallet logic — so a screen
  * can adopt the new look without touching the Stellar code underneath it.
  */
-import type { ReactNode } from 'react'
+import Image from 'next/image'
+import type { ButtonHTMLAttributes, ReactNode } from 'react'
+
+// ── Core wallet primitives ──────────────────────────────────────────────────
+
+/** Shared route header for flows that need a back action and optional actions. */
+export function Nav({
+  title,
+  onBack,
+  actions,
+}: {
+  title?: ReactNode
+  onBack?: () => void
+  actions?: ReactNode
+}) {
+  return (
+    <nav className="wallet-nav">
+      {onBack ? (
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex items-center gap-1.5 border-0 bg-transparent text-sm text-off-white cursor-pointer"
+        >
+          <span aria-hidden="true">←</span>
+          Back
+        </button>
+      ) : <span />}
+      {title ? <div className="font-anton text-[1.25rem] tracking-[0.08em] text-gold">{title}</div> : null}
+      <div className="flex items-center gap-2">{actions}</div>
+    </nav>
+  )
+}
+
+/** Anton uppercase metadata label used throughout wallet panels and forms. */
+export function Label({
+  children,
+  className = '',
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return <div className={`font-anton text-xs uppercase tracking-[0.08em] text-[rgba(246,247,248,0.4)] ${className}`}>{children}</div>
+}
+
+/** Inconsolata value display for balances, addresses, and transaction amounts. */
+export function Amount({
+  children,
+  className = '',
+}: {
+  children: ReactNode
+  className?: string
+}) {
+  return <span className={`font-mono whitespace-nowrap ${className}`}>{children}</span>
+}
+
+/** Consistent list row, optionally rendered as an accessible button. */
+export function Row({
+  children,
+  onClick,
+  last = false,
+  className = '',
+  ...buttonProps
+}: {
+  children: ReactNode
+  onClick?: () => void
+  last?: boolean
+  className?: string
+} & Pick<ButtonHTMLAttributes<HTMLButtonElement>, 'aria-label' | 'title'>) {
+  const classes = `flex w-full justify-between items-center py-3.5 text-left ${last ? '' : 'border-b border-[rgba(255,255,255,0.06)]'} ${onClick ? 'cursor-pointer' : ''} ${className}`
+  return onClick ? (
+    <button type="button" onClick={onClick} className={`border-x-0 border-t-0 bg-transparent ${classes}`} {...buttonProps}>{children}</button>
+  ) : (
+    <div className={classes}>{children}</div>
+  )
+}
+
+const TOKEN_LOGOS: Record<string, string> = {
+  XLM: '/tokens/xlm.png',
+  USDC: '/tokens/usdc.png',
+}
+
+/** Circular token mark with a branded image or a token-code fallback. */
+export function TokenIcon({ code, size = 32 }: { code: string; size?: number }) {
+  const normalized = code.toUpperCase()
+  const src = TOKEN_LOGOS[normalized]
+  if (src) {
+    return (
+      <div className="rounded-full overflow-hidden shrink-0 flex items-center justify-center" style={{ width: size, height: size, background: normalized === 'XLM' ? 'var(--near-black)' : 'transparent' }}>
+        <Image src={src} alt={code} width={size} height={size} className="object-contain" style={normalized === 'XLM' ? { filter: 'invert(1)', padding: 4 } : undefined} />
+      </div>
+    )
+  }
+  return (
+    <div className="rounded-full shrink-0 flex items-center justify-center font-bold text-gold" style={{ width: size, height: size, background: 'rgba(253,218,36,0.12)', border: '1px solid rgba(253,218,36,0.2)', fontSize: size * 0.38 }}>
+      {normalized[0]}
+    </div>
+  )
+}
 
 // ── Surfaces ─────────────────────────────────────────────────────────────────
 
@@ -212,7 +309,7 @@ export function Toggle({
       aria-label={label}
       onClick={() => onChange(!on)}
       className="relative w-[42px] h-6 rounded-pill shrink-0 transition-colors duration-200"
-      style={{ background: on ? '#FDDA24' : 'rgba(255,255,255,0.15)' }}
+      style={{ background: on ? 'var(--gold)' : 'rgba(255,255,255,0.15)' }}
     >
       <span
         className="absolute top-[3px] w-[18px] h-[18px] rounded-full bg-near-black transition-[left] duration-200"
@@ -318,7 +415,7 @@ export function Glyph({
 }) {
   const tones = {
     teal: { bg: 'rgba(0,167,181,0.14)', bd: 'rgba(0,167,181,0.35)', fg: '#00A7B5' },
-    gold: { bg: 'rgba(253,218,36,0.1)', bd: 'rgba(253,218,36,0.3)', fg: '#FDDA24' },
+    gold: { bg: 'var(--surface-md)', bd: 'var(--border-dim)', fg: 'var(--gold)' },
     lilac: { bg: 'rgba(183,172,232,0.14)', bd: 'rgba(183,172,232,0.35)', fg: '#B7ACE8' },
   } as const
   const t = tones[tone]

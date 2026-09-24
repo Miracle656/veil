@@ -262,7 +262,7 @@ export default function EarnPage() {
         )}
 
         {/* ── Pool list ── */}
-        {(step === 'pools' || step === 'deposit-form' || step === 'withdraw-form') && (
+        {step === 'pools' && (
           <>
             <p
               style={{
@@ -297,8 +297,8 @@ export default function EarnPage() {
                     padding: '1rem',
                     border:
                       selectedPool?.id === pool.id
-                        ? '1px solid rgba(212,175,55,0.5)'
-                        : '1px solid transparent',
+                        ? '1px solid var(--gold)'
+                        : '1px solid var(--border-dim)',
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
@@ -317,7 +317,7 @@ export default function EarnPage() {
                     Total liquidity: {(Number(pool.totalSupply) / 1e7).toLocaleString()}
                   </div>
                   <button
-                    className="btn-gold"
+                    className="btn-secondary"
                     style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem' }}
                     onClick={() => { setSelectedPool(pool); setStep('deposit-form') }}
                   >

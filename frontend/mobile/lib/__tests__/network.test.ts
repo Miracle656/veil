@@ -235,13 +235,11 @@ describe('clearNetworkOverride', () => {
 });
 
 describe('configuration checks', () => {
-  it('reports mainnet as unconfigured when the build has no endpoints for it', async () => {
+  it("defaults mainnet to Veil's RPC proxy when the build sets no endpoint", async () => {
     const net = await loadNetwork();
-    expect(net.isNetworkConfigured(net.NETWORKS.mainnet)).toBe(false);
-    expect(net.describeMissingConfig(net.NETWORKS.mainnet)).toEqual([
-      'Soroban RPC URL',
-      'factory contract ID',
-    ]);
+    expect(net.NETWORKS.mainnet.rpcUrl).toBe('https://app.useveilapp.xyz/api/rpc/mainnet');
+    expect(net.isNetworkConfigured(net.NETWORKS.mainnet)).toBe(true);
+    expect(net.describeMissingConfig(net.NETWORKS.mainnet)).toEqual([]);
   });
 
   it('reports a fully configured network as ready', async () => {
@@ -254,8 +252,10 @@ describe('configuration checks', () => {
   });
 
   it('names each missing piece individually', async () => {
-    const net = await loadNetwork({ EXPO_PUBLIC_MAINNET_RPC_URL: 'https://mainnet.rpc.test' });
-    expect(net.describeMissingConfig(net.NETWORKS.mainnet)).toEqual(['factory contract ID']);
+    const net = await loadNetwork();
+    const blanked = { ...net.NETWORKS.mainnet, rpcUrl: '', factoryContractId: '' };
+    expect(net.isNetworkConfigured(blanked)).toBe(false);
+    expect(net.describeMissingConfig(blanked)).toEqual(['Soroban RPC URL', 'factory contract ID']);
   });
 });
 

@@ -1,4 +1,5 @@
 import type { Messages } from '@/lib/i18n'
+import { useRegionalCurrency } from '@/lib/regionalCurrency'
 
 /**
  * The agent section — an inverted (light) band, ported from the Claude Design
@@ -17,6 +18,7 @@ import type { Messages } from '@/lib/i18n'
 
 export function LandingAgent({ t }: { t: Messages }) {
   const copy = t.agent
+  const amounts = useRegionalCurrency()
 
   return (
     <section id="agent" className="bg-off-white text-near-black py-20 sm:py-24 lg:py-28">
@@ -62,7 +64,9 @@ export function LandingAgent({ t }: { t: Messages }) {
           <div className="w-[520px] max-lg:w-full shrink-0 bg-near-black text-off-white rounded-[26px] p-6 sm:p-8 box-border">
             <div className="flex flex-col gap-[14px]">
               <div className="self-end max-w-[80%] bg-gold/10 border border-gold/[0.22] rounded-[18px] rounded-br-[6px] px-[18px] py-[14px] font-mono text-[13.5px] sm:text-[15px] leading-[1.6]">
-                {copy.ask}
+                {copy.ask
+                  .replace('{largeAmount}', amounts.largeAmount)
+                  .replace('{smallAmount}', amounts.smallAmount)}
               </div>
               <div className="self-start max-w-[86%] bg-white/[0.04] border border-white/[0.08] rounded-[18px] rounded-bl-[6px] px-[18px] py-[14px] font-mono text-[13.5px] sm:text-[15px] leading-[1.7] text-off-white/80">
                 {copy.reply}
@@ -79,7 +83,9 @@ export function LandingAgent({ t }: { t: Messages }) {
                   }`}
                 >
                   <span className="min-w-0">
-                    <span className="block font-mono text-[13px] sm:text-[14px]">{q.title}</span>
+                    <span className="block font-mono text-[13px] sm:text-[14px]">
+                    {q.title.replace('{smallAmount}', amounts.smallAmount)}
+                  </span>
                     <span className="block font-mono text-[11px] text-off-white/40 mt-[3px]">{q.sub}</span>
                   </span>
                   <span className="bg-gold text-near-black rounded-pill font-mono text-[12px] font-semibold tracking-[0.1em] px-4 py-2 shrink-0">

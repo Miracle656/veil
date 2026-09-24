@@ -13,6 +13,21 @@ import { Callout, Cards } from 'nextra/components'
   Veil implements the [WebAuthn / FIDO2](https://webauthn.guide) standard and the **ES256 (P-256 ECDSA)** signature scheme. All cryptographic verification happens on-chain inside a Soroban custom account contract.
 </Callout>
 
+## Live on Stellar Mainnet
+
+**Veil is deployed and source-verified on Stellar mainnet** — not a testnet-only project. The factory contract [`CCZ3JLRE…OQ7BK`](https://stellar.expert/explorer/public/contract/CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK) is built reproducibly through `scripts/reproducible-build.sh` (Docker `rust:1.85.0-bookworm`); its on-chain bytecode matches `contracts/expected-hashes.json` **byte for byte** (`factory.wasm` `3a6756d2…`, `invisible_wallet.wasm` `b485f817…`). A reviewer can rebuild locally and match the ledger directly.
+
+Real transactions on the public network prove the full passkey path works end to end:
+
+| What it proves | Transaction |
+|---|---|
+| A WebAuthn passkey authorizing a mainnet transfer on-chain (`__check_auth`) | [`626e1106…ebcc`](https://stellar.expert/explorer/public/tx/626e110b61b709afb2d85c14517e7678b95b07e4d49c34a6caff8ee51148ebcc) |
+| Soroswap aggregator swap (1 XLM → 0.2024626 USDC) | [`5e29e3d8…6f4f`](https://stellar.expert/explorer/public/tx/5e29e3d8cdd27ba25f510e5dbf412e9e6592dabdf761508266a8752bfd096f4f) |
+| Sponsored classic send to an external wallet (LOBSTR) | [`3ef7598f…ab5c`](https://stellar.expert/explorer/public/tx/3ef7598f6cc3c4d96032d5ea5df17ef543fbe06cdd008b8640bc917cc09cab5c) |
+| Passkey wallet deployed via the factory | [`acbc3147…57fe`](https://stellar.expert/explorer/public/tx/acbc3147c89cb1ccca486ff80b8293d0c1d3d2c306600c27c52c2b64aa0f57fe) |
+
+Full receipts (including the wallet contract and funding transaction) are in the repo's `docs/SCF_STRATEGY.md` §0. Note there is **no public mainnet Soroban RPC** — see [Choosing a Network](/guides/networks#mainnet-rpc-is-paid-and-why-the-wallet-proxies-it) for the paid-provider proxy the wallet uses.
+
 ## Why Veil?
 
 | Traditional Wallet | Veil |
@@ -62,10 +77,10 @@ invisible_wallet/
 |---|---|---|
 | Phase 1 | Complete    | Contract, WalletError, 6 unit tests |
 | Phase 2 | Complete    | Full WebAuthn pipeline, DER to raw, key extraction |
-| Phase 3 | In Progress | Factory contract, deterministic deployment |
-| Phase 4 | Upcoming    | Testnet integration, end-to-end demo |
-| Phase 5 | Upcoming    | Guardian recovery, multi-signer, replay protection |
+| Phase 3 | Complete    | Factory contract, deterministic deployment |
+| Phase 4 | Complete    | Testnet + **mainnet** deployment, end-to-end demo |
+| Phase 5 | In Progress | Guardian recovery, multi-signer, replay protection |
 
 <Callout type="warning">
-  Veil is under active development. The contract and SDK APIs may change before a stable 1.0 release. Do not use on Mainnet yet.
+  Veil is **live on Stellar mainnet** (see [above](#live-on-stellar-mainnet)) but still under active development — the contract and SDK APIs may change before a stable 1.0 release. Test on Testnet before moving real value, and never deploy unaudited changes to Mainnet.
 </Callout>

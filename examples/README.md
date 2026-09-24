@@ -2,6 +2,14 @@
 
 This directory contains example implementations of the Invisible Wallet SDK.
 
+## Vue 3
+
+The `vue/` directory contains a Vite + Vue 3 starter built on
+`invisible-wallet-sdk/vue`, covering register, login and send. See
+[vue/README.md](vue/README.md).
+
+For the SSR flavour, `nuxt/` runs the same composable inside Nuxt 3.
+
 ## Vanilla JavaScript
 
 The `vanilla/` directory contains a complete HTML page demonstrating how to use the SDK without any framework dependencies.

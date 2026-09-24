@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import type { Messages } from '@/lib/i18n'
+import { useRegionalCurrency, type RegionalAmounts } from '@/lib/regionalCurrency'
 
 /**
  * Landing hero — centred statement over a collage of the approved mobile screens.
@@ -53,7 +54,7 @@ function Phone({
 const LABEL = 'text-[9px] tracking-[0.14em] uppercase text-off-white/40 font-bold'
 const FIELD = 'bg-white/[0.04] border border-white/[0.08] rounded-[14px]'
 
-function SendScreen() {
+function SendScreen({ amounts }: { amounts: RegionalAmounts }) {
   return (
     <>
       <div className="flex items-center gap-[11px]">
@@ -79,15 +80,15 @@ function SendScreen() {
 
       <div className={`${LABEL} mt-4`}>Amount</div>
       <div className={`${FIELD} px-[13px] pt-[18px] pb-3 mt-[7px] flex flex-col items-center`}>
-        <span className="font-lora italic font-normal text-[38px] leading-none">₦25,000</span>
+        <span className="font-lora italic font-normal text-[38px] leading-none">{amounts.transfer}</span>
         <span className="font-mono text-[11px] text-off-white/50 mt-[7px]">≈ 16.08 USDC</span>
-        <span className="text-[10px] text-off-white/45 mt-[11px]">Balance ₦642,384</span>
+        <span className="text-[10px] text-off-white/45 mt-[11px]">Balance {amounts.balance}</span>
         <span className="flex gap-[5px] flex-wrap justify-center mt-2">
-          {['₦5,000', '₦10,000', '₦25,000', '₦50,000'].map((c) => (
+          {amounts.chips.map((c, i) => (
             <span
               key={c}
               className={`rounded-pill px-[9px] py-[4px] text-[9px] font-semibold border ${
-                c === '₦25,000'
+                i === 2
                   ? 'border-gold/40 bg-gold/[0.08] text-gold'
                   : 'border-white/10 text-off-white/60'
               }`}
@@ -126,7 +127,11 @@ function SendScreen() {
   )
 }
 
-function HomeScreen() {
+function HomeScreen({ amounts }: { amounts: RegionalAmounts }) {
+  const balanceDot = amounts.balance.lastIndexOf('.')
+  const balanceMain = balanceDot >= 0 ? amounts.balance.slice(0, balanceDot) : amounts.balance
+  const balanceDec = balanceDot >= 0 ? amounts.balance.slice(balanceDot) : null
+
   return (
     <>
       <div className="flex justify-between items-center px-[5px]">
@@ -157,12 +162,13 @@ function HomeScreen() {
           <Mark size={21} color="#0F0F0F" />
         </div>
         <div className="relative font-lora italic font-normal text-[35px] leading-[1.1] mt-[11px]">
-          ₦642,384<span className="text-[17px] text-near-black/45">.10</span>
+          {balanceMain}
+          {balanceDec && <span className="text-[17px] text-near-black/45">{balanceDec}</span>}
         </div>
         <div className="relative flex justify-between items-center mt-[13px] gap-2">
           <span className="font-mono text-[10px] text-near-black/60">412.98 USDC</span>
           <span className="bg-near-black/85 text-[#00e0f0] rounded-pill px-[9px] py-[3px] text-[9px] font-semibold shrink-0">
-            +₦109.32
+            +{amounts.dailyYield}
           </span>
         </div>
         <div className="relative flex gap-2 mt-[14px]">
@@ -253,32 +259,63 @@ function HomeScreen() {
   )
 }
 
-function ConfirmScreen() {
+function ConfirmScreen({ amounts }: { amounts: RegionalAmounts }) {
   return (
     <>
       <div className={LABEL}>Confirm transfer</div>
-      <div className="font-lora italic font-normal text-[42px] mt-[11px]">₦25,000</div>
+      <div className="font-lora italic font-normal text-[42px] mt-[11px]">{amounts.transfer}</div>
       <div className="font-mono text-[12px] text-off-white/50 mt-[5px]">To alice*veil.xyz</div>
 
       <div className="w-full mt-[30px] flex flex-col">
         {[
-          ['They receive', '₦25,000'],
+          ['They receive', amounts.transfer],
           ['Debited', '16.08 USDC'],
           ['Network fee', 'Sponsored'],
-        ].map(([k, v], i) => (
+          ['Arrives', '~5 seconds'],
+        ].map(([k, v], i, all) => (
           <div
             key={k}
-            className={`flex justify-between py-3 border-t border-white/[0.08] ${i === 2 ? 'border-b' : ''}`}
+            className={`flex justify-between py-[13px] border-t border-white/[0.08] ${
+              i === all.length - 1 ? 'border-b' : ''
+            }`}
           >
             <span className="text-[11px] text-off-white/45">{k}</span>
-            <span className={`text-[11px] ${v === 'Sponsored' ? 'text-teal' : 'font-mono'}`}>{v}</span>
+            <span
+              className={`text-[11px] ${
+                v === 'Sponsored' ? 'text-teal' : v === '~5 seconds' ? 'text-off-white/70' : 'font-mono'
+              }`}
+            >
+              {v}
+            </span>
           </div>
         ))}
       </div>
 
-      <div className="flex-1" />
-      <div className="relative w-full h-[54px] rounded-pill border border-gold/35 bg-gold/[0.05] flex items-center justify-center overflow-hidden">
-        <span className="absolute left-0 top-0 bottom-0 w-[112px] bg-gold/[0.13]" />
+      {/* The void this fills was the screen's real problem: a confirm screen with
+          four rows and a button reads as unfinished. This says the thing the
+          whole page is about, at the moment it matters most. */}
+      <div className="flex-1 flex items-center">
+        <div className="w-full rounded-[16px] border border-white/[0.08] bg-white/[0.03] px-[14px] py-[13px] flex items-center gap-[11px]">
+          <span className="shrink-0 w-[30px] h-[30px] rounded-full bg-gold/[0.12] border border-gold/25 flex items-center justify-center">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#FDDA24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="4" y="10" width="16" height="10" rx="2.5" />
+              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+            </svg>
+          </span>
+          <span className="leading-[1.35]">
+            <span className="block text-[11px] text-off-white/80">No seed phrase to enter</span>
+            <span className="block text-[10px] text-off-white/40">This device&rsquo;s passkey signs it</span>
+          </span>
+        </div>
+      </div>
+
+      {/* pl-[54px] clears the knob (4px inset + 46px wide + 4px of air): the knob
+          is absolutely positioned and paints over the label, so centring the
+          label in the whole track hides its first word — "SLIDE TO CONFIRM"
+          reads as "TO CONFIRM". Padding does not move an absolutely-positioned
+          child, so the knob and the fill stay put. */}
+      <div className="relative w-full h-[54px] rounded-pill border border-gold/35 bg-gold/[0.05] flex items-center justify-center overflow-hidden pl-[54px] pr-[4px]">
+        <span className="absolute left-0 top-0 bottom-0 w-[54px] bg-gold/[0.13]" />
         <span className="absolute left-[4px] top-[3px] w-[46px] h-[46px] rounded-full bg-gold text-near-black flex items-center justify-center text-[18px] font-bold">
           »
         </span>
@@ -286,13 +323,13 @@ function ConfirmScreen() {
           SLIDE TO CONFIRM
         </span>
       </div>
-      <div className="text-[10px] text-off-white/40 mt-3 text-center">Then confirm with your passkey.</div>
     </>
   )
 }
 
 export function LandingHero({ t }: { t: Messages }) {
   const copy = t.heroNew
+  const amounts = useRegionalCurrency()
 
   return (
     <section className="relative bg-near-black overflow-hidden">
@@ -338,7 +375,7 @@ export function LandingHero({ t }: { t: Messages }) {
             <div key={m.label} className="flex flex-col gap-[6px]">
               <dt className="sr-only">{m.label}</dt>
               <dd className="font-lora italic font-normal text-[28px] sm:text-[32px] leading-none text-off-white">
-                {m.value}
+                {m.value.includes('{sym}') ? m.value.replace('{sym}', amounts.symbol) : m.value}
               </dd>
               <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-off-white/45 whitespace-nowrap">
                 {m.label}
@@ -351,13 +388,13 @@ export function LandingHero({ t }: { t: Messages }) {
       {/* Collage: devices appear as room allows rather than being scaled down. */}
       <div className="relative flex justify-center items-end gap-5 lg:gap-6 mt-16 sm:mt-20 px-5 sm:px-8 lg:px-14 pb-4">
         <Phone className="hidden xl:flex">
-          <SendScreen />
+          <SendScreen amounts={amounts} />
         </Phone>
         <Phone tall>
-          <HomeScreen />
+          <HomeScreen amounts={amounts} />
         </Phone>
         <Phone className="hidden md:flex">
-          <ConfirmScreen />
+          <ConfirmScreen amounts={amounts} />
         </Phone>
       </div>
     </section>

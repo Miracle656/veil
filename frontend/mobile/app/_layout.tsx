@@ -1,8 +1,15 @@
+// Also imported from index.js, which runs before expo-router builds its route
+// tree — that is the one that matters, because route modules are required
+// during enumeration, before this file's body ever executes. Kept here too so
+// the shims cannot go missing if the entry point is ever changed back.
+import '../lib/polyfills';
+
 import { useEffect, useRef } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import * as SystemUI from 'expo-system-ui';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
@@ -11,9 +18,18 @@ import { StyleSheet } from 'react-native';
 import { fontAssets } from '../theme/typography';
 import { useTheme } from '../hooks/useTheme';
 import { useInactivityLock } from '../hooks/useInactivityLock';
+import { useNotifications } from '../hooks/useNotifications';
+import { useOutboxReplay } from '../hooks/useOutboxReplay';
 import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
+import { registerActivityCheck } from '../lib/backgroundActivity';
 import { hydrateLockSettings } from '../lib/appLock';
+import {
+  configureNotificationChannel,
+  configureNotificationHandler,
+  requestNotificationPermissions,
+  setAppLocked,
+} from '../lib/notifications';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
 import { WalletProvider } from '../components/WalletProvider';
 
@@ -31,6 +47,20 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, fontError]);
 
+  // Paint the native window background to match the in-app theme.
+  //
+  // Android draws the gesture navigation bar over the app rather than beside
+  // it, and what shows through is the *window* background — which Android sets
+  // from the OS colour scheme, not from Veil's. Anyone running the phone in
+  // light mode with Veil pinned to dark got a white band under the tab bar,
+  // because the window beneath was still the light theme's.
+  //
+  // Stack's `contentStyle` below cannot reach this: it paints inside the
+  // navigator, and the strip in question is outside it.
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(colors.background);
+  }, [colors.background]);
+
   // Apply any persisted network override before the first screen reads
   // getNetwork(). Without this the app always starts on the build-time network
   // and a saved choice would only take effect after the user re-picked it.
@@ -39,6 +69,16 @@ export default function RootLayout() {
     // Same reason as the network override: without this the app starts on the
     // defaults and a saved lock timeout only takes effect once re-picked.
     void hydrateLockSettings();
+    // Configure local notifications: the handler decides how they appear when
+    // the app is in the foreground; permissions are requested once per install.
+    configureNotificationHandler();
+    // Android takes heads-up behaviour from the channel, so it has to exist
+    // before the first notification is posted.
+    void configureNotificationChannel();
+    void requestNotificationPermissions();
+    // Check for payments while the app is closed, so a notification does not
+    // wait for the next time the user opens it.
+    void registerActivityCheck();
   }, []);
 
   // Keep the splash screen up (render nothing) until the fonts resolve — either
@@ -51,13 +91,21 @@ export default function RootLayout() {
   return (
     // GestureHandlerRootView + BottomSheetModalProvider are required by the
     // @gorhom bottom sheets used for the transaction detail surface.
-    <GestureHandlerRootView style={styles.root}>
+    // The background is applied here, not in `styles.root`, because it has to
+    // follow the in-app theme rather than a value frozen at module load. This
+    // is the app's own outermost view: painting it means the dark screen
+    // reaches the bottom of the display even if the native window beneath is
+    // still light, which is belt-and-braces alongside the SystemUI call above.
+    <GestureHandlerRootView style={[styles.root, { backgroundColor: colors.background }]}>
       <SafeAreaProvider>
         <BottomSheetModalProvider>
           <ConnectivityProvider>
             <WalletProvider>
               <ConnectivityGate />
+              <OutboxReplayGate />
               <InactivityLockGate />
+              <NotificationGate />
+              <LockStateTracker />
               <Stack
                 screenOptions={{
                   headerShown: false,
@@ -95,10 +143,46 @@ function InactivityLockGate() {
 }
 
 /**
+ * Monitors the activity feed and fires local notifications for new incoming
+ * transfers. Rendered at the root so it stays active regardless of which
+ * screen is visible.
+ */
+function NotificationGate() {
+  useNotifications();
+  return null;
+}
+
+/**
+ * Tracks the current route and updates the module-level lock flag in
+ * `notifications.ts` so that notification content respects the lock state.
+ */
+function LockStateTracker() {
+  const segments = useSegments();
+  useEffect(() => {
+    setAppLocked(segments[0] === 'lock');
+  }, [segments]);
+  return null;
+}
+
+/**
  * Pushes the offline screen when connectivity drops and pops it again when it
  * returns, so the route the user was on is preserved underneath. Rendered as a
  * sibling of the navigator rather than around it, so it can use the router.
  */
+/**
+ * Replays the SDK's Stellar transaction outbox when connectivity returns.
+ *
+ * The SDK only auto-replays off `window.addEventListener('online')`, which
+ * never fires under React Native, so without this mount a transaction queued
+ * while offline would sit in AsyncStorage until something replayed it by hand.
+ * It needs both ConnectivityProvider and WalletProvider in scope and renders
+ * nothing, so it belongs here with the other gates rather than in a screen.
+ */
+function OutboxReplayGate() {
+  useOutboxReplay();
+  return null;
+}
+
 function ConnectivityGate() {
   const { isOnline } = useConnectivity();
   const router = useRouter();
@@ -117,10 +201,14 @@ function ConnectivityGate() {
       return;
     }
 
-    if (pushedRef.current) {
+    // Leave whenever the screen is showing, not only when this gate pushed it
+    // and there is somewhere to go back to. On a cold start while offline there
+    // is no history, so `back()` did nothing and the screen stayed up for good.
+    if (pushedRef.current || isOnOfflineRoute) {
       pushedRef.current = false;
-      if (isOnOfflineRoute && router.canGoBack()) {
-        router.back();
+      if (isOnOfflineRoute) {
+        if (router.canGoBack()) router.back();
+        else router.replace('/');
       }
     }
   }, [isOnOfflineRoute, isOnline, router]);

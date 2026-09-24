@@ -51,14 +51,9 @@ export default function ActivityPage() {
           <button
             key={f.key}
             type="button"
-            className="vw-chip"
+            className={filter === f.key ? 'vw-chip vw-chip--active' : 'vw-chip'}
             aria-pressed={filter === f.key}
             onClick={() => setFilter(f.key)}
-            style={
-              filter === f.key
-                ? { color: '#FDDA24', borderColor: 'rgba(253,218,36,0.35)', background: 'rgba(253,218,36,0.08)' }
-                : undefined
-            }
           >
             {f.label}
           </button>

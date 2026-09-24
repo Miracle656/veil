@@ -7,11 +7,19 @@ import { Callout } from 'nextra/components'
 
 # SDK Reference
 
-The `invisible-wallet-sdk` is a TypeScript package providing a React hook and utility functions for integrating Veil into web applications.
+The `invisible-wallet-sdk` is a TypeScript package providing a React hook, a Vue 3 composable, and utility functions for integrating Veil into web applications.
 
 **Package:** `invisible-wallet-sdk`
 **Source:** `sdk/src/`
 **Entry:** `dist/index.js` / `dist/index.d.ts`
+
+| Entry point | Import | For |
+|---|---|---|
+| React | `invisible-wallet-sdk` | `useInvisibleWallet` hook |
+| Vue 3 | `invisible-wallet-sdk/vue` | `useInvisibleWallet` composable |
+| No framework | `invisible-wallet-sdk/vanilla` | `createInvisibleWallet` |
+
+All three wrap the same framework-agnostic core (`sdk/src/core.ts`), so the React and Vue adapters expose an identical set of actions. Neither entry point pulls in the other's framework.
 
 ---
 
@@ -84,6 +92,44 @@ const wallet = useInvisibleWallet(config)
 | `isDeployed` | `boolean` | Whether the contract exists on-chain |
 | `isPending` | `boolean` | True while any async operation is running |
 | `error` | `string \| null` | Last error message |
+
+---
+
+## `useInvisibleWallet(config)` — Vue 3
+
+The same wallet as a Composition API composable. Every method below is available and behaves identically; only the state differs, arriving as refs.
+
+```vue
+<script setup lang="ts">
+import { useInvisibleWallet } from 'invisible-wallet-sdk/vue'
+
+const { address, isPending, error, register, login, sendPayment } =
+  useInvisibleWallet(config)
+</script>
+
+<template>
+  <p v-if="address">Wallet: {{ address }}</p>
+  <button v-else :disabled="isPending" @click="register('alice')">Create wallet</button>
+</template>
+```
+
+### State
+
+| Property | Type | Description |
+|---|---|---|
+| `state` | `Ref<WalletState>` | All four fields in one ref, for `watch(state, …)` |
+| `address` | `ComputedRef<string \| null>` | Wallet contract address, null if not registered |
+| `isDeployed` | `ComputedRef<boolean>` | Whether the contract exists on-chain |
+| `isPending` | `ComputedRef<boolean>` | True while any async operation is running |
+| `error` | `ComputedRef<string \| null>` | Last error message |
+
+<Callout type="info">
+Called from `setup()` / `<script setup>`, the composable restores a persisted session on `onMounted` and detaches on `onUnmounted` — nothing touches `localStorage` or `window` before mount, so SSR is safe. Each call creates an independent wallet, so share one instance (module scope, or `provide`/`inject`) if several components need the same state.
+</Callout>
+
+Every action re-reads the config when it runs, so a `reactive()` config lets you switch networks at runtime. The `storage` adapter is the exception — it is read once, when the wallet is created, because the offline outbox and the passkey-derived cipher belong to it.
+
+Starters: [`examples/vue/`](https://github.com/Miracle656/veil/tree/main/examples/vue) (Vite) and [`examples/nuxt/`](https://github.com/Miracle656/veil/tree/main/examples/nuxt) (SSR).
 
 ---
 

@@ -3,6 +3,10 @@ const path = require('path')
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Dev only. Next serves HMR and font assets to `localhost` by default, so
+  // opening the dev server on the loopback IP silently loses hot reload and the
+  // page keeps retrying a blocked request. No effect on a production build.
+  allowedDevOrigins: ['127.0.0.1'],
   outputFileTracingRoot: path.join(__dirname, '../../'),
   experimental: {
     // Allow imports from outside the Next.js project root (e.g. ../../sdk/src)
@@ -76,6 +80,13 @@ const nextConfig = {
       path.resolve(__dirname, 'node_modules'),
       ...config.resolve.modules,
     ]
+    // The agent package (packages/agent) is ESM TypeScript that imports its own
+    // modules as './network.js' — the extension TypeScript emits. When webpack
+    // compiles that source directly, those files only exist as .ts; try .ts first.
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias || {}),
+      '.js': ['.ts', '.tsx', '.js'],
+    }
     return config
   },
 }

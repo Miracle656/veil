@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -15,10 +16,10 @@ import { QrScanner } from '../components/QrScanner';
 import type { Contact } from '../hooks/useContacts';
 import { requireSigner } from '../lib/signer';
 import { requirePasskey } from '../lib/passkey';
-import { fetchContractXlm } from '../lib/activity';
-import { sendXlmFromContract, getFeePayerSpendableXlm, isWalletDeployed } from '../lib/contractSpend';
-import { getSignerSecret } from '../lib/walletStore';
+import { fetchContractAssetBalance } from '../lib/activity';
+import { sendAssetFromContract, getFeePayerSpendableXlm, getFeePayerXlm, type FeePayerXlm } from '../lib/contractSpend';
 import { useWallet } from '../components/WalletProvider';
+import { deployWalletIfNeeded } from '../lib/deployWallet';
 import { sendPayment } from '../lib/sendPayment';
 import { truncateAddress } from '../components/ui/AddressChip';
 import { getWalletAddress } from '../lib/walletStore';
@@ -78,8 +79,19 @@ export default function SendScreen() {
   // Smart-wallet source: when the wallet is a C-address holding its own XLM,
   // the user can choose to spend from the contract (a __check_auth transfer).
   const [contractAddr, setContractAddr] = useState<string | null>(null);
-  const [contractXlm, setContractXlm] = useState(0);
+  /** The contract's balance of the currently selected asset, not just XLM. */
+  /**
+   * What the CONTRACT holds of the selected asset. `null` means not read yet,
+   * which is different from zero: until it is known we cannot split the
+   * combined holding into what each side can actually send.
+   */
+  const [contractHeld, setContractHeld] = useState<number | null>(null);
   const [fromContract, setFromContract] = useState(false);
+  /**
+   * The spending account's XLM with its actual reserve. `null` until read, and
+   * ignored if the read failed (it zeroes out rather than throwing).
+   */
+  const [spendingXlm, setSpendingXlm] = useState<FeePayerXlm | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -87,12 +99,7 @@ export default function SendScreen() {
       const address = await getWalletAddress().catch(() => null);
       if (!address) return;
       if (address.startsWith('C')) {
-        void fetchContractXlm(address).then((x) => {
-          if (alive) {
-            setContractAddr(address);
-            setContractXlm(x);
-          }
-        });
+        if (alive) setContractAddr(address);
       }
       const hs = await loadHoldings(address).catch(() => [] as Holding[]);
       if (!alive) return;
@@ -116,19 +123,77 @@ export default function SendScreen() {
   const trimmed = recipient.trim();
   const recipientValid = isValidDestination(trimmed);
   const showError = trimmed.length > 0 && !recipientValid;
+  // The contract's balance OF THE SELECTED ASSET. Previously this only ever
+  // read native XLM, so the smart wallet could not be chosen as the source for
+  // anything else — the routing would use it, but nothing on screen said so.
+  useEffect(() => {
+    let alive = true;
+    if (!contractAddr) return;
+    const asset =
+      selected && !selected.native && selected.issuer
+        ? { code: selected.code, issuer: selected.issuer }
+        : undefined;
+    setContractHeld(null);
+    void fetchContractAssetBalance(contractAddr, asset)
+      .then((x) => {
+        if (alive) setContractHeld(x);
+      })
+      .catch(() => {
+        if (alive) setContractHeld(null);
+      });
+    return () => { alive = false; };
+  }, [contractAddr, selected?.code, selected?.issuer, selected?.native]);
+
+  useEffect(() => {
+    if (!selected?.native) return;
+    let alive = true;
+    void getFeePayerXlm().then((x) => {
+      if (alive) setSpendingXlm(x);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [selected?.native, holdings]);
+
   const editable = step === 'form' || step === 'error';
   const amtNum = Number(amount);
   const nonNative = !!selected && !selected.native;
   const balanceNum = selected ? Number(selected.balance) : 0;
-  // The smart-wallet source only applies to native XLM.
-  const contractSource = fromContract && !nonNative && !!contractAddr;
-  // Native sends must leave ~1.5 XLM for the base reserve + fee.
+  // Any asset the contract actually holds can be its source — a SAC transfer
+  // is asset-agnostic and needs no trustline on the contract side.
+  const held = contractHeld ?? 0;
+  const contractSource = fromContract && !!contractAddr && held > 0;
+
+  /**
+   * What the CLASSIC account alone holds.
+   *
+   * `selected.balance` is the COMBINED holding — `loadHoldings` adds the
+   * contract's SAC balance to the fee payer's trustline on purpose, because
+   * "what do I own" is one number. It is the wrong number the moment a source
+   * is chosen, and using it here is what produced an `op_underfunded` on a
+   * send of 10.3 from an account holding 10.2946 while the screen said 10.5546:
+   * the missing 0.26 was in the contract, which this send was never going to
+   * touch. Never show a number the app cannot honour.
+   *
+   * `null` while the contract side is still being read, so nothing is offered
+   * on a split we have not measured yet.
+   */
+  const classicHeld = contractHeld === null ? null : Math.max(0, balanceNum - contractHeld);
+
+  // A native send must leave the account's reserve behind: (2 + subentries) x
+  // 0.5 XLM, read from the account. A flat 1.5 understated it — the recovery
+  // entries alone are three subentries — so "Max" offered XLM the network would
+  // refuse. The flat figure remains only as the fallback while that read is out.
+  const nativeSpendable = (classic: number) =>
+    spendingXlm && spendingXlm.balance > 0
+      ? Math.min(classic, spendingXlm.spendable)
+      : Math.max(0, classic - 1.5);
   const spendable = contractSource
-    ? contractXlm
-    : selected
+    ? held
+    : selected && classicHeld !== null
       ? selected.native
-        ? Math.max(0, balanceNum - 1.5)
-        : balanceNum
+        ? nativeSpendable(classicHeld)
+        : classicHeld
       : null;
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
   const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient;
@@ -142,9 +207,11 @@ export default function SendScreen() {
   }, []);
 
   const handleQuick = (frac: number) => {
-    if (!selected || !isFinite(balanceNum) || balanceNum <= 0) return;
-    // Leave a little XLM for fees/reserve when maxing native.
-    const usable = selected.native && frac === 1 ? Math.max(0, balanceNum - 1.5) : balanceNum * frac;
+    // Off the SOURCE's spendable, not the combined holding. `spendable`
+    // already carries the native reserve deduction, so Max is an amount the
+    // chosen account can actually pay.
+    if (spendable === null || !isFinite(spendable) || spendable <= 0) return;
+    const usable = spendable * frac;
     setAmount(usable.toFixed(usable >= 1 ? 2 : 4));
   };
 
@@ -159,30 +226,53 @@ export default function SendScreen() {
       // is FROM the contract — the passkey signs the Soroban auth entry and
       // __check_auth verifies it on-chain (that prompt IS the security gate).
       const stored = await getWalletAddress().catch(() => null);
-      if (!nonNative && stored?.startsWith('C')) {
-        const [liveContractXlm, fpSpendable] = await Promise.all([
-          fetchContractXlm(stored),
+      if (stored?.startsWith('C')) {
+        // Narrowed on `issuer` rather than on `nonNative`: an issued asset with
+        // no issuer cannot be turned into a SAC id, so it must not reach the
+        // contract path at all. Undefined means native, which is the one asset
+        // that legitimately has no issuer.
+        const spendAsset =
+          nonNative && selected?.issuer
+            ? { code: selected.code, issuer: selected.issuer }
+            : undefined;
+
+        const [liveContractBalance, fpSpendable] = await Promise.all([
+          fetchContractAssetBalance(stored, spendAsset),
           getFeePayerSpendableXlm(),
         ]);
-        const shouldUseContract =
-          (contractSource && amtNum <= liveContractXlm) ||
-          (amtNum > fpSpendable && amtNum <= liveContractXlm);
+
+        // Prefer the contract when it can actually cover the amount — it is the
+        // wallet the user believes they are spending from, and the fee payer is
+        // plumbing. But "prefer" is the operative word: the fee payer holds its
+        // own separate balance and is a legitimate source too.
+        //
+        // Requiring the contract for every issued asset was wrong, and broke
+        // the one flow that has to work first: moving USDC from the fee payer
+        // INTO the contract. The contract is empty by definition at that point,
+        // so the check rejected the transfer that would have filled it.
+        const shouldUseContract = amtNum <= liveContractBalance && liveContractBalance > 0;
         if (shouldUseContract) {
           // The wallet contract must exist on-chain before __check_auth can run.
           // Creation computed the address counterfactually — deploy lazily here.
-          if (!(await isWalletDeployed(stored))) {
-            const secret = await getSignerSecret();
-            if (!secret) throw new Error('No fee-payer key on this device to pay for deployment.');
-            await wallet.deploy(secret);
-          }
+          // With the key the address was derived from, resolved from the
+          // secure store or the on-chain recovery entries — see
+          // lib/deployWallet.ts. The SDK alone looked in one storage slot a
+          // recovered wallet never wrote, and refused.
+          await deployWalletIfNeeded(wallet.deploy, stored);
           setStep('submitting');
-          const hash = await sendXlmFromContract(stored, recipient.trim(), amount);
+          const hash = await sendAssetFromContract(stored, recipient.trim(), amount, spendAsset);
           setHash(hash);
           setStep('done');
           return;
         }
+        // Only an explicit "Smart wallet" choice is an error when the contract
+        // is short. Otherwise fall through to the fee payer, which for an
+        // issued asset reaches a C-address destination over that asset's SAC.
         if (contractSource) {
-          throw new Error(`The smart wallet holds ${liveContractXlm.toFixed(2)} XLM — not enough for this amount.`);
+          const code = nonNative && selected ? selected.code : 'XLM';
+          throw new Error(
+            `The smart wallet holds ${liveContractBalance.toFixed(2)} ${code} — not enough for this amount.`,
+          );
         }
       }
 
@@ -200,7 +290,7 @@ export default function SendScreen() {
       setHash(result.hash);
       setStep('done');
     } catch (err) {
-      const raw = err instanceof Error ? err.message : String(err);
+      const raw = errorMessage(err);
       const name = err instanceof Error ? err.name : '';
       // Horizon's 404 for the source account surfaces as a bare "Not found".
       const friendly =
@@ -275,8 +365,8 @@ export default function SendScreen() {
           <ChevronDownIcon size={18} color={colors.textFaint} />
         </Pressable>
 
-        {/* Source — only for smart wallets holding their own XLM */}
-        {contractAddr && contractXlm > 0 && !nonNative && (
+        {/* Source — shown whenever the contract holds some of this asset */}
+        {contractAddr && held > 0 && (
           <>
             <Text style={styles.section}>From</Text>
             <View style={styles.sourceRow}>
@@ -285,7 +375,15 @@ export default function SendScreen() {
                 accessibilityRole="button"
                 style={[styles.sourcePill, !fromContract && styles.sourcePillActive]}
               >
-                <Text style={[styles.sourceText, !fromContract && styles.sourceTextActive]}>Spending</Text>
+                {/* Both sides carry their balance. Only the smart wallet did, so
+                    a tester holding 8 could see the 2 in the contract but had to
+                    work out the 6 in spending for themselves. */}
+                <Text style={[styles.sourceText, !fromContract && styles.sourceTextActive]}>
+                  Spending
+                  {classicHeld !== null
+                    ? ` · ${mask(classicHeld.toLocaleString('en-US', { maximumFractionDigits: 2 }))} ${selected?.code ?? 'XLM'}`
+                    : ''}
+                </Text>
               </Pressable>
               <Pressable
                 onPress={() => setFromContract(true)}
@@ -293,7 +391,8 @@ export default function SendScreen() {
                 style={[styles.sourcePill, fromContract && styles.sourcePillActive]}
               >
                 <Text style={[styles.sourceText, fromContract && styles.sourceTextActive]}>
-                  Smart wallet · {contractXlm.toLocaleString('en-US', { maximumFractionDigits: 0 })} XLM
+                  Smart wallet · {mask(held.toLocaleString('en-US', { maximumFractionDigits: 2 }))}{' '}
+                  {selected?.code ?? 'XLM'}
                 </Text>
               </Pressable>
             </View>
@@ -325,15 +424,26 @@ export default function SendScreen() {
           <Text style={styles.amountFiat}>{fiatOfAmount ? `≈ ${fiatOfAmount}` : ' '}</Text>
           <Text style={[styles.balanceLine, insufficient && styles.balanceWarn]}>
             {(() => {
-              const shown = contractSource ? contractXlm.toFixed(2) : selected?.balance;
-              return insufficient && shown
-                ? `Not enough ${assetCode} — ${contractSource ? 'smart wallet has' : 'you have'} ${mask(fmtAmount(shown))}`
-                : `Balance ${shown ? `${mask(fmtAmount(shown))} ${assetCode}` : '—'}`;
+              // The balance of the chosen source, never the combined holding.
+              // Quoting the total here is what let someone type an amount the
+              // selected account could not cover.
+              const shown =
+                spendable === null ? null : (contractSource ? held : spendable).toFixed(4);
+              if (shown === null) return 'Checking balance…';
+              return insufficient
+                ? `Not enough ${assetCode} — ${contractSource ? 'smart wallet has' : 'spending has'} ${mask(fmtAmount(shown))}`
+                : !contractSource && selected?.native && classicHeld !== null && classicHeld - Number(shown) > 0.0001
+                  ? // Say both: the account holds more than it can send, and
+                    // quoting only one of the two reads as a wrong balance.
+                    `Balance ${mask(fmtAmount(classicHeld.toFixed(4)))} ${assetCode} · ${mask(fmtAmount(shown))} can be sent`
+                  : `Balance ${mask(fmtAmount(shown))} ${assetCode}`;
             })()}
           </Text>
           <View style={styles.chips}>
             {QUICK.map((q) => {
-              const target = q.frac === 1 ? balanceNum : balanceNum * q.frac;
+              // Same basis as handleQuick, so the highlighted chip is the one
+              // that actually produced the amount in the field.
+              const target = (spendable ?? 0) * q.frac;
               const active = amtNum > 0 && Math.abs(amtNum - target) < Math.max(0.0001, target * 0.02);
               return (
                 <Pressable

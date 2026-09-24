@@ -30,14 +30,27 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
+      # The repo root is not an npm workspace (#670): it installs only the
+      # release tooling. Changesets reads the publishable package set from
+      # pnpm-workspace.yaml, which npm ignores.
+      - name: Install release tooling
+        run: npm ci
 
+      # Each publishable package is a standalone npm project with its own
+      # lockfile, so install and build it in its own directory. `npm ci ||
+      # npm install` is the same deterministic-first idiom the PR jobs use.
       - name: Build publishable packages
         run: |
-          npm run build --workspace invisible-wallet-sdk --if-present
-          npm run build --workspace @veil/agent --if-present
-          npm run build --workspace create-veil-app --if-present
+          set -euo pipefail
+          for pkg in sdk packages/agent packages/create-veil-app; do
+            echo "::group::$pkg"
+            (
+              cd "$pkg"
+              npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+              npm run build --if-present
+            )
+            echo "::endgroup::"
+          done
 
       # When changeset files exist, this opens/updates a "Version Packages" PR
       # that consumes them. When that PR is merged (versions already bumped, no
@@ -47,7 +60,7 @@ jobs:
         with:
           version: npm run version-packages
           # Publishing is gated until npm trusted publishing is set up for
-          # @veil/agent, invisible-wallet-sdk and create-veil-app. A brand-new
+          # invisible-wallet-sdk and create-veil-wallet. A brand-new
           # package's first publish can't be authorized by OIDC alone, so
           # `changeset publish` E404s. Until then only the version flow runs
           # (opens/updates the "Version Packages" PR). To enable real publishing,

@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -94,7 +95,7 @@ export default function VaultScreen() {
       const next = await fetchVaultDetails(target, stubFetchVaultDetails);
       setDetails(next);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setLoading(false);
     }
@@ -121,7 +122,7 @@ export default function VaultScreen() {
       await loadDetails();
       return true;
     } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message : String(cause);
+      const message = errorMessage(cause);
       setError(message);
       return false;
     } finally {
@@ -134,7 +135,7 @@ export default function VaultScreen() {
     try {
       parsedDelay = parseDelaySeconds(delayValue, delayUnit);
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
       return;
     }
 
@@ -158,7 +159,7 @@ export default function VaultScreen() {
       setContractId(next.contractId);
       setExistingContract('');
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
     } finally {
       setAction(null);
     }

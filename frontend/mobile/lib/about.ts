@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import { Linking } from 'react-native';
 
+import { nativeApplicationVersion, nativeBuildVersion } from './nativeVersion';
 import { getNetwork, type VeilNetwork, type VeilNetworkName } from './network';
 
 /**
@@ -30,12 +31,9 @@ const UNKNOWN_VERSION = 'unknown';
  * Go and on web, where the app.json value is the closest thing available.
  */
 export function getAppVersion(): AppVersion {
-  const version =
-    Constants.nativeApplicationVersion?.trim()
-    || Constants.expoConfig?.version?.trim()
-    || UNKNOWN_VERSION;
+  const version = nativeApplicationVersion() || Constants.expoConfig?.version?.trim() || UNKNOWN_VERSION;
 
-  const build = Constants.nativeBuildVersion?.trim() || null;
+  const build = nativeBuildVersion();
 
   return { version, build };
 }
@@ -93,6 +91,25 @@ export function explorerAddressUrl(
   if (!path) return null;
 
   return `https://stellar.expert/explorer/${explorerNetworkSegment(network.name)}/${path}/${trimmed}`;
+}
+
+/**
+ * Explorer URL for a transaction hash. Stellar transaction hashes are 32 bytes
+ * rendered as 64 hex characters; anything else returns null so the UI shows the
+ * hash without offering a link that would 404.
+ *
+ * The network segment comes from the active network rather than a constant —
+ * the app is dual-network at runtime, and a mainnet hash looked up on testnet
+ * reads as "this transaction does not exist".
+ */
+export function explorerTxUrl(
+  hash: string | null | undefined,
+  network: VeilNetwork = getNetwork()
+): string | null {
+  const trimmed = hash?.trim();
+  if (!trimmed || !/^[0-9a-fA-F]{64}$/.test(trimmed)) return null;
+
+  return `https://stellar.expert/explorer/${explorerNetworkSegment(network.name)}/tx/${trimmed.toLowerCase()}`;
 }
 
 export type ExternalLink = {

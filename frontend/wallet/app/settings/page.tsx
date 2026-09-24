@@ -7,7 +7,9 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
+import { ensureWalletDeployed, getDeploymentState } from '@/lib/walletDeployment'
 import { walletConfig } from '@/lib/network'
+import { isMultisigAvailable } from '@/lib/multisigConfig'
 import { useWalletConnect } from '@/lib/walletConnect'
 import {
   generateMnemonicPhrase,
@@ -18,6 +20,7 @@ import {
   getEncryptedMnemonic,
 } from '@/lib/recovery'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 
 type Section = 'overview' | 'add-signer' | 'guardian' | 'recovery-backup'
 
@@ -148,6 +151,7 @@ export default function SettingsPage() {
   const [section, setSection] = useState<Section>('overview')
   const [status, setStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [prfDowngraded, setPrfDowngraded] = useState(false)
 
   const [signers, setSigners] = useState<SignerInfo[]>([])
   const [localPublicKey, setLocalPublicKey] = useState<string | null>(null)
@@ -203,6 +207,8 @@ export default function SettingsPage() {
       
       // 2. Register derived key as a signer on-chain
       const signerKeypair = getSignerKeypair()
+      // Adding a signer is a call the contract answers, so it has to exist.
+      await ensureWalletDeployed(wallet.deploy, address)
       const res = await wallet.addSigner(signerKeypair, publicKey)
       
       // 3. Encrypt and store in IndexedDB
@@ -259,20 +265,33 @@ export default function SettingsPage() {
     }
   }
 
+  const [multisigAvailable, setMultisigAvailable] = useState(false)
+
   useEffect(() => {
     const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
     setAddress(addr)
+    // Active network is read from localStorage, so this waits for mount (#672).
+    setMultisigAvailable(isMultisigAvailable())
+    // Check fee-payer downgrade state so the card can show a warning dot
+    // without importing the full diagnostics into every render.
+    setPrfDowngraded(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
   }, [router])
 
   const fetchSigners = useCallback(async () => {
     try {
+      // An undeployed wallet has no signer list on chain to read yet. That is
+      // a normal state now (deploy-on-first-use), not a failure to report.
+      if ((await getDeploymentState(address)) === 'undeployed') {
+        setSigners([])
+        return
+      }
       const list = await wallet.getSigners();
       setSigners(list)
     } catch (e) {
       console.error('Failed to fetch signers', e)
     }
-  }, [wallet.getSigners]);
+  }, [wallet.getSigners, address]);
 
   useEffect(() => {
     if (address && section === 'overview') {
@@ -296,6 +315,7 @@ export default function SettingsPage() {
       const signerKeypair = getSignerKeypair()
       const result = await wallet.register()
       if (!result?.publicKeyBytes) throw new Error('Registration returned no public key')
+      await ensureWalletDeployed(wallet.deploy, address)
       const res = await wallet.addSigner(signerKeypair, result.publicKeyBytes)
       setStatus(`New signer added at index ${res.signerIndex}`)
       await fetchSigners()
@@ -312,6 +332,7 @@ export default function SettingsPage() {
     setStatus(null)
     try {
       const signerKeypair = getSignerKeypair()
+      await ensureWalletDeployed(wallet.deploy, address)
       await wallet.removeSigner(signerKeypair, index)
       setStatus(`Signer #${index} removed`)
       await fetchSigners()
@@ -331,6 +352,8 @@ export default function SettingsPage() {
     setStatus(null)
     try {
       const signerKeypair = getSignerKeypair()
+      // Setting a guardian is stored by the contract, so it has to be on chain.
+      await ensureWalletDeployed(wallet.deploy, address)
       await wallet.setGuardian(signerKeypair, guardianAddress)
       setStatus('Guardian set successfully')
       setGuardianAddress('')
@@ -397,6 +420,42 @@ export default function SettingsPage() {
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
                     <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Fee Payer card */}
+              <button
+                id="settings-fee-payer"
+                className="card"
+                onClick={() => router.push('/settings/fee-payer')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: prfDowngraded ? '1px solid rgba(220,38,38,0.35)' : '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Fee Payer</p>
+                      {prfDowngraded && (
+                        <span
+                          title="PRF was requested but is unavailable on this device — fee payer may differ on other clients"
+                          style={{
+                            display: 'inline-block',
+                            width: '7px', height: '7px',
+                            borderRadius: '50%',
+                            background: 'rgba(220,38,38,0.85)',
+                            flexShrink: 0,
+                          }}
+                        />
+                      )}
+                    </div>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      {prfDowngraded
+                        ? 'PRF unavailable — using legacy derivation'
+                        : 'View active fee-payer address and derivation mode'}
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke={prfDowngraded ? 'rgba(220,38,38,0.5)' : 'rgba(246,247,248,0.3)'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -534,24 +593,27 @@ export default function SettingsPage() {
                 </div>
               </button>
 
-              {/* DAO Multisig Wallet Card */}
-              <button
-                className="card"
-                onClick={() => router.push('/multisig')}
-                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>DAO Multisig Wallet</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
-                      Configure M-of-N signers, deploy wallet contract, and track pending tx approvals
-                    </p>
+              {/* DAO Multisig Wallet Card — only where the contract exists (#672);
+                  /multisig redirects away on networks without it. */}
+              {multisigAvailable ? (
+                <button
+                  className="card"
+                  onClick={() => router.push('/multisig')}
+                  style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>DAO Multisig Wallet</p>
+                      <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                        Configure M-of-N signers, deploy wallet contract, and track pending tx approvals
+                      </p>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                      <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
                   </div>
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                </div>
-              </button>
+                </button>
+              ) : null}
 
               <button
                 className="card"

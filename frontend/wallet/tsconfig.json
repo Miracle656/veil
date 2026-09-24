@@ -27,7 +27,16 @@
         "./*"
       ],
       "@veil/sdk": [
-        "../../sdk/src/useInvisibleWallet"
+        "../../sdk/src/index"
+      ],
+      "@veil/agent-core": [
+        "../../packages/agent/src/handler"
+      ],
+      "@veil/agent-llm": [
+        "../../packages/agent/src/llm"
+      ],
+      "@veil/agent-review": [
+        "../mobile/lib/agentMessages"
       ],
       "@veil/events": [
         "../../sdk/src/events"
@@ -55,6 +64,12 @@
       ],
       "@stellar/stellar-sdk": [
         "./node_modules/@stellar/stellar-sdk"
+      ],
+      "@anthropic-ai/sdk": [
+        "./node_modules/@anthropic-ai/sdk"
+      ],
+      "@soroswap/sdk": [
+        "./node_modules/@soroswap/sdk"
       ]
     }
   },

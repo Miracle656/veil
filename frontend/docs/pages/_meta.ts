@@ -17,4 +17,9 @@ export default {
   'agent-integration': 'Agent Integration',
   security: 'Security',
   'threat-model': 'Threat Model',
+  papers: {
+    title: 'Research',
+    type: 'separator',
+  },
+  research: 'Reserve Economics',
 }

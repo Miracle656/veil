@@ -1,4 +1,6 @@
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
+
+import { reachabilityConfig } from './reachability';
 import {
   createContext,
   useCallback,
@@ -61,6 +63,14 @@ function resolveIsOnline(state: Pick<NetInfoState, 'isConnected' | 'isInternetRe
   if (state.isInternetReachable === false) return false;
   return true;
 }
+
+/**
+ * Reachability is checked against Horizon rather than left to the platform: the
+ * OS's own validation pings Google and fails on some phones and networks while
+ * the internet works. See lib/reachability.ts for why the check is a GET that
+ * accepts any HTTP status.
+ */
+NetInfo.configure(reachabilityConfig);
 
 export function ConnectivityProvider({ children }: { children: ReactNode }) {
   const [isConnected, setIsConnected] = useState<boolean | null>(null);

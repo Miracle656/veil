@@ -6,25 +6,42 @@ import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { AgentIcon, EarnIcon, HomeIcon, SettingsIcon, SwapIcon, type IconProps } from './icons';
+import {
+  AgentIcon,
+  SettingsIcon,
+  SwapVerticalIcon,
+  WalletIcon,
+  YieldIcon,
+  type IconProps,
+} from './icons';
 
 type TabMeta = { label: string; Icon: (p: IconProps) => React.JSX.Element };
 
 const META: Record<string, TabMeta> = {
-  dashboard: { label: 'Home', Icon: HomeIcon },
-  earn: { label: 'Earn', Icon: EarnIcon },
+  // "Wallet", not "Home" — the tab is the user's money, not a landing page.
+  dashboard: { label: 'Wallet', Icon: WalletIcon },
+  earn: { label: 'Earn', Icon: YieldIcon },
   agent: { label: 'Agent', Icon: AgentIcon },
   settings: { label: 'Settings', Icon: SettingsIcon },
 };
 
 /**
- * The redesign's floating tab bar with a raised gold "+" in the middle — the
- * universal pay/send action. Home / Earn sit left of it, Agent / Settings right.
+ * The floating tab bar: a single rounded pill of five evenly-weighted tabs,
+ * following the Iconly crypto-nav reference.
  *
- * Rendered as the expo-router Tabs `tabBar`, so Home/Earn/Agent/Settings are real
- * tab screens (state preserved), while the center + pushes the send flow over
- * them. Only the four registered tabs are drawn — order is fixed here so the +
- * always lands dead center regardless of registration order.
+ * It replaced a version with a raised gold FAB for Swap in the middle. The FAB
+ * gave Swap the visual weight of the app's primary action, which it isn't —
+ * sending and receiving are — and it forced 34px of dead space above the bar to
+ * make room for the circle. Flat tabs read as what they are: five places to go.
+ *
+ * Active state is colour and weight, not a shape change: accent icon at a
+ * heavier stroke with a semibold label, against muted thin-stroke labels. That
+ * keeps every tab the same size, so nothing shifts as you move between them.
+ *
+ * Rendered as the expo-router Tabs `tabBar`, so Wallet/Earn/Agent/Settings are
+ * real tab screens with their state preserved, while Swap pushes over them.
+ * Order is fixed here rather than taken from `state.routes`, so Swap always
+ * lands dead centre regardless of registration order.
  */
 export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
   const router = useRouter();
@@ -39,19 +56,16 @@ export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
     const meta = META[name];
     if (!meta) return null;
     const focused = activeName === name;
-    const color = focused ? colors.accent : colors.textFaint;
     return (
-      <Pressable
+      <Tab
         key={name}
+        label={meta.label}
+        Icon={meta.Icon}
+        focused={focused}
+        colors={colors}
+        styles={styles}
         onPress={() => navigation.navigate(name)}
-        accessibilityRole="button"
-        accessibilityState={{ selected: focused }}
-        accessibilityLabel={meta.label}
-        style={styles.tab}
-      >
-        <meta.Icon size={22} color={color} />
-        <Text style={[styles.label, { color }]}>{meta.label}</Text>
-      </Pressable>
+      />
     );
   };
 
@@ -60,18 +74,52 @@ export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
       <View style={[styles.bar, { backgroundColor: barBg }]}>
         {renderTab('dashboard')}
         {renderTab('earn')}
-        <Pressable
+        {/* Swap is a pushed screen, not a tab, so it is never the focused one —
+            it reads as the action it is. */}
+        <Tab
+          label="Swap"
+          Icon={SwapVerticalIcon}
+          focused={false}
+          colors={colors}
+          styles={styles}
           onPress={() => router.push('/swap')}
-          accessibilityRole="button"
-          accessibilityLabel="Swap"
-          style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
-        >
-          <SwapIcon size={26} color={colors.onAccent} strokeWidth={2.2} />
-        </Pressable>
+        />
         {renderTab('agent')}
         {renderTab('settings')}
       </View>
     </View>
+  );
+}
+
+function Tab({
+  label,
+  Icon,
+  focused,
+  colors,
+  styles,
+  onPress,
+}: {
+  label: string;
+  Icon: (p: IconProps) => React.JSX.Element;
+  focused: boolean;
+  colors: ThemeColors;
+  styles: ReturnType<typeof createStyles>;
+  onPress: () => void;
+}) {
+  const color = focused ? colors.accent : colors.textFaint;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: focused }}
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
+    >
+      <Icon size={22} color={color} strokeWidth={focused ? 2 : 1.6} />
+      <Text style={[styles.label, focused && styles.labelActive, { color }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -83,10 +131,9 @@ const createStyles = (colors: ThemeColors) =>
       right: 0,
       bottom: 0,
       alignItems: 'center',
-      paddingHorizontal: 20,
-      paddingBottom: 28,
-      // Room for the FAB poking above the bar.
-      paddingTop: 34,
+      paddingHorizontal: 16,
+      paddingBottom: 24,
+      paddingTop: 8,
     },
     bar: {
       flexDirection: 'row',
@@ -96,37 +143,32 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceMd,
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 26,
-      paddingHorizontal: 22,
-      paddingVertical: 12,
+      // Fully rounded: any radius at least half the bar's height reads as a
+      // pill, and stays one as the height changes with the font scale.
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.18,
+      shadowRadius: 18,
+      elevation: 10,
     },
     tab: {
+      flex: 1,
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 4,
-      width: 56,
+      gap: 5,
+      paddingVertical: 2,
     },
     label: {
-      fontFamily: fontFamily.bodyMedium,
+      fontFamily: fontFamily.body,
       fontSize: 10,
     },
-    fab: {
-      width: 60,
-      height: 60,
-      borderRadius: 30,
-      backgroundColor: colors.accent,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: -40,
-      borderWidth: 6,
-      borderColor: colors.background,
-      shadowColor: colors.accent,
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.35,
-      shadowRadius: 16,
-      elevation: 8,
+    labelActive: {
+      fontFamily: fontFamily.bodySemiBold,
     },
-    fabPressed: {
-      opacity: 0.85,
+    pressed: {
+      opacity: 0.6,
     },
   });

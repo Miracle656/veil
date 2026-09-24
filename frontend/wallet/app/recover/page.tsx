@@ -1,5 +1,6 @@
 'use client'
 
+import { NetworkSwitcher } from '@/components/NetworkSwitcher'
 import { inclusionFee } from '@/lib/fees'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -54,7 +55,7 @@ export default function RecoverPage() {
 
       const sim = await server.simulateTransaction(tx)
       if (SorobanRpc.Api.isSimulationError(sim)) {
-        throw new Error('Could not read wallet on-chain. Check the address and try again.')
+        throw new Error(`Could not read this wallet on ${network.displayName}. A wallet exists on one network only — if it was created on the other, switch above and try again.`)
       }
 
       const simResult  = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
@@ -198,7 +199,7 @@ export default function RecoverPage() {
 
       const sim = await server.simulateTransaction(tx)
       if (SorobanRpc.Api.isSimulationError(sim)) {
-        throw new Error('Could not read wallet on-chain. Check the address and try again.')
+        throw new Error(`Could not read this wallet on ${network.displayName}. A wallet exists on one network only — if it was created on the other, switch above and try again.`)
       }
 
       const simResult  = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
@@ -254,6 +255,11 @@ export default function RecoverPage() {
   return (
     <div className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
       <div style={{ maxWidth: 400, width: '100%' }}>
+
+        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
+          <NetworkSwitcher />
+        </div>
+
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', marginBottom: '2.5rem' }}>
           <VeilMark size={48} />

@@ -1,9 +1,15 @@
 /**
  * Tests for the About screen's facts.
  *
- * The version is read from the Expo config, which is mocked with a mutable
- * object; everything else takes its network as an argument, so each case states
- * the network it is describing rather than depending on the ambient environment.
+ * The version comes from the native build (expo-application) and falls back to
+ * the Expo config, both mocked with mutable objects; everything else takes its
+ * network as an argument, so each case states the network it is describing
+ * rather than depending on the ambient environment.
+ *
+ * These used to mock `nativeApplicationVersion` / `nativeBuildVersion` onto
+ * expo-constants, where they no longer exist — the mock invented the API, so it
+ * passed while the real screen read `undefined` and called a release build a
+ * development one. Mocking the module the code actually imports is the point.
  */
 
 import { Linking } from 'react-native';
@@ -12,6 +18,7 @@ import {
   EXTERNAL_LINKS,
   explorerAddressUrl,
   explorerNetworkSegment,
+  explorerTxUrl,
   getAppVersion,
   getContractEntries,
   getNetworkFacts,
@@ -19,15 +26,14 @@ import {
 } from '../about';
 import type { VeilNetwork } from '../network';
 
-const mockConstants: {
-  nativeApplicationVersion: string | null;
-  nativeBuildVersion: string | null;
-  expoConfig: { version?: string } | null;
-} = {
-  nativeApplicationVersion: null,
-  nativeBuildVersion: null,
+const mockConstants: { expoConfig: { version?: string } | null } = {
   expoConfig: { version: '0.1.0' },
 };
+
+const mockApplication: {
+  nativeApplicationVersion: string | null;
+  nativeBuildVersion: string | null;
+} = { nativeApplicationVersion: null, nativeBuildVersion: null };
 
 const mockOpenBrowserAsync = jest.fn<Promise<unknown>, [string]>();
 
@@ -37,6 +43,16 @@ jest.mock('expo-constants', () => ({
   __esModule: true,
   get default() {
     return mockConstants;
+  },
+}));
+
+jest.mock('expo-application', () => ({
+  __esModule: true,
+  get nativeApplicationVersion() {
+    return mockApplication.nativeApplicationVersion;
+  },
+  get nativeBuildVersion() {
+    return mockApplication.nativeBuildVersion;
   },
 }));
 
@@ -71,8 +87,8 @@ const MAINNET: VeilNetwork = {
 let openURLSpy: jest.SpyInstance<Promise<unknown>, [string]>;
 
 beforeEach(() => {
-  mockConstants.nativeApplicationVersion = null;
-  mockConstants.nativeBuildVersion = null;
+  mockApplication.nativeApplicationVersion = null;
+  mockApplication.nativeBuildVersion = null;
   mockConstants.expoConfig = { version: '0.1.0' };
   mockOpenBrowserAsync.mockReset().mockResolvedValue(undefined);
   openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
@@ -84,8 +100,8 @@ afterEach(() => {
 
 describe('getAppVersion', () => {
   it('prefers the native build over the Expo config', () => {
-    mockConstants.nativeApplicationVersion = '1.2.3';
-    mockConstants.nativeBuildVersion = '42';
+    mockApplication.nativeApplicationVersion = '1.2.3';
+    mockApplication.nativeBuildVersion = '42';
 
     expect(getAppVersion()).toEqual({ version: '1.2.3', build: '42' });
   });
@@ -155,6 +171,40 @@ describe('explorerAddressUrl', () => {
     expect(explorerAddressUrl(CONTRACT.slice(0, 55), TESTNET)).toBeNull();
     // Right length, neither a contract nor an account.
     expect(explorerAddressUrl(`M${CONTRACT.slice(1)}`, TESTNET)).toBeNull();
+  });
+});
+
+describe('explorerTxUrl', () => {
+  const HASH = 'a'.repeat(64);
+
+  it('links a transaction hash to the testnet explorer', () => {
+    expect(explorerTxUrl(HASH, TESTNET)).toBe(`https://stellar.expert/explorer/testnet/tx/${HASH}`);
+  });
+
+  it('uses the public network segment on mainnet', () => {
+    expect(explorerTxUrl(HASH, MAINNET)).toBe(`https://stellar.expert/explorer/public/tx/${HASH}`);
+  });
+
+  it('normalises an upper-case hash', () => {
+    expect(explorerTxUrl(HASH.toUpperCase(), TESTNET)).toBe(
+      `https://stellar.expert/explorer/testnet/tx/${HASH}`
+    );
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(explorerTxUrl(`  ${HASH}  `, TESTNET)).toBe(
+      `https://stellar.expert/explorer/testnet/tx/${HASH}`
+    );
+  });
+
+  it('returns null for anything that is not a 64-character hex hash', () => {
+    expect(explorerTxUrl(null, TESTNET)).toBeNull();
+    expect(explorerTxUrl(undefined, TESTNET)).toBeNull();
+    expect(explorerTxUrl('', TESTNET)).toBeNull();
+    // Too short, too long, and non-hex characters.
+    expect(explorerTxUrl(HASH.slice(0, 63), TESTNET)).toBeNull();
+    expect(explorerTxUrl(`${HASH}a`, TESTNET)).toBeNull();
+    expect(explorerTxUrl(`z${HASH.slice(1)}`, TESTNET)).toBeNull();
   });
 });
 

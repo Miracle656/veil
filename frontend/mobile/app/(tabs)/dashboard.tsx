@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { errorMessage } from '../../lib/errorMessage';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -11,7 +13,11 @@ import { VeilLogo } from '../../components/VeilLogo';
 import { SilverBalanceCard } from '../../components/SilverBalanceCard';
 import { PrivateBalanceCard } from '../../components/PrivateBalanceCard';
 import { PayForGrid } from '../../components/PayForGrid';
+import { PayForGrid, BILL_SERVICES } from '../../components/PayForGrid';
+import { isOfframpAvailable, lastKnownAvailability } from '../../lib/offramp';
+import { ServicesDrawer } from '../../components/ServicesDrawer';
 import { AssetsList } from '../../components/AssetsList';
+import { WalletAddressChip } from '../../components/WalletAddressChip';
 import { fontFamily } from '../../theme/typography';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
@@ -22,6 +28,7 @@ import { loadHorizonActivity } from '../../lib/horizonActivity';
 import { usePolling } from '../../hooks/usePolling';
 import { fetchDashboardData } from '../../lib/activity';
 import { fetchPrice, usdValue } from '../../lib/fetchPrice';
+import { loadHoldings } from '../../lib/holdings';
 import { getNetwork } from '../../lib/network';
 import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
 import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
@@ -31,6 +38,7 @@ import {
   refreshPrivateBalance,
   subscribeToPrivacy,
 } from '../../lib/privacy';
+import { useNetwork } from '../../hooks/useNetwork';
 
 /** Shorten a Stellar address for the header chip: `GDKF…9QX3`. */
 function shortAddress(addr: string): string {
@@ -44,10 +52,18 @@ const WRAITH_URL =
 // screen), so the card paints instantly instead of flashing a loading state.
 // Scoped to the wallet ADDRESS: after a reset/new wallet the old figures must
 // never paint under the new address.
-const lastKnown: { address: string | null; balance: string; price: number | null } = {
+const lastKnown: {
+  address: string | null;
+  balance: string;
+  price: number | null;
+  totalUsd: number | null;
+  breakdown: string | null;
+} = {
   address: null,
   balance: '—',
   price: null,
+  totalUsd: null,
+  breakdown: null,
 };
 
 /**
@@ -60,11 +76,31 @@ export default function DashboardTab() {
   const router = useRouter();
   const { colors: themeColors } = useTheme();
   const themedStyles = useMemo(() => createThemedStyles(themeColors), [themeColors]);
+  const [servicesOpen, setServicesOpen] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string>(() => lastKnown.balance);
   const [price, setPrice] = useState<number | null>(() => lastKnown.price);
+  // The whole wallet in fiat, across every asset and both accounts. The card
+  // used to show XLM only, so a wallet holding mostly USDC looked nearly empty.
+  const [totalUsd, setTotalUsd] = useState<number | null>(() => lastKnown.totalUsd);
+  const [breakdown, setBreakdown] = useState<string | null>(() => lastKnown.breakdown);
   const [refreshing, setRefreshing] = useState(false);
+  // Whether the Horizon activity load has finished once. On testnet the Wraith
+  // feed is deliberately skipped, so `loading` below reports false immediately
+  // and the feed rendered "No transactions yet" while Horizon — the source that
+  // actually fills it there — was still in flight. Tracked separately so the
+  // skeleton covers the real wait rather than only the Wraith one.
+  const [activitySettled, setActivitySettled] = useState(false);
+  // Each source reports its own failure. The balance card used to show the
+  // INDEXER's error, so a Wraith call that failed in transport told the user
+  // their balance could not be loaded — while the balance, which comes from
+  // Horizon, was fine. Supplementary sources must never speak for primary ones.
+  const [balanceError, setBalanceError] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
   const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
+  // Probed once per mount rather than per render: a 503 here means "no offramp
+  // on this deployment", which is also what a sleeping backend looks like.
+  const [offrampReady, setOfframpReady] = useState(false);
   const detailSheetRef = useRef<BottomSheetModal>(null);
 
   const handleSelectTx = useCallback((tx: TxRecord) => {
@@ -82,6 +118,13 @@ export default function DashboardTab() {
   );
 
   const onTestnet = getNetwork().name === 'testnet';
+  // Subscribed, not read once. A tab screen is not remounted on a network
+  // switch, so the address resolved at mount survived the change: the header
+  // kept showing the testnet C-address while /receive, which re-reads on mount,
+  // showed the mainnet one. Same staleness applied to `onTestnet`, which gates
+  // which activity source is used.
+  const { networkName } = useNetwork();
+  const onTestnet = networkName === 'testnet';
 
   // Refetch balance + price and rebuild the activity feed from Horizon + SAC
   // events — on EVERY network (Wraith, when configured, only supplements).
@@ -93,16 +136,45 @@ export default function DashboardTab() {
         lastKnown.price = p;
         setBalance(data.xlmBalance);
         setPrice(p);
+        setBalanceError(false);
       } catch {
-        // keep the last-known values
+        // Keep the last-known values. Only flag an error the card will show —
+        // it renders one only while there is no figure at all to fall back on.
+        setBalanceError(true);
+      }
+      try {
+        // Total across every holding. Shown only when every non-zero holding
+        // has a price: a sum that silently leaves an asset out would understate
+        // the wallet while presenting itself as the total, which is worse than
+        // falling back to the XLM figure the card already knows how to show.
+        const holdings = (await loadHoldings(addr)).filter((h) => Number(h.balance) > 0);
+        const allPriced = holdings.length > 0 && holdings.every((h) => h.usd !== null);
+        const total = allPriced ? holdings.reduce((sum, h) => sum + (h.usd as number), 0) : null;
+        const line = holdings
+          .slice()
+          .sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0))
+          .slice(0, 3)
+          .map((h) => `${Number(h.balance).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${h.code}`)
+          .join(' · ');
+        lastKnown.totalUsd = total;
+        lastKnown.breakdown = line || null;
+        setTotalUsd(total);
+        setBreakdown(line || null);
+      } catch {
+        // Keep the last known total; the XLM figure still renders meanwhile.
       }
       try {
         // Merge, don't replace: this runs every 15s, and any single source
         // blinking (rate-limited RPC, slow Horizon page) would otherwise blank
         // the feed until the next poll refilled it.
         hydrateActivityFeed(await loadHorizonActivity(addr), { merge: true });
-      } catch {
-        // activity stays as-is
+        setActivityError(null);
+      } catch (err) {
+        setActivityError(errorMessage(err));
+      } finally {
+        // Settled, not "succeeded": a failed load must still stop the skeleton,
+        // otherwise it spins forever with no way to say what went wrong.
+        setActivitySettled(true);
       }
       // Keep the private balance cache fresh alongside the public one.
       void refreshPrivateBalance();
@@ -113,6 +185,23 @@ export default function DashboardTab() {
   // Load the wallet address (repairing a wrong-network derivation first),
   // then its balance / price / activity on mount.
   useEffect(() => {
+    let alive = true;
+    // Seed from the last known answer so the card renders correctly on first
+    // paint, then confirm. Without it the tile was absent for a beat and the
+    // whole Pay-for card popped in, pushing the layout down — the jump we
+    // removed everywhere else with skeletons.
+    void lastKnownAvailability().then((cached) => { if (alive) setOfframpReady(cached); });
+    void isOfframpAvailable().then((ok) => { if (alive) setOfframpReady(ok); });
+    return () => { alive = false; };
+  }, [networkName]);
+
+  useEffect(() => {
+    // Blank the feed on the way in. Clearing only after the new address
+    // resolved meant the previous network's history stayed on screen for as
+    // long as that took — mainnet transactions listed under a testnet wallet,
+    // which is worse than an empty feed.
+    hydrateActivityFeed([]);
+    setActivitySettled(false);
     ensureCorrectWalletAddress()
       .then((addr) => {
         setWalletAddress(addr);
@@ -124,9 +213,14 @@ export default function DashboardTab() {
             lastKnown.address = addr;
             lastKnown.balance = '—';
             lastKnown.price = null;
+            lastKnown.totalUsd = null;
+            lastKnown.breakdown = null;
             setBalance('—');
             setPrice(null);
+            setTotalUsd(null);
+            setBreakdown(null);
             hydrateActivityFeed([]);
+            setActivitySettled(false);
           }
           void refreshAll(addr);
           // Backfill the on-chain sign-in record for wallets created before
@@ -135,10 +229,15 @@ export default function DashboardTab() {
         }
       })
       .catch(() => setWalletAddress(null));
-  }, [refreshAll]);
+    // networkName: re-resolve the wallet for the network now active. Each
+    // network has its own wallet (lib/walletStore.ts), so a switch invalidates
+    // the address, the balance and the feed together.
+  }, [refreshAll, networkName]);
 
   // Wraith feed init — skipped on testnet (Horizon covers it in refreshAll).
-  const { loading, error, refresh: refreshFeed } = useInitActivityFeed(
+  // Wraith supplements Horizon here; its own failures are logged by the feed
+  // module and deliberately not surfaced as a screen-level error.
+  const { loading, refresh: refreshFeed } = useInitActivityFeed(
     walletAddress,
     onTestnet ? null : WRAITH_URL,
   );
@@ -179,28 +278,56 @@ export default function DashboardTab() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
+            // tintColor is iOS-only; Android reads `colors` and paints the
+            // ring on `progressBackgroundColor`. With only tintColor set the
+            // Android spinner fell back to the platform default, which is the
+            // one build most people actually install.
             tintColor={themeColors.accent}
+            colors={[themeColors.accent]}
+            progressBackgroundColor={themeColors.surfaceMd}
           />
         }
       >
       {/* Header — Drape logo + wordmark, and the wallet address chip */}
       <View style={themedStyles.homeHeader}>
-        <View style={themedStyles.brand}>
+        <Pressable
+          onPress={() => setServicesOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Open services menu"
+          hitSlop={10}
+          style={({ pressed }) => [themedStyles.brand, pressed && { opacity: 0.6 }]}
+        >
           <VeilLogo size={22} color={themeColors.accent} />
           <Text style={themedStyles.wordmark}>VEIL</Text>
-        </View>
-        {walletAddress ? (
-          <View style={themedStyles.addrChip}>
-            <Text style={themedStyles.addrText}>{shortAddress(walletAddress)}</Text>
-          </View>
-        ) : null}
+        </Pressable>
+        {walletAddress ? <WalletAddressChip contractAddress={walletAddress} /> : null}
       </View>
 
       <SilverBalanceCard
         balance={balance === '—' ? undefined : balance}
         usd={usd}
-        loading={balance === '—' && loading}
-        error={!!error}
+        loading={balance === '—' && !balanceError}
+        error={balance === '—' && balanceError}
+        totalUsd={totalUsd}
+        breakdown={breakdown}
+      />
+
+      {/* Cash out is hidden unless the backend answers AND we are on mainnet.
+          The Linq key lives on the backend, so without it there is no order to
+          create; and Linq's Stellar leg is mainnet only — its deposit wallets
+          are mainnet accounts holding Circle's mainnet USDC, which a testnet
+          wallet cannot reach. Better to not offer it than to fail after
+          someone has entered their bank details. */}
+      <PayForGrid
+        services={
+          offrampReady && !onTestnet
+            ? BILL_SERVICES
+            : BILL_SERVICES.filter((s) => s.id !== 'transfer')
+        }
+        onSelect={(service) => {
+          if (service.route) router.push(service.route as never);
+        }}
+        onMore={() => setServicesOpen(true)}
       />
 
       {/* Private balance — only shown when the V131 privacy flag is enabled.
@@ -209,6 +336,7 @@ export default function DashboardTab() {
       {privacyEnabled ? <PrivateBalanceCard /> : null}
 
       <PayForGrid />
+      <ServicesDrawer visible={servicesOpen} onClose={() => setServicesOpen(false)} />
 
       <AssetsList
         address={walletAddress}
@@ -223,11 +351,17 @@ export default function DashboardTab() {
           <Text style={styles.sectionLink}>See all →</Text>
         </Pressable>
       </View>
-      <ActivityFeed filter="all" loading={loading} error={error} onSelectTx={handleSelectTx} limit={3} />
+      <ActivityFeed
+        filter="all"
+        loading={loading || !activitySettled}
+        error={activityError}
+        onSelectTx={handleSelectTx}
+        limit={3}
+      />
 
-      {error ? (
+      {activityError ? (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>{error}</Text>
+          <Text style={styles.errorText}>{activityError}</Text>
         </View>
       ) : null}
 

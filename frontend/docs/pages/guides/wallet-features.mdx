@@ -1,0 +1,112 @@
+---
+title: Wallet Features Reference
+description: How local-currency display, reserve-aware spendable balance, activity history, and Earn (Blend) actually work in the Veil wallet.
+---
+
+import { Callout } from "nextra/components";
+
+# Wallet Features Reference
+
+Reference for four shipped wallet features that don't fit neatly into the
+Networks or Fees guides, but are core to how the wallet behaves day to day.
+
+## Local Currency Display
+
+Veil's balances are denominated in USDC under the hood, but the product is
+fiat-facing — a user thinks in their local currency (₦, KSh, $…), not USD.
+`lib/currency.ts` owns the one remaining conversion hop: USD → the user's
+chosen display currency.
+
+**Supported currencies** (`CURRENCIES` in `lib/currency.ts`): USD, NGN
+(Nigerian Naira), KES (Kenyan Shilling), GHS (Ghanaian Cedi), ZAR (South
+African Rand), GBP, and EUR — Africa-forward, matching the Nigeria-first
+launch market, plus the majors.
+
+Two rules govern this module, both carried over from the mobile app so the
+two clients show the same figure for the same balance:
+
+- **FX is best-effort, never blocking.** `refreshFxRates()` fetches live rates
+  from `open.er-api.com` with a 5-second timeout. Any failure — timeout,
+  offline, malformed response — leaves the existing rate cache untouched and
+  the app keeps using each currency's bundled `fallbackRate`. A balance always
+  renders *a* number; it's only ever stale, never missing.
+- **A genuinely unpriced balance shows an em dash (`—`), never `$0.00`.**
+  `formatFiat()` returns `—` for a `null`/non-finite USD amount specifically
+  so "we couldn't price this" is never confused with "you have nothing."
+
+<Callout type="info">
+Selection is exposed via `useCurrency()`, a `useSyncExternalStore` hook backed
+by module state + `localStorage` (key `veil_currency`) — it works from any
+component with no context provider needed. The server-rendered snapshot is
+always pinned to `USD` so the first client render matches the server markup;
+`hydrateCurrency()` then applies the stored preference and kicks off a
+background FX refresh, avoiding a hydration mismatch for any non-default
+currency.
+</Callout>
+
+## Reserve-Aware Spendable Balance
+
+A Stellar account can't spend down to zero — it must retain a minimum
+reserve, or the ledger rejects the transaction. `lib/reserves.ts`'s
+`spendableNativeXlm()` computes what's *actually* available to send, not the
+raw balance:
+
+```ts
+const reserve = (2 + subentries) * 0.5   // base reserve, in XLM
+const spendable = balance - reserve - liabilities
+```
+
+- The base reserve is `(2 + subentry_count) × 0.5 XLM` — every trustline or
+  data entry on the account adds a subentry, so this is read from the
+  account's actual `subentry_count` rather than assumed to be the bare
+  minimum.
+- Anything already committed as `selling_liabilities` (an open DEX offer) is
+  subtracted too, since that XLM isn't available to send even though it's
+  still technically part of the balance.
+- The result is **truncated, not rounded** — rounding up would recreate the
+  exact overspend this function exists to prevent.
+
+<Callout type="warning">
+This is invisible on Testnet, where a Friendbot-funded account holds 10,000
+XLM and the reserve is noise. On Mainnet, where balances are small and real,
+skipping this check means a "Max" button that offers the full raw balance
+builds a transaction that **cannot succeed** (`tx_insufficient_balance`) — and
+the user only finds out after signing. Always use `spendableNativeXlm()`
+rather than the raw balance for any "send max" affordance.
+</Callout>
+
+## Activity History
+
+The dashboard shows a four-item transaction preview with a "See all" link;
+`app/activity/page.tsx` is where the full history actually lives. It doesn't
+run its own scan — it renders whatever `useActivityFeed()` has already
+hydrated into the shared `activityFeed` store via the dashboard's poller, and
+adds filtering (All / Sent / Received / Swaps) and a detail sheet
+(`TxDetailSheet`) per row.
+
+This matters for anyone extending the feed: **fetch/poll logic belongs in the
+shared store, not in this route** — `app/activity` is a consumer, not a data
+source, and duplicating a fetch here would just double the request load
+without changing what's shown.
+
+## Earn (Blend Pools)
+
+`app/earn` lets a user supply assets into [Blend](https://blend.capital)
+lending pools and see accrued interest, via `lib/blend.ts`.
+
+- **Pools are configured, not discovered.** `NEXT_PUBLIC_BLEND_POOL_IDS` is a
+  comma-separated list of pool contract IDs; an empty/unset value means
+  `loadBlendPools()` and `loadBlendPositions()` both return `[]` (a console
+  warning fires, but the UI degrades to "no pools" rather than erroring).
+- **Pool version is tried, not assumed.** `loadPool()` attempts `PoolV2.load`
+  first and falls back to `PoolV1.load` on failure, so the wallet doesn't need
+  a hardcoded map of which pool is which version.
+- **Supply and withdraw both build unsigned XDR**, not signed transactions —
+  `buildBlendSupplyXdr()` / `buildBlendWithdrawXdr()` return a transaction for
+  the caller to sign with the user's passkey through the normal wallet signing
+  flow, consistent with every other wallet action never holding a raw secret
+  itself.
+- Both use `inclusionFee()` (see the [Fees guide](/guides/fees)) for the
+  transaction's fee bid, so Earn transactions get the same Mainnet-aware
+  overbid as every other wallet operation — a hardcoded low fee here would
+  fail the same way on Mainnet as anywhere else.

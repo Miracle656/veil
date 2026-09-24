@@ -1,7 +1,6 @@
 import {
   Horizon,
   TransactionBuilder,
-  Networks,
   Operation,
   Asset,
   BASE_FEE,
@@ -12,13 +11,13 @@ import {
   nativeToScVal,
   scValToNative,
 } from '@stellar/stellar-sdk'
+import { HORIZON_URL, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
 
-const horizonUrl = process.env.HORIZON_URL ?? 'https://horizon-testnet.stellar.org'
-const networkPassphrase = process.env.STELLAR_NETWORK === 'mainnet'
-  ? Networks.PUBLIC
-  : Networks.TESTNET
+// Network and endpoints come from one place (network.ts). Deciding them here
+// separately is how mainnet signing ended up paired with testnet Horizon.
+const networkPassphrase = NETWORK_PASSPHRASE
 
-const horizon = new Horizon.Server(horizonUrl)
+const horizon = new Horizon.Server(HORIZON_URL)
 
 function parseAsset(assetStr: string): Asset {
   if (assetStr === 'XLM' || assetStr === 'native') return Asset.native()
@@ -171,9 +170,9 @@ export async function getBalances(
   let contractXlm = 0
   if (contractAddress) {
     try {
-      const rpcUrl = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org'
+      const rpcUrl = SOROBAN_RPC_URL
       const rpc = new SorobanRpc.Server(rpcUrl)
-      const sacAddress = Asset.native().contractId(networkPassphrase === Networks.PUBLIC ? 'Public Global Stellar Network ; September 2015' : networkPassphrase)
+      const sacAddress = Asset.native().contractId(networkPassphrase)
       const sacContract = new Contract(sacAddress)
       const dummyKp = Keypair.random()
       const dummyAcct = new Account(dummyKp.publicKey(), '0')

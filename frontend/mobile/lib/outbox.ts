@@ -1,3 +1,4 @@
+import { errorMessage } from './errorMessage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
@@ -197,7 +198,7 @@ export async function flushOutbox(): Promise<FlushSummary> {
         remaining.push({
           ...action,
           attempts,
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: errorMessage(error),
         });
         summary.retried += 1;
       }

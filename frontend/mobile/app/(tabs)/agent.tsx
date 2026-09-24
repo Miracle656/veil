@@ -18,6 +18,7 @@ import { Horizon, Keypair, TransactionBuilder, type Transaction } from '@stellar
  *     model output is never interpreted as markup.
  */
 
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -34,9 +35,8 @@ import {
 import { Button, Card, Screen } from '../../components/ui';
 import {
   describeSubmissionError,
-  isProposalForFeePayer,
+  proposalRefusal,
   nextMessageId,
-  parseAgentServerEvent,
   parseInlineMarkup,
   reviewProposedTransaction,
   shortenAddress,
@@ -44,7 +44,8 @@ import {
   type ProposalReview,
   type ProposalStatus,
 } from '../../lib/agentMessages';
-import { getNetwork } from '../../lib/network';
+import { useNetwork } from '../../hooks/useNetwork';
+import { historyFromMessages, sendAgentMessage, type AgentReply } from '../../lib/agentClient';
 import { signPayloadWithPasskey } from '../../lib/passkey';
 import { getPasskeyId, getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import { useTheme } from '../../hooks/useTheme';
@@ -67,8 +68,6 @@ import { fontFamily, typography } from '../../theme/typography';
  * in `lib/agentSocket.ts` (backlog #65).
  */
 
-const network = getNetwork();
-
 const SUGGESTIONS = [
   "What's my balance?",
   'Swap 100 XLM to USDC',
@@ -79,6 +78,9 @@ const SUGGESTIONS = [
 export default function AgentScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  // Subscribed rather than read once at module load: the network is a runtime
+  // choice, and everything on this screen belongs to exactly one chain.
+  const { network } = useNetwork();
   const [messages, setMessages] = useState<AgentMessage[]>([
     {
       id: nextMessageId('greeting'),
@@ -88,13 +90,9 @@ export default function AgentScreen() {
   ]);
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [feePayerAddress, setFeePayerAddress] = useState<string | null>(null);
 
-  const socketRef = useRef<WebSocket | null>(null);
-  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const closedByUsRef = useRef(false);
   const scrollRef = useRef<ScrollView | null>(null);
 
   const appendMessage = useCallback((message: AgentMessage) => {
@@ -129,112 +127,57 @@ export default function AgentScreen() {
     };
   }, []);
 
-  const handleEvent = useCallback(
-    (raw: string) => {
-      const event = parseAgentServerEvent(raw);
-      if (!event) return;
-
-      switch (event.type) {
-        case 'thinking':
-          setIsThinking(true);
-          return;
-
-        case 'error':
-          setIsThinking(false);
-          appendMessage({
-            id: nextMessageId('error'),
-            kind: 'error',
-            text: event.message,
-          });
-          return;
-
-        case 'history_cleared':
-          appendMessage({
-            id: nextMessageId('notice'),
-            kind: 'notice',
-            text: 'Conversation history cleared on the agent.',
-          });
-          return;
-
-        case 'response': {
-          setIsThinking(false);
-
-          if (!event.pendingTxXdr) {
-            appendMessage({ id: nextMessageId('agent'), kind: 'agent', text: event.message });
-            return;
-          }
-
-          // Decode the transaction before it is ever shown as approvable: a
-          // proposal we cannot read is presented as one to reject, not to trust.
-          let review: ProposalReview | null = null;
-          let reviewError: string | null = null;
-          try {
-            review = reviewProposedTransaction(event.pendingTxXdr, network.networkPassphrase);
-          } catch (error) {
-            reviewError =
-              error instanceof Error
-                ? error.message
-                : 'This transaction could not be decoded on this device.';
-          }
-
-          appendMessage({
-            id: nextMessageId('proposal'),
-            kind: 'proposal',
-            text: event.message,
-            claim: event.pendingTxSummary ?? null,
-            xdr: event.pendingTxXdr,
-            review,
-            reviewError,
-            status: { state: 'awaiting' },
-          });
-          return;
-        }
+  const handleReply = useCallback(
+    (reply: AgentReply) => {
+      if (reply.swapIntent) {
+        appendMessage({
+          id: nextMessageId('swap'),
+          kind: 'swap',
+          text: reply.response,
+          intent: reply.swapIntent,
+        });
+        return;
       }
+
+      if (!reply.pendingTxXdr) {
+        appendMessage({ id: nextMessageId('agent'), kind: 'agent', text: reply.response });
+        return;
+      }
+
+      // Decode the transaction before it is ever shown as approvable: a
+      // proposal we cannot read is presented as one to reject, not to trust.
+      let review: ProposalReview | null = null;
+      let reviewError: string | null = null;
+      try {
+        review = reviewProposedTransaction(reply.pendingTxXdr, network.networkPassphrase);
+      } catch (error) {
+        reviewError =
+          error instanceof Error ? error.message : 'This transaction could not be decoded on this device.';
+      }
+
+      appendMessage({
+        id: nextMessageId('proposal'),
+        kind: 'proposal',
+        text: reply.response,
+        claim: reply.pendingTxSummary ?? null,
+        xdr: reply.pendingTxXdr,
+        review,
+        reviewError,
+        status: { state: 'awaiting' },
+      });
     },
-    [appendMessage]
+    [appendMessage, network.networkPassphrase]
   );
 
-  const connect = useCallback(() => {
-    const url = process.env['EXPO_PUBLIC_AGENT_WS_URL']?.trim() || 'ws://localhost:3001';
-    const socket = new WebSocket(url);
-    socketRef.current = socket;
-
-    socket.onopen = () => setIsConnected(true);
-    socket.onmessage = (event) => handleEvent(String(event.data));
-    socket.onclose = () => {
-      setIsConnected(false);
-      setIsThinking(false);
-      if (closedByUsRef.current) return;
-      reconnectRef.current = setTimeout(connect, 2_000);
-    };
-  }, [handleEvent]);
-
-  useEffect(() => {
-    closedByUsRef.current = false;
-    connect();
-    return () => {
-      closedByUsRef.current = true;
-      if (reconnectRef.current) clearTimeout(reconnectRef.current);
-      socketRef.current?.close();
-    };
-  }, [connect]);
-
-  function handleSend() {
+  // One HTTPS request per message to the agent route (lib/agentClient.ts). The
+  // conversation so far travels with it; the server keeps nothing between calls.
+  async function handleSend() {
     const text = input.trim();
-    const socket = socketRef.current;
     if (!text || isThinking) return;
 
+    const history = historyFromMessages(messages);
     appendMessage({ id: nextMessageId('user'), kind: 'user', text });
     setInput('');
-
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      appendMessage({
-        id: nextMessageId('error'),
-        kind: 'error',
-        text: 'Not connected to the agent yet. It will retry automatically — send again in a moment.',
-      });
-      return;
-    }
 
     if (!walletAddress) {
       appendMessage({
@@ -245,20 +188,31 @@ export default function AgentScreen() {
       return;
     }
 
-    socket.send(
-      JSON.stringify({
-        type: 'chat',
+    setIsThinking(true);
+    try {
+      const reply = await sendAgentMessage({
+        message: text,
         walletAddress,
         feePayerAddress: feePayerAddress ?? undefined,
-        message: text,
-      })
-    );
+        history,
+      });
+      handleReply(reply);
+    } catch (error) {
+      appendMessage({
+        id: nextMessageId('error'),
+        kind: 'error',
+        text: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsThinking(false);
+    }
   }
 
   function handleClearHistory() {
-    const socket = socketRef.current;
-    if (!walletAddress || !socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: 'clear_history', walletAddress }));
+    // The agent keeps no history of its own any more — what it sees is what this
+    // screen sends — so clearing is local.
+    setMessages((current) => current.slice(0, 1));
+    appendMessage({ id: nextMessageId('notice'), kind: 'notice', text: 'Conversation cleared.' });
   }
 
   /**
@@ -272,20 +226,12 @@ export default function AgentScreen() {
   async function handleConfirm(message: Extract<AgentMessage, { kind: 'proposal' }>) {
     if (message.status.state !== 'awaiting') return;
 
-    const { review } = message;
-    if (!review) {
-      updateProposal(message.id, {
-        state: 'failed',
-        reason: 'This transaction could not be decoded, so it cannot be approved here.',
-      });
-      return;
-    }
-
-    if (!isProposalForFeePayer(review, feePayerAddress)) {
-      updateProposal(message.id, {
-        state: 'failed',
-        reason: `This transaction is sourced from ${shortenAddress(review.source)}, which is not this wallet's fee payer. Nothing was signed.`,
-      });
+    // One rule, shared with the web wallet (proposalRefusal): the decoded
+    // transaction must be from this wallet's fee payer, with every operation one
+    // this screen can show. The agent's summary plays no part in the decision.
+    const refusal = proposalRefusal(message.review, feePayerAddress);
+    if (refusal) {
+      updateProposal(message.id, { state: 'failed', reason: refusal });
       return;
     }
 
@@ -345,7 +291,7 @@ export default function AgentScreen() {
           <View style={styles.headerText}>
             <Text style={[typography.heading, styles.title]}>Veil agent</Text>
             <Text style={styles.status}>
-              {isConnected ? 'Connected' : 'Connecting…'} · it can propose, only you can sign
+              It can propose, only you can sign
             </Text>
           </View>
           <Pressable
@@ -481,7 +427,39 @@ function MessageRow({
           </View>
         </View>
       );
+
+    case 'swap':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <SwapHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
   }
+}
+
+/**
+ * The agent does not build swaps: it hands them to the Swap screen, which
+ * quotes across Soroswap, Phoenix, Aqua and the Stellar DEX, shows the route and
+ * slippage, and asks for the passkey there.
+ */
+function SwapHandoff({ intent }: { intent: { from: string; to: string; amount?: string } }) {
+  const router = useRouter();
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Button
+        label={`Open Swap · ${intent.amount ? `${intent.amount} ` : ''}${intent.from} → ${intent.to}`}
+        onPress={() =>
+          router.push({
+            pathname: '/swap',
+            params: { from: intent.from, to: intent.to, ...(intent.amount ? { amount: intent.amount } : {}) },
+          })
+        }
+      />
+    </View>
+  );
 }
 
 /** Agent prose with `**bold**` and `` `code` `` rendered as text, never as markup. */
@@ -526,6 +504,10 @@ function ProposalCard({
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  // Named on the approval card itself, so which chain is about to be signed
+  // against is visible at the moment of approval — and stays correct if the
+  // user switches networks with a proposal already on screen.
+  const { network } = useNetwork();
   const { review, status } = message;
 
   return (
@@ -762,7 +744,12 @@ const createStyles = (colors: ThemeColors) =>
       borderTopWidth: 1,
       borderTopColor: colors.border,
       paddingTop: 10,
-      paddingBottom: 8,
+      // The tab bar floats over the bottom of every tab (VeilTabBar is
+      // absolutely positioned), and its raised centre button stands higher
+      // still. With 8 here the input sat underneath it and could not be typed
+      // into. Scrolling tabs clear it with bottom padding on their content;
+      // this composer is pinned, so it has to clear it itself.
+      paddingBottom: 100,
       gap: 10,
     },
     chips: {

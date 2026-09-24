@@ -1,4 +1,7 @@
+import { rejectionFromResult } from './networkErrors';
+import { errorMessage } from './errorMessage';
 import './polyfills';
+import { assertRoundTrips, simulationErrorMessage } from './simulationError';
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -239,7 +242,7 @@ async function getWalletNonce(
         }
       } catch (err) {
         // Network-level flake (mobile data drops calls mid-burst) — retry too.
-        lastError = err instanceof Error ? err.message : String(err);
+        lastError = errorMessage(err);
       }
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -275,9 +278,22 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
 
   // Small CPU leeway for host-function ECDSA verification not modeled by
   // recording-mode simulation.
+  // Encode once and check it here: a truncated or empty envelope reads at the
+  // RPC as "could not unmarshal", which looks like a server-side problem.
+  const encoded = tx.toXDR();
+  assertRoundTrips(encoded, network.networkPassphrase, 'Smart-wallet transaction');
+
   const sim = await rpc.simulateTransaction(tx, { cpuInstructions: 5_000_000 } as any);
   if (SorobanRpc.Api.isSimulationError(sim)) {
-    throw new Error(`Simulation failed: ${sim.error}`);
+    throw new Error(
+      simulationErrorMessage({
+        error: sim.error,
+        flow: 'Smart-wallet transaction',
+        rpcUrl: network.rpcUrl,
+        network: network.name,
+        xdrLength: encoded.length,
+      }),
+    );
   }
 
   // Recording-mode simulation returns auth entries with
@@ -378,7 +394,7 @@ async function signAndSubmitXdr(xdrString: string): Promise<string> {
   const sendResult = await rpc.sendTransaction(signedTx);
   if (sendResult.status === 'ERROR') {
     throw new Error(
-      `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown'}`
+      rejectionFromResult(sendResult.errorResult)
     );
   }
   return sendResult.hash;
@@ -421,7 +437,7 @@ export async function approveWalletConnectRequest(request: WalletConnectRequest)
     const reason = isUserRejection(error) ? getSdkError('USER_REJECTED') : null;
     const response = reason
       ? buildWcError(id, reason.code, reason.message)
-      : buildWcError(id, 5000, error instanceof Error ? error.message : String(error));
+      : buildWcError(id, 5000, errorMessage(error));
 
     await client.respondSessionRequest({ topic, response }).catch(() => {});
     removePendingRequest(id, topic);

@@ -252,20 +252,94 @@ Veil optimizes fees where possible:
 
 ### Fee-Payer Derivation
 
-Veil uses a separate **fee-payer account** from the user's wallet contract:
+Veil uses a separate **fee-payer account** (a standard Ed25519 `G…` keypair)
+from the user's passkey-controlled wallet contract (`C…`). The user signs with
+their passkey to authorize a transaction; the fee-payer account is what
+actually pays the Stellar network fee, so a user never needs to think about
+fee balances.
 
+<Callout type="warning">
+How that fee-payer key is derived is safety-relevant, not an implementation
+detail. Get the derivation wrong and you can either strand a wallet on an
+unfunded key it can never reproduce, or make the key recoverable by anyone who
+can read local storage. `lib/feePayer.ts` (single accessor, per ADR 0003)
+is the only place the rest of the app should read this key from.
+</Callout>
+
+Three derivation modes exist, tracked per-wallet in `veil_feepayer_mode` and
+**pinned for life** once established — a wallet's fee-payer address must never
+change mid-life, or it'd be paying fees from an account that no longer holds
+the funds it was topped up with:
+
+| Mode | How the seed is produced | Where it's stored | Used for |
+|------|---------------------------|--------------------|----------|
+| `prf-raw` | Raw WebAuthn PRF output used directly as the Ed25519 seed | `sessionStorage` only | Default for new wallets — matches what the mobile app does, so a wallet is recoverable on either client |
+| `prf-hkdf` | PRF output run through HKDF before use | `sessionStorage` only | Wallets that were already pinned this way before `prf-raw` became the default — kept so their `G…` address doesn't move |
+| `legacy` | `HKDF(credentialId)` — the *non-secret* WebAuthn credential ID | `localStorage` (persisted) | Pre-PRF wallets, and the fallback when an authenticator doesn't support PRF |
+
+**Why this matters, safety-wise:** the credential ID used by `legacy` is not a
+secret — it's returned in plaintext during every WebAuthn ceremony and stored
+un-encrypted as `invisible_wallet_key_id`. Anyone who can read that value can
+reconstruct the `legacy` fee-payer keypair with no biometric prompt at all.
+The PRF-based modes fix this because a PRF output can only be produced by the
+authenticator that holds the actual passkey — reading storage alone is not
+enough. PRF-derived seeds are therefore kept in `sessionStorage` only (gone on
+tab close / inactivity lock); only `legacy` ever touches `localStorage`. See
+[ADR 0003](https://github.com/Miracle656/veil/blob/main/docs/adr/0003-fee-payer-key-from-webauthn-prf.md)
+for the full security rationale and migration plan.
+
+**How the mode is chosen:** on first establishment (`ensureFeePayer()`), the
+wallet derives every applicable candidate and — if no mode is already pinned —
+probes Horizon for which candidate's address actually exists on-chain,
+picking the first funded one it finds. This beats guessing: guessing wrong
+would strand the user on an unfunded fee-payer with no obvious way to fix it.
+A wallet with no existing on-chain fee-payer defaults to `prf-raw`. If a PRF
+ceremony is attempted but fails or is unsupported, the wallet falls back to
+`legacy` automatically — no device is ever bricked by a missing PRF
+capability, but see the diagnostics note below.
+
+**Diagnostics for support/debugging:** `getFeePayerDiagnostics()` records
+which candidates were tried, their on-chain probe results, and whether a PRF
+ceremony was attempted and why it failed if it did — rendered as plain text
+via `formatFeePayerDiagnostics()` so it can be pasted directly into a bug
+report. `isFeePayerPrfDowngrade()` flags the specific failure mode where a
+PRF ceremony was attempted but didn't produce a usable key and the wallet fell
+back to `legacy` — such a wallet will *not* reproduce the same fee-payer
+address on a different, PRF-capable device, which is worth surfacing to the
+user rather than leaving silent.
+
+## Network-Aware Inclusion Fee
+
+Separate from the resource fee above, every transaction also needs an
+**inclusion-fee bid** (stroops per operation) — how much you're willing to pay
+to get into the ledger. `lib/fees.ts`'s `inclusionFee()` sets this bid
+differently per network:
+
+```ts
+export function inclusionFee(): string {
+  return getNetwork().name === 'mainnet' ? '1000000' : BASE_FEE
+}
 ```
-Wallet Contract: Stores passkey, executes payments
-Fee-Payer Account: Standard Stellar account that pays for Soroban fees
 
-Workflow:
-1. User signs transaction with passkey → Soroban validates
-2. Fee-payer account pays the fee
-3. Funds never leave user's wallet (only fees paid by fee-payer)
-4. Fee-payer can be refunded or topped up programmatically
-```
+- **Testnet** bids the SDK's minimum `BASE_FEE` (100 stroops).
+- **Mainnet** bids `1000000` stroops (0.1 XLM).
 
-**Benefit:** Users can operate wallets without worrying about fee balances.
+This isn't arbitrary generosity: Mainnet surge-prices inclusion, especially on
+the Soroban lane, and a 100-stroop bid gets rejected outright with
+`txINSUFFICIENT_FEE` the moment there's any real network load — which the
+mobile app hit on its first factory deploy and again on its first in-app
+transfer. Overbidding is safe on Stellar because **the ledger only ever
+charges the effective market rate, not your bid** — so a generous 0.1 XLM
+Mainnet bid costs approximately nothing in the common case while surviving a
+surge, whereas Testnet's near-empty network never needs more than the
+minimum.
+
+<Callout type="info">
+If you're building your own transactions against this wallet's contracts
+rather than going through the wallet UI, call `inclusionFee()` rather than
+hardcoding `BASE_FEE` — a fixed low bid that works fine on Testnet will fail
+intermittently on Mainnet under load.
+</Callout>
 
 ## Refundable Fee Mechanics
 

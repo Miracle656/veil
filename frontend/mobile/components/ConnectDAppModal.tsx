@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -87,7 +88,7 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
       try {
         await pair(uri);
       } catch (pairError: unknown) {
-        setError(pairError instanceof Error ? pairError.message : 'Failed to pair with the dApp.');
+        setError(errorMessage(pairError));
         hasScannedRef.current = false;
       } finally {
         setIsPairing(false);
@@ -125,7 +126,7 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
       onClose();
     } catch (approveError: unknown) {
       setError(
-        approveError instanceof Error ? approveError.message : 'Failed to approve the session.'
+        errorMessage(approveError)
       );
     } finally {
       setIsApproving(false);
@@ -139,7 +140,7 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
       hasScannedRef.current = false;
     } catch (rejectError: unknown) {
       setError(
-        rejectError instanceof Error ? rejectError.message : 'Failed to reject the session.'
+        errorMessage(rejectError)
       );
     }
   }, [pendingProposal, rejectSession]);

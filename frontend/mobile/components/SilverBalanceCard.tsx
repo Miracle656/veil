@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Skeleton } from './Skeleton';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -21,6 +22,15 @@ export type SilverBalanceCardProps = {
   balance?: string;
   /** Fiat value in USD, or null when unpriced. */
   usd?: number | null;
+  /**
+   * The whole wallet in USD — every asset, both accounts — or null when any
+   * holding is unpriced. When present it leads the card; when absent the card
+   * falls back to the XLM figure rather than showing a sum that leaves an
+   * asset out.
+   */
+  totalUsd?: number | null;
+  /** Short line of the largest holdings, e.g. "412.98 USDC · 31 XLM". */
+  breakdown?: string | null;
   loading?: boolean;
   error?: boolean;
 };
@@ -57,13 +67,22 @@ function Metal() {
 /**
  * The home balance on a brushed-silver card (design "3a") — now a FLIP card.
  *
- * The face shows the balance in crypto (XLM); tapping it flips the card (a
- * rotateY animation) to the same balance in the user's local currency — whichever
- * they set in Settings, via `useCurrency`. Send / Receive live on both faces. The
+ * The face shows the whole wallet in the user's local currency (every asset,
+ * both accounts) with the largest holdings underneath; tapping it flips the card
+ * (a rotateY animation) to the XLM balance. When any holding is unpriced the
+ * total is withheld and the card shows XLM on the front and its fiat value on
+ * the back, as before. Send / Receive live on both faces. The
  * balance and its fiat value are real (dashboard balance × Lens price); the
  * "earning" chip is a static affordance until the live Blend yield lands.
  */
-export function SilverBalanceCard({ balance, usd = null, loading, error }: SilverBalanceCardProps) {
+export function SilverBalanceCard({
+  balance,
+  usd = null,
+  totalUsd = null,
+  breakdown = null,
+  loading,
+  error,
+}: SilverBalanceCardProps) {
   const router = useRouter();
   const { currency, format } = useCurrency();
   const { mask, hidden, toggle: toggleHidden } = useHiddenAmounts();
@@ -85,6 +104,10 @@ export function SilverBalanceCard({ balance, usd = null, loading, error }: Silve
   const hasFiat = usd !== null && usd !== undefined;
   const cryptoText = balance !== undefined ? `${trimAmount(balance)} XLM` : '—';
   const fiatText = hasFiat ? format(usd) : '—';
+  // Users read the front of this card as "what I have". XLM alone made a
+  // wallet holding mostly USDC look nearly empty, so the all-asset total leads
+  // whenever it is known, and the XLM view moves to the back.
+  const hasTotal = totalUsd !== null && totalUsd !== undefined;
 
   // The whole card flips (Send/Receive included). Only the VISIBLE face is
   // interactive (pointerEvents + zIndex/elevation below): the turned-away face
@@ -136,7 +159,10 @@ export function SilverBalanceCard({ balance, usd = null, loading, error }: Silve
             <Text style={styles.errorText}>Couldn’t load your balance.</Text>
           ) : (
             <View style={styles.loadingRow}>
-              <ActivityIndicator color={INK} />
+              {/* Shaped like the value that lands here — a wide amount and the
+                  fiat line under it — so the card does not resize on load. */}
+              <Skeleton width={168} height={30} radius={8} />
+              <Skeleton width={96} height={13} radius={6} style={styles.loadingSub} />
             </View>
           )}
         </View>
@@ -150,13 +176,17 @@ export function SilverBalanceCard({ balance, usd = null, loading, error }: Silve
         pointerEvents={flipped ? 'none' : 'auto'}
         style={[styles.face, { zIndex: flipped ? 0 : 2, elevation: flipped ? 0 : 12, transform: [{ perspective: 1400 }, { rotateY: frontRotate }] }]}
       >
-        {face('Total balance', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')}
+        {hasTotal
+          ? face('Total balance', format(totalUsd as number), breakdown ?? cryptoText)
+          : face('Total balance', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')}
       </Animated.View>
       <Animated.View
         pointerEvents={flipped ? 'auto' : 'none'}
         style={[styles.face, { zIndex: flipped ? 2 : 0, elevation: flipped ? 12 : 0, transform: [{ perspective: 1400 }, { rotateY: backRotate }] }]}
       >
-        {face(`Balance · ${currency}`, fiatText, `≈ ${trimAmount(balance)} XLM`)}
+        {hasTotal
+          ? face('XLM', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')
+          : face(`Balance · ${currency}`, fiatText, `≈ ${trimAmount(balance)} XLM`)}
       </Animated.View>
     </View>
   );
@@ -244,6 +274,9 @@ const createStyles = () =>
     loadingRow: {
       paddingVertical: 20,
       alignItems: 'flex-start',
+    },
+    loadingSub: {
+      marginTop: 10,
     },
     errorText: {
       color: INK,

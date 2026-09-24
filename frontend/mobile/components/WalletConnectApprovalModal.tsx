@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { TransactionBuilder } from '@stellar/stellar-sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -133,7 +134,7 @@ export function WalletConnectApprovalModal() {
       // request has left the queue, so there is nothing to report.
       if (!isUserRejection(approveError)) {
         const message =
-          approveError instanceof Error ? approveError.message : String(approveError);
+          errorMessage(approveError);
         setError(message || 'Failed to approve the request.');
       }
     } finally {
@@ -148,7 +149,7 @@ export function WalletConnectApprovalModal() {
     try {
       await rejectWalletConnectRequest(request);
     } catch (rejectError: unknown) {
-      const message = rejectError instanceof Error ? rejectError.message : String(rejectError);
+      const message = errorMessage(rejectError);
       setError(message || 'Failed to reject the request.');
     } finally {
       setIsSubmitting(false);

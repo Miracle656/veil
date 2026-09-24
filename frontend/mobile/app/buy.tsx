@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
@@ -158,7 +159,7 @@ export default function BuyScreen() {
       setStep('pending');
       startPolling(server, deposit.id);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not connect to anchor.');
+      setError(errorMessage(err));
       setStep('error');
     }
   };
@@ -173,7 +174,7 @@ export default function BuyScreen() {
         setStep('success');
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not fetch transaction status.');
+      setError(errorMessage(err));
     }
   };
 

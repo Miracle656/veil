@@ -13,7 +13,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import type { AgentUserProfile } from './agentSocket';
+import type { AgentUserProfile } from './agentClient';
 
 export type { AgentUserProfile };
 
