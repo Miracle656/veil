@@ -200,9 +200,58 @@ export default function EarnPage() {
         <div style={{ marginBottom: '1.75rem' }}>
           <PageHeader eyebrow="Yield" title="Earn" />
         </div>
-        <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginBottom: '1.75rem' }}>
+        <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginBottom: '1.25rem' }}>
           Deposit XLM or USDC into Blend Protocol to earn yield on-chain.
         </p>
+
+        {/* ── Invest & Yield Disclosures ── */}
+        <div
+          className="card"
+          style={{
+            marginBottom: '1.75rem',
+            padding: '1rem',
+            border: '1px solid var(--border-dim)',
+            background: 'rgba(255,255,255,0.02)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 240px' }}>
+              <p
+                style={{
+                  fontSize: '0.6875rem',
+                  fontFamily: 'Anton, Impact, sans-serif',
+                  letterSpacing: '0.06em',
+                  color: 'var(--gold)',
+                  marginBottom: '0.25rem',
+                }}
+              >
+                INVEST &amp; YIELD DISCLOSURES
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', lineHeight: 1.4, margin: 0 }}>
+                Veil is a self-custody wallet, not a broker. Veil never takes custody, never performs KYC, and never gives advice.
+              </p>
+            </div>
+            <a
+              href="https://docs.useveilapp.xyz/invest"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-ghost"
+              style={{
+                fontSize: '0.75rem',
+                padding: '0.4rem 0.75rem',
+                border: '1px solid var(--border-dim)',
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                color: 'var(--off-white)',
+                flexShrink: 0,
+              }}
+            >
+              How it works &amp; risks ↗
+            </a>
+          </div>
+        </div>
 
         {/* ── Existing Positions ── */}
         {positions.length > 0 && (

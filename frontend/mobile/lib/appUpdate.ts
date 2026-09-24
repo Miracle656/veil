@@ -12,7 +12,8 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
+
+import { nativeBuildVersion } from './nativeVersion';
 
 const RELEASES_URL = 'https://api.github.com/repos/Miracle656/veil/releases?per_page=20';
 const TAG_PREFIX = 'mobile-v';
@@ -32,9 +33,13 @@ export type LatestBuild = {
 
 export type UpdateCheck =
   | { state: 'current'; installed: number; latest: LatestBuild }
-  | { state: 'update'; installed: number | null; latest: LatestBuild }
-  /** No answer: offline, rate limited, or a build that knows no version code. */
-  | { state: 'unknown'; installed: number | null; reason: string };
+  | { state: 'update'; installed: number; latest: LatestBuild }
+  /**
+   * No answer: offline, rate limited, or a build that knows no version code.
+   * `latest` is still carried when one was published, so the screen can offer
+   * the download even though it cannot say whether it is an upgrade.
+   */
+  | { state: 'unknown'; installed: number | null; reason: string; latest?: LatestBuild };
 
 /** `mobile-v7` → 7. Anything else → null, so other tags are ignored. */
 export function versionCodeFromTag(tag: string): number | null {
@@ -96,7 +101,7 @@ export function pickLatestBuild(payload: unknown): LatestBuild | null {
 
 /** The installed build number, or null where there is none (Expo Go, web). */
 export function installedVersionCode(): number | null {
-  const raw = Constants.nativeBuildVersion?.trim();
+  const raw = nativeBuildVersion();
   const code = raw ? Number(raw) : Number.NaN;
   return Number.isInteger(code) ? code : null;
 }
@@ -105,9 +110,16 @@ export function installedVersionCode(): number | null {
 export function compareBuilds(installed: number | null, latest: LatestBuild | null): UpdateCheck {
   if (!latest) return { state: 'unknown', installed, reason: 'No published build to compare with.' };
   if (installed === null) {
-    // Cannot tell — say so rather than claim either answer. A dev build has no
-    // version code, and calling that "up to date" would be a guess.
-    return { state: 'update', installed, latest };
+    // Cannot tell, so do not claim either answer. This used to return `update`,
+    // which read as "a newer build exists" — and because the installed code was
+    // always null (see ./nativeVersion), every user was told to update to the
+    // build they were already running.
+    return {
+      state: 'unknown',
+      installed,
+      reason: 'This build does not report a version number, so it cannot be compared.',
+      latest,
+    };
   }
   return installed >= latest.versionCode
     ? { state: 'current', installed, latest }

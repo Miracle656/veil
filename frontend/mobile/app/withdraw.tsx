@@ -32,7 +32,7 @@ import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 // shipped (testnet), which is the same defect that previously derived a wallet
 // address against the wrong network and stranded real funds.
 const DEFAULT_ANCHOR =
-  process.env['EXPO_PUBLIC_SEP24_ANCHORS']?.split(',')[0]?.trim() || 'testanchor.stellar.org';
+  process.env['EXPO_PUBLIC_SEP24_ANCHORS']?.split(',')[0]?.trim() || '';
 
 const POLL_INTERVAL_MS = 4_000;
 
