@@ -128,6 +128,12 @@ export const EXTERNAL_LINKS: readonly ExternalLink[] = [
     url: 'https://docs.useveilapp.xyz',
   },
   {
+    key: 'invest-docs',
+    label: 'Invest rail disclosures',
+    description: 'What tokenized assets are, issuer risks, and what Veil is not',
+    url: 'https://docs.useveilapp.xyz/invest',
+  },
+  {
     key: 'source',
     label: 'Source code',
     description: 'Contracts, SDK, and apps on GitHub',
