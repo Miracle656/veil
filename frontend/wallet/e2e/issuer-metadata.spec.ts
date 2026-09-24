@@ -61,19 +61,19 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
   }, { key: cacheKey, ttl: ISSUER_TOML_TTL_MS })
   offline = true
   await expire()
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page.reload()
   await expect.poll(() => tomlRequests).toBeGreaterThan(initialRequests[0])
   await expect(verified.locator('img')).toHaveJSProperty('naturalWidth', 36)
 
   offline = false
   broken = true
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page.reload()
   await expect.poll(() => imageRequests).toBeGreaterThan(initialRequests[1])
   await expect(verified.locator('img')).toHaveCount(0)
   await expect(verified.locator('span[aria-hidden]')).toHaveText('U')
   broken = false
   await expire()
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page.reload()
   await expect(verified.locator('img')).toHaveJSProperty('naturalWidth', 36)
 })
 
@@ -113,7 +113,7 @@ test('does not request TOML for unregistered trustlines', async ({ page }) => {
   await page.route('**/.well-known/stellar.toml', (route) => { requests.push(route.request().url()); return route.abort() })
   await page.goto('/assets')
   await expect(page.getByText(unknownIssuer, { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await page.reload()
   await expect(page.getByText(unknownIssuer, { exact: true })).toBeVisible()
   expect(requests).toEqual([])
 })
