@@ -18,9 +18,11 @@ jobs:
     name: Stryker — SDK signing primitives
     runs-on: ubuntu-latest
     permissions:
-      # Post mutation score to PR (github-script), an issue comment.
+      # Posts the mutation score onto a pull request. Commenting on a PR needs
+      # `pull-requests: write`, even though the endpoint is /issues/{n}/comments.
       contents: read
       issues: write
+      pull-requests: write
     defaults:
       run:
         working-directory: sdk

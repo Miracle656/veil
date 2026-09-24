@@ -14,9 +14,12 @@ on:
       - 'sdk/**'
 
 permissions:
-  # The PR comment step posts an issue comment (github-script).
+  # The PR comment step posts a comment on a pull request. That needs
+  # `pull-requests: write` even though the REST endpoint is /issues/{n}/comments;
+  # `issues: write` alone fails at runtime with "Resource not accessible".
   contents: read
   issues: write
+  pull-requests: write
 
 jobs:
   e2e-tests:
