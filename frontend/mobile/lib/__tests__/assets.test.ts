@@ -53,3 +53,29 @@ describe('parseHeldAssets', () => {
     expect(parseHeldAssets([NATIVE])).toEqual([]);
   });
 });
+
+describe('mobile ASSET_REGISTRY - USDT0 (Issue #787)', () => {
+  it('USDT0 resolves to exactly the pinned issuer on mainnet', () => {
+    const { getRegisteredAsset, USDT0_MAINNET_ISSUER } = require('../assets');
+    const asset = getRegisteredAsset('USDT0');
+    expect(asset).not.toBeNull();
+    expect(asset?.code).toBe('USDT0');
+    expect(asset?.issuer).toBe(USDT0_MAINNET_ISSUER);
+    expect(asset?.issuer).toBe('GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q');
+    expect(asset?.network).toBe('mainnet');
+    expect(asset?.kind).toBe('stablecoin');
+    expect(asset?.homeDomain).toBeUndefined();
+  });
+
+  it('gating: does not offer USDT0 on testnet, but offers on mainnet', () => {
+    const { getRegisteredAsset, getAssetIssuer, isRegisteredIssuer, USDT0_MAINNET_ISSUER } = require('../assets');
+    expect(getRegisteredAsset('USDT0', 'testnet')).toBeNull();
+    expect(getAssetIssuer('USDT0', 'testnet')).toBeNull();
+    expect(isRegisteredIssuer('USDT0', USDT0_MAINNET_ISSUER, 'testnet')).toBe(false);
+
+    expect(getRegisteredAsset('USDT0', 'mainnet')?.issuer).toBe(USDT0_MAINNET_ISSUER);
+    expect(getAssetIssuer('USDT0', 'mainnet')).toBe(USDT0_MAINNET_ISSUER);
+    expect(isRegisteredIssuer('USDT0', USDT0_MAINNET_ISSUER, 'mainnet')).toBe(true);
+  });
+});
+
