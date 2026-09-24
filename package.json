@@ -4,6 +4,7 @@
   "description": "Root scripts — smoke tests and tooling for Veil",
   "scripts": {
     "smoke": "npx ts-node scripts/smoke_test.ts",
+    "test:privacy:e2e": "node scripts/privacy-e2e.mjs",
     "release-notes": "conventional-changelog -p angular -i CHANGELOG.md -s",
     "changeset": "changeset",
     "version-packages": "changeset version && node scripts/sync-package-lockfiles.mjs",
