@@ -19,8 +19,12 @@ import {
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
-import { USDY_MAINNET_ISSUER, getRegisteredAsset } from '@/lib/assets'
+import { USDY_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '@/lib/assets'
 import { fetchPrice } from '@/lib/fetchPrice'
+import {
+  loadRegisteredIssuerMetadata,
+  type IssuerTomlMetadata,
+} from '@/lib/issuerToml'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -45,6 +49,7 @@ export default function AssetsPage() {
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [prices, setPrices] = useState<Record<string, number | null>>({})
+  const [issuerMeta, setIssuerMeta] = useState<Record<string, IssuerTomlMetadata>>({})
 
   // Add-asset form
   const [domain, setDomain] = useState('')
@@ -54,6 +59,22 @@ export default function AssetsPage() {
   const [manualIssuer, setManualIssuer] = useState('')
 
   const trustlines: Trustline[] = useMemo(() => parseTrustlines(balances), [balances])
+
+  useEffect(() => {
+    let cancelled = false
+    const registered = trustlines.filter((line) => isRegisteredIssuer(line.code, line.issuer))
+    void (async () => {
+      const next: Record<string, IssuerTomlMetadata> = {}
+      for (const line of registered) {
+        const meta = await loadRegisteredIssuerMetadata(line.code, line.issuer)
+        if (meta) next[`${line.code}:${line.issuer}`] = meta
+      }
+      if (!cancelled) setIssuerMeta(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [trustlines])
 
   const loadAccount = useCallback(async () => {
     setLoading(true)
@@ -219,16 +240,32 @@ export default function AssetsPage() {
             trustlines.map((line) => {
               const price = prices[`${line.code}:${line.issuer}`]
               const usdVal = price != null ? Number(line.balance) * price : null
+              const meta = issuerMeta[`${line.code}:${line.issuer}`]
+              const registered = isRegisteredIssuer(line.code, line.issuer)
+                ? getRegisteredAsset(line.code)
+                : null
               return (
                 <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
-                  <div style={{ minWidth: 0 }}>
-                    <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{line.code}</p>
-                    <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
-                      {line.issuer}
-                    </p>
-                    <p style={mutedTextStyle}>
-                      Balance: {line.balance} {usdVal != null ? `(~$${usdVal.toFixed(2)} USD)` : ''}
-                    </p>
+                  <div style={{ display: 'flex', gap: '0.75rem', minWidth: 0, alignItems: 'center' }}>
+                    {meta ? <RegisteredAssetMark meta={meta} /> : null}
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>
+                        {line.code}
+                        {meta && meta.name !== line.code ? (
+                          <span style={{ fontWeight: 400, color: 'var(--warm-grey)' }}> · {meta.name}</span>
+                        ) : null}
+                      </p>
+                      {registered ? (
+                        <p style={mutedTextStyle}>Issuer: {registered.issuerName}</p>
+                      ) : null}
+                      {meta?.description ? <p style={mutedTextStyle}>{meta.description}</p> : null}
+                      <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
+                        {line.issuer}
+                      </p>
+                      <p style={mutedTextStyle}>
+                        Balance: {line.balance} {usdVal != null ? `(~$${usdVal.toFixed(2)} USD)` : ''}
+                      </p>
+                    </div>
                   </div>
                   <button
                     onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
@@ -311,6 +348,27 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+function RegisteredAssetMark({ meta }: { meta: IssuerTomlMetadata }) {
+  const [broken, setBroken] = useState(false)
+  if (meta.imageUrl && !broken) {
+    return (
+      <img
+        src={meta.imageUrl}
+        alt=""
+        width={36}
+        height={36}
+        onError={() => setBroken(true)}
+        style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+      />
+    )
+  }
+  return (
+    <span aria-hidden="true" style={letterMarkStyle}>
+      {meta.letter}
+    </span>
+  )
+}
+
 const backButtonStyle: CSSProperties = {
   background: 'none',
   border: 'none',
@@ -356,6 +414,20 @@ const sectionHeadingStyle: CSSProperties = {
 const mutedTextStyle: CSSProperties = {
   color: 'var(--warm-grey)',
   fontSize: '0.8125rem',
+}
+
+const letterMarkStyle: CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 8,
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'rgba(246,247,248,0.08)',
+  color: 'var(--off-white)',
+  fontWeight: 700,
+  fontSize: '0.95rem',
 }
 
 const trustlineRowStyle: CSSProperties = {
