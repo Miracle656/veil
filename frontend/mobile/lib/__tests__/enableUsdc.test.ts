@@ -7,7 +7,12 @@ import {
   MissingTrustline,
   MIN_XLM_FOR_TRUSTLINE,
 } from '../enableUsdc';
-import { USDY_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '../assets';
+import {
+  USDY_MAINNET_ISSUER,
+  getAssetIssuer,
+  getRegisteredAsset,
+  isRegisteredIssuer,
+} from '../assets';
 
 describe('Asset Registry for USDY & USDC', () => {
   it('verifies USDY issuer against the registry (GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6)', () => {
@@ -16,8 +21,14 @@ describe('Asset Registry for USDY & USDC', () => {
     expect(usdy?.code).toBe('USDY');
     expect(usdy?.issuer).toBe(USDY_MAINNET_ISSUER);
     expect(usdy?.homeDomain).toBe('ondo.finance');
+    expect(usdy?.network).toBe('mainnet');
     expect(isRegisteredIssuer('USDY', USDY_MAINNET_ISSUER)).toBe(true);
     expect(isRegisteredIssuer('USDY', 'GFAKEISSUER1234567890123456789012345678901234567890123456')).toBe(false);
+  });
+
+  it('does not resolve USDY on testnet', () => {
+    expect(getAssetIssuer('USDY', 'testnet')).toBeNull();
+    expect(getAssetIssuer('USDY', 'mainnet')).toBe(USDY_MAINNET_ISSUER);
   });
 });
 
