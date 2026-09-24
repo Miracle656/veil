@@ -1,13 +1,18 @@
 /**
- * Tests for the portfolio parser.
- *
- * `parseHeldAssets` is the pure core of the assets screen: given a set of
- * Horizon balances it must surface every classic asset the wallet holds and
- * nothing else — not native XLM, not liquidity-pool shares — with the code,
- * issuer, and balance the row renders.
+ * Tests for the portfolio parser and verified asset registry (including USDT0).
  */
 
-import { parseHeldAssets, type HorizonBalanceLike } from '../assets';
+import { Asset, Networks } from '@stellar/stellar-sdk';
+import {
+  parseHeldAssets,
+  type HorizonBalanceLike,
+  ASSET_REGISTRY,
+  USDT0_MAINNET_ISSUER,
+  USDT0_MAINNET_SAC_CONTRACT_ID,
+  getRegisteredAsset,
+  getAssetIssuer,
+  isRegisteredIssuer,
+} from '../assets';
 
 const USDC = {
   asset_type: 'credit_alphanum4',
@@ -51,5 +56,47 @@ describe('parseHeldAssets', () => {
 
   it('returns an empty portfolio for an account holding only XLM', () => {
     expect(parseHeldAssets([NATIVE])).toEqual([]);
+  });
+});
+
+describe('USDT0 asset registry on mobile (#787)', () => {
+  it('dynamically derives the SAC contract ID from asset and issuer on public network', () => {
+    const derivedSac = new Asset('USDT0', USDT0_MAINNET_ISSUER).contractId(Networks.PUBLIC);
+    expect(derivedSac).toBe(USDT0_MAINNET_SAC_CONTRACT_ID);
+    expect(derivedSac).toBe(ASSET_REGISTRY.USDT0.contractId);
+  });
+
+  it('registers USDT0 with the canonical issuer and without a homeDomain', () => {
+    const usdt0 = ASSET_REGISTRY.USDT0;
+    expect(usdt0).toBeDefined();
+    expect(usdt0.code).toBe('USDT0');
+    expect(usdt0.issuer).toBe('GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q');
+    expect(usdt0.kind).toBe('stablecoin');
+    expect(usdt0.network).toBe('mainnet');
+    expect(usdt0.homeDomain).toBeUndefined();
+  });
+
+  it('offers USDT0 on mainnet only, returning null on testnet', () => {
+    expect(getRegisteredAsset('USDT0', 'mainnet')).toBeDefined();
+    expect(getRegisteredAsset('USDT0', 'testnet')).toBeNull();
+
+    expect(getAssetIssuer('USDT0', 'mainnet')).toBe(USDT0_MAINNET_ISSUER);
+    expect(getAssetIssuer('USDT0', 'testnet')).toBeNull();
+  });
+
+  it('verifies genuine USDT0 issuer and rejects impostor issuers', () => {
+    expect(isRegisteredIssuer('USDT0', USDT0_MAINNET_ISSUER, 'mainnet')).toBe(true);
+    expect(isRegisteredIssuer('USDT0', USDT0_MAINNET_ISSUER, 'testnet')).toBe(false);
+
+    const impostors = [
+      'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK',
+      'GADUBOKGYG4E2BZUVXAZBBILGPIYIPOXAXWIIG6DJ4JDXWOQR67HUSDT',
+      'GBL35PWBKAHURS7SMATHXTS5X57BHC23P2B6MOJTDXTDKD7K25QHUSDT',
+      'GAKSY7RQI4YG3H5J5WRYHB4FDEJ2PAQJ6IN3P47HNG6KGUJJ2YOD7ZP3',
+    ];
+
+    for (const impostor of impostors) {
+      expect(isRegisteredIssuer('USDT0', impostor, 'mainnet')).toBe(false);
+    }
   });
 });
