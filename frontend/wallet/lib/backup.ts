@@ -27,6 +27,7 @@ import {
   type BackupStorageBackend,
 } from '@veil/backup'
 import { walletLocal } from '@/lib/walletStorage'
+import { getNetwork } from '@/lib/network'
 
 // Local crypto helpers — kept inline so the backup path stays free of the heavy
 // @stellar/stellar-sdk dependency that `@veil/utils` pulls in.
@@ -52,8 +53,6 @@ const ADDRESS_KEY = 'invisible_wallet_address'
 const KEY_ID_KEY = 'invisible_wallet_key_id'
 const PUBLIC_KEY_KEY = 'invisible_wallet_public_key'
 const SETTINGS_KEY = 'veil_wallet_settings'
-
-const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015'
 
 // ── Pluggable backends ───────────────────────────────────────────────────────────
 
@@ -140,14 +139,20 @@ export function collectWalletMetadata(overrides: Partial<WalletBackupMetadata> =
   const signers =
     overrides.signers ??
     (publicKey ? [{ index: 0, publicKey }] : [])
+  const network = getNetwork()
+  const factoryAddress = overrides.factoryAddress ?? network.factoryContractId
+  const networkPassphrase = overrides.networkPassphrase ?? network.networkPassphrase
+  if (!networkPassphrase || !factoryAddress) {
+    throw new Error(`Network configuration is incomplete for ${network.displayName}.`)
+  }
 
   return {
     version: 1,
     address,
     signers,
     settings: overrides.settings ?? readSettings(),
-    factoryAddress: overrides.factoryAddress,
-    networkPassphrase: overrides.networkPassphrase ?? TESTNET_PASSPHRASE,
+    factoryAddress,
+    networkPassphrase,
     rpId: overrides.rpId ?? (typeof window !== 'undefined' ? window.location.hostname : undefined),
     createdAt: overrides.createdAt ?? Date.now(),
   }

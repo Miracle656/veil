@@ -39,6 +39,7 @@ import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import { getAvailableInvestAssets, type InvestAsset } from '../../lib/invest';
 import { fetchHeldAssets, USDY_MAINNET_ISSUER } from '../../lib/assets';
 import { enableUsdy, NotEnoughXlm, AccountNotFunded } from '../../lib/enableUsdc';
+import { openExternalUrl } from '../../lib/about';
 
 /**
  * Earn — lend idle USDC or XLM to Blend lending pools and redeem it.
@@ -347,6 +348,55 @@ export default function EarnRoute() {
                 <View style={styles.sectionHeaderRow}>
                   <Text style={[typography.accent, styles.sectionLabel]}>Lending</Text>
                   <Text style={styles.sectionSublabel}>Blend Protocol</Text>
+              <Card style={styles.disclosureCard}>
+                <View style={styles.rowBetween}>
+                  <Text style={[typography.accent, styles.disclosureLabel]}>Disclosures</Text>
+                  <Pressable
+                    accessibilityRole="link"
+                    accessibilityLabel="Learn how Veil invest works and disclosures"
+                    hitSlop={8}
+                    onPress={() => void openExternalUrl('https://docs.useveilapp.xyz/invest')}
+                  >
+                    <Text style={styles.disclosureLink}>How it works &amp; risks →</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.disclosureText}>
+                  Veil is a self-custody wallet, not a broker. Veil never takes custody, never performs KYC, and never gives advice.
+                </Text>
+              </Card>
+
+              {!loadingPools && bestApy > 0 ? (
+                <Card variant="md" style={styles.hero}>
+                  <Text style={[typography.accent, styles.heroLabel]}>Best rate today</Text>
+                  <Text style={styles.heroRate}>{formatApy(bestApy)}</Text>
+                  <Text style={styles.muted}>a year, paid by borrowers. The rate moves with demand.</Text>
+                </Card>
+              ) : null}
+
+              {positions.length > 0 ? (
+                <View style={styles.section}>
+                  <Text style={[typography.accent, styles.sectionLabel]}>Your deposits</Text>
+                  {positions.map((position) => (
+                    <Card key={`${position.poolId}-${position.asset}`} style={styles.card}>
+                      <View style={styles.rowBetween}>
+                        <View>
+                          <Text style={styles.assetCode}>{position.code ?? `${position.asset.slice(0, 6)}…`}</Text>
+                          <Text style={styles.muted}>{poolName(position.poolId)} pool</Text>
+                        </View>
+                        <Text style={styles.value}>
+                          {mask(formatAmount(toUnits(position.deposited)))} {position.code ?? ''}
+                        </Text>
+                      </View>
+                      <Button
+                        label="Withdraw"
+                        variant="ghost"
+                        onPress={() => {
+                          setSelectedPosition(position);
+                          setStep('withdraw-form');
+                        }}
+                      />
+                    </Card>
+                  ))}
                 </View>
 
                 {!loadingPools && bestApy > 0 ? (
@@ -614,6 +664,10 @@ const createStyles = (colors: ThemeColors) =>
     heroRate: { fontFamily: fontFamily.heading, fontSize: 40, lineHeight: 48, color: colors.accentText },
     section: { gap: 12 },
     sectionLabel: { color: colors.textMuted, fontSize: 11 },
+    disclosureCard: { padding: 14, gap: 6 },
+    disclosureLabel: { color: colors.accent, fontSize: 11 },
+    disclosureLink: { fontFamily: fontFamily.bodySemiBold, fontSize: 12, color: colors.accentText },
+    disclosureText: { fontFamily: fontFamily.body, fontSize: 12, lineHeight: 17, color: colors.textMuted },
     card: { padding: 18, gap: 12 },
     cardCentered: { padding: 18, gap: 12, alignItems: 'center' },
     cardTitle: { color: colors.textStrong, fontSize: 20, lineHeight: 26 },

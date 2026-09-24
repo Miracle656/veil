@@ -154,6 +154,7 @@ veil/
 │   │   ├── core.ts                # Framework-agnostic wallet core — register, deploy, login, signAuthEntry, sendPayment, addSigner, removeSigner, setGuardian, initiateRecovery, completeRecovery
 │   │   ├── useInvisibleWallet.ts  # React hook — binds the core to useSyncExternalStore
 │   │   ├── vue/                   # Vue 3 composable — binds the same core to refs (invisible-wallet-sdk/vue)
+│   │   ├── angular/               # Angular DI service + provideVeil — standalone-compatible (invisible-wallet-sdk/angular)
 │   │   ├── webauthn.ts            # WebAuthn provider interface + web/browser implementation
 │   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkey) — Metro auto-resolves
 │   │   ├── utils.ts               # Crypto utilities (DER→raw, pubkey extraction, SHA256, computeWalletAddress)
@@ -475,6 +476,56 @@ cleanup, which keeps it safe through a solid-start server render.
 See [`sdk/src/solid`](sdk/src/solid) for the adapter and
 [`examples/solid`](examples/solid) for a Vite starter covering register,
 dashboard and send.
+
+### With Angular
+
+Configure the wallet once at bootstrap with `provideVeil` — standalone-component
+compatible:
+
+```ts
+import { bootstrapApplication } from '@angular/platform-browser';
+import { provideVeil } from 'invisible-wallet-sdk/angular';
+
+bootstrapApplication(AppComponent, {
+  providers: [
+    provideVeil({
+      factoryAddress: FACTORY_CONTRACT_ID,
+      rpcUrl: 'https://soroban-testnet.stellar.org',
+      networkPassphrase: Networks.TESTNET,
+    }),
+  ],
+});
+```
+
+Components and services then inject the DI singleton:
+
+```ts
+import { Component, inject } from '@angular/core';
+import { VeilService } from 'invisible-wallet-sdk/angular';
+
+@Component({
+  standalone: true,
+  template: `
+    @if (wallet.address(); as address) {
+      <p>Wallet: {{ address }}</p>
+    } @else {
+      <button (click)="wallet.register('alice')">Create wallet</button>
+    }
+  `,
+})
+export class WalletComponent {
+  readonly wallet = inject(VeilService);
+}
+```
+
+State arrives as signals — `wallet.address()`, `wallet.isPending()`, etc. — over
+the same `InvisibleWalletCore` every other adapter binds, so the actions are
+identical across all five. Standalone apps use `provideVeil`; NgModule-based
+apps import `VeilModule.forRoot(config)`.
+
+See [`sdk/src/angular`](sdk/src/angular) for the adapter and
+[`examples/angular`](examples/angular) for a standalone starter covering
+register, login and send.
 
 ### Without a framework
 

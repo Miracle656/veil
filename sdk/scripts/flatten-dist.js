@@ -9,7 +9,15 @@ const nestedSrcDir = path.join(distDir, 'src');
 
 if (fs.existsSync(nestedSrcDir)) {
   for (const entry of fs.readdirSync(nestedSrcDir)) {
-    fs.renameSync(path.join(nestedSrcDir, entry), path.join(distDir, entry));
+    const source = path.join(nestedSrcDir, entry);
+    const dest = path.join(distDir, entry);
+    // Re-running tsc leaves a stale adapter dir at the destination, and
+    // renameSync cannot replace an existing directory — clear it first so
+    // repeated builds stay idempotent.
+    if (fs.existsSync(dest)) {
+      fs.rmSync(dest, { recursive: true, force: true });
+    }
+    fs.renameSync(source, dest);
   }
   fs.rmdirSync(nestedSrcDir);
 }
