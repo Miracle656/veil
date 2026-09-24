@@ -15,6 +15,7 @@ import { ConnectDAppModal } from '@/components/ConnectDAppModal'
 import { WalletConnectApprovalModal } from '@/components/WalletConnectApprovalModal'
 import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
+import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
@@ -861,6 +862,9 @@ function DashboardPageContent() {
             </div>
           </div>
 
+        {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
+            scan stub below stands in for the V134 client until it lands. */}
+        <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.

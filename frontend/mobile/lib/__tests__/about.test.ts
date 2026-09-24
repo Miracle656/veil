@@ -214,6 +214,12 @@ describe('EXTERNAL_LINKS', () => {
       expect(link.url).toMatch(/^https:\/\//);
     }
   });
+
+  it('includes invest rail disclosures pointing to docs', () => {
+    const investLink = EXTERNAL_LINKS.find((link) => link.key === 'invest-docs');
+    expect(investLink).toBeDefined();
+    expect(investLink?.url).toBe('https://docs.useveilapp.xyz/invest');
+  });
 });
 
 describe('openExternalUrl', () => {
