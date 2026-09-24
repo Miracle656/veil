@@ -181,7 +181,7 @@ Set these in Vercel (or `.env.local` for local dev):
 | `NEXT_PUBLIC_SOROBAN_RPC_URL` | Optional testnet Soroban RPC override |
 | `NEXT_PUBLIC_MAINNET_RPC_URL` | Mainnet Soroban RPC provider URL |
 | `NEXT_PUBLIC_WRAITH_URL` | Wraith indexer URL (transfer history) |
-| `NEXT_PUBLIC_AGENT_WS_URL` | Veil Agent WebSocket URL |
+| `NEXT_PUBLIC_AGENT_WS_URL` | Deprecated. The wallet agent uses its own `/api/agent` route; no WebSocket URL is configured. |
 
 ---
 
