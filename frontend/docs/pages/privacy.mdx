@@ -1,0 +1,137 @@
+---
+title: What "Private" Means in Veil
+description: An honest, plain-language guide to shielded pools, privacy boundaries, selective disclosure, and compliance controls in Veil.
+---
+
+import { Callout, Steps, Cards } from 'nextra/components'
+
+# What "Private" Means in Veil
+
+Privacy features fail when users assume they hide more than they actually do.
+
+Veil uses **Stellar Private Payments (SPP)** — built with Nethermind and the Stellar Development Foundation (SDF) — to offer shielded payments. This guide explains in plain language **exactly what is private, what remains public, and how the rules work**, so you can use these tools safely and confidently.
+
+<Callout type="warning">
+**Developer preview on Testnet only**: Stellar Private Payments is currently an unaudited developer preview on Stellar Testnet. It is strictly locked out on Mainnet in Veil until the contracts and circuits undergo formal security audits and SDF approval.
+</Callout>
+
+---
+
+## The Core Rule: Inside the Pool vs. Outside the Pool
+
+Think of a privacy pool like a shared, secure vault:
+
+1. **Entering the vault (Shield / Deposit)** is public.
+2. **Exchanging items inside the vault (Private Send)** is private.
+3. **Leaving the vault (Unshield / Withdraw)** is public.
+
+```
+[ Your Public Account ] ──( Public Deposit )──> [ Shielded Pool ]
+                                                        │
+                                          [ Private Transfer ] (Hidden)
+                                                        │
+[ Destination Account ] <──( Public Withdraw )── [ Shielded Pool ]
+```
+
+---
+
+## At a Glance: What is Hidden vs. What is Public
+
+| Action / Detail | What Observers See on the Blockchain | Is It Private? |
+|---|---|:---:|
+| **Private Send (Inside Pool)** | Only that a valid zero-knowledge proof occurred | **Yes (Hidden)** |
+| **Sender Address (Inside Pool)** | Hidden cryptographically | **Yes (Hidden)** |
+| **Recipient Address (Inside Pool)** | Hidden cryptographically | **Yes (Hidden)** |
+| **Transfer Amount (Inside Pool)** | Hidden cryptographically | **Yes (Hidden)** |
+| **Shield (Deposit into Pool)** | Your public account sends funds into the pool contract | **No (Public)** |
+| **Unshield (Withdraw from Pool)** | The pool contract sends funds to a public destination account | **No (Public)** |
+| **Deposit / Withdrawal Amount** | The exact amount entering or leaving the pool is visible | **No (Public)** |
+| **Time of Deposit / Withdrawal** | Recorded on the public Stellar ledger | **No (Public)** |
+
+---
+
+## 1. What Happens Inside the Pool (Private Transfers)
+
+When you make a **Private Send** to another Veil user:
+- **No addresses appear on the ledger:** The network does not record who sent the funds or who received them.
+- **No amounts appear on the ledger:** Observers cannot see whether you transferred 1 XLM or 1,000 XLM.
+- **Zero-Knowledge Proofs:** Instead of publishing your transaction details, your device generates a mathematical proof (Groth16 over BN254) showing that you owned valid funds and transferred them according to the rules, without revealing the underlying numbers or keys.
+
+---
+
+## 2. Why Shielding (Deposit) and Unshielding (Withdrawal) are Public
+
+To use the privacy pool, funds must move between Stellar's transparent public ledger and the shielded pool contract.
+
+### Shielding (Depositing)
+When you shield tokens:
+1. Your public Stellar account submits a transaction to deposit funds into the pool contract.
+2. Anyone looking at a block explorer (such as stellar.expert) can see: *"Account A deposited 50 XLM into the privacy pool."*
+3. Once the funds enter the pool, they become an encrypted **private note** owned by your device.
+
+### Unshielding (Withdrawing)
+When you unshield tokens:
+1. Your device proves with zero knowledge that you own an unspent private note in the pool.
+2. The pool contract releases public tokens to the destination address you specified.
+3. Anyone looking at a block explorer can see: *"The privacy pool sent 50 XLM to Account B."*
+
+### Why this is still private
+Even though deposit and withdrawal transactions are individually visible on-chain, **observers cannot link which deposit corresponds to which withdrawal**, as long as other users are transacting in the shared pool.
+
+<Callout type="info">
+**Tip for better privacy:** If you deposit 137.4912 XLM and immediately withdraw 137.4912 XLM in the very next block, an observer might correlate the two by the exact unique amount and timing. For optimal privacy, shield round numbers or let funds sit in the pool before transacting.
+</Callout>
+
+---
+
+## 3. Selective Disclosure ("Prove this Payment")
+
+Privacy should never prevent you from proving legitimate transactions when you need to.
+
+If a landlord, tax authority, merchant, or auditor asks for proof of payment, you can generate a **Selective Disclosure Proof**:
+
+- **Note-Scoped:** The disclosure reveals **only that single payment** (amount, date, and recipient).
+- **Zero Leakage:** It reveals **nothing** about your total wallet balance, your other transactions, or your remaining private notes.
+- **Cryptographically Bound:** The proof is cryptographically tied to the requesting party so it cannot be altered or re-used maliciously.
+
+```
+[ Private Payment ] ──> Generate Selective Proof ──> [ Auditor / Landlord / Tax Office ]
+                                                     (Verifies single payment only)
+```
+
+---
+
+## 4. Compliance Controls & Pool Operator Rules
+
+Veil uses **canonical shared pools** operated according to the Stellar Private Payments specification. The pools are not unregulated mixers; they implement built-in compliance controls:
+
+### Association Set Providers (ASPs)
+Each pool enforces membership policies:
+- **Block-Lists:** Sanctioned, stolen, or malicious addresses (such as OFAC-listed accounts) are blocked from entering or transacting in the pool.
+- **Allow-Lists:** Certain institutional pools (such as the EURC pool) may require verified allow-list enrollment.
+
+### Operator Key Freezing
+- The pool operator has the administrative ability to **freeze listed keys or notes** that violate compliance rules or sanctions.
+- If a key or note is frozen by the pool operator, it cannot be transferred or withdrawn from the pool.
+
+We state this plainly so you understand the trust model: Veil does not operate private islands outside the law.
+
+---
+
+## 5. Security & Key Custody
+
+- **Keys never leave your device:** Your note encryption keys and spending keys are derived deterministically from your passkey hardware authenticator.
+- **No server custody:** No Veil server, bootnode, or relayer ever sees your private keys, your note secrets, or your transaction graphs.
+- **Deterministic recovery:** When you recover your wallet with your passkey on a supported device (with WebAuthn PRF extension support), your private balance keys are recovered with it.
+
+---
+
+## Summary Checklist
+
+- [x] **Private sends hide amounts and counterparties inside the pool.**
+- [x] **Deposits (shield) and withdrawals (unshield) are visible on the public Stellar ledger.**
+- [x] **Selective disclosure lets you prove a specific transaction without exposing your whole wallet.**
+- [x] **Pool operators can enforce compliance block-lists and freeze listed keys.**
+- [x] **Testnet only today:** Never attempt to use private features on Mainnet until fully audited.
+
+For technical details on cryptographic primitives and circuits, see the [Threat Model](/threat-model) and [Architecture](/architecture).

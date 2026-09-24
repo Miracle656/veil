@@ -31,6 +31,8 @@ import { VeilMark } from '@/components/ui/VeilMark'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
+import { isPrivacyEnabled } from '@/lib/privacy/config'
 
 const network = getNetwork()
 
@@ -214,6 +216,7 @@ function DashboardPageContent() {
   const recent = transactions.slice(0, 4)
 
   const [multisigAvailable, setMultisigAvailable] = useState(false)
+  const [privacyEnabled, setPrivacyEnabled] = useState(false)
 
   const horizonNextRef = useRef<(() => Promise<any>) | null>(null)
 
@@ -227,6 +230,7 @@ function DashboardPageContent() {
     // chip there would just bounce the user straight back here. Resolved after
     // mount because the active network lives in localStorage.
     setMultisigAvailable(isMultisigAvailable())
+    setPrivacyEnabled(isPrivacyEnabled(getNetworkName()))
 
     // Establish the fee-payer for this session (idempotent, fire-and-forget).
     // PRF wallets keep the seed in sessionStorage only — never copied to
@@ -826,6 +830,10 @@ function DashboardPageContent() {
             it. The CSS for the layout was there the whole time; nothing put the
             two columns in a row. */}
         {/* ── Balance plate and earning: full width, above the columns ── */}
+        {privacyEnabled && (
+          <PrivateBalanceCard hideAmounts={hideAmounts} />
+        )}
+
           <div className="vw-balance-row">
             <div className="vw-silver">
               <div className="vw-silver__sheen" />
