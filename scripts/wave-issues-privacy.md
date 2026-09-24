@@ -9,8 +9,8 @@
 Put these at the top of each issue's Background, or link to this section:
 
 - **Integrate, don't build.** Veil uses Nethermind/SDF **Stellar Private Payments (SPP)**: npm `stellar-private-payments` (web, WASM) and the Rust SDK in `sdk/native` of `NethermindEth/stellar-private-payments`. No circuits, trusted setup or pool contracts of our own.
-- **Canonical pools only, and NEVER hard-code an address.** Read every contract id from SPP's `deployments/testnet/deployments.json` (vendor the file or fetch it at build time) — do not copy addresses into source, and do not retype one from a doc. A Veil-only pool would hide far less.
-- **Any address you do write down must pass `StrKey.isValidContract` / `StrKey.isValidEd25519PublicKey`.** A PR that hard-codes an id gets it checked in review. This rule exists because three PRs in this batch shipped invented ids that were cited as coming from upstream.
+- **Canonical pools only, and every address must be traceable to upstream.** Take every contract id from SPP's `deployments/testnet/deployments.json` — never retype one from a doc, a chat message or another issue. Pinning the values into a config module is fine and is what V131 does; what makes it fine is that it names the upstream commit it was pinned from, and a test asserts the values. A Veil-only pool would hide far less.
+- **Every address must pass `StrKey.isValidContract` / `StrKey.isValidEd25519PublicKey`.** This gets checked in review. The rule exists because three PRs in this batch shipped invented ids while citing upstream as the source — see `frontend/wallet/lib/privacy/config.ts` for how to do it properly.
 
   Verified against upstream on 2026-09-24, for reference only — read them from the file, do not paste these:
 
