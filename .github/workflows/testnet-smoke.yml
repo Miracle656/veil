@@ -7,10 +7,17 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch: {}   # allow manual trigger for debugging
 
+permissions:
+  contents: read
+
 jobs:
   testnet-smoke:
     name: Stellar testnet — deploy wallet, fund, send, verify
     runs-on: ubuntu-latest
+    permissions:
+      # Open GitHub issue on failure (github-script).
+      contents: read
+      issues: write
     # Skip on dependabot branches so dependency PRs don't trigger a burner-key spend
     if: ${{ !startsWith(github.head_ref, 'dependabot/') }}
 

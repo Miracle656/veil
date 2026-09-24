@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   root-install:
     name: Repo root — install is clean (#670)
@@ -233,6 +236,10 @@ jobs:
     name: Wallet PWA — Lighthouse performance budget
     runs-on: ubuntu-latest
     needs: wallet
+    permissions:
+      # The Lighthouse summary is posted as an issue comment (github-script).
+      contents: read
+      issues: write
     defaults:
       run:
         working-directory: frontend/wallet

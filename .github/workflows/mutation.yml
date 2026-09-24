@@ -10,10 +10,17 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   stryker:
     name: Stryker — SDK signing primitives
     runs-on: ubuntu-latest
+    permissions:
+      # Post mutation score to PR (github-script), an issue comment.
+      contents: read
+      issues: write
     defaults:
       run:
         working-directory: sdk

@@ -8,8 +8,8 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write
-  pull-requests: write
+  # The release job needs the wider scope, and declares it on the job.
+  contents: read
 
 jobs:
   release:

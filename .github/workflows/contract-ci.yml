@@ -27,6 +27,9 @@ on:
       - 'contracts/**'
       - '.github/workflows/contract-ci.yml'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Rust contracts - build (sccache)

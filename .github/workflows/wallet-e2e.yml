@@ -14,8 +14,8 @@ on:
       - 'sdk/**'
 
 permissions:
+  # The PR comment step posts an issue comment (github-script).
   contents: read
-  pull-requests: write
   issues: write
 
 jobs:

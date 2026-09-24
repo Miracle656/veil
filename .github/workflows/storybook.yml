@@ -14,11 +14,9 @@ on:
       - '.github/workflows/storybook.yml'
   workflow_dispatch:
 
-# Allow the deploy job to publish to GitHub Pages.
+# The build job only reads; the deploy job declares the pages scope it needs.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: storybook-pages
@@ -50,6 +48,11 @@ jobs:
     # Only publish from the default branch; PRs just build to catch breakage.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      # Deploying to GitHub Pages needs the Pages deployment scopes.
+      contents: read
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

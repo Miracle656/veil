@@ -18,8 +18,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  # Write, because a successful build is published as a release below.
-  contents: write
+  contents: read
 
 concurrency:
   group: mobile-apk
@@ -30,6 +29,9 @@ jobs:
     name: Build community APK
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    permissions:
+      # The successful build is published as a release (`gh release create`).
+      contents: write
     defaults:
       run:
         working-directory: frontend/mobile
