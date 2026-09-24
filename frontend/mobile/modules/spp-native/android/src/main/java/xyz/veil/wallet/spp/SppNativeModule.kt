@@ -73,34 +73,40 @@ class SppNativeModule : Module() {
             proverDispatcher.close()
         }
     }
-
-    companion object {
-        const val E_PROVER = "E_PROVER"
-        const val E_BAD_REQUEST = "E_BAD_REQUEST"
-    }
 }
 
+// Top-level (not in a companion object) so the file's top-level conversion
+// helpers below can reference them — a companion member is out of scope
+// outside the class body.
+private const val E_PROVER = "E_PROVER"
+private const val E_BAD_REQUEST = "E_BAD_REQUEST"
+
 // Outcome → promise: an error_code rejects with `code: detail` so the JS
-// layer can branch on the prefix without parsing prose.
+// layer can branch on the prefix without parsing prose. The code is captured
+// in a local val first: `errorCode` is a `var` property of the generated
+// data class, and Kotlin will not smart-cast a member var to non-null.
 private fun ProveOutcome.resolveOrReject(promise: Promise) {
-    if (errorCode != null) {
-        promise.reject(errorCode, "$errorCode: ${detail.orEmpty()}", null)
+    val code = errorCode
+    if (code != null) {
+        promise.reject(code, "$code: ${detail.orEmpty()}", null)
     } else {
         promise.resolve(result!!.toJsMap())
     }
 }
 
 private fun VerifyOutcome.resolveOrReject(promise: Promise) {
-    if (errorCode != null) {
-        promise.reject(errorCode, "$errorCode: ${detail.orEmpty()}", null)
+    val code = errorCode
+    if (code != null) {
+        promise.reject(code, "$code: ${detail.orEmpty()}", null)
     } else {
         promise.resolve(verified)
     }
 }
 
 private fun SyncOutcome.resolveOrReject(promise: Promise) {
-    if (errorCode != null) {
-        promise.reject(errorCode, "$errorCode: ${detail.orEmpty()}", null)
+    val code = errorCode
+    if (code != null) {
+        promise.reject(code, "$code: ${detail.orEmpty()}", null)
     } else {
         promise.resolve(checkpoint!!.toJsMap())
     }
@@ -145,18 +151,18 @@ private fun Map<String, Any?>.toRustTransaction() = uniffi.spp_native.SppTransac
     anchor = requireByteArray("anchor"),
     inputs = requireList("inputs").map { (it as Map<String, Any?>).toRustInput() },
     outputs = requireList("outputs").map { (it as Map<String, Any?>).toRustOutput() },
-    fee = requireLong("fee"),
-    expiryLedger = requireInt("expiryLedger"),
+    fee = requireLong("fee").toULong(),
+    expiryLedger = requireInt("expiryLedger").toUInt(),
 )
 
 private fun Map<String, Any?>.toRustInput() = uniffi.spp_native.Input(
     nullifier = requireByteArray("nullifier"),
-    leafIndex = requireLong("leafIndex"),
+    leafIndex = requireLong("leafIndex").toULong(),
 )
 
 private fun Map<String, Any?>.toRustOutput() = uniffi.spp_native.Output(
     commitment = requireByteArray("commitment"),
-    amount = requireLong("amount"),
+    amount = requireLong("amount").toULong(),
     asset = requireString("asset"),
     recipient = requireString("recipient"),
 )
@@ -164,13 +170,13 @@ private fun Map<String, Any?>.toRustOutput() = uniffi.spp_native.Output(
 private fun Map<String, Any?>.toRustSpendNote() = uniffi.spp_native.SpendNote(
     noteKey = requireByteArray("noteKey"),
     rho = requireByteArray("rho"),
-    amount = requireLong("amount"),
+    amount = requireLong("amount").toULong(),
     asset = requireString("asset"),
     commitment = requireByteArray("commitment"),
 )
 
 private fun Map<String, Any?>.toRustMerklePath() = uniffi.spp_native.MerklePath(
-    depth = requireInt("depth"),
+    depth = requireInt("depth").toUByte(),
     siblings = requireList("siblings").map { it as ByteArray },
     indexBits = requireList("indexBits").map { it as Boolean },
 )

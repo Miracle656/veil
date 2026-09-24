@@ -165,3 +165,12 @@ tasks.matching { it.name == 'preBuild' }.configureEach {
   dependsOn 'generateUniffiBindings'
   rustTargets.each { target -> dependsOn "buildRust${target.abi}" }
 }
+
+// `preBuild` alone is NOT a hard ordering edge to `compile*Kotlin`: under
+// Gradle's parallel execution the Kotlin compile can snapshot its sources
+// before generateUniffiBindings has written them, so every `uniffi.spp_native`
+// reference comes back "Unresolved reference". Depend on the codegen directly
+// from each Kotlin compile task to guarantee the generated .kt exists first.
+tasks.matching { it.name.startsWith('compile') && it.name.contains('Kotlin') }.configureEach {
+  dependsOn 'generateUniffiBindings'
+}
