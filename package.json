@@ -8,7 +8,8 @@
     "changeset": "changeset",
     "version-packages": "changeset version && node scripts/sync-package-lockfiles.mjs",
     "release": "changeset publish",
-    "verify:lockfile": "node scripts/verify-root-lockfile.mjs"
+    "verify:lockfile": "node scripts/verify-root-lockfile.mjs",
+    "verify:assets": "node scripts/verify-asset-registry.mjs"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^14.6.1"
