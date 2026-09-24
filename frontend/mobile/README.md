@@ -88,7 +88,7 @@ changes nothing on the device — there is no partial restore.
 you set up in the browser carries over.
 
 Point it at a server with `EXPO_PUBLIC_AGENT_WS_URL` (defaults to
-`ws://localhost:3001`).
+`wss://localhost:3001`).
 
 The transport lives in `lib/agentSocket.ts`, separated from the screen because a
 phone's socket drops constantly — backgrounding the app is enough. It reconnects
@@ -140,7 +140,7 @@ it at the service before running:
 
 ```bash
 # frontend/mobile/.env.local
-EXPO_PUBLIC_AGENT_WS_URL=ws://localhost:3001
+EXPO_PUBLIC_AGENT_WS_URL=wss://localhost:3001
 ```
 
 The agent can read, explain, and propose — it cannot move funds. Each message type
