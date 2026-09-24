@@ -31,16 +31,16 @@ import { VeilMark } from '@/components/ui/VeilMark'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
+import { buildPortfolio } from '@/lib/portfolio'
+import { PortfolioSummary } from '@/components/PortfolioSummary'
 
 const network = getNetwork()
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface WalletAsset {
-  code: string
-  issuer: string | null
-  balance: string
-}
+export type { WalletAsset } from '@/lib/walletTypes'
+import type { WalletAsset } from '@/lib/walletTypes'
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -123,6 +123,8 @@ function DashboardPageContent() {
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
   const [loading, setLoading]             = useState(cachedAssets === null)
   const [prices, setPrices]               = useState<Record<string, number | null>>(() => cachedPrices)
+  const [pricesTimestamp, setPricesTimestamp] = useState<number>(() => Date.now())
+  const [blendPositions, setBlendPositions]   = useState<BlendPosition[]>([])
   const [isFunding, setIsFunding]         = useState(false)
   const [fundingError, setFundingError]   = useState<string | null>(null)
   const [copied, setCopied]               = useState(false)
@@ -499,10 +501,22 @@ function DashboardPageContent() {
       if (!cancelled) {
         cachedPrices = result
         setPrices(result)
+        setPricesTimestamp(Date.now())
       }
     })
     return () => { cancelled = true }
   }, [assets])
+
+  // Load Blend lending positions whenever the wallet address is known.
+  // Best-effort: an empty array is a valid portfolio state (no positions).
+  useEffect(() => {
+    if (!walletAddress) return
+    let cancelled = false
+    loadBlendPositions(walletAddress).then(positions => {
+      if (!cancelled) setBlendPositions(positions)
+    }).catch(() => { /* Blend offline — positions stay empty */ })
+    return () => { cancelled = true }
+  }, [walletAddress])
 
   // ── Service worker registration + background polling ─────────────────────
   useEffect(() => {
@@ -865,6 +879,16 @@ function DashboardPageContent() {
         {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
             scan stub below stands in for the V134 client until it lands. */}
         <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
+
+        {/* ── Portfolio summary: total value split by cash, lending, invest ── */}
+        {(assets.length > 0 || blendPositions.length > 0) && (
+          <PortfolioSummary
+            portfolio={buildPortfolio(assets, blendPositions, prices, pricesTimestamp)}
+            currencyCode={currencyCode}
+            fxRate={fxRate}
+            hideAmounts={hideAmounts}
+          />
+        )}
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.
