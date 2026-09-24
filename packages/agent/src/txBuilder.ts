@@ -147,6 +147,8 @@ export async function buildPayment(input: PaymentInput): Promise<string> {
  *   XLM            — combined total
  *   plus any token balances (e.g. USDC:ISSUER)
  */
+import { getRegisteredAsset } from './assets.js'
+
 export async function getBalances(
   feePayerAddress: string,
   contractAddress?: string,
@@ -161,8 +163,14 @@ export async function getBalances(
       feePayerXlm = parseFloat(balance.balance)
       result['XLM_feepayer'] = balance.balance
     } else {
-      const key = `${(balance as any).asset_code}:${(balance as any).asset_issuer}`
+      const code = (balance as any).asset_code
+      const issuer = (balance as any).asset_issuer
+      const key = `${code}:${issuer}`
       result[key] = balance.balance
+      const registered = getRegisteredAsset(code)
+      if (registered) {
+        result[registered.code] = balance.balance
+      }
     }
   }
 
