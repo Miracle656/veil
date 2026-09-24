@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { AssetRow } from '../components/AssetRow';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { useTheme } from '../hooks/useTheme';
+import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import {
   fetchHeldAssets,
@@ -14,7 +15,6 @@ import {
   type HeldAsset,
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
-import { getNetworkName } from '../lib/network';
 import { enableUsdy, AccountNotFunded, NotEnoughXlm } from '../lib/enableUsdc';
 
 type State =
@@ -25,6 +25,7 @@ type State =
 
 export default function AssetsScreen() {
   const { colors } = useTheme();
+  const { networkName } = useNetwork();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [enablingUsdy, setEnablingUsdy] = useState(false);
@@ -96,8 +97,6 @@ export default function AssetsScreen() {
 
   const usdyRegistered = getRegisteredAsset('USDY');
 
-  const onMainnet = getNetworkName() === 'mainnet';
-
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
       <View style={styles.header}>
@@ -106,11 +105,9 @@ export default function AssetsScreen() {
       </View>
       <Text style={styles.subtitle}>Every asset your wallet holds beyond XLM.</Text>
 
-      {/* Featured USDY One-Tap Trustline Action */}
-      {state.kind === 'ready' && !hasUsdy && (
       {/* Featured USDY One-Tap Trustline Action. Mainnet only — USDY's issuer
           does not exist on testnet. */}
-      {state.kind === 'ready' && !hasUsdy && onMainnet && (
+      {state.kind === 'ready' && !hasUsdy && networkName === 'mainnet' && (
         <View style={styles.usdyBanner}>
           <View style={styles.usdyInfo}>
             <Text style={styles.usdyTitle}>Enable USDY</Text>
