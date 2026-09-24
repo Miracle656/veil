@@ -22,6 +22,8 @@ import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { USDY_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '@/lib/assets'
 import { fetchPrice } from '@/lib/fetchPrice'
 import {
+  ISSUER_TOML_TTL_MS,
+  letterAvatar,
   loadRegisteredIssuerMetadata,
   type IssuerTomlMetadata,
 } from '@/lib/issuerToml'
@@ -74,16 +76,22 @@ export default function AssetsPage() {
 
   useEffect(() => {
     let cancelled = false
-    void (async () => {
-      const next: Record<string, IssuerTomlMetadata> = {}
-      for (const target of metadataTargets) {
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    for (const target of metadataTargets) {
+      const key = `${target.code}:${target.issuer}`
+      const refresh = async () => {
         const meta = await loadRegisteredIssuerMetadata(target.code, target.issuer)
-        if (meta) next[`${target.code}:${target.issuer}`] = meta
+        if (cancelled || !meta) return
+        setIssuerMeta((current) => ({ ...current, [key]: meta }))
+        // Retry stale/offline results in a minute; fresh data refreshes at expiry.
+        const delay = Math.max(60_000, (meta.fetchedAt ?? 0) + ISSUER_TOML_TTL_MS - Date.now())
+        timers.set(key, setTimeout(() => void refresh(), delay))
       }
-      if (!cancelled) setIssuerMeta(next)
-    })()
+      void refresh()
+    }
     return () => {
       cancelled = true
+      timers.forEach(clearTimeout)
     }
   }, [metadataTargets])
 
@@ -227,19 +235,17 @@ export default function AssetsPage() {
         {!hasUsdy && !loading && network.name === 'mainnet' && (
           <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(212,175,55,0.3)', background: 'rgba(212,175,55,0.05)' }}>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-              {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`] ? (
-                <RegisteredAssetMark meta={issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]} />
-              ) : null}
+              <RegisteredAssetMark code="USDY" meta={issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]} />
               <div style={{ minWidth: 0 }}>
-            <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
-            <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
-            </p>
-            {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]?.description ? (
-              <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
-                {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`].description}
-              </p>
-            ) : null}
+                <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
+                </p>
+                {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]?.description ? (
+                  <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                    {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`].description}
+                  </p>
+                ) : null}
               </div>
             </div>
             <button
@@ -264,13 +270,13 @@ export default function AssetsPage() {
               const price = prices[`${line.code}:${line.issuer}`]
               const usdVal = price != null ? Number(line.balance) * price : null
               const meta = issuerMeta[`${line.code}:${line.issuer}`]
-              const registered = isRegisteredIssuer(line.code, line.issuer)
+              const registered = isRegisteredIssuer(line.code, line.issuer) && getRegisteredAsset(line.code)?.code === line.code
                 ? getRegisteredAsset(line.code)
                 : null
               return (
                 <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
                   <div style={{ display: 'flex', gap: '0.75rem', minWidth: 0, alignItems: 'center' }}>
-                    {meta ? <RegisteredAssetMark meta={meta} /> : null}
+                    {registered ? <RegisteredAssetMark code={line.code} meta={meta} /> : null}
                     <div style={{ minWidth: 0 }}>
                       <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>
                         {line.code}
@@ -373,23 +379,23 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-function RegisteredAssetMark({ meta }: { meta: IssuerTomlMetadata }) {
-  const [broken, setBroken] = useState(false)
-  if (meta.imageUrl && !broken) {
+function RegisteredAssetMark({ code, meta }: { code: string; meta?: IssuerTomlMetadata }) {
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null)
+  if (meta?.imageUrl && meta.imageUrl !== brokenUrl) {
     return (
       <img
         src={meta.imageUrl}
         alt=""
         width={36}
         height={36}
-        onError={() => setBroken(true)}
+        onError={() => setBrokenUrl(meta.imageUrl)}
         style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
       />
     )
   }
   return (
     <span aria-hidden="true" style={letterMarkStyle}>
-      {meta.letter}
+      {letterAvatar(code)}
     </span>
   )
 }

@@ -8,7 +8,8 @@ export const ISSUER_TOML_TTL_MS = 24 * 60 * 60 * 1000
 /** Logos larger than this are rejected. Half a megabyte is enough for a mark. */
 export const MAX_ISSUER_LOGO_BYTES = 512 * 1024
 
-const CACHE_PREFIX = 'veil_issuer_toml:'
+const CACHE_PREFIX = 'veil_issuer_toml:v2:'
+const FETCH_TIMEOUT_MS = 10_000
 
 /** The currency fields this wallet reads from a SEP-1 stellar.toml. */
 export interface IssuerCurrency {
@@ -83,14 +84,13 @@ export function selectRegisteredCurrency(
   issuer: string,
 ): IssuerCurrency | undefined {
   if (!isRegisteredIssuer(code, issuer)) return undefined
-  const wanted = code.toUpperCase()
-  const rows = (currencies ?? []).filter(
+  if (!Array.isArray(currencies)) return undefined
+  return currencies.find(
     (currency) =>
-      (currency.code ?? '').toUpperCase() === wanted &&
-      !!currency.issuer &&
-      isRegisteredIssuer(wanted, currency.issuer),
+      currency?.code === code &&
+      currency?.issuer === issuer &&
+      isRegisteredIssuer(code, currency.issuer),
   )
-  return rows.find((currency) => currency.issuer === issuer) ?? rows[0]
 }
 
 function browserStore(): CacheStore {
@@ -124,8 +124,8 @@ function readCache(store: CacheStore, code: string, issuer: string): CachedIssue
   try {
     const parsed = JSON.parse(raw) as Partial<CachedIssuerMeta>
     if (parsed.code?.toUpperCase() !== code.toUpperCase() || parsed.issuer !== issuer) return null
-    if (typeof parsed.fetchedAt !== 'number') return null
-    const imageUrl = isHttpsImageUrl(parsed.imageUrl) ? parsed.imageUrl : null
+    if (typeof parsed.fetchedAt !== 'number' || !Number.isFinite(parsed.fetchedAt)) return null
+    const imageUrl = isCachedImage(parsed.imageUrl) ? parsed.imageUrl : null
     return {
       code: parsed.code,
       issuer: parsed.issuer,
@@ -160,57 +160,71 @@ function present(
     issuerName: asset.issuerName,
     name: fields.name?.trim() || asset.name,
     description: fields.description?.trim() ? fields.description.trim() : null,
-    imageUrl: isHttpsImageUrl(fields.imageUrl) ? fields.imageUrl : null,
+    imageUrl: isCachedImage(fields.imageUrl) ? fields.imageUrl : null,
     letter: letterAvatar(asset.code),
     fetchedAt: fields.fetchedAt ?? null,
     fromCache: fields.fromCache,
   }
 }
 
-/**
- * Accepts an HTTPS logo that is no larger than `maxBytes`.
- * A readable oversized body is rejected. If the browser cannot read the
- * response (issuer CDNs often omit CORS), the https URL is kept so an
- * `<img>` can load it and fall back to the letter if that fails.
- */
+/** Only the bounded image bytes are cached/rendered, never a remote URL. */
+function isCachedImage(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > MAX_ISSUER_LOGO_BYTES * 4 / 3 + 100) return false
+  const match = /^data:image\/(?:png|jpeg|gif|webp|svg\+xml);base64,([A-Za-z0-9+/=]+)$/.exec(value)
+  if (!match) return false
+  try {
+    return imageByteLengthAllowed(atob(match[1]).length)
+  } catch {
+    return false
+  }
+}
+
+/** Fetch once over HTTPS; unreadable, redirected, or oversized logos fail closed. */
 export async function measureHttpsImage(
   url: string,
   fetchImpl: typeof fetch,
   maxBytes = MAX_ISSUER_LOGO_BYTES,
 ): Promise<string | null> {
   if (!isHttpsImageUrl(url)) return null
-  let response: Response
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
-    response = await fetchImpl(url)
-  } catch {
-    return url
-  }
-  if (!response.ok) return null
+    const response = await fetchImpl(url, {
+      signal: controller.signal,
+      redirect: 'error',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    })
+    if (!response.ok || !response.body) return null
+    const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()
+    if (!type || !/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(type)) return null
+    const declared = response.headers.get('content-length')
+    if (declared !== null && !imageByteLengthAllowed(Number(declared), maxBytes)) return null
 
-  const declaredRaw = response.headers.get('content-length')
-  const declared = declaredRaw === null ? null : Number(declaredRaw)
-  if (declared !== null && (!Number.isFinite(declared) || declared > maxBytes)) return null
-
-  if (!response.body) {
-    return imageByteLengthAllowed(declared, maxBytes) ? url : null
-  }
-
-  const reader = response.body.getReader()
-  let seen = 0
-  try {
+    const reader = response.body.getReader()
+    const chunks: ArrayBuffer[] = []
+    let seen = 0
     for (;;) {
       const { done, value } = await reader.read()
       if (done) break
       seen += value.byteLength
-      if (seen > maxBytes) {
-        await reader.cancel()
-        return null
-      }
+      if (seen > maxBytes) return null
+      chunks.push(new Uint8Array(value).buffer)
     }
+    if (!imageByteLengthAllowed(seen, maxBytes)) return null
+    // Rendering these exact bytes avoids a second, unchecked image download.
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(new Blob(chunks, { type }))
+    })
   } catch {
     return null
+  } finally {
+    controller.abort()
+    clearTimeout(timeout)
   }
-  return imageByteLengthAllowed(seen, maxBytes) ? url : null
 }
 
 /**
@@ -232,14 +246,15 @@ export async function loadRegisteredIssuerMetadata(
   } = {},
 ): Promise<IssuerTomlMetadata | null> {
   if (!isRegisteredIssuer(code, issuer)) return null
+  // Stellar asset codes are case-sensitive even though registry lookup is not.
   const asset = getRegisteredAsset(code)
-  if (!asset || !asset.homeDomain.trim()) return null
+  if (!asset || asset.code !== code || !asset.homeDomain.trim()) return null
 
   const now = options.now ?? Date.now()
   const ttlMs = options.ttlMs ?? ISSUER_TOML_TTL_MS
   const store = options.store ?? browserStore()
   const cached = readCache(store, code, issuer)
-  if (cached && now - cached.fetchedAt < ttlMs) {
+  if (cached && now >= cached.fetchedAt && now - cached.fetchedAt < ttlMs) {
     return present(asset, issuer, {
       name: cached.name,
       description: cached.description,
@@ -250,7 +265,7 @@ export async function loadRegisteredIssuerMetadata(
   }
 
   const resolveToml =
-    options.resolveToml ?? ((domain: string) => StellarToml.Resolver.resolve(domain))
+    options.resolveToml ?? ((domain: string) => StellarToml.Resolver.resolve(domain, { timeout: FETCH_TIMEOUT_MS }))
   const acceptImage =
     options.acceptImage ??
     ((url: string) => measureHttpsImage(url, options.fetchImpl ?? fetch))
@@ -259,7 +274,7 @@ export async function loadRegisteredIssuerMetadata(
     const toml = await resolveToml(asset.homeDomain)
     const currency = selectRegisteredCurrency(toml.CURRENCIES, code, issuer)
     let imageUrl: string | null = null
-    if (currency?.image) {
+    if (typeof currency?.image === 'string' && isHttpsImageUrl(currency.image)) {
       try {
         imageUrl = await acceptImage(currency.image)
       } catch {
@@ -269,8 +284,8 @@ export async function loadRegisteredIssuerMetadata(
     const entry: CachedIssuerMeta = {
       code: asset.code,
       issuer,
-      name: currency?.name?.trim() || asset.name,
-      description: currency?.desc?.trim() || null,
+      name: typeof currency?.name === 'string' ? currency.name.trim() || asset.name : asset.name,
+      description: typeof currency?.desc === 'string' ? currency.desc.trim() || null : null,
       imageUrl,
       fetchedAt: now,
     }

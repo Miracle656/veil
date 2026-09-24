@@ -16,6 +16,8 @@ import {
   type IssuerCurrency,
 } from '../issuerToml'
 
+const LOGO = 'data:image/png;base64,AAAA'
+
 const USDC = ASSET_REGISTRY.USDC
 const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 const UNREGISTERED_ISSUER = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
@@ -31,13 +33,13 @@ function memoryStore(seed: Record<string, string> = {}): CacheStore & { data: Re
   }
 }
 
-function response(byteLength: number, init: { ok?: boolean; length?: string | null } = {}): Response {
+function response(byteLength: number, init: { ok?: boolean; length?: string | null; type?: string } = {}): Response {
   const chunk = byteLength > 0 ? new Uint8Array(byteLength) : null
   let sent = false
   return {
     ok: init.ok ?? true,
     headers: {
-      get: (name: string) => (name.toLowerCase() === 'content-length' ? (init.length ?? null) : null),
+      get: (name: string) => (name === 'content-type' ? (init.type ?? 'image/png') : name === 'content-length' ? (init.length ?? null) : null),
     },
     body: {
       getReader: () => ({
@@ -71,12 +73,12 @@ describe('image checks', () => {
     expect(imageByteLengthAllowed(null)).toBe(false)
   })
 
-  it('keeps an https logo when the size check cannot be read', async () => {
+  it('rejects an https logo when the size check cannot be read', async () => {
     const fetchImpl = jest.fn(async () => {
       throw new TypeError('Failed to fetch')
     })
     const url = 'https://cdn.ondo.finance/tokens/logos/usdy_160x160.png'
-    await expect(measureHttpsImage(url, fetchImpl)).resolves.toBe(url)
+    await expect(measureHttpsImage(url, fetchImpl)).resolves.toBeNull()
   })
 
   it('rejects a non-https image without fetching it', async () => {
@@ -102,8 +104,9 @@ describe('image checks', () => {
   it('keeps a small https image', async () => {
     const fetchImpl = jest.fn(async () => response(3, { length: '3' }))
     await expect(measureHttpsImage('https://cdn.example/logo.png', fetchImpl)).resolves.toBe(
-      'https://cdn.example/logo.png',
+      LOGO,
     )
+    expect(fetchImpl).toHaveBeenCalledWith('https://cdn.example/logo.png', expect.objectContaining({ redirect: 'error', credentials: 'omit' }))
   })
 })
 
@@ -117,9 +120,10 @@ describe('selectRegisteredCurrency', () => {
     expect(selectRegisteredCurrency(currencies, 'USDC', UNREGISTERED_ISSUER)).toBeUndefined()
   })
 
-  it('matches the registered issuer, including the other registered USDC issuer', () => {
+  it('matches only the exact asset code and issuer', () => {
     expect(selectRegisteredCurrency(currencies, 'USDC', USDC.issuer)?.name).toBe('USD Coin')
-    expect(selectRegisteredCurrency(currencies, 'usdc', TESTNET_USDC_ISSUER)?.issuer).toBe(USDC.issuer)
+    expect(selectRegisteredCurrency(currencies, 'USDC', TESTNET_USDC_ISSUER)).toBeUndefined()
+    expect(selectRegisteredCurrency(currencies, 'usdc', USDC.issuer)).toBeUndefined()
   })
 })
 
@@ -157,14 +161,14 @@ describe('loadRegisteredIssuerMetadata', () => {
   })
 
   it('uses a fresh cache and does not hit the network', async () => {
-    const key = `veil_issuer_toml:USDC:${USDC.issuer}`
+    const key = `veil_issuer_toml:v2:USDC:${USDC.issuer}`
     const store = memoryStore({
       [key]: JSON.stringify({
         code: 'USDC',
         issuer: USDC.issuer,
         name: 'Cached Coin',
         description: 'from cache',
-        imageUrl: 'https://circle.com/usdc.png',
+        imageUrl: LOGO,
         fetchedAt: now - 1000,
         issuerName: 'Replaced by toml',
       }),
@@ -175,20 +179,20 @@ describe('loadRegisteredIssuerMetadata', () => {
     expect(meta).toMatchObject({
       issuerName: 'Circle',
       name: 'Cached Coin',
-      imageUrl: 'https://circle.com/usdc.png',
+      imageUrl: LOGO,
       fromCache: true,
     })
   })
 
   it('refreshes a stale cache and stores the new logo only when it is accepted', async () => {
-    const key = `veil_issuer_toml:USDC:${USDC.issuer}`
+    const key = `veil_issuer_toml:v2:USDC:${USDC.issuer}`
     const store = memoryStore({
       [key]: JSON.stringify({
         code: 'USDC',
         issuer: USDC.issuer,
         name: 'Old',
         description: null,
-        imageUrl: 'https://circle.com/old.png',
+        imageUrl: LOGO,
         fetchedAt: now - ISSUER_TOML_TTL_MS - 1,
       }),
     })
@@ -201,21 +205,21 @@ describe('loadRegisteredIssuerMetadata', () => {
           CURRENCIES: [{ code: 'USDC', issuer: USDC.issuer, name: 'USD Coin', image: 'https://circle.com/usdc.png' }],
         }
       },
-      acceptImage: async () => 'https://circle.com/usdc.png',
+      acceptImage: async () => LOGO,
     })
-    expect(meta).toMatchObject({ name: 'USD Coin', imageUrl: 'https://circle.com/usdc.png', fromCache: false, issuerName: 'Circle' })
+    expect(meta).toMatchObject({ name: 'USD Coin', imageUrl: LOGO, fromCache: false, issuerName: 'Circle' })
     expect(JSON.parse(store.data[key]).fetchedAt).toBe(now)
   })
 
   it('falls back to a stale cache when the toml fetch fails', async () => {
-    const key = `veil_issuer_toml:USDY:${ASSET_REGISTRY.USDY.issuer}`
+    const key = `veil_issuer_toml:v2:USDY:${ASSET_REGISTRY.USDY.issuer}`
     const store = memoryStore({
       [key]: JSON.stringify({
         code: 'USDY',
         issuer: ASSET_REGISTRY.USDY.issuer,
         name: 'Cached USDY',
         description: 'still here',
-        imageUrl: 'https://ondo.finance/usdy.png',
+        imageUrl: LOGO,
         fetchedAt: now - ISSUER_TOML_TTL_MS - 5,
       }),
     })
@@ -229,7 +233,7 @@ describe('loadRegisteredIssuerMetadata', () => {
     expect(meta).toMatchObject({
       name: 'Cached USDY',
       issuerName: 'Ondo Finance',
-      imageUrl: 'https://ondo.finance/usdy.png',
+      imageUrl: LOGO,
       letter: 'U',
       fromCache: true,
     })
@@ -251,5 +255,65 @@ describe('loadRegisteredIssuerMetadata', () => {
       letter: 'U',
       fromCache: false,
     })
+  })
+})
+
+
+describe('metadata safety regressions', () => {
+  it.each(['usdc', 'FAKE'])('never fetches an unregistered code %s', async (code) => {
+    const resolveToml = jest.fn()
+    expect(await loadRegisteredIssuerMetadata(code, USDC.issuer, { resolveToml })).toBeNull()
+    expect(resolveToml).not.toHaveBeenCalled()
+  })
+
+  it('ignores malformed TOML rows without discarding valid metadata', async () => {
+    const meta = await loadRegisteredIssuerMetadata('USDC', USDC.issuer, {
+      store: memoryStore(),
+      resolveToml: async () => ({ CURRENCIES: [null, { code: 123 }, {
+        code: 'USDC', issuer: USDC.issuer, name: 12, desc: 'Valid description', image: 123,
+      }] } as unknown as { CURRENCIES: IssuerCurrency[] }),
+    })
+    expect(meta).toMatchObject({ name: USDC.name, description: 'Valid description', imageUrl: null })
+  })
+
+  it('rejects an unchecked remote URL from cache', async () => {
+    const now = Date.now()
+    const store = memoryStore({ [`veil_issuer_toml:v2:USDC:${USDC.issuer}`]: JSON.stringify({
+      code: 'USDC', issuer: USDC.issuer, name: 'Cached', fetchedAt: now,
+      imageUrl: 'https://example.com/unchecked.png',
+    }) })
+    expect(await loadRegisteredIssuerMetadata('USDC', USDC.issuer, { now, store })).toMatchObject({ imageUrl: null })
+  })
+
+  it('refreshes at the exact expiry and does not trust future timestamps', async () => {
+    const now = Date.now()
+    for (const fetchedAt of [now - ISSUER_TOML_TTL_MS, now + 1]) {
+      const store = memoryStore({ [`veil_issuer_toml:v2:USDC:${USDC.issuer}`]: JSON.stringify({
+        code: 'USDC', issuer: USDC.issuer, fetchedAt,
+      }) })
+      const resolveToml = jest.fn(async () => ({}))
+      await loadRegisteredIssuerMetadata('USDC', USDC.issuer, { now, store, resolveToml })
+      expect(resolveToml).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('rejects empty, failed, non-image and unreadable responses', async () => {
+    for (const result of [response(0), response(3, { ok: false }), response(3, { type: 'text/html' }),
+      { ...response(3, { length: '3' }), body: null } as Response]) {
+      expect(await measureHttpsImage('https://example.com/logo', async () => result)).toBeNull()
+    }
+  })
+
+  it('aborts a stalled logo fetch and falls back', async () => {
+    jest.useFakeTimers()
+    try {
+      const pending = measureHttpsImage('https://example.com/logo', (_url, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      }))
+      await jest.advanceTimersByTimeAsync(10_000)
+      await expect(pending).resolves.toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
