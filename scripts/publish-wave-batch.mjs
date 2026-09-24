@@ -58,7 +58,7 @@ function gh(args, { json = false } = {}) {
  * "## " or the first issue. Returns '' when the draft has none.
  */
 export function sharedSection(markdown) {
-  const preamble = markdown.split(/^### V[0-9]+ /m)[0]
+  const preamble = markdown.split(/^### [VWL][0-9]+ /m)[0]
   const lines = preamble.split('\n')
   const start = lines.findIndex((l) => l.trim() === '## Shared with every issue')
   if (start === -1) return ''
@@ -71,7 +71,7 @@ export function parseBatch(markdown) {
   const issues = []
   const shared = sharedSection(markdown)
   // Sections look like "### V131 · Privacy feature flag and SPP network config".
-  const parts = markdown.split(/^### (V\d+) · (.+)$/m)
+  const parts = markdown.split(/^### ([VWL]\d+) · (.+)$/m)
   for (let i = 1; i < parts.length; i += 3) {
     const [id, title, rest] = [parts[i], parts[i + 1].trim(), parts[i + 2]]
     const labels = (rest.match(/^\*\*Labels:\*\*\s*(.+)$/m)?.[1] ?? '')
