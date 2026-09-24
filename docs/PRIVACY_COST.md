@@ -15,7 +15,7 @@
 | Proofs | Groth16 over BN254, Circom circuits, proved on the device | Noir, UltraHonk |
 | Compliance | Association Set Providers (allow-list / block-list per pool), freeze, selective disclosure, global view keys | Auditor view key, selective disclosure, freeze, policy engine |
 | Status | **Developer preview, unaudited, testnet only**, "not yet approved for mainnet" | **Developer preview, testnet**; audits underway; mainnet was targeted for late summer 2026 (not confirmed yet) |
-| Assets on testnet | XLM and EURC pools | any SEP-41 token (USDC via the SAC) |
+| Assets on testnet | **Two XLM pools** (verified in upstream `deployments/testnet/deployments.json` 2026-09-24: both `asset.kind: native`, same `tokenContractId`; the second adds `gvkMode: traceable`). There is **no EURC pool** — an earlier version of this row said there was | any SEP-41 token (USDC via the SAC) |
 | Code | `NethermindEth/stellar-private-payments` — Apache-2.0, circuit compiler GPLv3; npm `stellar-private-payments` 0.1.0 (alpha), Rust SDK | `OpenZeppelin/stellar-contracts` |
 
 Both rest on protocol upgrades already live on mainnet: X-Ray (Protocol 25, BN254 + Poseidon, Jan 22 2026) and Yardstick (Protocol 26, more BN254 host functions, May 6 2026).

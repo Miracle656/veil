@@ -1,6 +1,6 @@
 # invisible-wallet-sdk
 
-TypeScript SDK for Veil / Invisible Wallet (Soroban + WebAuthn passkeys). Supports Web (React, Vue 3, vanilla JS/TS) and React Native / Expo.
+TypeScript SDK for Veil / Invisible Wallet (Soroban + WebAuthn passkeys). Supports Web (React, Vue 3, Angular, Solid.js, Svelte, vanilla JS/TS) and React Native / Expo.
 
 ---
 
@@ -13,6 +13,7 @@ npm install invisible-wallet-sdk @stellar/stellar-sdk
 Optional peer dependencies based on your framework:
 - **React**: `npm install react react-dom @tanstack/react-query`
 - **Vue 3**: `npm install vue`
+- **Angular**: `npm install @angular/core`
 - **React Native / Expo**: `npm install react-native react-native-passkey`
 
 ---
@@ -129,7 +130,55 @@ install it.
 
 ---
 
-### 4. Vanilla / Framework-Agnostic
+### 4. Angular
+
+Import the service from the `/angular` subpath and configure it once at
+bootstrap with `provideVeil` — standalone-component compatible:
+
+```ts
+// main.ts
+import { bootstrapApplication } from '@angular/platform-browser';
+import { provideVeil } from 'invisible-wallet-sdk/angular';
+
+bootstrapApplication(AppComponent, {
+  providers: [
+    provideVeil({
+      factoryAddress: 'CA...',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+      rpcUrl: 'https://soroban-testnet.stellar.org',
+    }),
+  ],
+});
+```
+
+Components and services then inject the shared singleton:
+
+```ts
+import { Component, inject } from '@angular/core';
+import { VeilService } from 'invisible-wallet-sdk/angular';
+
+@Component({
+  standalone: true,
+  template: `
+    @if (wallet.address(); as address) {
+      <p>Wallet: {{ address }}</p>
+    } @else {
+      <button (click)="wallet.register('alice')">Create wallet</button>
+    }
+  `,
+})
+export class WalletComponent {
+  readonly wallet = inject(VeilService);
+}
+```
+
+State arrives as signals — `wallet.address()`, `wallet.isDeployed()`,
+`wallet.isPending()`, `wallet.error()`. NgModule-based apps use
+`VeilModule.forRoot({...})` instead of `provideVeil`.
+
+---
+
+### 5. Vanilla / Framework-Agnostic
 
 Use `createInvisibleWallet` for direct programmatic control without UI framework bindings:
 
@@ -163,6 +212,7 @@ The package provides verified export subpaths:
 | `invisible-wallet-sdk/vue` | Vue 3 composable (`useInvisibleWallet`) |
 | `invisible-wallet-sdk/svelte` | Svelte store (`createWalletStore`) |
 | `invisible-wallet-sdk/solid` | Solid.js primitive (`useInvisibleWallet`) |
+| `invisible-wallet-sdk/angular` | Angular DI service (`VeilService` + `provideVeil`) |
 | `invisible-wallet-sdk/vanilla` | Framework-agnostic client (`createInvisibleWallet`) |
 
 ---

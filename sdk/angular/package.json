@@ -1,0 +1,22 @@
+{
+  "name": "@veil/invisible-wallet-angular",
+  "version": "0.1.0",
+  "description": "Angular adapter for Invisible Wallet (Soroban + WebAuthn) — ships inside invisible-wallet-sdk as the `/angular` subpath",
+  "private": true,
+  "sideEffects": false,
+  "main": "../dist/angular/index.js",
+  "module": "../dist/angular/index.js",
+  "types": "../dist/angular/index.d.ts",
+  "peerDependencies": {
+    "@angular/core": ">=17.0.0"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "webauthn",
+    "passkeys",
+    "wallet",
+    "angular"
+  ],
+  "license": "MIT"
+}
