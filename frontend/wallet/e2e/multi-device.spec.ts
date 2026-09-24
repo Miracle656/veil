@@ -107,9 +107,17 @@ test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
       }
       
       // Manually set the wallet address on device B to simulate successful recovery
-      // In a real scenario, the app would derive this from the passkey
+      // In a real scenario, the app would derive this from the passkey.
+      //
+      // Write BOTH storage areas: the app persists the address in localStorage
+      // (walletLocal) and mirrors it into sessionStorage (walletSession) — see
+      // app/page.tsx, which does exactly this local→session copy on sign-in.
+      // The dashboard guard reads walletSession, so a localStorage-only write
+      // leaves it null and /dashboard bounces to /lock before rendering. On
+      // testnet the namespace is unsuffixed, so the plain key is correct.
       await pageB.evaluate((address) => {
         localStorage.setItem('invisible_wallet_address', address);
+        sessionStorage.setItem('invisible_wallet_address', address);
       }, walletAddressA!);
       
       // Navigate to dashboard
