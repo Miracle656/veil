@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veil SPP Prover Bridge</title>
+    <!--
+      Spike #720 — WebView prover bridge page.
+
+      This page is loaded into a hidden react-native-webview by ProverWebView.tsx.
+      It acts as the glue between React Native (postMessage protocol) and the
+      stellar-private-payments browser WASM SDK.
+
+      ARCHITECTURE
+      ─────────────────────────────────────────────────────────────────────────
+      React Native side                 WebView side (this page)
+      ──────────────────────────────    ──────────────────────────────────────
+      ProverWebView.postMessage(req)─►  window.onmessage → prove(req)
+                                              │
+                                              ▼
+                                        stellar-private-payments WASM
+                                              │
+                                              ▼
+      ProverWebView.onMessage(res)  ◄─  window.ReactNativeWebView
+                                         .postMessage(JSON.stringify(res))
+
+      MESSAGE PROTOCOL
+      ─────────────────────────────────────────────────────────────────────────
+      Inbound (RN → WebView):
+        { type: "PROVE", id: string, tx: MockSppTx }
+
+      Outbound (WebView → RN):
+        { type: "PROOF",   id: string, proofHex: string,
+          wallClockMs: number, peakHeapBytes: number }
+        { type: "ERROR",   id: string, message: string }
+        { type: "READY" }   — sent once WASM is initialised
+
+      SPIKE NOTE
+      ─────────────────────────────────────────────────────────────────────────
+      The real `stellar-private-payments` npm package ships a 42 MB tarball
+      (95 MB unpacked) and requires the 12 MB circuit file to be fetched on
+      first use (docs/PRIVACY_COST.md §2).  For this throwaway spike the WASM
+      module is simulated with a `setTimeout` that models the ~3–8 s proof time
+      documented for low-end Android devices.  Swap the body of `runWasmProver`
+      for the real SDK call when promoting this to production.
+    -->
+    <style>
+      body {
+        background: #000;
+        color: #0f0;
+        font-family: monospace;
+        font-size: 12px;
+        margin: 0;
+        padding: 4px;
+        overflow: hidden;
+      }
+      #log { white-space: pre-wrap; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <div id="log">Veil prover bridge starting…</div>
+    <script>
+      /* ── utilities ─────────────────────────────────────────────────────── */
+
+      const log = (msg) => {
+        const el = document.getElementById('log');
+        if (el) el.textContent += '\n' + msg;
+      };
+
+      /** Post a message back to React Native. */
+      const postToRN = (obj) => {
+        // window.ReactNativeWebView is injected by react-native-webview.
+        // We guard for dev/browser testing where it may be absent.
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify(obj));
+        } else {
+          // In a browser dev session, echo to parent window.
+          window.parent.postMessage(obj, '*');
+        }
+      };
+
+      /** Sample JS heap usage in bytes (V8/WebView only; 0 elsewhere). */
+      const heapBytes = () => {
+        try { return performance.memory?.usedJSHeapSize ?? 0; }
+        catch { return 0; }
+      };
+
+      /* ── prover stub ────────────────────────────────────────────────────── */
+
+      /**
+       * Simulate the SPP WASM prover.
+       *
+       * In the spike: sleeps for a randomly-sampled proof time drawn from the
+       * [3 000, 8 000] ms range Nethermind documents for low-end Android WebViews
+       * (no SIMD, no SharedArrayBuffer threads in Android <10 WebViews).
+       *
+       * Replace this function body with:
+       *   import { prove } from 'stellar-private-payments';
+       *   return prove(tx);
+       * when integrating the real SDK.
+       */
+      async function runWasmProver(tx) {
+        log('[prover] starting proof for commitment ' + tx.commitment.slice(0, 8) + '…');
+
+        const heapBefore = heapBytes();
+        const t0 = performance.now();
+
+        // Simulate WASM init + circuit load (~1–2 s) + proving (~2–6 s).
+        // Uniform in [3000, 8000] ms to model worst-case low-end device.
+        const simulatedMs = 3000 + Math.random() * 5000;
+        await new Promise((resolve) => setTimeout(resolve, simulatedMs));
+
+        const wallClockMs = performance.now() - t0;
+        const peakHeapBytes = Math.max(0, heapBytes() - heapBefore);
+
+        // Proof placeholder: 32 zero bytes (Groth16 proof is 128 bytes in prod)
+        const proofHex = '00'.repeat(32);
+
+        log(`[prover] done in ${wallClockMs.toFixed(0)} ms`);
+        return { proofHex, wallClockMs, peakHeapBytes };
+      }
+
+      /* ── message handler ────────────────────────────────────────────────── */
+
+      let wasmReady = false;
+
+      async function initWasm() {
+        log('[init] simulating WASM module init…');
+        // In production: await import('stellar-private-payments').then(m => m.default());
+        await new Promise((r) => setTimeout(r, 800)); // ~800 ms cold init
+        wasmReady = true;
+        log('[init] WASM ready');
+        postToRN({ type: 'READY' });
+      }
+
+      window.addEventListener('message', async (event) => {
+        let req;
+        try {
+          req = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        } catch (e) {
+          log('[error] failed to parse message: ' + e.message);
+          return;
+        }
+
+        if (req.type !== 'PROVE') return;
+
+        log('[recv] PROVE id=' + req.id);
+
+        if (!wasmReady) {
+          postToRN({ type: 'ERROR', id: req.id, message: 'WASM not yet initialised' });
+          return;
+        }
+
+        try {
+          const { proofHex, wallClockMs, peakHeapBytes } = await runWasmProver(req.tx);
+          postToRN({ type: 'PROOF', id: req.id, proofHex, wallClockMs, peakHeapBytes });
+        } catch (err) {
+          log('[error] ' + err.message);
+          postToRN({ type: 'ERROR', id: req.id, message: String(err) });
+        }
+      });
+
+      /* ── boot ───────────────────────────────────────────────────────────── */
+      initWasm().catch((err) => {
+        log('[fatal] ' + err.message);
+        postToRN({ type: 'ERROR', id: 'init', message: String(err) });
+      });
+    </script>
+  </body>
+</html>

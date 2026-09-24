@@ -1,5 +1,8 @@
 import { buildSponsoredFeeBumpTransaction } from '../feeBump'
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
+import { TextEncoder } from 'util'
+
+global.TextEncoder = TextEncoder as any
 
 // `lib/fees` imports one function from the `@veil/sdk` barrel, and that barrel
 // loads the whole SDK core — which reads `Horizon.Server` at module scope. With
@@ -31,6 +34,7 @@ jest.mock('@stellar/stellar-sdk', () => {
       buildFeeBumpTransaction: jest.fn(() => feeBump),
     },
     xdr: {},
+    Horizon: { Server: jest.fn() },
   }
 })
 
