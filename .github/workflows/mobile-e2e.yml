@@ -47,7 +47,7 @@ jobs:
       # Gradle ever runs. platform-tools (adb, for the install step below) is
       # the only thing needed; license acceptance still happens so Gradle can
       # fetch the platforms/build-tools the prebuild project requires.
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
           packages: platform-tools
 
@@ -63,7 +63,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: frontend/mobile/modules/spp-native/rust
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
 
       - name: Install dependencies
         run: npm ci
