@@ -1,9 +1,9 @@
-# spp-native — the Rust SPP prover, exposed to JS
+# spp-native — the SPP native boundary, exposed to JS
 
-The native half of the V141 prover path. The Rust crate proves SPP
-transactions with arkworks (Groth16 over BLS12-381) — the same proof system
-the web build compiles to WASM, but parallel on-device instead of
-single-threaded in a WebView.
+The native half of the SPP integration. Veil does not own an SPP circuit,
+trusted setup, proving key, or verifier. The Rust crate is pinned to
+Nethermind/SDF's `stellar-private-payments` SDK and must use its canonical
+`TransactParams` and published circuit artifacts.
 
 ## Layout
 
@@ -15,7 +15,8 @@ modules/spp-native/
 │   ├── build.gradle             # cargo-ndk build + uniffi codegen, wired to preBuild
 │   └── .../SppNativeModule.kt   # Expo module wrapping the generated bindings
 ├── parameters/
-│   └── proving-key.bin          # V142 circuit parameters, embedded at build time
+│   ├── proving-key.bin          # checked-in placeholder until SPP artifacts land
+│   └── check-placeholder.sh     # refuses to ship the placeholder
 ├── scripts/
 │   └── install-rust-toolchain.sh # EAS/GHA provisioning, run by the app's postinstall
 └── rust/
@@ -55,22 +56,22 @@ like a build with the module reporting "unavailable" — the app launches.
 That is the same pattern `lib/backgroundActivity.ts` uses for the
 background-task modules.
 
-## Regenerating the proving key
+## Proving artifacts
 
-After a circuit change:
+`parameters/generate-key.sh` intentionally exits with an error. Veil must
+never generate a setup or proving key: the verifier deployed by SPP only
+accepts proofs made with SPP's published artifacts. The artifacts must be
+obtained from the pinned SPP release and verified against its circuit lockfile.
 
 ```bash
-sh parameters/generate-key.sh
+sh parameters/check-placeholder.sh
 ```
 
-The key is a deterministic function of the constraint system (fixed RNG
-seed — no ceremony), so this produces identical bytes on every machine.
-Commit the result; the APK carries it inside the `.so`, so proving needs no
-network at runtime.
+The current legacy Veil request shape is rejected by the native adapter until
+the JS/Kotlin callers send SPP's canonical transaction witness. This is
+intentional: producing a proof for a locally defined shape would be unsafe.
 
-## Testing the V141 benchmark
+## Benchmark screen
 
-The fixture transaction lives in two places on purpose, checked against
-each other by the test suites: `rust/spp-prover/src/tests.rs` and
-`lib/sppBenchmark.ts`. The on-device comparison screen is at
+The existing comparison screen remains available at
 `/privacy/benchmark`.

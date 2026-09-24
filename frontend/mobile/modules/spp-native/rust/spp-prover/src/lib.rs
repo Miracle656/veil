@@ -19,15 +19,12 @@
 //! `uniffi` exposes this crate to Kotlin through `spp_native.udl`; the Kotlin
 //! side of the bridge lives in `android/src/main/java/.../SppNativeModule.kt`.
 
-mod circuit;
+mod circ_err;
 mod notes;
 mod payload;
+mod spp_adapter;
 mod state;
-#[cfg(test)]
-mod tests;
 mod uniffi_support;
-
-use sha2::Sha256;
 
 use uniffi::Record;
 
@@ -140,24 +137,13 @@ pub struct SyncCheckpoint {
 /// and blocking, so this is called from a background dispatcher, never the
 /// JS thread.
 pub fn prove(request: ProveRequest) -> ProveOutcome {
-    let started = std::time::Instant::now();
-    match circuit::prove(&request) {
-        Ok(proof) => ProveOutcome::ok(ProveResult {
-            proof: proof.proof,
-            public_inputs: proof.public_inputs,
-            native_ms: started.elapsed().as_millis() as u64,
-        }),
-        Err(err) => ProveOutcome::err(&err.code, err.detail),
-    }
+    spp_adapter::prove(request)
 }
 
 /// Verify a proof against the public inputs — cheap, used to sanity-check a
 /// proof before it is submitted.
 pub fn verify(proof: &[u8], public_inputs: &[u8]) -> VerifyOutcome {
-    match circuit::verify(proof, public_inputs) {
-        Ok(verified) => VerifyOutcome::ok(verified),
-        Err(err) => VerifyOutcome::err(&err.code, err.detail),
-    }
+    spp_adapter::verify(proof, public_inputs)
 }
 
 /// Advance the sync state machine to `to_height` against the given
@@ -183,12 +169,6 @@ impl ProverError {
     }
 }
 
-impl From<crate::circ_err::Error> for ProverError {
-    fn from(e: crate::circ_err::Error) -> Self {
-        ProverError::new("prover", e.0)
-    }
-}
-
 /// Error category codes. Kept as a plain module so the Kotlin bridge and
 /// the JS layer spell them identically.
 pub(crate) mod error_codes {
@@ -196,14 +176,6 @@ pub(crate) mod error_codes {
     pub const INVALID_NOTE: &str = "invalid_note";
     pub const PROVER: &str = "prover";
     pub const INVALID_SYNC: &str = "invalid_sync";
-}
-
-/// The transaction hash a request commits to — shared by the circuit and the
-/// test fixtures so both sides hash identical bytes.
-pub(crate) fn transaction_hash(transaction: &payload::SppTransaction) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(transaction.encode());
-    hasher.finalize().into()
 }
 
 /// uniffi scaffolding for the `spp_native` library.
