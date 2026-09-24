@@ -71,6 +71,14 @@ describe('image checks', () => {
     expect(imageByteLengthAllowed(null)).toBe(false)
   })
 
+  it('keeps an https logo when the size check cannot be read', async () => {
+    const fetchImpl = jest.fn(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    const url = 'https://cdn.ondo.finance/tokens/logos/usdy_160x160.png'
+    await expect(measureHttpsImage(url, fetchImpl)).resolves.toBe(url)
+  })
+
   it('rejects a non-https image without fetching it', async () => {
     const fetchImpl = jest.fn()
     await expect(measureHttpsImage('http://cdn.example/logo.png', fetchImpl)).resolves.toBeNull()

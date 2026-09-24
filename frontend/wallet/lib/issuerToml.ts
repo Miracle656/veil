@@ -168,9 +168,10 @@ function present(
 }
 
 /**
- * Downloads a logo only when it is HTTPS and no larger than `maxBytes`.
- * A missing length, a failed request, or a body that grows past the cap
- * all reject the image.
+ * Accepts an HTTPS logo that is no larger than `maxBytes`.
+ * A readable oversized body is rejected. If the browser cannot read the
+ * response (issuer CDNs often omit CORS), the https URL is kept so an
+ * `<img>` can load it and fall back to the letter if that fails.
  */
 export async function measureHttpsImage(
   url: string,
@@ -182,7 +183,7 @@ export async function measureHttpsImage(
   try {
     response = await fetchImpl(url)
   } catch {
-    return null
+    return url
   }
   if (!response.ok) return null
 

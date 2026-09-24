@@ -60,21 +60,32 @@ export default function AssetsPage() {
 
   const trustlines: Trustline[] = useMemo(() => parseTrustlines(balances), [balances])
 
+  const metadataTargets = useMemo(() => {
+    const targets = new Map<string, { code: string; issuer: string }>()
+    for (const line of trustlines) {
+      if (!isRegisteredIssuer(line.code, line.issuer)) continue
+      targets.set(`${line.code}:${line.issuer}`, { code: line.code, issuer: line.issuer })
+    }
+    if (network.name === 'mainnet') {
+      targets.set(`USDY:${USDY_MAINNET_ISSUER}`, { code: 'USDY', issuer: USDY_MAINNET_ISSUER })
+    }
+    return [...targets.values()]
+  }, [trustlines])
+
   useEffect(() => {
     let cancelled = false
-    const registered = trustlines.filter((line) => isRegisteredIssuer(line.code, line.issuer))
     void (async () => {
       const next: Record<string, IssuerTomlMetadata> = {}
-      for (const line of registered) {
-        const meta = await loadRegisteredIssuerMetadata(line.code, line.issuer)
-        if (meta) next[`${line.code}:${line.issuer}`] = meta
+      for (const target of metadataTargets) {
+        const meta = await loadRegisteredIssuerMetadata(target.code, target.issuer)
+        if (meta) next[`${target.code}:${target.issuer}`] = meta
       }
       if (!cancelled) setIssuerMeta(next)
     })()
     return () => {
       cancelled = true
     }
-  }, [trustlines])
+  }, [metadataTargets])
 
   const loadAccount = useCallback(async () => {
     setLoading(true)
@@ -215,10 +226,22 @@ export default function AssetsPage() {
             exist on testnet, where changeTrust would fail with op_no_issuer. */}
         {!hasUsdy && !loading && network.name === 'mainnet' && (
           <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(212,175,55,0.3)', background: 'rgba(212,175,55,0.05)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`] ? (
+                <RegisteredAssetMark meta={issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]} />
+              ) : null}
+              <div style={{ minWidth: 0 }}>
             <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
             <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
               Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
             </p>
+            {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]?.description ? (
+              <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`].description}
+              </p>
+            ) : null}
+              </div>
+            </div>
             <button
               onClick={() => void submitChangeTrust('USDY', USDY_MAINNET_ISSUER, false)}
               disabled={busy}
@@ -258,7 +281,9 @@ export default function AssetsPage() {
                       {registered ? (
                         <p style={mutedTextStyle}>Issuer: {registered.issuerName}</p>
                       ) : null}
-                      {meta?.description ? <p style={mutedTextStyle}>{meta.description}</p> : null}
+                      {meta?.description ? (
+                        <p style={clampedNoteStyle}>{meta.description}</p>
+                      ) : null}
                       <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
                         {line.issuer}
                       </p>
@@ -414,6 +439,14 @@ const sectionHeadingStyle: CSSProperties = {
 const mutedTextStyle: CSSProperties = {
   color: 'var(--warm-grey)',
   fontSize: '0.8125rem',
+}
+
+const clampedNoteStyle: CSSProperties = {
+  ...mutedTextStyle,
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
 }
 
 const letterMarkStyle: CSSProperties = {
