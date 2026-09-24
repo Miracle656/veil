@@ -14,7 +14,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript((secret) => {
     localStorage.setItem('veil_network', 'mainnet')
     sessionStorage.setItem('veil_signer_secret_mainnet', secret)
-  }, Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(1)).secret())
+  }, Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).secret())
   await page.route('https://horizon.stellar.org/**', (route) => route.fulfill({
     json: {
       account_id: route.request().url().split('/').pop(), sequence: '1',
@@ -24,6 +24,9 @@ test.beforeEach(async ({ page }) => {
     },
   }))
   await page.route('https://ondo.finance/**', (route) => route.abort())
+  // The logo route fetches on the server, out of Playwright's reach; stub it so
+  // no test depends on the real issuer hosts.
+  await page.route('**/api/issuer-logo?**', (route) => route.fulfill({ status: 502 }))
 })
 
 test('registered metadata, cached logo, offline fallback, and image recovery', async ({ page }) => {
@@ -80,10 +83,14 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
 for (const failure of ['oversized', 'http', 'unreadable', 'redirect', 'offline']) {
   test(`uses a letter for ${failure} metadata or logos`, async ({ page }) => {
     let imageRequests = 0
+    let proxyRequests = 0
+    await page.route('**/api/issuer-logo?**', (route) => { proxyRequests++; return route.fulfill({ status: 502 }) })
     await page.route('https://circle.com/.well-known/stellar.toml', (route) => failure === 'offline'
       ? route.abort()
       : route.fulfill({ contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="${failure === 'http' ? 'http' : 'https'}://logos.example/usdc.svg"` }))
     await page.route('**://logos.example/**', (route) => {
+      // The insecure redirect target serves a valid logo; it must still be refused.
+      if (route.request().url().endsWith('/insecure.svg')) return route.fulfill({ contentType: 'image/svg+xml', body: logo })
       imageRequests++
       if (failure === 'unreadable') return route.abort()
       if (failure === 'redirect') return route.fulfill({ status: 302, headers: { location: 'http://logos.example/insecure.svg' } })
@@ -97,13 +104,34 @@ for (const failure of ['oversized', 'http', 'unreadable', 'redirect', 'offline']
     }
     await expect(verified.locator('img')).toHaveCount(0)
     expect(imageRequests).toBe(failure === 'http' || failure === 'offline' ? 0 : 1)
+    // A logo the browser could not load (including a refused insecure redirect) is
+    // retried through the wallet route, which applies the same checks; one that was
+    // fetched and rejected is not.
+    expect(proxyRequests).toBe(failure === 'unreadable' || failure === 'redirect' ? 1 : 0)
   })
 }
+
+test('loads the logo through the wallet route when the host sends no CORS headers', async ({ page }) => {
+  const proxied: URL[] = []
+  await page.route('https://circle.com/.well-known/stellar.toml', (route) => route.fulfill({
+    contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="https://logos.example/usdc.svg"`,
+  }))
+  await page.route('https://logos.example/**', (route) => route.abort())
+  await page.route('**/api/issuer-logo?**', (route) => {
+    proxied.push(new URL(route.request().url()))
+    return route.fulfill({ contentType: 'image/svg+xml', body: logo })
+  })
+  await page.goto('/assets')
+  const verified = page.locator('.card').filter({ hasText: 'Issuer: Circle' })
+  await expect(verified.locator('img')).toHaveJSProperty('naturalWidth', 36)
+  expect(proxied).toHaveLength(1)
+  expect(Object.fromEntries(proxied[0].searchParams)).toEqual({ code: 'USDC', issuer })
+})
 
 test('does not request TOML for unregistered trustlines', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('veil_network', 'testnet'))
   await page.addInitScript((secret) => sessionStorage.setItem('veil_signer_secret', secret),
-    Keypair.fromRawEd25519Seed(new Uint8Array(32).fill(1)).secret())
+    Keypair.fromRawEd25519Seed(Buffer.alloc(32, 1)).secret())
   await page.route('https://horizon-testnet.stellar.org/**', (route) => route.fulfill({
     json: { account_id: route.request().url().split('/').pop(), sequence: '1', balances: [
       { asset_type: 'credit_alphanum4', asset_code: 'USDC', asset_issuer: unknownIssuer, balance: '0', limit: '1000' },

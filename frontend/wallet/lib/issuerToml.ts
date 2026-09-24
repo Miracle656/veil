@@ -179,52 +179,130 @@ function isCachedImage(value: unknown): value is string {
   }
 }
 
-/** Fetch once over HTTPS; unreadable, redirected, or oversized logos fail closed. */
+export interface BoundedImage {
+  type: string
+  bytes: Uint8Array<ArrayBuffer>
+}
+
+/** Reads an image response; a bad status, non-image type, or oversized body fails closed. */
+export async function readBoundedImage(
+  response: Response,
+  maxBytes = MAX_ISSUER_LOGO_BYTES,
+): Promise<BoundedImage | null> {
+  if (!response.ok || !response.body) return null
+  const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()
+  if (!type || !/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(type)) return null
+  const declared = response.headers.get('content-length')
+  if (declared !== null && !imageByteLengthAllowed(Number(declared), maxBytes)) return null
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let seen = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      seen += value.byteLength
+      if (seen > maxBytes) return null
+      chunks.push(value)
+    }
+  } finally {
+    void Promise.resolve(reader.cancel()).catch(() => {})
+  }
+  if (!imageByteLengthAllowed(seen, maxBytes)) return null
+  const bytes = new Uint8Array(seen)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return { type, bytes }
+}
+
+function toDataUrl(image: BoundedImage): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(new Blob([image.bytes], { type: image.type }))
+  })
+}
+
+interface ImageAttempt {
+  dataUrl: string | null
+  /** The request itself failed (network, CORS, timeout), as opposed to a rejected image. */
+  unreachable: boolean
+}
+
+async function fetchImageDataUrl(
+  url: string,
+  fetchImpl: typeof fetch,
+  maxBytes: number,
+  init: RequestInit,
+): Promise<ImageAttempt> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  let response: Response
+  try {
+    response = await fetchImpl(url, {
+      ...init,
+      signal: controller.signal,
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+    })
+  } catch {
+    clearTimeout(timeout)
+    return { dataUrl: null, unreachable: true }
+  }
+  try {
+    // Redirects are followed, but a hop off HTTPS rejects the logo.
+    if (response.redirected && !isHttpsImageUrl(response.url)) return { dataUrl: null, unreachable: false }
+    const image = await readBoundedImage(response, maxBytes)
+    // Rendering these exact bytes avoids a second, unchecked image download.
+    return { dataUrl: image ? await toDataUrl(image) : null, unreachable: false }
+  } catch {
+    return { dataUrl: null, unreachable: false }
+  } finally {
+    controller.abort()
+    clearTimeout(timeout)
+  }
+}
+
+/** Fetch once over HTTPS; unreadable, insecurely redirected, or oversized logos fail closed. */
 export async function measureHttpsImage(
   url: string,
   fetchImpl: typeof fetch,
   maxBytes = MAX_ISSUER_LOGO_BYTES,
 ): Promise<string | null> {
   if (!isHttpsImageUrl(url)) return null
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    const response = await fetchImpl(url, {
-      signal: controller.signal,
-      redirect: 'error',
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
-    })
-    if (!response.ok || !response.body) return null
-    const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()
-    if (!type || !/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(type)) return null
-    const declared = response.headers.get('content-length')
-    if (declared !== null && !imageByteLengthAllowed(Number(declared), maxBytes)) return null
+  return (await fetchImageDataUrl(url, fetchImpl, maxBytes, { redirect: 'follow' })).dataUrl
+}
 
-    const reader = response.body.getReader()
-    const chunks: ArrayBuffer[] = []
-    let seen = 0
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      seen += value.byteLength
-      if (seen > maxBytes) return null
-      chunks.push(new Uint8Array(value).buffer)
-    }
-    if (!imageByteLengthAllowed(seen, maxBytes)) return null
-    // Rendering these exact bytes avoids a second, unchecked image download.
-    return await new Promise<string | null>((resolve) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
-      reader.onerror = () => resolve(null)
-      reader.readAsDataURL(new Blob(chunks, { type }))
-    })
-  } catch {
-    return null
-  } finally {
-    controller.abort()
-    clearTimeout(timeout)
-  }
+/** Same-origin route that fetches a registered issuer's logo server-side. */
+export const ISSUER_LOGO_PROXY_PATH = '/api/issuer-logo'
+
+/**
+ * Loads a registered issuer's logo. Many logo hosts send no CORS headers, so
+ * the browser cannot read (and size-check) them directly; when the direct
+ * request fails, the wallet's own route fetches the logo named in the
+ * issuer's stellar.toml and applies the same checks. A logo that was fetched
+ * but rejected is not retried through the route.
+ */
+export async function acceptIssuerLogo(
+  code: string,
+  issuer: string,
+  url: string,
+  fetchImpl: typeof fetch,
+  maxBytes = MAX_ISSUER_LOGO_BYTES,
+): Promise<string | null> {
+  if (!isHttpsImageUrl(url)) return null
+  const direct = await fetchImageDataUrl(url, fetchImpl, maxBytes, { redirect: 'follow' })
+  if (!direct.unreachable) return direct.dataUrl
+  const params = new URLSearchParams({ code, issuer })
+  const proxied = await fetchImageDataUrl(`${ISSUER_LOGO_PROXY_PATH}?${params}`, fetchImpl, maxBytes, {
+    redirect: 'error',
+  })
+  return proxied.dataUrl
 }
 
 /**
@@ -268,7 +346,7 @@ export async function loadRegisteredIssuerMetadata(
     options.resolveToml ?? ((domain: string) => StellarToml.Resolver.resolve(domain, { timeout: FETCH_TIMEOUT_MS }))
   const acceptImage =
     options.acceptImage ??
-    ((url: string) => measureHttpsImage(url, options.fetchImpl ?? fetch))
+    ((url: string) => acceptIssuerLogo(code, issuer, url, options.fetchImpl ?? fetch))
 
   try {
     const toml = await resolveToml(asset.homeDomain)

@@ -4,8 +4,10 @@ Object.assign(globalThis, { TextEncoder, TextDecoder })
 
 import { ASSET_REGISTRY } from '../assets'
 import {
+  ISSUER_LOGO_PROXY_PATH,
   ISSUER_TOML_TTL_MS,
   MAX_ISSUER_LOGO_BYTES,
+  acceptIssuerLogo,
   imageByteLengthAllowed,
   isHttpsImageUrl,
   letterAvatar,
@@ -106,7 +108,49 @@ describe('image checks', () => {
     await expect(measureHttpsImage('https://cdn.example/logo.png', fetchImpl)).resolves.toBe(
       LOGO,
     )
-    expect(fetchImpl).toHaveBeenCalledWith('https://cdn.example/logo.png', expect.objectContaining({ redirect: 'error', credentials: 'omit' }))
+    expect(fetchImpl).toHaveBeenCalledWith('https://cdn.example/logo.png', expect.objectContaining({ redirect: 'follow', credentials: 'omit' }))
+  })
+})
+
+describe('acceptIssuerLogo', () => {
+  const direct = 'https://cdn.example/logo.png'
+
+  it('uses the logo directly when the host allows it', async () => {
+    const fetchImpl = jest.fn(async () => response(3, { length: '3' }))
+    await expect(acceptIssuerLogo('USDC', USDC.issuer, direct, fetchImpl)).resolves.toBe(LOGO)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('falls back to the wallet route with only the code and issuer when the host is unreachable', async () => {
+    const fetchImpl = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === direct) throw new TypeError('Failed to fetch')
+      return response(3, { length: '3' })
+    })
+    await expect(acceptIssuerLogo('USDC', USDC.issuer, direct, fetchImpl)).resolves.toBe(LOGO)
+    const proxied = new URL(String(fetchImpl.mock.calls[1][0]), 'https://wallet.example')
+    expect(proxied.pathname).toBe(ISSUER_LOGO_PROXY_PATH)
+    expect(Object.fromEntries(proxied.searchParams)).toEqual({ code: 'USDC', issuer: USDC.issuer })
+  })
+
+  it('does not retry a logo that was fetched and rejected', async () => {
+    const fetchImpl = jest.fn(async () => response(3, { length: String(MAX_ISSUER_LOGO_BYTES + 1) }))
+    await expect(acceptIssuerLogo('USDC', USDC.issuer, direct, fetchImpl)).resolves.toBeNull()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a logo redirected off https', async () => {
+    const fetchImpl = jest.fn(async () =>
+      Object.assign(response(3, { length: '3' }), { redirected: true, url: 'http://cdn.example/logo.png' }),
+    )
+    await expect(acceptIssuerLogo('USDC', USDC.issuer, direct, fetchImpl)).resolves.toBeNull()
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a logo redirected to another https url', async () => {
+    const fetchImpl = jest.fn(async () =>
+      Object.assign(response(3, { length: '3' }), { redirected: true, url: 'https://cdn2.example/logo.png' }),
+    )
+    await expect(acceptIssuerLogo('USDC', USDC.issuer, direct, fetchImpl)).resolves.toBe(LOGO)
   })
 })
 
