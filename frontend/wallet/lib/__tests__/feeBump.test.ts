@@ -1,6 +1,3 @@
-import { TextEncoder, TextDecoder } from 'util'
-Object.assign(globalThis, { TextEncoder, TextDecoder })
-
 import { buildSponsoredFeeBumpTransaction } from '../feeBump'
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
 
