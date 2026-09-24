@@ -18,6 +18,11 @@ export function App() {
         </nav>
       </header>
 
+      <div className="notice warning" style={{ marginTop: 20, marginBottom: -8, fontSize: '0.85rem', lineHeight: 1.5 }}>
+        <strong style={{ color: '#fdda24' }}>⚠️ Demonstration only — not production-safe:</strong>{' '}
+        This app stores a delegated transaction signer secret (<code>veil_signer_secret</code>) in plaintext renderer <code>localStorage</code>. Any script in the renderer context or local file access can extract it. Production Electron apps must protect signer credentials using OS-level encrypted storage (e.g. Electron <code>safeStorage</code>) or hardware keystores.
+      </div>
+
       <main className="content">
         <Routes>
           <Route path="/" element={<Navigate to="/register" replace />} />

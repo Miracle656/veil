@@ -1,5 +1,9 @@
 # Veil Tauri Wallet Example
 
+> [!WARNING]
+> **Demonstration only — not production-safe**
+> This example generates ECDSA signing keys in software and stores the raw, unencrypted private key bytes directly on disk (`private_key.bin`) instead of using hardware-backed secure storage (such as Apple Secure Enclave, Windows TPM, or OS Keychain). Production desktop applications must store private keys in hardware-isolated or OS-encrypted keystores.
+
 A minimal cross-platform Tauri desktop wallet example for the Veil SDK. This app demonstrates passkey registration and transaction signing using Tauri's biometric plugin instead of browser WebAuthn.
 
 ## Prerequisites
