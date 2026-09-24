@@ -47,13 +47,14 @@ describe('invest assets eligibility gate and regional availability (#743)', () =
   });
 
   it('returns empty array for an excluded region when feature is enabled', () => {
-    // Simulate feature flag enabled and an asset enabled in 'NG' only
+    // Simulate an enabled asset in NG only, while the feature flag is on.
     const testAsset = { ...INVEST_ASSETS[0], enabledRegions: ['NG'] };
-    const isExcludedForUS = !testAsset.enabledRegions.includes('US');
-    expect(isExcludedForUS).toBe(true);
-
-    const isExcludedForGlobal = !testAsset.enabledRegions.includes('GLOBAL');
-    expect(isExcludedForGlobal).toBe(true);
+    expect(
+      getAvailableInvestAssets('US', { featureEnabled: true, assets: [testAsset] }),
+    ).toEqual([]);
+    expect(
+      getAvailableInvestAssets('NG', { featureEnabled: true, assets: [testAsset] }),
+    ).toEqual([testAsset]);
   });
 
   it('records eligibility acknowledgement locally with timestamp and asset code', async () => {

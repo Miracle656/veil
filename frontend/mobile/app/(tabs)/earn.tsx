@@ -37,6 +37,7 @@ import { requirePasskey } from '../../lib/passkey';
 import { signAndSubmitSorobanXdr } from '../../lib/sorobanTx';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import {
+  getDeviceRegion,
   getAvailableInvestAssets,
   hasAcknowledgedEligibility,
   recordEligibilityAcknowledgement,
@@ -147,7 +148,7 @@ export default function EarnRoute() {
     setPositions(nextPositions);
     setLoadingPools(false);
 
-    const availableInvest = getAvailableInvestAssets('GLOBAL');
+    const availableInvest = getAvailableInvestAssets(getDeviceRegion());
     setInvestAssets(availableInvest);
 
     const trustsUsdy = heldAssets.some(
@@ -380,11 +381,6 @@ export default function EarnRoute() {
 
           {step === 'pools' ? (
             <>
-              {/* Section 1: Lending */}
-              <View style={styles.section}>
-                <View style={styles.sectionHeaderRow}>
-                  <Text style={[typography.accent, styles.sectionLabel]}>Lending</Text>
-                  <Text style={styles.sectionSublabel}>Blend Protocol</Text>
               <Card style={styles.disclosureCard}>
                 <View style={styles.rowBetween}>
                   <Text style={[typography.accent, styles.disclosureLabel]}>Disclosures</Text>
@@ -402,38 +398,11 @@ export default function EarnRoute() {
                 </Text>
               </Card>
 
-              {!loadingPools && bestApy > 0 ? (
-                <Card variant="md" style={styles.hero}>
-                  <Text style={[typography.accent, styles.heroLabel]}>Best rate today</Text>
-                  <Text style={styles.heroRate}>{formatApy(bestApy)}</Text>
-                  <Text style={styles.muted}>a year, paid by borrowers. The rate moves with demand.</Text>
-                </Card>
-              ) : null}
-
-              {positions.length > 0 ? (
-                <View style={styles.section}>
-                  <Text style={[typography.accent, styles.sectionLabel]}>Your deposits</Text>
-                  {positions.map((position) => (
-                    <Card key={`${position.poolId}-${position.asset}`} style={styles.card}>
-                      <View style={styles.rowBetween}>
-                        <View>
-                          <Text style={styles.assetCode}>{position.code ?? `${position.asset.slice(0, 6)}…`}</Text>
-                          <Text style={styles.muted}>{poolName(position.poolId)} pool</Text>
-                        </View>
-                        <Text style={styles.value}>
-                          {mask(formatAmount(toUnits(position.deposited)))} {position.code ?? ''}
-                        </Text>
-                      </View>
-                      <Button
-                        label="Withdraw"
-                        variant="ghost"
-                        onPress={() => {
-                          setSelectedPosition(position);
-                          setStep('withdraw-form');
-                        }}
-                      />
-                    </Card>
-                  ))}
+              {/* Section 1: Lending */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={[typography.accent, styles.sectionLabel]}>Lending</Text>
+                  <Text style={styles.sectionSublabel}>Blend Protocol</Text>
                 </View>
 
                 {!loadingPools && bestApy > 0 ? (
@@ -800,7 +769,7 @@ const createStyles = (colors: ThemeColors) =>
     detailLabel: { fontFamily: fontFamily.bodySemiBold, fontSize: 12, color: colors.textMuted },
     detailValue: { fontFamily: fontFamily.body, fontSize: 13, color: colors.textPrimary, flexShrink: 1 },
     riskValue: { fontFamily: fontFamily.body, fontSize: 13, color: colors.textMuted, flexShrink: 1 },
-    yieldValue: { fontFamily: fontFamily.bodyMedium, fontSize: 13, color: colors.positive, flexShrink: 1 },
+    yieldValue: { fontFamily: fontFamily.bodyMedium, fontSize: 13, color: colors.textSecondary, flexShrink: 1 },
     investNoticeText: {
       fontFamily: fontFamily.body,
       fontSize: 13,

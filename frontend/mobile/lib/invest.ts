@@ -60,14 +60,41 @@ export interface EligibilityAcknowledgement {
 }
 
 /**
+ * Test-only configuration seam for the availability gate. Production callers
+ * use the default flag and asset registry.
+ */
+export interface InvestAvailabilityOptions {
+  featureEnabled?: boolean;
+  assets?: InvestAsset[];
+}
+
+/**
+ * Gets the device's ISO 3166-1 alpha-2 region from its locale. An unknown or
+ * language-only locale returns an empty value, which the gate treats as ineligible.
+ */
+export function getDeviceRegion(): string {
+  const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+  const region = locale
+    .split(/[-_]/)
+    .slice(1)
+    .find((part) => /^[a-z]{2}$/i.test(part));
+  return region?.toUpperCase() ?? '';
+}
+
+/**
  * Returns invest assets available for a given region.
  * Per V190 & #743, if feature flag is off, no region is enabled, or an unenabled region is passed, returns [].
  */
-export function getAvailableInvestAssets(userRegion: string = 'GLOBAL'): InvestAsset[] {
-  if (!INVEST_FEATURE_ENABLED) return [];
+export function getAvailableInvestAssets(
+  userRegion: string,
+  options: InvestAvailabilityOptions = {},
+): InvestAsset[] {
+  if (!(options.featureEnabled ?? INVEST_FEATURE_ENABLED)) return [];
   if (!userRegion) return [];
   const normalized = userRegion.toUpperCase();
-  return INVEST_ASSETS.filter((asset) => asset.enabledRegions.includes(normalized));
+  return (options.assets ?? INVEST_ASSETS).filter((asset) =>
+    asset.enabledRegions.includes(normalized),
+  );
 }
 
 /**
