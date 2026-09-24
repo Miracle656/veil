@@ -38,6 +38,9 @@ export function resolveAsset(input: string): ResolvedAsset {
 
   const registered = getRegisteredAsset(value)
   if (registered) {
+    if (registered.network !== 'all' && registered.network !== NETWORK) {
+      throw new Error(`Asset "${registered.code}" is only supported on ${registered.network}.`)
+    }
     return { horizon: `${registered.code}:${registered.issuer}`, label: registered.code }
   }
 

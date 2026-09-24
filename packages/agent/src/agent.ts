@@ -417,6 +417,9 @@ export async function runAgent(
         if (!asset) {
           return JSON.stringify({ error: `Asset "${code}" is not in the verified asset registry.` })
         }
+        if (asset.network !== 'all' && asset.network !== NETWORK) {
+          return JSON.stringify({ error: `Asset "${code}" is only supported on ${asset.network}.` })
+        }
         const amount = input.amount === undefined ? undefined : String(input.amount).trim()
         if (amount !== undefined && !/^\d+(\.\d{1,7})?$/.test(amount)) {
           return JSON.stringify({ error: 'amount must be a plain number like "50" or "10.5"' })

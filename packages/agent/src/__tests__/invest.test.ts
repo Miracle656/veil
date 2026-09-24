@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals'
+import { jest, describe, it, expect } from '@jest/globals'
 import { runAgent } from '../agent.js'
 import type { LlmProvider, LlmTurn } from '../llm.js'
 import { USDY_MAINNET_ISSUER, ASSET_REGISTRY } from '../assets.js'
@@ -103,27 +103,35 @@ describe('runAgent - Invest Asset Queries', () => {
   })
 
   it('returns an honest "unavailable", not a made-up number, when price lookup returns no data', async () => {
-    const llm = scripted([
-      {
-        text: '',
-        toolCalls: [
-          {
-            id: 'call_price',
-            name: 'get_price',
-            input: { asset_a: 'UNKNOWNASSET:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', asset_b: 'USDC' },
-          },
-        ],
-      },
-      {
-        text: 'Price data is currently unavailable for UNKNOWNASSET.',
-        toolCalls: [],
-      },
-    ])
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async () => {
+      return { ok: false, status: 404, json: async () => ({}) } as Response
+    })
 
-    const result = await runAgent('what is the price of UNKNOWNASSET', wallet, [], undefined, undefined, llm)
+    try {
+      const llm = scripted([
+        {
+          text: '',
+          toolCalls: [
+            {
+              id: 'call_price',
+              name: 'get_price',
+              input: { asset_a: 'UNKNOWNASSET:GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', asset_b: 'USDC' },
+            },
+          ],
+        },
+        {
+          text: 'Price data is currently unavailable for UNKNOWNASSET.',
+          toolCalls: [],
+        },
+      ])
 
-    expect(llm.results[0][0].content).toContain('unavailable')
-    expect(result.response).toMatch(/unavailable/i)
-    expect(result.response).not.toMatch(/\$?\d+\.\d+/)
+      const result = await runAgent('what is the price of UNKNOWNASSET', wallet, [], undefined, undefined, llm)
+
+      expect(llm.results[0][0].content).toContain('unavailable')
+      expect(result.response).toMatch(/unavailable/i)
+      expect(result.response).not.toMatch(/\$?\d+\.\d+/)
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 })
