@@ -82,6 +82,7 @@ export default function SettingsScreen() {
 
   const security: Row[] = [
     { key: 'passkeys', title: 'Passkeys', subtitle: 'Devices registered on this wallet', onPress: () => router.push('/settings/passkeys') },
+    { key: 'recovery-coverage', title: 'Recovery coverage', subtitle: 'See which ways can restore this wallet', onPress: () => router.push('/settings/recovery') },
     { key: 'recovery', title: 'Recovery', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
     { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
   ];
