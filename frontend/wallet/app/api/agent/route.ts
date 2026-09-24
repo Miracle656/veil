@@ -46,7 +46,9 @@ function clientKey(req: NextRequest): string {
 
 /** Health check for the uptime probe. Reports configuration, never secrets. */
 export async function GET() {
-  const configured = !!(process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY)
+  const configured = !!(
+    process.env.OPENROUTER_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.DEEPSEEK_API_KEY
+  )
   return NextResponse.json({ ok: configured, model: configured ? llm().label : null })
 }
 

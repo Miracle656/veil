@@ -64,11 +64,13 @@ export function getRegisteredAsset(code: string, network?: 'mainnet' | 'testnet'
 }
 
 export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'mainnet'): string | null {
-  const asset = getRegisteredAsset(code, network)
-  if (!asset) return null
+  // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
+  // for testnet returns null and every branch below becomes unreachable.
   if (code.toUpperCase() === 'USDC' && network === 'testnet') {
     return 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
   }
+  const asset = getRegisteredAsset(code, network)
+  if (!asset) return null
   if (asset.network === 'mainnet' && network === 'testnet') {
     return null
   }
@@ -76,14 +78,16 @@ export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'm
 }
 
 export function isRegisteredIssuer(code: string, issuer: string, network: 'mainnet' | 'testnet' = 'mainnet'): boolean {
-  const asset = getRegisteredAsset(code, network)
-  if (!asset) return false
+  // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
+  // for testnet returns null and every branch below becomes unreachable.
   if (code.toUpperCase() === 'USDC') {
     return (
       issuer === 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' ||
       issuer === 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
     )
   }
+  const asset = getRegisteredAsset(code, network)
+  if (!asset) return false
   if (asset.network === 'mainnet' && network === 'testnet') {
     return false
   }

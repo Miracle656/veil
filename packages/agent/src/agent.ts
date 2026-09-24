@@ -54,10 +54,13 @@ function resolveConfig(config: AgentConfig): ResolvedConfig {
   let llm: LlmProvider
   if (config.provider) {
     llm = config.provider
+  } else if (config.openRouterApiKey) {
+    // Same order as providerFromEnv(). The two selectors disagreeing about
+    // precedence would make an SDK consumer and a deployment pick differently
+    // from the same set of keys.
+    llm = openRouterProvider({ apiKey: config.openRouterApiKey, models: config.models })
   } else if (config.deepSeekApiKey) {
     llm = deepseekProvider({ apiKey: config.deepSeekApiKey, model: config.deepSeekModel })
-  } else if (config.openRouterApiKey) {
-    llm = openRouterProvider({ apiKey: config.openRouterApiKey, models: config.models })
   } else {
     llm = anthropicProvider({ apiKey: config.anthropicApiKey, model: config.model })
   }

@@ -69,7 +69,11 @@ export async function serveIssuerLogo(requestUrl: string, deps: IssuerLogoDeps =
   const code = params.get('code') ?? ''
   const issuer = params.get('issuer') ?? ''
   const asset = getRegisteredAsset(code)
-  if (!asset || asset.code !== code || !asset.homeDomain.trim() || !isRegisteredIssuer(code, issuer)) {
+  // `homeDomain` is optional: the genuine USDT0 issuer publishes none, while
+  // every impostor of that code does. No domain simply means no toml to read,
+  // and the caller falls back to a letter avatar — it is not a signal either way.
+  const homeDomain = asset?.homeDomain?.trim()
+  if (!asset || asset.code !== code || !homeDomain || !isRegisteredIssuer(code, issuer)) {
     return refuse(404)
   }
 
@@ -78,7 +82,7 @@ export async function serveIssuerLogo(requestUrl: string, deps: IssuerLogoDeps =
     ((domain: string) => StellarToml.Resolver.resolve(domain, { timeout: FETCH_TIMEOUT_MS }))
   let image: string | undefined
   try {
-    image = selectRegisteredCurrency((await resolveToml(asset.homeDomain)).CURRENCIES, code, issuer)?.image
+    image = selectRegisteredCurrency((await resolveToml(homeDomain)).CURRENCIES, code, issuer)?.image
   } catch {
     return refuse(502)
   }

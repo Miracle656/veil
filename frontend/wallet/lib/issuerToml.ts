@@ -326,7 +326,11 @@ export async function loadRegisteredIssuerMetadata(
   if (!isRegisteredIssuer(code, issuer)) return null
   // Stellar asset codes are case-sensitive even though registry lookup is not.
   const asset = getRegisteredAsset(code)
-  if (!asset || asset.code !== code || !asset.homeDomain.trim()) return null
+  // `homeDomain` is optional. The genuine USDT0 issuer publishes none while all
+  // seven impostors of that code do, so its absence means only "no toml to
+  // read" — the caller falls back to registry text and a letter avatar.
+  const homeDomain = asset?.homeDomain?.trim()
+  if (!asset || asset.code !== code || !homeDomain) return null
 
   const now = options.now ?? Date.now()
   const ttlMs = options.ttlMs ?? ISSUER_TOML_TTL_MS
@@ -349,7 +353,7 @@ export async function loadRegisteredIssuerMetadata(
     ((url: string) => acceptIssuerLogo(code, issuer, url, options.fetchImpl ?? fetch))
 
   try {
-    const toml = await resolveToml(asset.homeDomain)
+    const toml = await resolveToml(homeDomain)
     const currency = selectRegisteredCurrency(toml.CURRENCIES, code, issuer)
     let imageUrl: string | null = null
     if (typeof currency?.image === 'string' && isHttpsImageUrl(currency.image)) {

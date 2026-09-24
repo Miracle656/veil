@@ -318,7 +318,10 @@ async function tryModels(
       continue
     }
 
-    const status = Number(body?.error?.code ?? res.status)
+    // DeepSeek's OpenAI-format envelope carries `error.code` as a string, so a
+  // bare Number() is NaN and every status comparison below silently fails.
+  const bodyCode = Number(body?.error?.code)
+  const status = Number.isFinite(bodyCode) ? bodyCode : res.status
     const detail = String(body?.error?.message ?? res.statusText ?? '').slice(0, 300)
     const upstream = body?.error?.metadata?.provider_name
     const raw = String(body?.error?.metadata?.raw ?? '').slice(0, 200)
