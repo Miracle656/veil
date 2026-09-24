@@ -27,9 +27,17 @@ describe('discoverAnchorInfo', () => {
   });
 
   it('fails clearly when the active network has no passphrase', async () => {
+    // A whole VeilNetwork, not just the two fields under test: `getNetwork` is
+    // typed, so a partial object is a typecheck error even though the code path
+    // only reads the passphrase.
     mockGetNetwork.mockReturnValueOnce({
+      name: 'mainnet',
       displayName: 'Stellar Mainnet',
       networkPassphrase: '',
+      horizonUrl: '',
+      rpcUrl: '',
+      factoryContractId: '',
+      friendbotUrl: null,
     });
 
     global.fetch = jest.fn().mockResolvedValue({
