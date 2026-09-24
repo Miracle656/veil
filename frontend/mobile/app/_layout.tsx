@@ -65,7 +65,10 @@ export default function RootLayout() {
                   // shorter than the viewport) never shows the opposite theme.
                   contentStyle: { backgroundColor: colors.background },
                 }}
-              />
+              >
+                {/* Privacy sub-navigator — shield / private-send / unshield. */}
+                <Stack.Screen name="privacy" />
+              </Stack>
               {/* Mounted once at the root so a dApp request is presented for approval
               no matter which screen the user is on. */}
               <WalletConnectApprovalModal />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -9,6 +9,7 @@ import { TxDetailSheet } from '../../components/TxDetailSheet';
 import type { BottomSheetModal } from '@gorhom/bottom-sheet';
 import { VeilLogo } from '../../components/VeilLogo';
 import { SilverBalanceCard } from '../../components/SilverBalanceCard';
+import { PrivateBalanceCard } from '../../components/PrivateBalanceCard';
 import { PayForGrid } from '../../components/PayForGrid';
 import { AssetsList } from '../../components/AssetsList';
 import { fontFamily } from '../../theme/typography';
@@ -24,6 +25,12 @@ import { fetchPrice, usdValue } from '../../lib/fetchPrice';
 import { getNetwork } from '../../lib/network';
 import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
 import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
+import {
+  getPrivacyEnabled,
+  isPrivacyFlagHydrated,
+  refreshPrivateBalance,
+  subscribeToPrivacy,
+} from '../../lib/privacy';
 
 /** Shorten a Stellar address for the header chip: `GDKF…9QX3`. */
 function shortAddress(addr: string): string {
@@ -65,6 +72,15 @@ export default function DashboardTab() {
     detailSheetRef.current?.present();
   }, []);
 
+  // Privacy feature flag — gates the PrivateBalanceCard.
+  // Subscribes to the external store so the card appears immediately if the
+  // flag is flipped without a full reload (e.g. from the debug settings screen).
+  const privacyEnabled = useSyncExternalStore(
+    subscribeToPrivacy,
+    getPrivacyEnabled,
+    getPrivacyEnabled,
+  );
+
   const onTestnet = getNetwork().name === 'testnet';
 
   // Refetch balance + price and rebuild the activity feed from Horizon + SAC
@@ -88,6 +104,8 @@ export default function DashboardTab() {
       } catch {
         // activity stays as-is
       }
+      // Keep the private balance cache fresh alongside the public one.
+      void refreshPrivateBalance();
     },
     [],
   );
@@ -184,6 +202,11 @@ export default function DashboardTab() {
         loading={balance === '—' && loading}
         error={!!error}
       />
+
+      {/* Private balance — only shown when the V131 privacy flag is enabled.
+          Sits between the public card and the Pay-for grid so both balance
+          types are visible at a glance without scrolling. */}
+      {privacyEnabled ? <PrivateBalanceCard /> : null}
 
       <PayForGrid />
 
