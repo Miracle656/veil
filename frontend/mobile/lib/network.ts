@@ -231,7 +231,9 @@ export const walletConfig: WalletConfig = {
   rpcUrl: getNetwork().rpcUrl,
   networkPassphrase: getNetwork().networkPassphrase,
   // Required on React Native: there is no window.location to infer the
-  // relying party from, and 'localhost' would fail domain association.
+  // relying party from, and 'localhost' would fail domain association (#445).
+  // Deliberately mirrors the build-time env in lib/relyingParty.ts instead of
+  // the SDK's 'localhost' fallback (sdk/src/core.ts resolveRpId).
   rpId: getRelyingPartyId(),
   // Also required on RN: the SDK would default deploy() to `https://${rpId}`,
   // but native assertions carry the android:apk-key-hash origin — a wallet

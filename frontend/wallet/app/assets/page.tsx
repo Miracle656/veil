@@ -19,8 +19,14 @@ import {
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
-import { USDY_MAINNET_ISSUER, getRegisteredAsset } from '@/lib/assets'
+import { USDY_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '@/lib/assets'
 import { fetchPrice } from '@/lib/fetchPrice'
+import {
+  ISSUER_TOML_TTL_MS,
+  letterAvatar,
+  loadRegisteredIssuerMetadata,
+  type IssuerTomlMetadata,
+} from '@/lib/issuerToml'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -45,6 +51,7 @@ export default function AssetsPage() {
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [prices, setPrices] = useState<Record<string, number | null>>({})
+  const [issuerMeta, setIssuerMeta] = useState<Record<string, IssuerTomlMetadata>>({})
 
   // Add-asset form
   const [domain, setDomain] = useState('')
@@ -54,6 +61,39 @@ export default function AssetsPage() {
   const [manualIssuer, setManualIssuer] = useState('')
 
   const trustlines: Trustline[] = useMemo(() => parseTrustlines(balances), [balances])
+
+  const metadataTargets = useMemo(() => {
+    const targets = new Map<string, { code: string; issuer: string }>()
+    for (const line of trustlines) {
+      if (!isRegisteredIssuer(line.code, line.issuer)) continue
+      targets.set(`${line.code}:${line.issuer}`, { code: line.code, issuer: line.issuer })
+    }
+    if (network.name === 'mainnet') {
+      targets.set(`USDY:${USDY_MAINNET_ISSUER}`, { code: 'USDY', issuer: USDY_MAINNET_ISSUER })
+    }
+    return [...targets.values()]
+  }, [trustlines])
+
+  useEffect(() => {
+    let cancelled = false
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    for (const target of metadataTargets) {
+      const key = `${target.code}:${target.issuer}`
+      const refresh = async () => {
+        const meta = await loadRegisteredIssuerMetadata(target.code, target.issuer)
+        if (cancelled || !meta) return
+        setIssuerMeta((current) => ({ ...current, [key]: meta }))
+        // Retry stale/offline results in a minute; fresh data refreshes at expiry.
+        const delay = Math.max(60_000, (meta.fetchedAt ?? 0) + ISSUER_TOML_TTL_MS - Date.now())
+        timers.set(key, setTimeout(() => void refresh(), delay))
+      }
+      void refresh()
+    }
+    return () => {
+      cancelled = true
+      timers.forEach(clearTimeout)
+    }
+  }, [metadataTargets])
 
   const loadAccount = useCallback(async () => {
     setLoading(true)
@@ -194,10 +234,20 @@ export default function AssetsPage() {
             exist on testnet, where changeTrust would fail with op_no_issuer. */}
         {!hasUsdy && !loading && network.name === 'mainnet' && (
           <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(212,175,55,0.3)', background: 'rgba(212,175,55,0.05)' }}>
-            <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
-            <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
-            </p>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <RegisteredAssetMark code="USDY" meta={issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]} />
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
+                </p>
+                {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]?.description ? (
+                  <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                    {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`].description}
+                  </p>
+                ) : null}
+              </div>
+            </div>
             <button
               onClick={() => void submitChangeTrust('USDY', USDY_MAINNET_ISSUER, false)}
               disabled={busy}
@@ -219,16 +269,34 @@ export default function AssetsPage() {
             trustlines.map((line) => {
               const price = prices[`${line.code}:${line.issuer}`]
               const usdVal = price != null ? Number(line.balance) * price : null
+              const meta = issuerMeta[`${line.code}:${line.issuer}`]
+              const registered = isRegisteredIssuer(line.code, line.issuer) && getRegisteredAsset(line.code)?.code === line.code
+                ? getRegisteredAsset(line.code)
+                : null
               return (
                 <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
-                  <div style={{ minWidth: 0 }}>
-                    <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{line.code}</p>
-                    <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
-                      {line.issuer}
-                    </p>
-                    <p style={mutedTextStyle}>
-                      Balance: {line.balance} {usdVal != null ? `(~$${usdVal.toFixed(2)} USD)` : ''}
-                    </p>
+                  <div style={{ display: 'flex', gap: '0.75rem', minWidth: 0, alignItems: 'center' }}>
+                    {registered ? <RegisteredAssetMark code={line.code} meta={meta} /> : null}
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>
+                        {line.code}
+                        {meta && meta.name !== line.code ? (
+                          <span style={{ fontWeight: 400, color: 'var(--warm-grey)' }}> · {meta.name}</span>
+                        ) : null}
+                      </p>
+                      {registered ? (
+                        <p style={mutedTextStyle}>Issuer: {registered.issuerName}</p>
+                      ) : null}
+                      {meta?.description ? (
+                        <p style={clampedNoteStyle}>{meta.description}</p>
+                      ) : null}
+                      <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
+                        {line.issuer}
+                      </p>
+                      <p style={mutedTextStyle}>
+                        Balance: {line.balance} {usdVal != null ? `(~$${usdVal.toFixed(2)} USD)` : ''}
+                      </p>
+                    </div>
                   </div>
                   <button
                     onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
@@ -311,6 +379,27 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+function RegisteredAssetMark({ code, meta }: { code: string; meta?: IssuerTomlMetadata }) {
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null)
+  if (meta?.imageUrl && meta.imageUrl !== brokenUrl) {
+    return (
+      <img
+        src={meta.imageUrl}
+        alt=""
+        width={36}
+        height={36}
+        onError={() => setBrokenUrl(meta.imageUrl)}
+        style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+      />
+    )
+  }
+  return (
+    <span aria-hidden="true" style={letterMarkStyle}>
+      {letterAvatar(code)}
+    </span>
+  )
+}
+
 const backButtonStyle: CSSProperties = {
   background: 'none',
   border: 'none',
@@ -356,6 +445,28 @@ const sectionHeadingStyle: CSSProperties = {
 const mutedTextStyle: CSSProperties = {
   color: 'var(--warm-grey)',
   fontSize: '0.8125rem',
+}
+
+const clampedNoteStyle: CSSProperties = {
+  ...mutedTextStyle,
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+}
+
+const letterMarkStyle: CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 8,
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'rgba(246,247,248,0.08)',
+  color: 'var(--off-white)',
+  fontWeight: 700,
+  fontSize: '0.95rem',
 }
 
 const trustlineRowStyle: CSSProperties = {

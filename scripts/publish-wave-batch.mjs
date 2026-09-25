@@ -8,7 +8,14 @@
  *
  *   - title      the text after "### V131 · "
  *   - labels     the "**Labels:**" line, plus points:N read from the Drips line
- *   - body       everything else, with the contributor Telegram footer appended
+ *   - body       everything else, plus any "## Shared with every issue" section
+ *                from the preamble, plus the contributor Telegram footer
+ *
+ * That shared section exists because a batch preamble reaches NOBODY.
+ * Contributors read the issue, not the draft file, so verified addresses and
+ * reference tables left in the preamble are invisible to the person doing the
+ * work. Three PRs in the privacy batch hard-coded invented Soroban contract ids
+ * partly because the issues gave them nowhere authoritative to copy from.
  *
  * Missing labels are created rather than silently dropped — GitHub ignores
  * unknown labels on issue creation, which is how a batch ends up unpointed and
@@ -45,10 +52,26 @@ function gh(args, { json = false } = {}) {
 }
 
 /** Every issue in a draft file. */
+/**
+ * The block a draft marks to travel with every issue in the batch: everything
+ * under a "## Shared with every issue" heading in the preamble, up to the next
+ * "## " or the first issue. Returns '' when the draft has none.
+ */
+export function sharedSection(markdown) {
+  const preamble = markdown.split(/^### [VWL][0-9]+ /m)[0]
+  const lines = preamble.split('\n')
+  const start = lines.findIndex((l) => l.trim() === '## Shared with every issue')
+  if (start === -1) return ''
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((l) => l.startsWith('## '))
+  return (end === -1 ? rest : rest.slice(0, end)).join('\n').trim()
+}
+
 export function parseBatch(markdown) {
   const issues = []
+  const shared = sharedSection(markdown)
   // Sections look like "### V131 · Privacy feature flag and SPP network config".
-  const parts = markdown.split(/^### (V\d+) · (.+)$/m)
+  const parts = markdown.split(/^### ([VWL]\d+) · (.+)$/m)
   for (let i = 1; i < parts.length; i += 3) {
     const [id, title, rest] = [parts[i], parts[i + 1].trim(), parts[i + 2]]
     const labels = (rest.match(/^\*\*Labels:\*\*\s*(.+)$/m)?.[1] ?? '')
@@ -63,6 +86,11 @@ export function parseBatch(markdown) {
       .replace(/^\*\*Labels:\*\*.*$/m, '')
       .replace(/\n---\s*$/, '')
       .trim()
+      .concat(shared ? `
+
+---
+
+${shared}` : '')
     issues.push({ id, title, labels: [...new Set(labels)], points: Number(points ?? 0), body })
   }
   return issues
