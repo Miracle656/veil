@@ -13,14 +13,22 @@
 import {
   TransactionBuilder,
   Transaction,
-  Networks,
   Keypair,
   Operation,
 } from '@stellar/stellar-sdk'
+import { getNetwork } from '@/lib/network'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 // ── Anchor config ─────────────────────────────────────────────────────────────
+
+/**
+ * Resolves default SEP-24 anchor domain from environment.
+ * Never silently defaults to testanchor.stellar.org.
+ */
+export function getDefaultSep24Anchor(): string {
+  return process.env.NEXT_PUBLIC_SEP24_ANCHORS?.split(',')[0]?.trim() || ''
+}
 
 export interface AnchorInfo {
   transferServerUrl: string
@@ -51,7 +59,10 @@ export async function discoverAnchorInfo(anchorDomain: string): Promise<AnchorIn
   }
 
   const networkMatch = text.match(/NETWORK_PASSPHRASE\s*=\s*"([^"]+)"/)
-  const networkPassphrase = networkMatch ? networkMatch[1] : Networks.TESTNET
+  const networkPassphrase = networkMatch ? networkMatch[1] : getNetwork().networkPassphrase
+  if (!networkPassphrase) {
+    throw new Error(`No network passphrase is configured for ${getNetwork().displayName}.`)
+  }
 
   return {
     transferServerUrl: transferMatch[1].replace(/\/$/, ''),

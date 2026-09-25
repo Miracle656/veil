@@ -27,13 +27,12 @@ import {
   type EncryptedBackup,
   type WalletBackupMetadata,
 } from './backup';
+import { getNetwork } from './network';
 
 // Wallet credential keys written by the SDK (`useInvisibleWallet`).
 const ADDRESS_KEY = 'invisible_wallet_address';
 const PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
 const SETTINGS_KEY = 'veil_wallet_settings';
-
-const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
 
 /** Sub-directory of the cache dir that exported envelopes are staged in. */
 const EXPORT_DIR_NAME = 'veil-backups';
@@ -72,17 +71,26 @@ export async function collectWalletMetadata(
   const publicKey = await AsyncStorage.getItem(PUBLIC_KEY_KEY);
   const signers = overrides.signers ?? (publicKey ? [{ index: 0, publicKey }] : []);
 
+  const network = getNetwork();
+  const factoryAddress =
+    overrides.factoryAddress ||
+    process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID']?.trim() ||
+    network.factoryContractId;
+  const networkPassphrase =
+    overrides.networkPassphrase ||
+    process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim() ||
+    network.networkPassphrase;
+  if (!networkPassphrase || !factoryAddress) {
+    throw new BackupError(`Network configuration is incomplete for ${network.displayName}.`);
+  }
+
   return {
     version: 1,
     address,
     signers,
     settings: overrides.settings ?? (await readSettings()),
-    factoryAddress:
-      overrides.factoryAddress || process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID']?.trim() || undefined,
-    networkPassphrase:
-      overrides.networkPassphrase
-      || process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim()
-      || TESTNET_PASSPHRASE,
+    factoryAddress,
+    networkPassphrase,
     rpId: overrides.rpId || process.env['EXPO_PUBLIC_RP_ID']?.trim() || undefined,
     createdAt: overrides.createdAt ?? Date.now(),
   };
