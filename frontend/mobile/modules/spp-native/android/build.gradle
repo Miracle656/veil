@@ -21,7 +21,16 @@ version = '0.1.0'
 def rustDir = file("${projectDir}/../rust")
 def cargoManifest = file("${rustDir}/Cargo.toml")
 def jniLibsDir = file("${buildDir}/jniLibs")
-def uniffiOutDir = file("${buildDir}/generated/uniffi")
+// Generated uniffi bindings are written straight into the module's DEFAULT
+// Kotlin/Java source root (src/main/java) — the same root SppNativeModule.kt
+// lives in — rather than build/generated. Custom `java.srcDirs`/`kotlin.srcDirs`
+// registrations for a generated folder were NOT picked up by compile*Kotlin
+// under the expo-module-gradle-plugin + AGP source-set wiring, so every
+// `uniffi.spp_native` reference came back "Unresolved reference" even though
+// codegen succeeded. The default root is compiled unconditionally, so this
+// removes the wiring question entirely. The generated `uniffi/` package is
+// gitignored.
+def uniffiOutDir = file("${projectDir}/src/main/java")
 
 // ABIs the APK ships. arm64-v8a covers every modern device; armeabi-v7a
 // keeps 2016-era phones working. x86_64 exists so emulators can run the
@@ -60,17 +69,10 @@ android {
 
   sourceSets {
     main {
-      // Generated uniffi bindings land here; the generateUniffiBindings task
-      // runs before compilation, so the folder exists by the time Kotlin
-      // compiles. Register on the `kotlin` source set explicitly: adding only
-      // to `java.srcDirs` does not reliably feed compile*Kotlin, which is why
-      // every `uniffi.spp_native` reference came back "Unresolved reference"
-      // even though the bindings were generated. `java.srcDirs` is kept so the
-      // Java toolchain and IDEs also see the folder.
-      java.srcDirs uniffiOutDir.absolutePath
-      kotlin.srcDirs uniffiOutDir.absolutePath
-      // Compiled .so files, moved into jniLibs/<abi>/lib*.so by the tasks
-      // below.
+      // No custom registration for the generated bindings: they are written
+      // into src/main/java (the default root) by generateUniffiBindings, which
+      // compile*Kotlin already includes. Only the native libs need a non-default
+      // srcDir; the Rust tasks below move libspp_prover.so into jniLibs/<abi>/.
       jniLibs.srcDirs jniLibsDir.absolutePath
     }
   }

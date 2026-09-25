@@ -27,12 +27,18 @@ modules/spp-native/
 
 `expo-modules-autolinking` scans `modules/`, reads `expo-module.config.json`,
 and adds the Android project with the standard `expo-module-gradle-plugin`.
-The module's Gradle file hooks `preBuild`:
+The module's Gradle file hooks `preBuild` (and each `compile*Kotlin` task
+directly, so codegen is a hard ordering edge):
 
 1. `buildRust<abi>` compiles `rust/` per ABI with `cargo-ndk` into
    `build/jniLibs/<abi>/libspp_prover.so`.
 2. `generateUniffiBindings` runs the in-tree `uniffi-bindgen` binary against
-   the host build and emits Kotlin into `build/generated/uniffi`.
+   the host build and emits Kotlin into the module's default source root,
+   `android/src/main/java/uniffi/spp_native/` (gitignored). It goes there
+   rather than `build/generated` because a custom `srcDirs` registration for a
+   generated folder was not picked up by `compile*Kotlin` under the
+   expo-module-gradle-plugin + AGP source-set wiring, whereas the default root
+   is always compiled.
 
 Toolchain provisioning is a build-file concern, so it is wired into the app's
 `postinstall` (`sh ./modules/spp-native/scripts/install-rust-toolchain.sh`):
