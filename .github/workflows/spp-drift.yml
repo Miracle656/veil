@@ -7,7 +7,7 @@ name: SPP config drift check
 # content downtime never blocks contributors' unrelated PRs.
 #
 # When drift is detected on the scheduled run, opens an issue naming the changed
-# keys and old/new values.
+# keys and old/new values, deduplicating against open issues.
 
 on:
   schedule:
@@ -21,13 +21,12 @@ on:
   pull_request:
     paths:
       - 'scripts/check-spp-drift.mjs'
-      - 'frontend/wallet/lib/privacy/drift.ts'
-      - 'frontend/wallet/lib/privacy/__tests__/drift.test.ts'
+      - 'scripts/tests/check-spp-drift.test.mjs'
       - '.github/workflows/spp-drift.yml'
 
 concurrency:
-  group: spp-drift
-  cancel-in-progress: true
+  group: spp-drift-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -46,12 +45,18 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Run drift detection unit tests
+        run: node --test scripts/tests/check-spp-drift.test.mjs
+
       - name: Run drift check
         id: check
+        shell: bash
         run: |
+          code=0
           node scripts/check-spp-drift.mjs \
-            ${{ (github.event_name == 'pull_request' || inputs.warn_only) && '--warn-only' || '' }} \
-            | tee drift.txt
+            ${{ (github.event_name == 'pull_request' || inputs.warn_only) && '--warn-only' || '' }} > drift.txt || code=$?
+          cat drift.txt
+          exit $code
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -60,12 +65,32 @@ jobs:
         run: |
           cat drift.txt 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || echo "No drift report generated" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Open issue on drift
-        if: failure() && steps.check.outputs.status == 'drift' && github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue create \
-            --title "Notice: SPP testnet deployment config has drifted from upstream" \
-            --body "$(cat drift.txt)" \
-            --label "area:ci,epic:privacy"
+      - name: Open GitHub issue on drift
+        if: failure() && github.event_name != 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('drift.txt') ? fs.readFileSync('drift.txt', 'utf8') : 'Drift detected, but drift.txt was empty.';
+            const title = 'Notice: SPP testnet deployment config has drifted from upstream';
+
+            // Avoid duplicate issues (following testnet-smoke.yml house pattern)
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'area:ci',
+            });
+            const alreadyOpen = existing.data.some((i) => i.title.includes('SPP testnet deployment config has drifted'));
+            if (alreadyOpen) {
+              console.log('Issue already open for SPP drift — skipping duplicate.');
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: report,
+              labels: ['area:ci', 'epic:privacy'],
+            });

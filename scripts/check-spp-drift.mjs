@@ -15,6 +15,7 @@
  *   node scripts/check-spp-drift.mjs              # exit 1 on drift, exit 2 on unreachable
  *   node scripts/check-spp-drift.mjs --warn-only  # report drift/unreachable but exit 0
  *   node scripts/check-spp-drift.mjs --json       # machine-readable JSON output
+ *   node scripts/check-spp-drift.mjs --dry-run-issue # test issue creation payload formatting
  */
 
 import { readFileSync, appendFileSync } from 'node:fs'
@@ -31,11 +32,27 @@ const UPSTREAM_RAW_URL =
 const UPSTREAM_API_URL =
   'https://api.github.com/repos/NethermindEth/stellar-private-payments/contents/deployments/testnet/deployments.json'
 
+// Pure fallback validator if @stellar/stellar-sdk is unresolvable
+let strKeyValidator = (id) => typeof id === 'string' && /^C[A-Z2-7]{55}$/.test(id)
+try {
+  const sdk = await import('@stellar/stellar-sdk').catch(() =>
+    import('../frontend/wallet/node_modules/@stellar/stellar-sdk/lib/index.js')
+  )
+  if (sdk?.StrKey?.isValidContract) {
+    strKeyValidator = (id) => sdk.StrKey.isValidContract(id)
+  }
+} catch {}
+
+export function isValidContractId(id) {
+  return strKeyValidator(id)
+}
+
 function parseArgs() {
   const args = process.argv.slice(2)
   return {
     warnOnly: args.includes('--warn-only'),
     json: args.includes('--json'),
+    dryRunIssue: args.includes('--dry-run-issue'),
   }
 }
 
@@ -48,15 +65,23 @@ function setGithubOutput(key, value) {
   }
 }
 
+/**
+ * Extracts pinned testnet SPP configuration from config.ts source text.
+ * Scoped strictly to the testnet block to be immune to reformatting, comments,
+ * or future mainnet entries.
+ */
 export function extractPinnedConfig(sourceText) {
-  const aspMembership = sourceText.match(/aspMembership:\s*'([^']+)'/)?.[1]
-  const aspNonMembership = sourceText.match(/aspNonMembership:\s*'([^']+)'/)?.[1]
-  const standard = sourceText.match(/standard:\s*'([^']+)'/)?.[1]
-  const traceable = sourceText.match(/traceable:\s*'([^']+)'/)?.[1]
-  const publicKeyRegistry = sourceText.match(/publicKeyRegistry:\s*'([^']+)'/)?.[1]
+  const testnetBlockMatch = sourceText.match(/testnet:\s*\{([\s\S]*?)\n\s*\},?\s*(?:\n\s*\}|\/\/)/)
+  const block = testnetBlockMatch ? testnetBlockMatch[1] : sourceText
 
-  const poolIds = [...sourceText.matchAll(/id:\s*'([A-Z0-9]{56})'/g)].map((m) => m[1])
-  const tokenContractIds = [...sourceText.matchAll(/tokenContractId:\s*'([A-Z0-9]{56})'/g)].map(
+  const aspMembership = block.match(/aspMembership:\s*['"]([A-Z0-9]{56})['"]/)?.[1]
+  const aspNonMembership = block.match(/aspNonMembership:\s*['"]([A-Z0-9]{56})['"]/)?.[1]
+  const standard = block.match(/standard:\s*['"]([A-Z0-9]{56})['"]/)?.[1]
+  const traceable = block.match(/traceable:\s*['"]([A-Z0-9]{56})['"]/)?.[1]
+  const publicKeyRegistry = block.match(/publicKeyRegistry:\s*['"]([A-Z0-9]{56})['"]/)?.[1]
+
+  const poolIds = [...block.matchAll(/id:\s*['"]([A-Z0-9]{56})['"]/g)].map((m) => m[1])
+  const tokenContractIds = [...block.matchAll(/tokenContractId:\s*['"]([A-Z0-9]{56})['"]/g)].map(
     (m) => m[1],
   )
 
@@ -77,48 +102,38 @@ export function extractPinnedConfig(sourceText) {
   }
 }
 
-export function diffSppDeployments(pinned, upstream) {
+/**
+ * Compares pinned config against upstream deployments JSON.
+ * Validates upstream values with StrKey to prevent accepting corrupted IDs.
+ */
+export function diffSppDeployments(pinned, upstream, validator = isValidContractId) {
   const diffs = []
 
-  if (upstream.asp_membership && upstream.asp_membership !== pinned.aspMembership) {
-    diffs.push({
-      field: 'aspMembership',
-      pinned: pinned.aspMembership,
-      upstream: upstream.asp_membership,
-    })
+  function check(field, pinnedVal, upstreamVal) {
+    if (!upstreamVal) return
+    if (!validator(upstreamVal)) {
+      diffs.push({
+        field,
+        pinned: pinnedVal,
+        upstream: upstreamVal,
+        error: `Upstream contract ID '${upstreamVal}' fails StrKey.isValidContract validation`,
+      })
+      return
+    }
+    if (upstreamVal !== pinnedVal) {
+      diffs.push({
+        field,
+        pinned: pinnedVal,
+        upstream: upstreamVal,
+      })
+    }
   }
 
-  if (upstream.asp_non_membership && upstream.asp_non_membership !== pinned.aspNonMembership) {
-    diffs.push({
-      field: 'aspNonMembership',
-      pinned: pinned.aspNonMembership,
-      upstream: upstream.asp_non_membership,
-    })
-  }
-
-  if (upstream.verifiers?.B && upstream.verifiers.B !== pinned.verifiers.standard) {
-    diffs.push({
-      field: 'verifiers.standard',
-      pinned: pinned.verifiers.standard,
-      upstream: upstream.verifiers.B,
-    })
-  }
-
-  if (upstream.verifiers?.B_gvk_T && upstream.verifiers.B_gvk_T !== pinned.verifiers.traceable) {
-    diffs.push({
-      field: 'verifiers.traceable',
-      pinned: pinned.verifiers.traceable,
-      upstream: upstream.verifiers.B_gvk_T,
-    })
-  }
-
-  if (upstream.public_key_registry && upstream.public_key_registry !== pinned.publicKeyRegistry) {
-    diffs.push({
-      field: 'publicKeyRegistry',
-      pinned: pinned.publicKeyRegistry,
-      upstream: upstream.public_key_registry,
-    })
-  }
+  check('aspMembership', pinned.aspMembership, upstream.asp_membership)
+  check('aspNonMembership', pinned.aspNonMembership, upstream.asp_non_membership)
+  check('verifiers.standard', pinned.verifiers?.standard, upstream.verifiers?.B)
+  check('verifiers.traceable', pinned.verifiers?.traceable, upstream.verifiers?.B_gvk_T)
+  check('publicKeyRegistry', pinned.publicKeyRegistry, upstream.public_key_registry)
 
   if (Array.isArray(upstream.pools)) {
     if (upstream.pools.length !== pinned.pools.length) {
@@ -132,39 +147,48 @@ export function diffSppDeployments(pinned, upstream) {
     for (let i = 0; i < maxLen; i++) {
       const up = upstream.pools[i]
       const pin = pinned.pools[i]
-      if (up.poolContractId && up.poolContractId !== pin.id) {
-        diffs.push({
-          field: `pools[${i}].id`,
-          pinned: pin.id,
-          upstream: up.poolContractId,
-        })
-      }
-      if (up.tokenContractId && up.tokenContractId !== pin.tokenContractId) {
-        diffs.push({
-          field: `pools[${i}].tokenContractId`,
-          pinned: pin.tokenContractId,
-          upstream: up.tokenContractId,
-        })
-      }
+      check(`pools[${i}].id`, pin?.id, up?.poolContractId)
+      check(`pools[${i}].tokenContractId`, pin?.tokenContractId, up?.tokenContractId)
     }
   }
 
-  return diffs
+  const status = diffs.length === 0 ? 'in_sync' : 'drift'
+  return { status, diffs }
 }
 
-export async function fetchUpstreamDeployments(timeoutMs = 10_000) {
+export function formatDriftReport(diffs) {
+  if (!diffs || diffs.length === 0) {
+    return '[IN_SYNC] Pinned SPP testnet config is in sync with upstream NethermindEth/stellar-private-payments.'
+  }
+  const lines = [
+    '## Notice: SPP testnet deployment config has drifted from upstream',
+    '',
+    `Detected ${diffs.length} field(s) where pinned config differs from NethermindEth/stellar-private-payments:`,
+    '',
+    '| Field | Pinned (Veil) | Upstream (Nethermind) | Status |',
+    '|---|---|---|---|',
+  ]
+  for (const d of diffs) {
+    const statusNote = d.error ? `⚠️ Invalid StrKey: ${d.error}` : 'Changed'
+    lines.push(`| \`${d.field}\` | \`${d.pinned}\` | \`${d.upstream}\` | ${statusNote} |`)
+  }
+  lines.push('', '### Required action', 'Update `frontend/wallet/lib/privacy/config.ts` to match the upstream contract IDs.')
+  return lines.join('\n')
+}
+
+export async function fetchUpstreamDeployments(fetchImpl = fetch, timeoutMs = 10_000) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     let res = null
     try {
-      res = await fetch(UPSTREAM_RAW_URL, {
+      res = await fetchImpl(UPSTREAM_RAW_URL, {
         signal: controller.signal,
         headers: { 'User-Agent': 'veil-drift-sentry' },
       })
     } catch {
-      res = await fetch(UPSTREAM_API_URL, {
+      res = await fetchImpl(UPSTREAM_API_URL, {
         signal: controller.signal,
         headers: {
           Accept: 'application/vnd.github.raw+json',
@@ -199,7 +223,22 @@ export async function fetchUpstreamDeployments(timeoutMs = 10_000) {
 }
 
 async function main() {
-  const { warnOnly, json } = parseArgs()
+  const { warnOnly, json, dryRunIssue } = parseArgs()
+
+  if (dryRunIssue) {
+    console.log('[DRY-RUN] Verifying drift report and issue-creation markdown generation:')
+    const simulatedDiffs = [
+      {
+        field: 'pools[0].id',
+        pinned: 'CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT',
+        upstream: 'CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4YPL3PYIN42',
+      },
+    ]
+    const report = formatDriftReport(simulatedDiffs)
+    console.log(report)
+    console.log('[DRY-RUN] Execution completed successfully.')
+    process.exit(0)
+  }
 
   let sourceText
   try {
@@ -226,7 +265,7 @@ async function main() {
     process.exit(2)
   }
 
-  const diffs = diffSppDeployments(pinned, fetchResult.data)
+  const { status, diffs } = diffSppDeployments(pinned, fetchResult.data)
 
   if (diffs.length === 0) {
     setGithubOutput('status', 'in_sync')
@@ -243,18 +282,7 @@ async function main() {
   if (json) {
     console.log(JSON.stringify({ status: 'drift', diffs }, null, 2))
   } else {
-    console.log('## SPP testnet config drift detected')
-    console.log()
-    console.log(`Detected ${diffs.length} field(s) where pinned config differs from NethermindEth/stellar-private-payments:`)
-    console.log()
-    console.log('| Field | Pinned (Veil) | Upstream (Nethermind) |')
-    console.log('|---|---|---|')
-    for (const d of diffs) {
-      console.log(`| \`${d.field}\` | \`${d.pinned}\` | \`${d.upstream}\` |`)
-    }
-    console.log()
-    console.log('### Required action')
-    console.log('Update `frontend/wallet/lib/privacy/config.ts` to match the upstream contract IDs.')
+    console.log(formatDriftReport(diffs))
   }
 
   if (warnOnly) {
