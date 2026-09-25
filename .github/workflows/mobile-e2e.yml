@@ -108,19 +108,29 @@ jobs:
           disable-animations: true
           working-directory: frontend/mobile
           script: |
+            # Gate on real device readiness before touching the app: adb
+            # attached, and sys.boot_completed set. The runner usually waits
+            # for boot itself, but a device that reports `offline` here makes
+            # every later step fail with misleading in-app symptoms, so fail
+            # loudly at the device layer instead.
+            adb wait-for-device
+            for i in $(seq 1 60); do bc=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r'); st=$(adb get-state 2>/dev/null || true); if [ "$bc" = "1" ] && [ "$st" = "device" ]; then echo "Emulator boot completed"; break; fi; echo "Waiting for emulator readiness ($i/60)"; sleep 2; done
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; then echo "Emulator did not finish booting" >&2; adb logcat -d -t 500 || true; exit 1; fi
+
             adb install -r android/app/build/outputs/apk/release/app-release.apk
 
             # The app pushes /offline whenever NetInfo reports no usable
             # connection, and a freshly booted emulator often has not finished
-            # bringing its network up. Without this wait every flow fails on the
-            # cold-start assertion before it reaches anything it meant to test.
-            # The flows also dismiss the offline screen defensively, so a failure
-            # to validate here degrades rather than blocks.
+            # bringing its network up. The flows also dismiss the offline
+            # screen defensively, but a wait that gives up silently turns into
+            # five confusing flow failures, so make an unvalidated network a
+            # loud job failure instead.
             #
-            # Kept on one line: the emulator runner hands this whole block to a
-            # single `sh -c`, and a multi-line `for ... done` there trips dash
-            # with "Syntax error: end of file unexpected (expecting done)".
-            for i in $(seq 1 30); do if adb shell dumpsys connectivity | grep -q "VALIDATED"; then echo "Emulator network validated"; break; fi; echo "Waiting for emulator network ($i/30)"; sleep 5; done
+            # Every loop stays on one line: the emulator runner hands this
+            # whole block to a single `sh -c`, and a multi-line `for ... done`
+            # there trips dash with "Syntax error: end of file unexpected
+            # (expecting done)".
+            net_ready=false; for i in $(seq 1 60); do if adb shell dumpsys connectivity 2>/dev/null | grep -q "VALIDATED"; then net_ready=true; echo "Emulator network validated"; break; fi; echo "Waiting for emulator network ($i/60)"; sleep 5; done; if [ "$net_ready" != "true" ]; then echo "Emulator network was not validated" >&2; adb shell dumpsys connectivity || true; adb shell dumpsys wifi || true; exit 1; fi
 
             maestro test .maestro --format junit --output maestro-report.xml
 
