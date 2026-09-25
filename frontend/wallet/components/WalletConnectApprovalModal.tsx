@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { TransactionBuilder } from '@stellar/stellar-sdk'
+import { Address, scValToNative, TransactionBuilder } from '@stellar/stellar-sdk'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import {
   getWalletConnectClient,
@@ -10,13 +10,19 @@ import {
 } from '@/lib/walletConnect'
 import { getNetwork } from '@/lib/network'
 
-type ParsedRequestDetails = {
-  operationType: 'payment' | 'contract' | 'unknown'
-  amount?: string
+export type ParsedOperation = {
+  type: string
+  label: string
   destination?: string
+  asset?: string
+  amount?: string
   contractAddress?: string
   functionName?: string
+  arguments: string[]
+  depth: number
 }
+
+export type ParsedRequestDetails = { operations: ParsedOperation[] }
 
 function getRequestId(event: any): number {
   return Number(event?.id ?? event?.params?.request?.id ?? 0)
@@ -37,51 +43,101 @@ function getRequestXdr(params: any): string | null {
   return null
 }
 
-function parseRequestDetails(request: any): ParsedRequestDetails {
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_, item) => {
+      if (typeof item === 'bigint') return item.toString()
+      if (item instanceof Uint8Array) return `0x${Array.from(item).map((byte) => byte.toString(16).padStart(2, '0')).join('')}`
+      if (item instanceof Map) return Object.fromEntries(item)
+      return item
+    }) ?? String(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function scValText(value: any): string {
+  try {
+    return safeStringify(scValToNative(value))
+  } catch {
+    return value?.toString?.() || 'Unable to decode argument'
+  }
+}
+
+function contractInvocation(invocation: any, depth: number): ParsedOperation[] {
+  if (!invocation) return []
+  let functionName: string | undefined
+  let contractAddress: string | undefined
+  let args: string[] = []
+  try {
+    const func = invocation.function?.()
+    const contract = func?.contractFn?.() ?? func?.invokeContract?.()
+    const address = contract?.contractAddress?.()
+    const name = contract?.functionName?.()
+    contractAddress = address?.toString?.()
+    functionName = name?.toString?.()
+    args = (contract?.args?.() || []).map(scValText)
+  } catch {
+    // Keep a visible entry even when an SDK version cannot decode an arm.
+  }
+  const current: ParsedOperation = {
+    type: 'invokeHostFunction',
+    label: depth ? 'Sub-invocation' : 'Contract call',
+    contractAddress,
+    functionName,
+    arguments: args,
+    depth,
+  }
+  const children = (() => {
+    try { return (invocation.subInvocations?.() || []).flatMap((item: any) => contractInvocation(item, depth + 1)) } catch { return [] }
+  })()
+  return [current, ...children]
+}
+
+function hostFunctionOperation(operation: any, depth: number): ParsedOperation {
+  let contractAddress: string | undefined
+  let functionName: string | undefined
+  let args: string[] = []
+  try {
+    const contract = operation.func?.invokeContract?.()
+    contractAddress = Address.fromScAddress(contract.contractAddress()).toString()
+    functionName = contract.functionName().toString()
+    args = (contract.args?.() || []).map(scValText)
+  } catch {
+    // Keep a visible contract entry when an SDK version cannot decode an arm.
+  }
+  return { type: 'invokeHostFunction', label: 'Contract call', contractAddress, functionName, arguments: args, depth }
+}
+
+function parseOperation(operation: any, depth = 0): ParsedOperation[] {
+  const type = String(operation?.type || 'unknown')
+  if (type === 'invokeHostFunction') {
+    const children = (() => {
+      try { return (operation.auth || []).flatMap((entry: any) => contractInvocation(entry.rootInvocation?.(), depth + 1)) } catch { return [] }
+    })()
+    return [hostFunctionOperation(operation, depth), ...children]
+  }
+  const result: ParsedOperation = { type, label: type, arguments: [], depth }
+  if (typeof operation?.destination === 'string') result.destination = operation.destination
+  if (typeof operation?.amount === 'string') result.amount = operation.amount
+  try {
+    if (operation?.asset?.isNative?.()) result.asset = 'XLM'
+    else result.asset = operation?.asset?.getCode?.() || operation?.asset?.toString?.()
+  } catch { /* Keep asset unknown. */ }
+  result.label = type === 'payment' ? 'Payment' : type
+  return [result]
+}
+
+export function parseRequestDetails(request: any): ParsedRequestDetails {
   const xdrString = getRequestXdr(request?.params?.request?.params)
-  if (!xdrString) return { operationType: 'unknown' }
+  if (!xdrString) return { operations: [] }
 
   try {
     const tx = TransactionBuilder.fromXDR(xdrString, getNetwork().networkPassphrase)
-    const operation = tx.operations?.[0] as any
-    if (!operation) return { operationType: 'unknown' }
-
-    if (operation.type === 'payment') {
-      return {
-        operationType: 'payment',
-        amount: typeof operation.amount === 'string' ? operation.amount : undefined,
-        destination: typeof operation.destination === 'string' ? operation.destination : undefined,
-      }
-    }
-
-    if (operation.type === 'invokeHostFunction') {
-      let contractAddress = ''
-      let functionName = ''
-      try {
-        const invokeContract = operation.func?.invokeContract?.()
-        const contractAddressValue = invokeContract?.contractAddress?.()
-        const functionNameValue = invokeContract?.functionName?.()
-        if (contractAddressValue && typeof contractAddressValue.toString === 'function') {
-          contractAddress = contractAddressValue.toString()
-        }
-        if (functionNameValue && typeof functionNameValue.toString === 'function') {
-          functionName = functionNameValue.toString()
-        }
-      } catch {
-        // Fall through to safe fallback messaging for MVP.
-      }
-
-      return {
-        operationType: 'contract',
-        contractAddress: contractAddress || undefined,
-        functionName: functionName || undefined,
-      }
-    }
+    return { operations: (tx.operations || []).flatMap((operation: any) => parseOperation(operation)) }
   } catch {
-    return { operationType: 'unknown' }
+    return { operations: [{ type: 'unknown', label: 'Unknown', arguments: [], depth: 0 }] }
   }
-
-  return { operationType: 'unknown' }
 }
 
 export function WalletConnectApprovalModal() {
@@ -225,52 +281,20 @@ export function WalletConnectApprovalModal() {
         </div>
 
         <div className="card-md" style={{ marginBottom: '1rem' }}>
-          <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.45)', marginBottom: '0.5rem' }}>
-            Operation type
+          <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.45)', marginBottom: '0.75rem' }}>
+            {details.operations.length} operation{details.operations.length === 1 ? '' : 's'}
           </p>
-          <p style={{ fontSize: '0.9375rem', fontWeight: 600, marginBottom: '0.875rem' }}>
-            {details.operationType === 'payment' ? 'Payment' : details.operationType === 'contract' ? 'Contract call' : 'Unknown'}
-          </p>
-
-          {details.operationType === 'payment' && (
-            <>
-              <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.45)' }}>Amount</p>
-              <p style={{ fontSize: '0.9rem', marginBottom: '0.625rem' }}>{details.amount || 'Unknown'}</p>
-              <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.45)' }}>Destination</p>
-              <p className="mono" style={{ fontSize: '0.8125rem', wordBreak: 'break-all' }}>
-                {details.destination || 'Unknown'}
-              </p>
-            </>
-          )}
-
-          {details.operationType === 'contract' && (
-            <>
-              {details.contractAddress ? (
-                <>
-                  <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.45)' }}>Contract address</p>
-                  <p className="mono" style={{ fontSize: '0.8125rem', marginBottom: '0.625rem', wordBreak: 'break-all' }}>
-                    {details.contractAddress}
-                  </p>
-                </>
-              ) : null}
-              {details.functionName ? (
-                <>
-                  <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.45)' }}>Function name</p>
-                  <p style={{ fontSize: '0.9rem' }}>{details.functionName}</p>
-                </>
-              ) : (
-                <p style={{ fontSize: '0.85rem', color: 'rgba(246,247,248,0.65)' }}>
-                  Contract interaction — review carefully
-                </p>
-              )}
-            </>
-          )}
-
-          {details.operationType === 'unknown' && (
-            <p style={{ fontSize: '0.85rem', color: 'rgba(246,247,248,0.65)' }}>
-              Contract interaction — review carefully
-            </p>
-          )}
+          {details.operations.length ? details.operations.map((operation, index) => (
+            <div key={`${operation.type}-${index}`} style={{ marginBottom: index === details.operations.length - 1 ? 0 : '1rem', paddingLeft: `${operation.depth * 0.875}rem`, borderLeft: operation.depth ? '1px solid var(--border-dim)' : undefined }}>
+              <p style={{ fontSize: '0.9375rem', fontWeight: 600, marginBottom: '0.5rem' }}>{operation.label}</p>
+              {operation.amount && <p style={{ fontSize: '0.85rem' }}>Amount: {operation.amount}{operation.asset ? ` ${operation.asset}` : ''}</p>}
+              {operation.destination && <p className="mono" style={{ fontSize: '0.8125rem', wordBreak: 'break-all' }}>Destination: {operation.destination}</p>}
+              {operation.contractAddress && <p className="mono" style={{ fontSize: '0.8125rem', wordBreak: 'break-all' }}>Contract: {operation.contractAddress}</p>}
+              {operation.functionName && <p style={{ fontSize: '0.85rem' }}>Function: {operation.functionName}</p>}
+              {operation.arguments.map((argument, argumentIndex) => <p className="mono" key={argumentIndex} style={{ fontSize: '0.78rem', wordBreak: 'break-word' }}>Argument {argumentIndex + 1}: {argument}</p>)}
+              {!operation.amount && !operation.destination && !operation.contractAddress && !operation.functionName && !operation.arguments.length && <p style={{ fontSize: '0.85rem', color: 'rgba(246,247,248,0.65)' }}>Review this operation carefully</p>}
+            </div>
+          )) : <p style={{ fontSize: '0.85rem', color: 'rgba(246,247,248,0.65)' }}>Unable to decode operations. Review carefully.</p>}
         </div>
 
         <div style={{ display: 'grid', gap: '0.625rem' }}>
