@@ -10,9 +10,11 @@
 import {
   isClassicAddress,
   pollForResult,
+  sendPayment,
   toStroops,
   validateSend,
   type TransactionPoller,
+  type WalletSigner,
 } from '../sendPayment';
 import { requireSigner, SignerUnavailableError } from '../signer';
 
@@ -35,6 +37,25 @@ describe('validateSend', () => {
   it('rejects a zero or negative amount', () => {
     expect(validateSend(G_ADDR, '0').amount).toBeDefined();
     expect(validateSend(G_ADDR, '-2').amount).toBeDefined();
+  });
+
+  it('accepts memos up to 28 bytes', () => {
+    expect(validateSend(G_ADDR, '1', 'short note')).toEqual({});
+    expect(validateSend(G_ADDR, '1', 'a'.repeat(28))).toEqual({});
+  });
+
+  it('rejects a 29-byte memo with exact error message naming the limit', () => {
+    const res = validateSend(G_ADDR, '1', 'a'.repeat(29));
+    expect(res.memo).toBe('Memo exceeds the 28-byte limit');
+  });
+
+  it('counts multi-byte UTF-8 characters as bytes at the boundary', () => {
+    // 9 'あ' (27 bytes) + '!' (1 byte) = 28 bytes
+    expect(validateSend(G_ADDR, '1', 'あ'.repeat(9) + '!')).toEqual({});
+
+    // 9 'あ' (27 bytes) + '!!' (2 bytes) = 29 bytes
+    const res = validateSend(G_ADDR, '1', 'あ'.repeat(9) + '!!');
+    expect(res.memo).toBe('Memo exceeds the 28-byte limit');
   });
 });
 
@@ -82,5 +103,18 @@ describe('pollForResult', () => {
 describe('requireSigner', () => {
   it('fails closed while the mobile passkey module is pending', async () => {
     await expect(requireSigner()).rejects.toBeInstanceOf(SignerUnavailableError);
+  });
+});
+
+describe('sendPayment memo validation (Issue #818)', () => {
+  it('throws validation error before signing if memo exceeds 28 bytes', async () => {
+    const mockSigner: WalletSigner = {
+      publicKey: G_ADDR,
+      sign: jest.fn(),
+    };
+    await expect(
+      sendPayment(G_ADDR, '1', mockSigner, 'a'.repeat(29)),
+    ).rejects.toThrow('Memo exceeds the 28-byte limit');
+    expect(mockSigner.sign).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 
 import {
-  Keypair, TransactionBuilder, BASE_FEE, Asset, Operation,
+  Keypair, TransactionBuilder, BASE_FEE, Asset, Operation, Memo,
   Contract, rpc as SorobanRpc, nativeToScVal, Horizon,
 } from '@stellar/stellar-sdk'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
@@ -17,6 +17,7 @@ import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { parseQrValue } from '@/lib/sep7'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { validateMemoText, MAX_MEMO_TEXT_BYTES, MEMO_EXCEEDS_LIMIT_MESSAGE } from '@/lib/memo'
 
 import { getNativeAssetContractId, getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
@@ -205,6 +206,7 @@ export default function SendPage() {
     if (!validAddress) return false
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return false
     if (!selectedAsset) return false
+    if (memo && validateMemoText(memo) !== null) return false
     return true
   }
 
@@ -213,6 +215,15 @@ export default function SendPage() {
     setStep('signing')
     setErrorMsg(null)
     try {
+      if (memo) {
+        const memoErr = validateMemoText(memo)
+        if (memoErr) {
+          setErrorMsg(memoErr)
+          setStep('error')
+          return
+        }
+      }
+
       const signerSecret = walletSession.getItem('veil_signer_secret')
         || walletLocal.getItem('veil_signer_secret')
       if (!signerSecret) {
@@ -244,7 +255,7 @@ export default function SendPage() {
 
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
-        const tx = new TransactionBuilder(account, {
+        const builder = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
@@ -254,7 +265,10 @@ export default function SendPage() {
             amount,
           }))
           .setTimeout(30)
-          .build()
+        if (memo.trim()) {
+          builder.addMemo(Memo.text(memo.trim()))
+        }
+        const tx = builder.build()
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
         setTxHash(result.hash)
@@ -525,8 +539,12 @@ export default function SendPage() {
                 placeholder="Add a note for the recipient"
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
-                maxLength={28}
               />
+              {memo && validateMemoText(memo) && (
+                <p style={{ fontSize: '0.75rem', color: '#e5484d', marginTop: '0.375rem', lineHeight: 1.4 }}>
+                  {MEMO_EXCEEDS_LIMIT_MESSAGE}
+                </p>
+              )}
             </div>
 
             <div className="vw-feerow">
