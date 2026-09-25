@@ -24,11 +24,9 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../../hooks/useTheme';
 import { useHiddenAmounts } from '../../hooks/useHiddenAmounts';
 import { useCurrency } from '../../hooks/useCurrency';
-import { usePrivacyRecoveryNotice } from '../../hooks/usePrivacyRecoveryNotice';
 import type { ThemeColors } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
 import { FlowHeader } from '../../components/FlowHeader';
-import { RecoveryWarning } from '../../components/RecoveryWarning';
 import { SlideToConfirm } from '../../components/SlideToConfirm';
 import { ShieldIcon } from '../../components/icons';
 import { shieldXlm } from '../../lib/privacy';
@@ -68,10 +66,6 @@ export default function ShieldScreen() {
 
   const [step, setStep] = useState<Step>('form');
   const [error, setError] = useState<string | null>(null);
-
-  // #711: warn BEFORE anything is shielded when this wallet's privacy keys
-  // cannot be re-derived from a passkey on another device.
-  const recovery = usePrivacyRecoveryNotice();
 
   // Load the spendable public balance.
   useEffect(() => {
@@ -251,8 +245,6 @@ export default function ShieldScreen() {
             <Text style={styles.errorText}>{error}</Text>
           ) : null}
 
-          {recovery.needsAck ? <RecoveryWarning onAcknowledge={recovery.acknowledge} /> : null}
-
           {/* Review card — shown when amount is valid */}
           {canSubmit ? (
             <View style={styles.reviewCard}>
@@ -277,7 +269,7 @@ export default function ShieldScreen() {
           <SlideToConfirm
             label="Slide to shield"
             onConfirm={handleConfirm}
-            disabled={!canSubmit || recovery.needsAck}
+            disabled={!canSubmit}
           />
         </View>
       </KeyboardAvoidingView>

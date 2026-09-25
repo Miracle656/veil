@@ -17,7 +17,6 @@ import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { usePrivacyRecoveryNotice } from '@/hooks/usePrivacyRecoveryNotice'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
@@ -143,9 +142,6 @@ function DashboardPageContent() {
   // PRF downgrade: surfaced as a dismissible banner (issue #629).
   const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
   const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
-  // #711: true when this wallet's privacy keys cannot be re-derived from a
-  // passkey elsewhere — the private-balance card warns before anything shields.
-  const privacyRecoveryUnsupported = usePrivacyRecoveryNotice()
 
   // Shoulder-surfing guard. Persisted, but read after mount so the server and
   // client render the same first paint.
@@ -868,12 +864,7 @@ function DashboardPageContent() {
 
         {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
             scan stub below stands in for the V134 client until it lands. */}
-        <PrivateBalanceCard
-          balances={[]}
-          syncState="syncing"
-          hideAmounts={hideAmounts}
-          recoveryWarning={privacyRecoveryUnsupported}
-        />
+        <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.
