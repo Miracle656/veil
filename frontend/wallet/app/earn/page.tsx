@@ -2,8 +2,8 @@
 
 import { PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { Keypair } from '@stellar/stellar-sdk'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Asset, Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
@@ -19,6 +19,7 @@ import {
   type BlendPosition,
 } from '@/lib/blend'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { parseInvestPrefill } from './prefill'
 
 const network = getNetwork()
 
@@ -26,6 +27,7 @@ type EarnStep = 'pools' | 'deposit-form' | 'depositing' | 'deposit-done' | 'with
 
 export default function EarnPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   useInactivityLock()
 
   const [step, setStep] = useState<EarnStep>('pools')
@@ -36,6 +38,7 @@ export default function EarnPage() {
   const [loadingPools, setLoadingPools] = useState(true)
 
   const [selectedPool, setSelectedPool] = useState<BlendPool | null>(null)
+  const [selectedAssetContract, setSelectedAssetContract] = useState<string | null>(null)
   const [depositAmount, setDepositAmount] = useState('')
   const [selectedPosition, setSelectedPosition] = useState<BlendPosition | null>(null)
 
@@ -76,6 +79,18 @@ export default function EarnPage() {
     setLoadingPools(false)
   }
 
+  useEffect(() => {
+    const prefill = parseInvestPrefill(`?${searchParams.toString()}`)
+    if (!prefill || pools.length === 0) return
+    const assetContract = new Asset(prefill.asset, prefill.issuer).contractId(network.networkPassphrase)
+    const pool = pools.find((candidate) => candidate.assets.includes(assetContract))
+    if (!pool) return
+    setSelectedPool(pool)
+    setSelectedAssetContract(assetContract)
+    setDepositAmount(prefill.amount)
+    setStep('deposit-form')
+  }, [pools, searchParams])
+
   // ── Deposit ──
   async function handleDeposit() {
     if (!selectedPool || !accountAddress || !depositAmount) return
@@ -91,7 +106,7 @@ export default function EarnPage() {
 
       const amountInStroops = BigInt(Math.round(parseFloat(depositAmount) * 1e7))
       // Use XLM native asset contract for XLM pools, or first asset otherwise
-      const assetContract = selectedPool.assets[0] ?? ''
+      const assetContract = selectedAssetContract ?? selectedPool.assets[0] ?? ''
 
       const xdr = await buildBlendSupplyXdr({
         poolId: selectedPool.id,
@@ -368,7 +383,7 @@ export default function EarnPage() {
                   <button
                     className="btn-secondary"
                     style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem' }}
-                    onClick={() => { setSelectedPool(pool); setStep('deposit-form') }}
+                    onClick={() => { setSelectedPool(pool); setSelectedAssetContract(pool.assets[0] ?? null); setStep('deposit-form') }}
                   >
                     Deposit &amp; earn
                   </button>
@@ -395,7 +410,7 @@ export default function EarnPage() {
                   style={{ flex: 1, fontSize: '1.5rem', background: 'none', border: 'none', padding: 0 }}
                 />
                 <span style={{ color: 'rgba(246,247,248,0.4)', fontSize: '0.875rem' }}>
-                  {selectedPool.assets[0]?.slice(0, 6) ?? 'asset'}
+                  {selectedAssetContract?.slice(0, 6) ?? 'asset'}
                 </span>
               </div>
               {depositAmount && (

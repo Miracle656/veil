@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
+import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
@@ -26,6 +27,7 @@ interface Message {
   review?: ProposalReview | null
   /** A swap the agent handed to the Swap screen, which quotes and confirms it. */
   swapIntent?: { from: string; to: string; amount?: string }
+  investIntent?: { asset: string; issuer: string; amount: string }
 }
 
 /** Link into the Swap screen, pre-filled. The Swap page validates it again. */
@@ -33,6 +35,11 @@ function swapHref(intent: { from: string; to: string; amount?: string }): string
   const q = new URLSearchParams({ from: intent.from, to: intent.to })
   if (intent.amount) q.set('amount', intent.amount)
   return `/swap?${q}`
+}
+
+function investHref(intent: { asset: string; issuer: string; amount: string }): string {
+  const q = new URLSearchParams({ asset: intent.asset, issuer: intent.issuer, amount: intent.amount })
+  return `/earn?${q}`
 }
 
 /** Earlier turns for the agent, as plain text. The server keeps no history. */
@@ -290,6 +297,8 @@ export default function AgentPage() {
       if (data.swapIntent && typeof data.swapIntent.from === 'string' && typeof data.swapIntent.to === 'string') {
         msg.swapIntent = data.swapIntent
       }
+      const investIntent = parseInvestIntent(data.investIntent)
+      if (investIntent) msg.investIntent = investIntent
       if (data.pendingTxXdr) {
         msg.pendingTxXdr = data.pendingTxXdr
         msg.pendingTxSummary = data.pendingTxSummary
@@ -663,6 +672,23 @@ export default function AgentPage() {
                     className="agent-tx-card__btn"
                   >
                     Open Swap
+                  </button>
+                </div>
+              )}
+
+              {msg.investIntent && (
+                <div className="agent-tx-card">
+                  <div className="agent-tx-card__header">
+                    <span className="agent-tx-card__label">Investment ready</span>
+                  </div>
+                  <div className="agent-tx-card__summary">
+                    {msg.investIntent.amount} {msg.investIntent.asset}
+                  </div>
+                  <button
+                    onClick={() => router.push(investHref(msg.investIntent!))}
+                    className="agent-tx-card__btn"
+                  >
+                    Open Earn
                   </button>
                 </div>
               )}

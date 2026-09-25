@@ -2,6 +2,8 @@ import { describe, it, expect } from '@jest/globals'
 import { runAgent } from '../agent.js'
 import type { LlmProvider, LlmTurn } from '../llm.js'
 
+const INVEST_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+
 /**
  * The agent loop, against a scripted provider — no model, no key, no network.
  *
@@ -93,6 +95,49 @@ describe('runAgent', () => {
     const result = await runAgent('swap 10 xlm to usdc', wallet, [], undefined, undefined, llm)
     expect(result.swapIntent).toEqual({ from: 'XLM', to: 'USDC', amount: '10' })
     expect(result.pendingTxXdr).toBeUndefined()
+  })
+
+  it('hands an issued asset to the Earn screen', async () => {
+    const issuer = INVEST_ISSUER
+    const llm = scripted([
+      { text: '', toolCalls: [{ id: 'i', name: 'open_invest', input: { asset_code: 'USDY', asset_issuer: issuer, amount: '50' } }] },
+      { text: 'Opening Earn.', toolCalls: [] },
+    ])
+    const result = await runAgent('buy 50 USDY', wallet, [], undefined, undefined, llm)
+    expect(result.investIntent).toEqual({ asset: { code: 'USDY', issuer }, amount: '50' })
+  })
+
+  it('refuses a malformed investment intent', async () => {
+    const llm = scripted([
+      { text: '', toolCalls: [{ id: 'i', name: 'open_invest', input: { asset_code: 'USDY', asset_issuer: 'not-an-issuer', amount: '50' } }] },
+      { text: 'done', toolCalls: [] },
+    ])
+    const result = await runAgent('buy USDY', wallet, [], undefined, undefined, llm)
+    expect(result.investIntent).toBeUndefined()
+    expect(llm.results[0][0].content).toMatch(/error/)
+  })
+
+  it("keeps a prepared investment when only the model's closing reply fails", async () => {
+    const issuer = INVEST_ISSUER
+    let calls = 0
+    const llm: LlmProvider = {
+      label: 'flaky',
+      start() {
+        return {
+          async next() {
+            calls += 1
+            if (calls === 1) {
+              return { text: '', toolCalls: [{ id: 'i', name: 'open_invest', input: { asset_code: 'USDY', asset_issuer: issuer, amount: '50' } }] }
+            }
+            throw new Error('Model provider error: all busy')
+          },
+          addToolResults() {},
+        }
+      },
+    }
+    const result = await runAgent('buy USDY', wallet, [], undefined, undefined, llm)
+    expect(result.investIntent).toEqual({ asset: { code: 'USDY', issuer }, amount: '50' })
+    expect(result.response).toMatch(/Earn screen/)
   })
 
   it('refuses a swap between unsupported or identical assets, and a malformed amount', async () => {
