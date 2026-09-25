@@ -108,14 +108,11 @@ jobs:
             # cold-start assertion before it reaches anything it meant to test.
             # The flows also dismiss the offline screen defensively, so a failure
             # to validate here degrades rather than blocks.
-            for i in $(seq 1 30); do
-              if adb shell dumpsys connectivity | grep -q "VALIDATED"; then
-                echo "Emulator network validated"
-                break
-              fi
-              echo "Waiting for emulator network ($i/30)"
-              sleep 5
-            done
+            #
+            # Kept on one line: the emulator runner hands this whole block to a
+            # single `sh -c`, and a multi-line `for ... done` there trips dash
+            # with "Syntax error: end of file unexpected (expecting done)".
+            for i in $(seq 1 30); do if adb shell dumpsys connectivity | grep -q "VALIDATED"; then echo "Emulator network validated"; break; fi; echo "Waiting for emulator network ($i/30)"; sleep 5; done
 
             maestro test .maestro --format junit --output maestro-report.xml
 
