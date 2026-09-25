@@ -47,3 +47,11 @@ updates:
     open-pull-requests-limit: 5
     assignees:
       - "Miracle656"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    assignees:
+      - "Miracle656"
