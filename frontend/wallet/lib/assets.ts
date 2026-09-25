@@ -94,3 +94,44 @@ export function isRegisteredIssuer(code: string, issuer: string, network: 'mainn
   return asset.issuer === issuer
 }
 
+export interface HorizonIssuerFlags {
+  auth_required?: boolean
+  auth_revocable?: boolean
+  auth_clawback_enabled?: boolean
+  auth_immutable?: boolean
+}
+
+export function getAssetControlDisclosure(flags?: HorizonIssuerFlags | null): string | null {
+  if (!flags) return null
+  if (flags.auth_revocable && flags.auth_clawback_enabled) {
+    return 'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.'
+  }
+  if (flags.auth_clawback_enabled) {
+    return 'The issuer can take this balance back, and this is a property of the asset, not of Veil.'
+  }
+  if (flags.auth_revocable) {
+    return 'The issuer can freeze this balance, and this is a property of the asset, not of Veil.'
+  }
+  return null
+}
+
+export async function fetchIssuerFlags(
+  server: { loadAccount: (id: string) => Promise<any> },
+  issuer: string,
+): Promise<HorizonIssuerFlags | null> {
+  try {
+    const account = await server.loadAccount(issuer)
+    return (account?.flags as HorizonIssuerFlags) ?? null
+  } catch {
+    return null
+  }
+}
+
+export async function fetchAssetDisclosure(
+  server: { loadAccount: (id: string) => Promise<any> },
+  issuer: string,
+): Promise<string | null> {
+  const flags = await fetchIssuerFlags(server, issuer)
+  return getAssetControlDisclosure(flags)
+}
+
