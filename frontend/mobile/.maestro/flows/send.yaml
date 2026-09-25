@@ -9,8 +9,9 @@ env:
 ---
 # Ports the send half of the web happy path (frontend/wallet/e2e/happy-path.spec.ts)
 # plus its recipient-validation case. Signing and submission are not asserted —
-# the screen does not own them yet — so what this protects is the form, its
-# validation, and the prefill contract that deep links and SEP-7 requests depend on.
+# the slide-to-confirm fires a passkey ceremony no emulator can answer — so
+# what this protects is the form, its validation, and the prefill contract that
+# deep links and SEP-7 requests depend on.
 - runFlow: ../subflows/launch-fresh.yaml
 
 - openLink: "veil://send"
@@ -40,10 +41,13 @@ env:
 
 - assertVisible: ${RECIPIENT}
 - assertVisible: ${AMOUNT}
-# Review only enables once the address parses and the amount is positive.
+# Once the address parses and the amount is positive the disabled
+# `send-submit` plate is replaced by the slide-to-confirm gesture — the
+# affordance itself only exists in the submittable state.
 - assertVisible:
+    id: "slide-to-confirm"
+- assertNotVisible:
     id: "send-submit"
-    enabled: true
 
 # Prefill from a payment request. The app is stopped first so this exercises the
 # cold-start path into the send form; deep-link.yaml covers the warm resume.
