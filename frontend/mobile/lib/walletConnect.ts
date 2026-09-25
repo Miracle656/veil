@@ -508,7 +508,7 @@ async function initClient(): Promise<IWalletKit> {
   notifySessions();
 
   const client = await WalletKit.init({
-    core: new Core({ projectId }) as any,
+    core: new Core({ projectId }),
     metadata: {
       name: 'Veil Wallet',
       description: 'Passkey-powered Stellar wallet.',
