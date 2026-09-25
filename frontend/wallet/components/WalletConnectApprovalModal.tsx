@@ -9,6 +9,7 @@ import {
   handleSignXdrRequest,
 } from '@/lib/walletConnect'
 import { getNetwork } from '@/lib/network'
+import { OriginDisplay } from './OriginDisplay'
 
 type ParsedRequestDetails = {
   operationType: 'payment' | 'contract' | 'unknown'
@@ -116,6 +117,7 @@ export function WalletConnectApprovalModal() {
 
   const dappName = dappMetadata?.name || 'Unknown dApp'
   const dappIcon = dappMetadata?.icons?.[0]
+  const dappUrl = dappMetadata?.url || ''
 
   const closeModal = useCallback(() => {
     setIsOpen(false)
@@ -222,6 +224,10 @@ export function WalletConnectApprovalModal() {
               </p>
             </div>
           </div>
+          
+          {dappUrl && (
+            <OriginDisplay url={dappUrl} />
+          )}
         </div>
 
         <div className="card-md" style={{ marginBottom: '1rem' }}>
