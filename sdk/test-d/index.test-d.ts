@@ -3,6 +3,8 @@ import type {
     WalletConfig,
     WebAuthnSignature,
     AuthenticatorAttachment,
+    RegisterOptions,
+    LoginOptions,
     RegisterResult,
     DeployResult,
     AddSignerResult,
@@ -10,7 +12,12 @@ import type {
     SignerInfo,
     InitiateRecoveryResult,
     StorageAdapter,
+    WalletState,
+    WalletStateListener,
+    InvisibleWalletActions,
     InvisibleWallet,
+    CounterfactualConfig,
+    CounterfactualAddress,
 } from 'invisible-wallet-sdk';
 import {
     RecoveryTimelockActive,
@@ -20,6 +27,54 @@ import {
 import type { OutboxStatus, OutboxEntry } from 'invisible-wallet-sdk';
 import type { Sep7MemoType, Sep7PayRequest } from 'invisible-wallet-sdk';
 import type { SignedMessage } from 'invisible-wallet-sdk';
+
+// ── WalletState ───────────────────────────────────────────────────────────────
+
+declare const walletState: WalletState;
+expectType<string | null>(walletState.address);
+expectType<boolean>(walletState.isDeployed);
+expectType<boolean>(walletState.isPending);
+expectType<string | null>(walletState.error);
+
+// ── WalletStateListener ───────────────────────────────────────────────────────
+
+const listener: WalletStateListener = (state) => {
+  expectType<string | null>(state.address);
+};
+expectAssignable<(state: WalletState) => void>(listener);
+
+// ── RegisterOptions ───────────────────────────────────────────────────────────
+
+declare const registerOptions: RegisterOptions;
+expectType<AuthenticatorAttachment | undefined>(registerOptions.authenticatorAttachment);
+expectAssignable<RegisterOptions>({ authenticatorAttachment: 'platform' });
+expectAssignable<RegisterOptions>({ authenticatorAttachment: 'cross-platform' });
+expectAssignable<RegisterOptions>({});
+
+// ── LoginOptions ──────────────────────────────────────────────────────────────
+
+declare const loginOptions: LoginOptions;
+expectType<string | undefined>(loginOptions.credentialId);
+expectType<string | undefined>(loginOptions.walletAddress);
+expectAssignable<LoginOptions>({ credentialId: 'abc' });
+expectAssignable<LoginOptions>({ walletAddress: 'C...' });
+
+// ── InvisibleWalletActions ────────────────────────────────────────────────────
+
+declare const actions: InvisibleWalletActions;
+expectType<(username?: string, options?: RegisterOptions) => Promise<RegisterResult>>(actions.register);
+expectType<(options?: LoginOptions) => Promise<{ walletAddress: string } | null>>(actions.login);
+
+// ── CounterfactualAddress / CounterfactualConfig ──────────────────────────────
+
+declare const counterfactual: CounterfactualConfig;
+expectType<string>(counterfactual.factoryAddress);
+expectType<string>(counterfactual.networkPassphrase);
+
+declare const derived: CounterfactualAddress;
+expectType<string>(derived.address);
+expectType<string>(derived.publicKeyHex);
+expectType<number>(derived.derivedAt);
 
 // ── WalletConfig ──────────────────────────────────────────────────────────────
 
