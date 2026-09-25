@@ -4,9 +4,12 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import uniffi.spp_native.ProveOutcome
 import uniffi.spp_native.ProveRequest
 import uniffi.spp_native.SyncCheckpoint
@@ -40,11 +43,19 @@ class SppNativeModule : Module() {
         Executors.newSingleThreadExecutor { r -> Thread(r, "spp-prover") }.asCoroutineDispatcher()
     }
 
+    // The Promise-body AsyncFunction overload runs its lambda as an ordinary
+    // function, so the blocking prove/verify/syncTo call cannot use
+    // withContext directly; it is launched onto the prover dispatcher through
+    // this scope instead, which keeps the work off the JS thread.
+    private val proverScope: CoroutineScope by lazy {
+        CoroutineScope(proverDispatcher + SupervisorJob())
+    }
+
     override fun definition() = ModuleDefinition {
         Name(SPP_MODULE_NAME)
 
         AsyncFunction("prove") { request: Map<String, Any?>, promise: Promise ->
-            withContext(proverDispatcher) {
+            proverScope.launch {
                 runCatching { prove(request.toRustProveRequest()) }
                     .onSuccess { outcome -> outcome.resolveOrReject(promise) }
                     .onFailure { promise.reject(E_PROVER, it.message ?: "prover failure", it) }
@@ -52,7 +63,7 @@ class SppNativeModule : Module() {
         }
 
         AsyncFunction("verify") { proof: ByteArray, publicInputs: ByteArray, promise: Promise ->
-            withContext(proverDispatcher) {
+            proverScope.launch {
                 runCatching { verify(proof, publicInputs) }
                     .onSuccess { outcome -> outcome.resolveOrReject(promise) }
                     .onFailure { promise.reject(E_PROVER, it.message ?: "verify failure", it) }
@@ -64,7 +75,7 @@ class SppNativeModule : Module() {
                 toHeight: Long,
                 leaves: List<ByteArray>,
                 promise: Promise ->
-            withContext(proverDispatcher) {
+            proverScope.launch {
                 runCatching { syncTo(checkpoint.toRustCheckpoint(), toHeight.toULong(), leaves) }
                     .onSuccess { outcome -> outcome.resolveOrReject(promise) }
                     .onFailure { promise.reject(E_PROVER, it.message ?: "sync failure", it) }
@@ -72,6 +83,7 @@ class SppNativeModule : Module() {
         }
 
         OnDestroy {
+            proverScope.cancel()
             proverDispatcher.close()
         }
     }
