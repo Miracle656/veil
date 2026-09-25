@@ -24,6 +24,7 @@ import { sendPayment } from '../lib/sendPayment';
 import { truncateAddress } from '../components/ui/AddressChip';
 import { getWalletAddress } from '../lib/walletStore';
 import { loadHoldings, unitPrice, type Holding } from '../lib/holdings';
+import { resolvePaymentAsset } from '../lib/deepLinks';
 import { ChevronDownIcon, ScanIcon, UsersIcon } from '../components/icons';
 import { TokenIcon } from '../components/TokenIcon';
 import { SuccessAnimation } from '../components/SuccessAnimation';
@@ -58,8 +59,8 @@ export default function SendScreen() {
   const { wallet } = useWallet();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  // Deep links land here prefilled: `to`, `amount`, `asset`, `memo`.
-  const params = useLocalSearchParams<{ to?: string; amount?: string; asset?: string; memo?: string }>();
+  // Deep links land here prefilled: `to`, `amount`, `asset`, `asset_issuer`, `memo`.
+  const params = useLocalSearchParams<{ to?: string; amount?: string; asset?: string; asset_issuer?: string; memo?: string }>();
 
   const [recipient, setRecipient] = useState(() => firstValue(params.to));
   const [amount, setAmount] = useState(() => firstValue(params.amount));
@@ -111,14 +112,33 @@ export default function SendScreen() {
   }, []);
 
   const keyOf = (h: Holding) => `${h.code}:${h.issuer ?? 'native'}`;
-  const preferred = firstValue(params.asset).toUpperCase();
-  const selected =
-    holdings.find((h) => keyOf(h) === selectedKey) ??
-    holdings.find((h) => h.code === preferred) ??
-    holdings.find((h) => h.native) ??
-    holdings[0] ??
-    null;
-  const assetCode = selected?.code || firstValue(params.asset) || 'XLM';
+  const requestedAsset = firstValue(params.asset);
+  const requestedIssuer = firstValue(params.asset_issuer);
+
+  const assetResolution = useMemo(() => {
+    return resolvePaymentAsset(
+      { asset: requestedAsset, asset_issuer: requestedIssuer },
+      holdings,
+    );
+  }, [requestedAsset, requestedIssuer, holdings]);
+
+  const manuallySelected = selectedKey ? holdings.find((h) => keyOf(h) === selectedKey) : null;
+
+  let selected: Holding | null = null;
+  let assetResolutionError: string | null = null;
+
+  if (manuallySelected) {
+    selected = manuallySelected;
+  } else if (assetResolution.status === 'resolved') {
+    selected = holdings.find((h) => h.code.toUpperCase() === assetResolution.asset.code.toUpperCase() && (h.issuer ?? null) === (assetResolution.asset.issuer ?? null)) ?? null;
+  } else if (assetResolution.status === 'unresolved') {
+    selected = null;
+    assetResolutionError = assetResolution.error;
+  } else {
+    selected = holdings.find((h) => h.native) ?? holdings[0] ?? null;
+  }
+
+  const assetCode = selected?.code || requestedAsset || 'XLM';
 
   const trimmed = recipient.trim();
   const recipientValid = isValidDestination(trimmed);
@@ -196,7 +216,7 @@ export default function SendScreen() {
         : classicHeld
       : null;
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
-  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient;
+  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient && !!selected && !assetResolutionError;
 
   const up = selected ? unitPrice(selected) : null;
   const fiatOfAmount = up !== null && isFinite(amtNum) && amtNum > 0 ? format(amtNum * up) : null;
@@ -358,12 +378,15 @@ export default function SendScreen() {
             <View>
               <Text style={styles.assetCode}>{assetCode}</Text>
               <Text style={styles.assetSub}>
-                {selected ? `${mask(fmtAmount(selected.balance))} available` : 'Loading…'}
+                {selected ? `${mask(fmtAmount(selected.balance))} available` : assetResolutionError ? 'Select an asset' : 'Loading…'}
               </Text>
             </View>
           </View>
           <ChevronDownIcon size={18} color={colors.textFaint} />
         </Pressable>
+        {assetResolutionError && (
+          <Text style={styles.errorBanner}>{assetResolutionError}</Text>
+        )}
 
         {/* Source — shown whenever the contract holds some of this asset */}
         {contractAddr && held > 0 && (
@@ -505,6 +528,13 @@ export default function SendScreen() {
           <Text style={styles.feeValue}>Sponsored</Text>
         </View>
 
+        {memo ? (
+          <View style={styles.feeRow}>
+            <Text style={styles.feeLabel}>Memo</Text>
+            <Text style={styles.feeValue}>{memo}</Text>
+          </View>
+        ) : null}
+
         {step === 'error' && error && <Text style={styles.errorBanner}>{error}</Text>}
         {nonNative && (
           <Text style={styles.note}>
@@ -524,7 +554,7 @@ export default function SendScreen() {
         ) : (
           <View style={[styles.cta, styles.disabled]} testID="send-submit">
             <Text style={styles.ctaText}>
-              {insufficient ? 'Not enough balance' : step === 'error' ? 'Try again' : 'Enter details to send'}
+              {assetResolutionError ? 'Select an asset' : insufficient ? 'Not enough balance' : step === 'error' ? 'Try again' : 'Enter details to send'}
             </Text>
           </View>
         )}
@@ -557,7 +587,25 @@ export default function SendScreen() {
         </Pressable>
       </Modal>
 
-      <QrScanner visible={scannerOpen} onScan={(address) => { setRecipient(address); setScannerOpen(false); }} onClose={() => setScannerOpen(false)} />
+      <QrScanner
+        visible={scannerOpen}
+        onScan={(address, details) => {
+          setRecipient(address);
+          if (details?.memo) setMemo(details.memo);
+          if (details?.amount) setAmount(details.amount);
+          if (details?.assetCode) {
+            const res = resolvePaymentAsset(
+              { asset: details.assetCode, asset_issuer: details.assetIssuer },
+              holdings,
+            );
+            if (res.status === 'resolved') {
+              setSelectedKey(keyOf(res.asset as Holding));
+            }
+          }
+          setScannerOpen(false);
+        }}
+        onClose={() => setScannerOpen(false)}
+      />
       <ContactPicker visible={pickerOpen} onSelect={handleSelectContact} onClose={() => setPickerOpen(false)} />
     </SafeAreaView>
   );
