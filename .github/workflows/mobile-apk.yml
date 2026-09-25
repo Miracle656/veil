@@ -66,7 +66,7 @@ jobs:
 
       # Plain npm, not --legacy-peer-deps: the mobile lockfile is kept that way.
       - name: Install app dependencies
-        run: npm ci || npm install
+        run: npm ci || { echo "::warning::npm ci failed; falling back to npm install"; npm install; }
 
       - name: Install EAS CLI
         run: npm install --global eas-cli@latest
