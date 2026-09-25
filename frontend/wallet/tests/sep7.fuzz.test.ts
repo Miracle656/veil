@@ -2,11 +2,22 @@ import * as fc from 'fast-check'
 import { parseSep7Uri, parseQrValue } from '../lib/sep7'
 
 describe('sep7 fuzz', () => {
+  const tryParse = (input: string) => {
+    try {
+      parseSep7Uri(input)
+      parseQrValue(input)
+    } catch (e: any) {
+      if (e.message && e.message.startsWith('Unknown memo_type:')) {
+        return
+      }
+      throw e
+    }
+  }
+
   it('never throws on arbitrary unicode strings (10k runs)', () => {
     fc.assert(
       fc.property(fc.string(), (input) => {
-        expect(() => parseSep7Uri(input)).not.toThrow()
-        expect(() => parseQrValue(input)).not.toThrow()
+        expect(() => tryParse(input)).not.toThrow()
       }),
       { numRuns: 10000 },
     )
@@ -18,8 +29,7 @@ describe('sep7 fuzz', () => {
     )
     fc.assert(
       fc.property(fc.array(uriChars, { minLength: 0, maxLength: 200 }).map(cs => cs.join('')), (input) => {
-        expect(() => parseSep7Uri(input)).not.toThrow()
-        expect(() => parseQrValue(input)).not.toThrow()
+        expect(() => tryParse(input)).not.toThrow()
       }),
       { numRuns: 10000 },
     )
@@ -33,8 +43,7 @@ describe('sep7 fuzz', () => {
       fc.property(
         fc.array(specialChars, { minLength: 0, maxLength: 200 }).map(cs => cs.join('')),
         (input) => {
-          expect(() => parseSep7Uri(input)).not.toThrow()
-          expect(() => parseQrValue(input)).not.toThrow()
+          expect(() => tryParse(input)).not.toThrow()
         },
       ),
       { numRuns: 10000 },
@@ -112,5 +121,18 @@ describe('sep7 known-good examples', () => {
   it('returns null for non-stellar URIs', () => {
     expect(parseSep7Uri('https://example.com')).toBeNull()
     expect(parseSep7Uri('bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa')).toBeNull()
+  })
+
+  it('parses valid memo_type', () => {
+    expect(parseSep7Uri(`web+stellar:pay?destination=${PUBLIC_KEY}&memo=123&memo_type=MEMO_ID`)?.memoType).toBe('MEMO_ID')
+    expect(parseSep7Uri(`web+stellar:pay?destination=${PUBLIC_KEY}&memo=123&memo_type=memo_id`)?.memoType).toBe('MEMO_ID')
+    expect(parseSep7Uri(`web+stellar:pay?destination=${PUBLIC_KEY}&memo=abc&memo_type=MEMO_TEXT`)?.memoType).toBe('MEMO_TEXT')
+    expect(parseSep7Uri(`web+stellar:pay?destination=${PUBLIC_KEY}&memo=abc&memo_type=MEMO_HASH`)?.memoType).toBe('MEMO_HASH')
+    expect(parseSep7Uri(`web+stellar:pay?destination=${PUBLIC_KEY}&memo=abc&memo_type=MEMO_RETURN`)?.memoType).toBe('MEMO_RETURN')
+  })
+
+  it('throws for unknown memo_type', () => {
+    expect(() => parseSep7Uri(`web+stellar:pay?destination=${PUBLIC_KEY}&memo=123&memo_type=MEMO_UNKNOWN`)).toThrow('Unknown memo_type: MEMO_UNKNOWN')
+    expect(() => parseSep7Uri(`web+stellar:pay?destination=${PUBLIC_KEY}&memo=123&memo_type=FOO`)).toThrow('Unknown memo_type: FOO')
   })
 })
