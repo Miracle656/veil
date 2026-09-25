@@ -1,19 +1,22 @@
-# GitGuardian configuration
-# Allowlist for testnet public values (NEXT_PUBLIC_* are browser-exposed constants)
-
-matches:
-  - name: Testnet Contract ID
-    match: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
-    reason: Public testnet contract address (NEXT_PUBLIC_FACTORY_CONTRACT_ID)
-    ignore_on:
-      - path: .github/workflows/ci.yml
-  - name: Pinned SPP testnet contract IDs
-    match: '[CG][A-Z2-7]{55}'
-    reason: >-
-      Public testnet Soroban contract addresses pinned from
-      NethermindEth/stellar-private-payments deployments.json at commit
-      91ba67d659cb50a66ecba7ba42e27f8e686117f4 (V131 privacy config). They are
-      deployed contracts, not credentials, and cannot be rotated.
-    ignore_on:
-      - path: frontend/wallet/lib/privacy/**
-      - path: frontend/mobile/lib/privacy/**
+# GitGuardian allowlist (.gitguardian.yaml schema, version 2)
+#
+# These paths hold public, non-credential values that the secret scanner flags
+# as false positives:
+#   - Stellar Soroban contract IDs pinned from NethermindEth/stellar-private-
+#     payments deployments.json (commit 91ba67d659cb50a66ecba7ba42e27f8e686117f4,
+#     V131 privacy config). Deployed testnet contracts, not secrets; they cannot
+#     be rotated and MUST appear verbatim in the pin tests that assert config
+#     drift.
+#   - The well-known public Stellar network passphrase (Networks.PUBLIC /
+#     Networks.TESTNET), a published constant.
+#
+# `ignored_paths` is the recognized allowlist key. The previous file used a
+# policy-style `matches:`/`ignore_on:` body under this allowlist filename, which
+# the scanner does not parse — so nothing was ever suppressed.
+version: 2
+secret_scans:
+  ignored_paths:
+    - examples/sveltekit/src/lib/network.ts
+    - frontend/mobile/lib/privacy/**
+    - frontend/wallet/lib/privacy/**
+    - .github/workflows/ci.yml
