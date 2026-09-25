@@ -319,6 +319,12 @@ export default function DashboardTab() {
 
       {/* Activity feed — 3 most recent, full history on the transactions page */}
       <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Collectibles</Text>
+        <Pressable onPress={() => router.push('/nfts')} hitSlop={8} accessibilityRole="button">
+          <Text style={styles.sectionLink}>View NFTs →</Text>
+        </Pressable>
+      </View>
+      <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Activity</Text>
         <Pressable onPress={() => router.push('/transactions')} hitSlop={8} accessibilityRole="button">
           <Text style={styles.sectionLink}>See all →</Text>
