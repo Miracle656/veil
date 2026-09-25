@@ -31,6 +31,7 @@ import { VeilMark } from '@/components/ui/VeilMark'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { verifyAsset, type AssetVerification } from '@/lib/assets'
 
 const network = getNetwork()
 
@@ -40,6 +41,7 @@ export interface WalletAsset {
   code: string
   issuer: string | null
   balance: string
+  verification: AssetVerification
 }
 
 // ── Shared types ─────────────────────────────────────────────────────────────
@@ -118,6 +120,7 @@ function DashboardPageContent() {
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
+  const [showUnverified, setShowUnverified] = useState(false)
   const transactions                      = useActivityFeed()
   const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
@@ -300,7 +303,12 @@ function DashboardPageContent() {
         // All non-XLM balances (e.g. USDC from swaps)
         otherAssets = (account.balances as any[])
           .filter(b => b.asset_type !== 'native' && parseFloat(b.balance) > 0)
-          .map(b => ({ code: b.asset_code, issuer: b.asset_issuer, balance: b.balance }))
+          .map(b => ({
+            code: b.asset_code,
+            issuer: b.asset_issuer,
+            balance: b.balance,
+            verification: verifyAsset(b.asset_code, b.asset_issuer, getNetworkName()),
+          }))
 
         // Transaction history (fee-payer account)
         const paymentsPage = await horizonServer
@@ -387,7 +395,7 @@ function DashboardPageContent() {
     // ── 5. Combine and display ───────────────────────────────────────────────
     const totalXlm = (contractXlm + feePayerXlm).toFixed(7)
     const finalAssets: WalletAsset[] = [
-      { code: 'XLM', issuer: null, balance: totalXlm },
+      { code: 'XLM', issuer: null, balance: totalXlm, verification: { verified: true, impersonates: null } },
       ...otherAssets,
     ]
     cachedAssets = finalAssets
@@ -826,6 +834,7 @@ function DashboardPageContent() {
             it. The CSS for the layout was there the whole time; nothing put the
             two columns in a row. */}
         {/* ── Balance plate and earning: full width, above the columns ── */}
+          <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
           <div className="vw-balance-row">
             <div className="vw-silver">
               <div className="vw-silver__sheen" />
@@ -862,9 +871,6 @@ function DashboardPageContent() {
             </div>
           </div>
 
-        {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
-            scan stub below stands in for the V134 client until it lands. */}
-        <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.
@@ -939,7 +945,10 @@ function DashboardPageContent() {
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>
                 No assets yet. Fund this address to get started.
               </p>
-            ) : assets.map((asset) => {
+            ) : (() => {
+              const verifiedAssets = assets.filter(asset => asset.verification.verified)
+              const unverifiedAssets = assets.filter(asset => !asset.verification.verified)
+              const renderAsset = (asset: WalletAsset) => {
               const price = priceOf(asset)
               const value = price != null ? parseFloat(asset.balance) * price : null
               return (
@@ -955,6 +964,11 @@ function DashboardPageContent() {
                       <span className="vw-meta">
                         {hideAmounts ? '••••' : parseFloat(asset.balance).toFixed(4) + ' ' + asset.code}
                       </span>
+                      {asset.verification.impersonates && (
+                        <span style={{ color: '#E8A87C', fontSize: '11px' }}>
+                          Impersonates {asset.verification.impersonates.issuerName}&apos;s {asset.code}
+                        </span>
+                      )}
                     </span>
                   </span>
                   <Amount className="text-[15px] font-semibold shrink-0">
@@ -962,7 +976,21 @@ function DashboardPageContent() {
                   </Amount>
                 </Row>
               )
-            })}
+              }
+              return <>
+                {verifiedAssets.map(renderAsset)}
+                {unverifiedAssets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowUnverified(open => !open)}
+                    style={{ background: 'none', border: 0, color: 'rgba(246,247,248,0.6)', cursor: 'pointer', fontSize: '12px', padding: '12px 0', textAlign: 'left' }}
+                  >
+                    {showUnverified ? 'Hide' : 'Show'} unverified ({unverifiedAssets.length})
+                  </button>
+                )}
+                {showUnverified && unverifiedAssets.map(renderAsset)}
+              </>
+            })()}
           </div>
         </div>
         </div>

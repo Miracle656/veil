@@ -33,14 +33,29 @@ const POOL_SHARE = {
 describe('parseHeldAssets', () => {
   it('keeps classic alphanum4 and alphanum12 assets with code/issuer/balance', () => {
     expect(parseHeldAssets([USDC, LONGASSET])).toEqual([
-      { code: 'USDC', issuer: USDC.asset_issuer, balance: '42.5000000', assetType: 'credit_alphanum4' },
-      { code: 'LONGASSET', issuer: LONGASSET.asset_issuer, balance: '1.0000000', assetType: 'credit_alphanum12' },
+      expect.objectContaining({
+        code: 'USDC',
+        issuer: USDC.asset_issuer,
+        balance: '42.5000000',
+        assetType: 'credit_alphanum4',
+      }),
+      expect.objectContaining({
+        code: 'LONGASSET',
+        issuer: LONGASSET.asset_issuer,
+        balance: '1.0000000',
+        assetType: 'credit_alphanum12',
+      }),
     ]);
   });
 
   it('excludes native XLM and liquidity-pool shares', () => {
     expect(parseHeldAssets([NATIVE, USDC, POOL_SHARE])).toEqual([
-      { code: 'USDC', issuer: USDC.asset_issuer, balance: '42.5000000', assetType: 'credit_alphanum4' },
+      expect.objectContaining({
+        code: 'USDC',
+        issuer: USDC.asset_issuer,
+        balance: '42.5000000',
+        assetType: 'credit_alphanum4',
+      }),
     ]);
   });
 

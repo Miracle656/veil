@@ -46,7 +46,7 @@ export default function AssetsScreen() {
         assets.map(async (asset) => {
           const key = `${asset.code}:${asset.issuer}`;
           prices[key] = await fetchPrice(asset.code, asset.issuer);
-        }),
+        })
       );
 
       setState({ kind: 'ready', assets, prices });
@@ -73,11 +73,11 @@ export default function AssetsScreen() {
     } catch (err) {
       if (err instanceof NotEnoughXlm) {
         setUsdyActionMessage(
-          `This account holds ${err.have} XLM. Adding a USDY trustline needs about 0.6 XLM of refundable reserve.`,
+          `This account holds ${err.have} XLM. Adding a USDY trustline needs about 0.6 XLM of refundable reserve.`
         );
       } else if (err instanceof AccountNotFunded) {
         setUsdyActionMessage(
-          'This account does not exist on the network yet, so it cannot add a trustline.',
+          'This account does not exist on the network yet, so it cannot add a trustline.'
         );
       } else {
         setUsdyActionMessage(errorMessage(err));
@@ -90,7 +90,7 @@ export default function AssetsScreen() {
   const hasUsdy = useMemo(() => {
     if (state.kind !== 'ready') return false;
     return state.assets.some(
-      (a) => a.code.toUpperCase() === 'USDY' && a.issuer === USDY_MAINNET_ISSUER,
+      (a) => a.code.toUpperCase() === 'USDY' && a.issuer === USDY_MAINNET_ISSUER
     );
   }, [state]);
 
@@ -138,7 +138,9 @@ export default function AssetsScreen() {
 
       {usdyActionMessage && <Text style={styles.actionNotice}>{usdyActionMessage}</Text>}
 
-      {state.kind === 'loading' && <ActivityIndicator color={colors.accent} style={styles.spinner} />}
+      {state.kind === 'loading' && (
+        <ActivityIndicator color={colors.accent} style={styles.spinner} />
+      )}
 
       {state.kind === 'no-wallet' && (
         <Text style={styles.muted}>No wallet found on this device yet.</Text>
@@ -153,6 +155,7 @@ export default function AssetsScreen() {
           </Text>
         ) : (
           <View style={styles.list}>
+            {/* Asset grouping is currently implemented on the dashboard; this detail screen remains out of scope for this PR. */}
             {state.assets.map((asset) => {
               const key = `${asset.code}:${asset.issuer}`;
               const price = state.prices[key] ?? null;
