@@ -21,6 +21,7 @@ import { sendAssetFromContract, getFeePayerSpendableXlm, getFeePayerXlm, type Fe
 import { useWallet } from '../components/WalletProvider';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
 import { sendPayment } from '../lib/sendPayment';
+import { validateMemoText } from '../lib/memo';
 import { truncateAddress } from '../components/ui/AddressChip';
 import { getWalletAddress } from '../lib/walletStore';
 import { loadHoldings, unitPrice, type Holding } from '../lib/holdings';
@@ -196,7 +197,8 @@ export default function SendScreen() {
         : classicHeld
       : null;
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
-  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient;
+  const memoError = validateMemoText(memo);
+  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient && !memoError;
 
   const up = selected ? unitPrice(selected) : null;
   const fiatOfAmount = up !== null && isFinite(amtNum) && amtNum > 0 ? format(amtNum * up) : null;
@@ -217,6 +219,14 @@ export default function SendScreen() {
 
   const handleSend = async () => {
     if (!canSubmit) return;
+    if (memo) {
+      const memoErr = validateMemoText(memo);
+      if (memoErr) {
+        setError(memoErr);
+        setStep('error');
+        return;
+      }
+    }
     setError(null);
     try {
       setStep('authorizing');
@@ -498,6 +508,11 @@ export default function SendScreen() {
             editable={editable}
           />
         </View>
+        {memoError && (
+          <Text style={styles.errorText} testID="send-memo-error">
+            {memoError}
+          </Text>
+        )}
 
         {/* Fee */}
         <View style={styles.feeRow}>
