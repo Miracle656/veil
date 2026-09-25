@@ -2,7 +2,7 @@
 /**
  * Fast, pure offline asset registry verification (#794).
  *
- * Runs on every PR / push path with zero network calls:
+ * Runs on every PR / push path with zero external dependencies and zero network calls:
  * - Validates issuer StrKey format (Ed25519 public key)
  * - Dynamically derives SAC contract IDs and asserts equality
  * - Verifies 100% parity between web and mobile asset registries
@@ -11,20 +11,114 @@
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
 
-// Dynamic import of stellar-sdk from wallet node_modules
-let StrKey, Asset, Networks
-try {
-  const sdk = await import('../frontend/wallet/node_modules/@stellar/stellar-sdk/lib/index.js')
-  StrKey = sdk.StrKey
-  Asset = sdk.Asset
-  Networks = sdk.Networks
-} catch (err) {
-  console.error(`[ERROR] Failed to load @stellar/stellar-sdk: ${err.message}`)
-  process.exitCode = 1
+const RFC4648_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+
+export function decodeBase32(str) {
+  let bits = 0
+  let value = 0
+  const output = []
+  for (let i = 0; i < str.length; i++) {
+    const idx = RFC4648_ALPHABET.indexOf(str[i])
+    if (idx === -1) throw new Error(`Invalid Base32 character: ${str[i]}`)
+    value = (value << 5) | idx
+    bits += 5
+    if (bits >= 8) {
+      output.push((value >>> (bits - 8)) & 255)
+      bits -= 8
+    }
+  }
+  return Buffer.from(output)
+}
+
+export function encodeBase32(buffer) {
+  let bits = 0
+  let value = 0
+  let output = ''
+  for (let i = 0; i < buffer.length; i++) {
+    value = (value << 8) | buffer[i]
+    bits += 8
+    while (bits >= 5) {
+      output += RFC4648_ALPHABET[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+  if (bits > 0) {
+    output += RFC4648_ALPHABET[(value << (5 - bits)) & 31]
+  }
+  return output
+}
+
+export function crc16xmodem(buf) {
+  let crc = 0x0000
+  for (let i = 0; i < buf.length; i++) {
+    let byte = buf[i]
+    let code = (crc >>> 8) & 0xff
+    code ^= byte & 0xff
+    code ^= code >>> 4
+    crc = (crc << 8) & 0xffff
+    crc ^= code
+    code = (code << 5) & 0xffff
+    crc ^= code
+    code = (code << 7) & 0xffff
+    crc ^= code
+  }
+  return crc
+}
+
+export function isValidEd25519PublicKey(str) {
+  if (typeof str !== 'string' || str.length !== 56 || str[0] !== 'G') return false
+  try {
+    const decoded = decodeBase32(str)
+    if (decoded.length !== 35) return false
+    if (decoded[0] !== 6 << 3) return false // version byte 48 = 'G'
+    const payload = decoded.subarray(0, 33)
+    const checksum = decoded.readUInt16LE(33)
+    return crc16xmodem(payload) === checksum
+  } catch {
+    return false
+  }
+}
+
+export function encodeContractId(hash32) {
+  const version = 2 << 3 // version byte 16 = 'C'
+  const payload = Buffer.concat([Buffer.from([version]), hash32])
+  const crc = crc16xmodem(payload)
+  const checksumBuf = Buffer.alloc(2)
+  checksumBuf.writeUInt16LE(crc, 0)
+  return encodeBase32(Buffer.concat([payload, checksumBuf]))
+}
+
+export function deriveClassicAssetSac(code, issuer, networkPassphrase = 'Public Global Stellar Network ; September 2015') {
+  if (!isValidEd25519PublicKey(issuer)) {
+    throw new Error(`Invalid issuer address: ${issuer}`)
+  }
+  const decodedIssuer = decodeBase32(issuer)
+  const issuerRawKey = decodedIssuer.subarray(1, 33)
+
+  const networkId = createHash('sha256').update(networkPassphrase).digest()
+  const isAlpha4 = code.length <= 4
+  const assetType = isAlpha4 ? 1 : 2
+  const codeLen = isAlpha4 ? 4 : 12
+  const codeBuf = Buffer.alloc(codeLen)
+  codeBuf.write(code, 'ascii')
+
+  const parts = [
+    Buffer.from([0, 0, 0, 8]), // ENVELOPE_TYPE_CONTRACT_ID
+    networkId,
+    Buffer.from([0, 0, 0, 1]), // CONTRACT_ID_PREIMAGE_FROM_ASSET
+    Buffer.from([0, 0, 0, assetType]),
+    codeBuf,
+    Buffer.from([0, 0, 0, 0]), // PUBLIC_KEY_TYPE_ED25519
+    issuerRawKey,
+  ]
+  const fullPreimage = Buffer.concat(parts)
+  const contractHash = createHash('sha256').update(fullPreimage).digest()
+  return encodeContractId(contractHash)
 }
 
 export function parseAssetRegistryFromSource(filePath) {
@@ -116,13 +210,13 @@ export function verifyOfflineRegistries(walletAssets, mobileAssets) {
       continue
     }
 
-    if (StrKey && !StrKey.isValidEd25519PublicKey(asset.issuer)) {
+    if (!isValidEd25519PublicKey(asset.issuer)) {
       errors.push(`Asset "${key}" has invalid Ed25519 public key StrKey: ${asset.issuer}`)
     }
 
-    if (asset.sacContractId && Asset && Networks) {
+    if (asset.sacContractId) {
       try {
-        const derivedSac = new Asset(asset.code, asset.issuer).contractId(Networks.PUBLIC)
+        const derivedSac = deriveClassicAssetSac(asset.code, asset.issuer)
         if (derivedSac !== asset.sacContractId) {
           errors.push(
             `Asset "${key}" SAC contract ID mismatch: registered="${asset.sacContractId}" vs derived="${derivedSac}"`,
