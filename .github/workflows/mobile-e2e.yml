@@ -19,7 +19,7 @@ jobs:
   maestro-android:
     name: Maestro — Android emulator
     runs-on: ubuntu-latest
-    # Prebuild plus a Gradle debug build dominates the runtime; the flows
+    # Prebuild plus a Gradle release build dominates the runtime; the flows
     # themselves take a few minutes.
     timeout-minutes: 60
 
@@ -72,9 +72,17 @@ jobs:
       - name: Generate the Android project
         run: npx expo prebuild --platform android --no-install
 
-      - name: Build debug APK
+      # A debug APK is an expo-dev-client build, so it boots to the "Development
+      # Build" launcher waiting for a Metro server instead of running the app —
+      # every flow then fails on the cold-start `welcome-screen` assertion before
+      # it starts. Release builds bundle the JS and skip the launcher (it only
+      # auto-shows in debuggable builds), so the app comes up on its own UI, and
+      # deep links resolve because the manifest intent filters are live rather
+      # than behind the dev client. The template signs release with the debug
+      # keystore, so the result is still installable with `adb install`.
+      - name: Build release APK
         working-directory: frontend/mobile/android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Install Maestro
         run: |
@@ -100,7 +108,7 @@ jobs:
           disable-animations: true
           working-directory: frontend/mobile
           script: |
-            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            adb install -r android/app/build/outputs/apk/release/app-release.apk
 
             # The app pushes /offline whenever NetInfo reports no usable
             # connection, and a freshly booted emulator often has not finished
