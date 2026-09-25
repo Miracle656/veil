@@ -36,6 +36,7 @@ export type {
 } from './sep7';
 export * from './webauthn/attestation';
 export * from './recovery/sep30';
+export * from './recovery/signerVerification';
 export * from './crypto/prf';
 export * from './signMessage';
 export * from './bulkPayout';
