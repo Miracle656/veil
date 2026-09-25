@@ -12,7 +12,7 @@ import { getSignerSecret, getWalletAddress, setPasskeyCredential, setPasskeyId, 
 import { hexToUint8Array } from './webauthn';
 
 /** Same PRF salt the fee-payer was derived with at creation (SDK constant). */
-const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
 
 // SDK storage keys — mirrored so the SDK's login()/signAuthEntry() see the
 // recovered wallet exactly as if register() had run on this device.
@@ -220,8 +220,11 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
  * An assertion never reveals its public key, so possession is proven the other
  * way round: the signature is checked against every signer the wallet holds,
  * and a match means the asserting passkey owns that signer's private key.
+ *
+ * Exported so backup-file restore (V192 / #765) runs the same check V191
+ * introduces rather than inventing a second verification rule.
  */
-function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
+export function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
   // WebAuthn signs SHA-256(authData ‖ SHA-256(clientDataJSON)).
   const clientDataHash = sha256(picked.clientDataJSON);
   const verificationData = new Uint8Array(picked.authData.length + clientDataHash.length);

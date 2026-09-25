@@ -20,6 +20,8 @@ import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
 import { getWalletAddress } from '../../lib/walletStore';
 import ActivityFeed from '../../components/ActivityFeed';
+import { FeePayerBanner } from '../../components/FeePayerBanner';
+import { checkFeePayerFunding, type FeePayerFundingState } from '../../lib/fees';
 import { useInitActivityFeed, hydrateActivityFeed, type TxRecord } from '../../lib/activityFeed';
 import { loadHorizonActivity } from '../../lib/horizonActivity';
 import { usePolling } from '../../hooks/usePolling';
@@ -92,6 +94,15 @@ export default function DashboardTab() {
   // Probed once per mount rather than per render: a 503 here means "no offramp
   // on this deployment", which is also what a sleeping backend looks like.
   const [offrampReady, setOfframpReady] = useState(false);
+  // Fee-payer funding (V193 / #766): a wallet recovered without PRF gets a
+  // fresh random fee-payer holding zero XLM. The balance loads, the passkey
+  // signs, and then every submission fails — so the dashboard names the gap
+  // up front instead of failing at submission time with a network error.
+  const [feeFunding, setFeeFunding] = useState<FeePayerFundingState | null>(null);
+  // Which fee-payer the banner was dismissed for. Cleared once funded (or when
+  // there is nothing to show), so it reappears if the account is drained again
+  // but stays hidden while still unfunded after an explicit dismiss.
+  const [feeBannerDismissedFor, setFeeBannerDismissedFor] = useState<string | null>(null);
   const detailSheetRef = useRef<BottomSheetModal>(null);
 
   const handleSelectTx = useCallback((tx: TxRecord) => {
@@ -156,6 +167,20 @@ export default function DashboardTab() {
         // Settled, not "succeeded": a failed load must still stop the skeleton,
         // otherwise it spins forever with no way to say what went wrong.
         setActivitySettled(true);
+      }
+      // Fee-payer funding is re-checked on every refresh (mount, focus, poll,
+      // pull-to-refresh) so the banner clears without an app restart once
+      // funded. An unreachable Horizon reports `unknown` and shows nothing —
+      // a failed lookup must never read as a broken wallet.
+      try {
+        const funding = await checkFeePayerFunding();
+        setFeeFunding(funding);
+        if (funding.status !== 'missing' && funding.status !== 'underfunded') {
+          setFeeBannerDismissedFor(null);
+        }
+      } catch {
+        // Leave the last funding state in place; the banner is supplementary
+        // and must never break the balance/activity refresh around it.
       }
     },
     [],
@@ -281,6 +306,18 @@ export default function DashboardTab() {
         </Pressable>
         {walletAddress ? <WalletAddressChip contractAddress={walletAddress} /> : null}
       </View>
+
+      {(feeFunding?.status === 'missing' || feeFunding?.status === 'underfunded') &&
+      feeBannerDismissedFor !== feeFunding.feePayerAddress ? (
+        <FeePayerBanner
+          feePayerAddress={feeFunding.feePayerAddress}
+          missing={feeFunding.status === 'missing'}
+          balance={feeFunding.balance}
+          needed={feeFunding.needed}
+          shortfall={feeFunding.shortfall}
+          onDismiss={() => setFeeBannerDismissedFor(feeFunding.feePayerAddress)}
+        />
+      ) : null}
 
       <SilverBalanceCard
         balance={balance === '—' ? undefined : balance}
