@@ -75,6 +75,8 @@ export default function DashboardTab() {
   // used to show XLM only, so a wallet holding mostly USDC looked nearly empty.
   const [totalUsd, setTotalUsd] = useState<number | null>(() => lastKnown.totalUsd);
   const [breakdown, setBreakdown] = useState<string | null>(() => lastKnown.breakdown);
+  const [reservedXlm, setReservedXlm] = useState<number | null>(null);
+  const [reserveReason, setReserveReason] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Whether the Horizon activity load has finished once. On testnet the Wraith
   // feed is deliberately skipped, so `loading` below reports false immediately
@@ -117,6 +119,8 @@ export default function DashboardTab() {
         lastKnown.price = p;
         setBalance(data.xlmBalance);
         setPrice(p);
+        setReservedXlm(data.reserveXlm ?? null);
+        setReserveReason(data.reserveReason ?? null);
         setBalanceError(false);
       } catch {
         // Keep the last-known values. Only flag an error the card will show —
@@ -289,7 +293,10 @@ export default function DashboardTab() {
         error={balance === '—' && balanceError}
         totalUsd={totalUsd}
         breakdown={breakdown}
+        reservedXlm={reservedXlm}
+        reserveReason={reserveReason}
       />
+
 
       {/* Cash out is hidden unless the backend answers AND we are on mainnet.
           The Linq key lives on the backend, so without it there is no order to

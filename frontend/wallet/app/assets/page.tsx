@@ -18,6 +18,7 @@ import {
   type Trustline,
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { TRUSTLINE_RESERVE_COST_XLM, TRUSTLINE_RESERVE_EXPLANATION } from '@/lib/reserves'
 
 import { USDY_MAINNET_ISSUER, USDT0_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '@/lib/assets'
 import { fetchPrice } from '@/lib/fetchPrice'
@@ -373,13 +374,16 @@ export default function AssetsPage() {
                   <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
                     {asset.issuer}
                   </p>
+                  <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.5)', marginTop: '2px' }}>
+                    Reserve cost: 0.5 XLM (locked, not spent — released if removed)
+                  </p>
                 </div>
                 <button
                   onClick={() => void submitChangeTrust(asset.code, asset.issuer, false)}
                   disabled={busy || already}
                   style={primaryButtonStyle(busy || already)}
                 >
-                  {already ? 'Added' : 'Add'}
+                  {already ? 'Added' : 'Add trustline'}
                 </button>
               </div>
             )
@@ -389,6 +393,9 @@ export default function AssetsPage() {
         {/* Add manually */}
         <section>
           <h2 style={sectionHeadingStyle}>Add by issuer</h2>
+          <p style={{ ...mutedTextStyle, fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+            {TRUSTLINE_RESERVE_EXPLANATION}
+          </p>
           <input
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
@@ -404,9 +411,10 @@ export default function AssetsPage() {
             aria-label="Issuer address"
           />
           <button onClick={handleManualAdd} disabled={busy} style={primaryButtonStyle(busy)}>
-            Add trustline
+            Add trustline (0.5 XLM reserve)
           </button>
         </section>
+
       </main>
     </div>
   )

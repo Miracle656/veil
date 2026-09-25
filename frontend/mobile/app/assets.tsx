@@ -155,7 +155,7 @@ export default function AssetsScreen() {
               {usdt0Registered?.name ?? "Tether's USD stablecoin bridged to Stellar."}
             </Text>
             <Text style={styles.reserveNotice}>
-              Reserve cost: 0.5 XLM refundable reserve required upfront.
+              Reserve cost: 0.5 XLM (locked, not spent — released if removed).
             </Text>
             <Text style={styles.disclosureText}>
               Note: The issuer can freeze this balance or take it back.
@@ -190,8 +190,9 @@ export default function AssetsScreen() {
               {usdyRegistered?.name ?? "Ondo's US Treasuries-backed, yield-bearing token."}
             </Text>
             <Text style={styles.reserveNotice}>
-              Reserve cost: 0.5 XLM refundable reserve required upfront.
+              Reserve cost: 0.5 XLM (locked, not spent — released if removed).
             </Text>
+
           </View>
           <Pressable
             onPress={handleEnableUsdy}
