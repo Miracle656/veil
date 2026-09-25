@@ -1,0 +1,61 @@
+name: Docs
+
+# Path-filtered build gate for the Nextra docs site (frontend/docs).
+# Runs only when docs sources, the docs lockfile, or this workflow change,
+# so unrelated PRs (wallet, SDK, contracts) skip the Node + Next cost entirely.
+#
+# Build gate scope: next build fails on a broken .mdx page (syntax error,
+# bad import, dead link that Nextra resolves at build time) or a broken
+# _meta.ts nav entry. It does NOT fail on Nextra's routine warnings — Next.js
+# treats warnings as non-fatal by default, which is what we want here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/docs/**'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/docs/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Docs site — build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend/docs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/docs/package-lock.json
+
+      # path/key are GITHUB_WORKSPACE-relative (hashFiles and actions/*
+      # resolve against the workspace root, NOT the job working-directory),
+      # so reference frontend/docs explicitly. An absolute path keeps the
+      # .next cache pointing at the docs build output regardless.
+      - name: Cache Next.js build output
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/frontend/docs/.next
+          key: ${{ runner.os }}-docs-next-${{ hashFiles('frontend/docs/package-lock.json') }}
+          # Lockfile churn busts the primary key; fall back to the last docs
+          # .next cache and let Next recompile just the changed modules.
+          restore-keys: |
+            ${{ runner.os }}-docs-next-
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build docs site
+        run: npm run build
