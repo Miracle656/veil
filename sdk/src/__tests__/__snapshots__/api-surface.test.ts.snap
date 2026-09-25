@@ -18,6 +18,7 @@ exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
   "Sep30Client: function(arity: 1)",
   "Sep30Error: function(arity: 2)",
   "Sep7Error: function(arity: 1)",
+  "Sep8Error: function(arity: 4)",
   "TransactionOutbox: function(arity: 2)",
   "WALLET_KEYS: object",
   "WALLET_KEY_SET: object",
@@ -64,6 +65,7 @@ exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
   "inclusionFee: function(arity: 1)",
   "initBatchState: function(arity: 1)",
   "isPrfSupported: function(arity: 0)",
+  "isRegulatedAsset: function(arity: 1)",
   "isValidDestination: function(arity: 1)",
   "loadBatchState: function(arity: 1)",
   "namespaceKey: function(arity: 1)",
@@ -79,9 +81,11 @@ exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
   "sha256: function(arity: 1)",
   "signMessage: function(arity: 3)",
   "spendableNativeXlm: function(arity: 1)",
+  "submitSep8Transaction: function(arity: 1)",
   "useInvisibleWallet: function(arity: 1)",
   "verifyAttestation: function(arity: 1)",
   "verifyMessage: function(arity: 3)",
+  "verifyRevisedTransaction: function(arity: 2)",
 ]
 `;
 
