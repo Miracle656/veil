@@ -10,6 +10,9 @@
     "release": "changeset publish",
     "verify:lockfile": "node scripts/verify-root-lockfile.mjs",
     "verify:lockfiles": "node scripts/verify-all-lockfiles.mjs",
+    "verify:assets": "node scripts/verify-assets-offline.mjs",
+    "verify:assets:offline": "node scripts/verify-assets-offline.mjs",
+    "verify:assets:online": "node scripts/verify-assets-online.mjs",
     "test:scripts": "node --test scripts/tests/*.test.mjs"
   },
   "dependencies": {
