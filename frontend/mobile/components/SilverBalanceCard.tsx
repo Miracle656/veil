@@ -137,11 +137,11 @@ export function SilverBalanceCard({
         <Text style={styles.sub}>{hidden ? '••••' : sub}</Text>
       </Pressable>
       <View style={styles.actions}>
-        <Pressable onPress={() => router.push('/send')} accessibilityRole="button" accessibilityLabel="Send" style={({ pressed }) => [styles.sendBtn, pressed && styles.pressed]}>
+        <Pressable onPress={() => router.push('/send')} accessibilityRole="button" accessibilityLabel="Send" testID="dashboard-send" style={({ pressed }) => [styles.sendBtn, pressed && styles.pressed]}>
           <PaperPlaneIcon size={15} color="#FDDA24" />
           <Text style={styles.sendText}>Send</Text>
         </Pressable>
-        <Pressable onPress={() => router.push('/receive')} accessibilityRole="button" accessibilityLabel="Receive" style={({ pressed }) => [styles.receiveBtn, pressed && styles.pressed]}>
+        <Pressable onPress={() => router.push('/receive')} accessibilityRole="button" accessibilityLabel="Receive" testID="dashboard-receive" style={({ pressed }) => [styles.receiveBtn, pressed && styles.pressed]}>
           <ReceiveIcon size={15} color={INK} strokeWidth={2} />
           <Text style={styles.receiveText}>Receive</Text>
         </Pressable>

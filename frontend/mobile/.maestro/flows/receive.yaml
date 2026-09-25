@@ -4,8 +4,8 @@ tags:
   - core
   - receive
 ---
-# Covers the receive path the web wallet exposes at /receive: an address the
-# payer can act on, a SEP-7 QR built from it, and the two ways to hand it over.
+# Covers the receive path: an address the payer can act on, a SEP-7 QR built
+# from it, and the ways to hand it over.
 - runFlow: ../subflows/launch-fresh.yaml
 
 - openLink: "veil://receive"
@@ -15,28 +15,37 @@ tags:
     timeout: 20000
 - assertVisible:
     id: "receive-address"
-- assertVisible: "Show this to get paid on Stellar."
+# A wiped install has no stored wallet, so the card shows the fallback classic
+# (G) preview and addresses itself to ordinary senders rather than the
+# contract-address variant a smart wallet gets.
+- assertVisible: "Use this for most senders & exchanges"
 
 # Copy writes to the clipboard and reports it. The clipboard itself is not
 # readable from a flow, so the confirmation is the observable part.
 - tapOn:
-    id: "receive-copy-button"
+    id: "receive-copy"
 - assertVisible: "Copied"
 
 # Share opens the system sheet, which is OS UI outside the app. Asserting the
-# button exists and is tappable is as far as a flow can go without depending on
-# a specific launcher's share dialog.
+# tile exists and is tappable is as far as a flow can go without depending on
+# a specific launcher's share dialog. Save QR likewise hands off to the system
+# share sheet, so its tile presence is the assertion too.
 - assertVisible:
-    id: "receive-share-button"
+    id: "receive-share"
+- assertVisible:
+    id: "receive-save"
 
 # The screen survives leaving and coming back — the QR and address are rebuilt,
-# not cached into a blank state.
-- tapOn: "Send"
+# not cached into a blank state. Send/Receive are no longer tabs, so the
+# round-trip goes out through the back gesture and back in through the link.
+- back
 - assertVisible:
-    id: "send-screen"
-- tapOn: "Receive"
-- assertVisible:
-    id: "receive-address"
+    id: "welcome-screen"
+- openLink: "veil://receive"
+- extendedWaitUntil:
+    visible:
+      id: "receive-address"
+    timeout: 20000
 
 # A requested amount arrives as a query parameter on the link. The screen does
 # not render it yet (it builds a destination-only SEP-7 URI), so this asserts
