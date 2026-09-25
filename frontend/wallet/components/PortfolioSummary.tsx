@@ -16,11 +16,12 @@ import { formatFiat, type CurrencyCode } from '@/lib/currency'
 
 // ── Section header ────────────────────────────────────────────────────────────
 
-function SectionHeader({ label, valueUsd, currencyCode, fxRate }: {
+function SectionHeader({ label, valueUsd, currencyCode, fxRate, hideAmounts }: {
   label: string
   valueUsd: number | null
   currencyCode: CurrencyCode
   fxRate: number
+  hideAmounts: boolean
 }) {
   return (
     <div style={{
@@ -39,7 +40,7 @@ function SectionHeader({ label, valueUsd, currencyCode, fxRate }: {
         {label}
       </span>
       <Amount className="text-[13px] font-semibold text-[rgba(246,247,248,0.55)]">
-        {valueUsd !== null ? formatFiat(valueUsd, currencyCode, fxRate) : '—'}
+        {hideAmounts ? '••••' : (valueUsd !== null ? formatFiat(valueUsd, currencyCode, fxRate) : '—')}
       </Amount>
     </div>
   )
@@ -157,6 +158,7 @@ function Bucket({
         valueUsd={bucketUsd}
         currencyCode={currencyCode}
         fxRate={fxRate}
+        hideAmounts={hideAmounts}
       />
       {lines.map((line, i) => (
         <AssetLine
