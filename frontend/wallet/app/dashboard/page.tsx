@@ -41,7 +41,6 @@ const network = getNetwork()
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export type { WalletAsset } from '@/lib/walletTypes'
 import type { WalletAsset } from '@/lib/walletTypes'
 
 // ── Shared types ─────────────────────────────────────────────────────────────
