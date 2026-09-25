@@ -15,13 +15,19 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 stellar-private-payments = { git = "https://github.com/NethermindEth/stellar-private-payments.git", rev = "a407160de6636e58537402c483bcfd98d8c2ad7d", default-features = false }
 sha2 = "0.10"
 thiserror = "2"
-uniffi = { version = "0.29", features = ["cli"] }
+# Pinned exactly: this crate's Cargo.lock is gitignored (repo-root .gitignore),
+# so a floating "0.29" lets CI resolve a different 0.29.x than a local build.
+# uniffi's generated-Kotlin output layout has moved between patch releases and
+# bindgen must match the scaffolding/runtime version, so an exact pin keeps
+# codegen reproducible across environments.
+uniffi = { version = "=0.29.5", features = ["cli"] }
 
 # build.rs calls uniffi::generate_scaffolding, which lives behind the `build`
 # feature. Build scripts have their own dependency graph — listing uniffi only
-# under [dependencies] leaves build.rs unable to resolve it (E0433).
+# under [dependencies] leaves build.rs unable to resolve it (E0433). Must match
+# the [dependencies] pin above so scaffolding and bindgen stay the same version.
 [build-dependencies]
-uniffi = { version = "0.29", features = ["build"] }
+uniffi = { version = "=0.29.5", features = ["build"] }
 
 [dev-dependencies]
 hex = "0.4"

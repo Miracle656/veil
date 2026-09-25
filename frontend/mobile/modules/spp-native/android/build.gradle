@@ -165,14 +165,18 @@ tasks.register('generateUniffiBindings', Exec) {
     uniffiOutDir.mkdirs()
   }
   doLast {
-    // Fail loudly if codegen "succeeded" but produced no package — this is the
-    // diagnostic that distinguishes "no output generated" from "output not on
-    // the compile path".
-    def generatedPackage = new File(uniffiOutDir, 'uniffi/spp_native')
-    if (!generatedPackage.exists()) {
-      throw new GradleException("UniFFI generation completed but did not create ${generatedPackage}")
+    // uniffi's generated-Kotlin layout differs between patch versions — some
+    // write <out>/uniffi/<ns>/<ns>.kt, others <out>/<ns>/. Don't hardcode the
+    // subpath: scan recursively for any generated .kt and log what was found.
+    // Throws only when codegen produced no Kotlin at all, which distinguishes
+    // "no output" from "output landed at a path this check didn't expect".
+    def generated = fileTree(dir: uniffiOutDir, includes: ['**/*.kt']).files
+    if (generated.isEmpty()) {
+      def seen = uniffiOutDir.exists() ? (uniffiOutDir.listFiles()*.toString()) : ['<out-dir missing>']
+      throw new GradleException(
+        "UniFFI generation produced no Kotlin under ${uniffiOutDir}; directory contents: ${seen}")
     }
-    logger.lifecycle("[spp-native] Generated UniFFI Kotlin bindings under ${generatedPackage}")
+    logger.lifecycle("[spp-native] Generated UniFFI Kotlin bindings: ${generated*.name} under ${uniffiOutDir}")
   }
   commandLine 'cargo', 'run', '--release', '-p', 'spp-prover', '--bin', 'uniffi-bindgen',
     '--', 'generate',
