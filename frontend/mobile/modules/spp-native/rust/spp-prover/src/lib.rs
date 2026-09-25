@@ -19,12 +19,10 @@
 //! `uniffi` exposes this crate to Kotlin through `spp_native.udl`; the Kotlin
 //! side of the bridge lives in `android/src/main/java/.../SppNativeModule.kt`.
 
-mod circ_err;
 mod notes;
 mod payload;
 mod spp_adapter;
 mod state;
-mod uniffi_support;
 
 // The uniffi scaffolding (included at the bottom of this file) references every
 // UDL dictionary type by bare name at the crate root, so the record types that
@@ -69,18 +67,14 @@ pub struct ProveResult {
 pub struct ProveOutcome {
     /// The proof, on success.
     pub result: Option<ProveResult>,
-    /// Machine-readable failure category (`invalid_transaction`,
-    /// `invalid_note`, `prover`). Null on success.
+    /// Machine-readable failure category (see `error_codes`; `prove` emits
+    /// `prover`). Null on success.
     pub error_code: Option<String>,
     /// Human-readable detail: what was wrong and with which field.
     pub detail: Option<String>,
 }
 
 impl ProveOutcome {
-    fn ok(result: ProveResult) -> Self {
-        ProveOutcome { result: Some(result), error_code: None, detail: None }
-    }
-
     fn err(code: &str, detail: String) -> Self {
         ProveOutcome { result: None, error_code: Some(code.to_string()), detail: Some(detail) }
     }
@@ -96,10 +90,6 @@ pub struct VerifyOutcome {
 }
 
 impl VerifyOutcome {
-    fn ok(verified: bool) -> Self {
-        VerifyOutcome { verified, error_code: None, detail: None }
-    }
-
     fn err(code: &str, detail: String) -> Self {
         VerifyOutcome { verified: false, error_code: Some(code.to_string()), detail: Some(detail) }
     }
@@ -176,11 +166,9 @@ impl ProverError {
     }
 }
 
-/// Error category codes. Kept as a plain module so the Kotlin bridge and
-/// the JS layer spell them identically.
+/// Error category codes the prover actually emits. Kept as a plain module so
+/// the Rust side, the Kotlin bridge, and the JS layer spell them identically.
 pub(crate) mod error_codes {
-    pub const INVALID_TRANSACTION: &str = "invalid_transaction";
-    pub const INVALID_NOTE: &str = "invalid_note";
     pub const PROVER: &str = "prover";
     pub const INVALID_SYNC: &str = "invalid_sync";
 }

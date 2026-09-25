@@ -7,7 +7,7 @@
 
 use sha2::Digest;
 
-use crate::{ProverError, SyncCheckpoint};
+use crate::{error_codes, ProverError, SyncCheckpoint};
 
 /// Advance `checkpoint` to `to_height` against `leaves`, the commitment
 /// leaves observed in (to_height - scanned_height] .
@@ -24,7 +24,7 @@ pub(crate) fn sync_to(
 ) -> Result<SyncCheckpoint, ProverError> {
     if to_height < checkpoint.scanned_height {
         return Err(ProverError::new(
-            "invalid_sync",
+            error_codes::INVALID_SYNC,
             format!(
                 "cannot sync backwards: at {}, asked for {}",
                 checkpoint.scanned_height, to_height
@@ -36,7 +36,7 @@ pub(crate) fn sync_to(
     for (index, leaf) in leaves.iter().enumerate() {
         if leaf.len() != 32 {
             return Err(ProverError::new(
-                "invalid_sync",
+                error_codes::INVALID_SYNC,
                 format!("leaf {index} must be 32 bytes, got {}", leaf.len()),
             ));
         }
