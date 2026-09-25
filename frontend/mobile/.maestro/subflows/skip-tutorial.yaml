@@ -12,15 +12,20 @@ appId: xyz.veil.wallet
 # it is reachable from Jest but not from a device test. Dismissing the overlay
 # through its own Skip button is, and it has the side benefit of asserting that
 # the button works. Guarded by `when`, so this is a no-op on any later visit
-# once the flag is persisted. The `when` carries a timeout because the overlay
-# appears a tick after the dashboard mounts (the seen-flag is read from
-# AsyncStorage); without it the guard can evaluate before the overlay exists
-# and fall through with the modal still to come.
+# once the flag is persisted. The overlay appears a tick after the dashboard
+# mounts (the seen-flag is read from AsyncStorage), so it is waited for first:
+# `when.visible` rejects a `timeout` key, and without the wait the guard can
+# evaluate before the overlay exists and fall through with the modal still to
+# come. `optional` keeps the wait a no-op when there is no overlay at all.
+- extendedWaitUntil:
+    visible:
+      id: "tutorial-overlay"
+    timeout: 8000
+    optional: true
 - runFlow:
     when:
       visible:
         id: "tutorial-overlay"
-        timeout: 8000
     commands:
       - tapOn:
           id: "tutorial-skip-button"
