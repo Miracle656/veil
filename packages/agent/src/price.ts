@@ -1,5 +1,6 @@
 import { Asset } from '@stellar/stellar-sdk'
 import { SoroswapSDK, SupportedNetworks, SupportedProtocols, TradeType } from '@soroswap/sdk'
+import { ASSET_REGISTRY } from './assets.js'
 import { HORIZON_URL, NETWORK, NETWORK_PASSPHRASE, USDC_ISSUER } from './network.js'
 
 /**
@@ -24,15 +25,20 @@ export interface ResolvedAsset {
 }
 
 /**
- * Accepts "XLM", "native", "USDC" (resolved to the network's USDC issuer) or
- * "CODE:ISSUER". Anything else is refused: a bare code like "EURC" names no
- * particular asset on Stellar, where anyone can issue one with that code.
+ * Accepts XLM, a registered asset code, or an explicit CODE:ISSUER pair.
+ * Anything else is refused: a bare code like "EURC" names no particular
+ * asset on Stellar, where anyone can issue one with that code.
  */
 export function resolveAsset(input: string): ResolvedAsset {
   const value = input.trim()
   const upper = value.toUpperCase()
   if (upper === 'XLM' || upper === 'NATIVE') return { horizon: 'native', label: 'XLM' }
   if (upper === 'USDC') return { horizon: `USDC:${USDC_ISSUER}`, label: 'USDC' }
+
+  const registered = ASSET_REGISTRY[upper]
+  if (registered && (registered.network === 'all' || registered.network === NETWORK)) {
+    return { horizon: `${registered.code}:${registered.issuer}`, label: registered.code }
+  }
 
   const [code, issuer] = value.split(':')
   if (code && issuer && /^G[A-Z2-7]{55}$/.test(issuer)) {
