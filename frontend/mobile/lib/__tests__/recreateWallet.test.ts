@@ -64,7 +64,7 @@ beforeEach(() => {
   mockLoadAccount.mockRejectedValue(Object.assign(new Error('not found'), { response: { status: 404 } }));
 });
 
-describe('recreatePasskeyWallet', () => {
+describe('createPasskeyWallet & recreatePasskeyWallet', () => {
   it('builds a new wallet from a new passkey, and binds recovery when the new one has PRF', async () => {
     mainnet();
     mockPrf.mockResolvedValue({ outcome: 'ok', output: new Uint8Array(32).fill(7) });
@@ -72,21 +72,39 @@ describe('recreatePasskeyWallet', () => {
     const result = await recreatePasskeyWallet({ register });
 
     expect(register).toHaveBeenCalledTimes(1);
-    expect(result.ok && result.wallet.address).toBe(NEW_ADDRESS);
-    expect(result.ok && result.wallet.recoverable).toBe(true);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.status).toBe('created');
+      if (result.result.status === 'created') {
+        expect(result.result.wallet.address).toBe(NEW_ADDRESS);
+        expect(result.result.wallet.recoverable).toBe(true);
+      }
+    }
     // The old random fee-payer is replaced, not kept alongside.
     expect(setSignerSecret).toHaveBeenCalledWith(Keypair.fromRawEd25519Seed(Buffer.from(new Uint8Array(32).fill(7))).secret());
     expect(setWalletAddress).toHaveBeenCalledWith(NEW_ADDRESS);
   });
 
-  it('still reports the wallet unrecoverable when the new passkey also has no PRF', async () => {
+  it('surfaces pre-commit unsupported result when passkey has no PRF, and commits on demand', async () => {
     mainnet();
     mockPrf.mockResolvedValue({ outcome: 'ok', output: null });
 
     const result = await recreatePasskeyWallet({ register });
 
-    expect(result.ok && result.wallet.recoverable).toBe(false);
-    expect(result.ok && result.wallet.recoveryIssue).toBe('unsupported');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.status).toBe('unsupported');
+      if (result.result.status === 'unsupported') {
+        expect(result.result.issue).toBe('unsupported');
+        expect(setWalletAddress).not.toHaveBeenCalled();
+
+        const wallet = await result.result.commit();
+        expect(wallet.address).toBe(NEW_ADDRESS);
+        expect(wallet.recoverable).toBe(false);
+        expect(wallet.recoveryIssue).toBe('unsupported');
+        expect(setWalletAddress).toHaveBeenCalledWith(NEW_ADDRESS);
+      }
+    }
   });
 
   it('refuses when the account it would abandon is already on chain', async () => {
