@@ -2,10 +2,14 @@ import {
   enableTrustline,
   enableUsdc,
   enableUsdy,
+  removeTrustline,
   NotEnoughXlm,
   AccountNotFunded,
   MissingTrustline,
+  NonZeroBalanceError,
   MIN_XLM_FOR_TRUSTLINE,
+  TRUSTLINE_RESERVE_XLM,
+  calculateSpendableAfterTrustline,
 } from '../enableUsdc';
 import { USDY_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '../assets';
 
@@ -44,5 +48,32 @@ describe('NotEnoughXlm & MissingTrustline Error Classes', () => {
     expect(err.message).toBe(
       'This account does not exist on the network yet, so it cannot add a trustline.',
     );
+  });
+
+  it('formats NonZeroBalanceError with plain sentence refusing removal', () => {
+    const err = new NonZeroBalanceError('10.5000000', 'USDY');
+    expect(err.name).toBe('NonZeroBalanceError');
+    expect(err.message).toBe(
+      'Cannot remove USDY trustline: balance is 10.5000000 (must be 0 to remove and reclaim 0.5 XLM reserve).',
+    );
+  });
+});
+
+describe('calculateSpendableAfterTrustline', () => {
+  it('computes 0.5 XLM reserve deduction and remaining spendable balance', () => {
+    expect(TRUSTLINE_RESERVE_XLM).toBe(0.5);
+    const impact = calculateSpendableAfterTrustline('5.0000000', 1);
+    expect(impact.reserveCost).toBe(0.5);
+    expect(impact.currentSpendable).toBe(5.0);
+    expect(impact.projectedSpendable).toBe(4.5);
+    expect(impact.canAfford).toBe(true);
+  });
+
+  it('correctly flags insufficient balance when spendable XLM is below reserve cost', () => {
+    const impact = calculateSpendableAfterTrustline('0.2000000', 1);
+    expect(impact.reserveCost).toBe(0.5);
+    expect(impact.currentSpendable).toBe(0.2);
+    expect(impact.projectedSpendable).toBe(0);
+    expect(impact.canAfford).toBe(false);
   });
 });

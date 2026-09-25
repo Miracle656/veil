@@ -69,12 +69,52 @@ export function hasTrustline(
   return balances.some((b) => b.asset_code === code && b.asset_issuer === issuer)
 }
 
+/** Each classic trustline locks exactly 0.5 XLM of ledger base reserve. */
+export const TRUSTLINE_RESERVE_XLM = 0.5
+
+export interface TrustlineReserveImpact {
+  reserveCost: number
+  currentSpendable: number
+  projectedSpendable: number
+  canAfford: boolean
+}
+
+/**
+ * Calculates the reserve cost and remaining spendable XLM before adding trustlines.
+ */
+export function calculateSpendableAfterTrustline(
+  spendableXlm: string | number,
+  additionalTrustlines = 1,
+): TrustlineReserveImpact {
+  const current = Math.max(0, Number(spendableXlm) || 0)
+  const reserveCost = additionalTrustlines * TRUSTLINE_RESERVE_XLM
+  const projected = Math.max(0, current - reserveCost)
+  const canAfford = current >= reserveCost
+  return {
+    reserveCost,
+    currentSpendable: current,
+    projectedSpendable: Number((Math.floor(projected * 1e7) / 1e7).toFixed(7)),
+    canAfford,
+  }
+}
+
 /**
  * A trustline can only be removed when its balance is exactly zero — Stellar
  * rejects a `changeTrust` to zero while the holder still owns the asset.
  */
 export function canRemoveTrustline(trustline: Trustline): boolean {
   return Number(trustline.balance) === 0
+}
+
+/**
+ * Explains why a trustline removal is refused if the balance is non-zero.
+ */
+export function getRemovalRefusalReason(trustline: Trustline): string | null {
+  const bal = Number(trustline.balance)
+  if (!Number.isFinite(bal) || bal > 0) {
+    return `Cannot remove trustline for ${trustline.code}: balance is ${trustline.balance} (must be 0 to remove and reclaim 0.5 XLM reserve).`
+  }
+  return null
 }
 
 /**

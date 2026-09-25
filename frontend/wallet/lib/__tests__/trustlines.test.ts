@@ -5,11 +5,14 @@ Object.assign(globalThis, { TextEncoder, TextDecoder })
 import { Account, Keypair, Networks, type Operation } from '@stellar/stellar-sdk'
 import {
   buildChangeTrustTx,
+  calculateSpendableAfterTrustline,
   canRemoveTrustline,
+  getRemovalRefusalReason,
   hasTrustline,
   normalizeDomain,
   parseTrustlines,
   resolveAnchorAssets,
+  TRUSTLINE_RESERVE_XLM,
   type HorizonBalanceLike,
 } from '../trustlines'
 
@@ -37,10 +40,39 @@ describe('hasTrustline', () => {
   })
 })
 
-describe('canRemoveTrustline', () => {
+describe('canRemoveTrustline & getRemovalRefusalReason', () => {
   it('only allows removal at a zero balance', () => {
     expect(canRemoveTrustline({ code: 'A', issuer: ISSUER, balance: '0', limit: '1', assetType: 'credit_alphanum4' })).toBe(true)
     expect(canRemoveTrustline({ code: 'A', issuer: ISSUER, balance: '5', limit: '1', assetType: 'credit_alphanum4' })).toBe(false)
+  })
+
+  it('provides detailed refusal reason when balance is non-zero', () => {
+    const refusal = getRemovalRefusalReason({ code: 'USDC', issuer: ISSUER, balance: '12.5000000', limit: '100', assetType: 'credit_alphanum4' })
+    expect(refusal).toBe('Cannot remove trustline for USDC: balance is 12.5000000 (must be 0 to remove and reclaim 0.5 XLM reserve).')
+  })
+
+  it('returns null refusal reason when balance is zero', () => {
+    const refusal = getRemovalRefusalReason({ code: 'USDC', issuer: ISSUER, balance: '0', limit: '100', assetType: 'credit_alphanum4' })
+    expect(refusal).toBeNull()
+  })
+})
+
+describe('calculateSpendableAfterTrustline', () => {
+  it('computes 0.5 XLM reserve per trustline and remaining spendable balance', () => {
+    expect(TRUSTLINE_RESERVE_XLM).toBe(0.5)
+    const res = calculateSpendableAfterTrustline('3.5000000', 1)
+    expect(res.reserveCost).toBe(0.5)
+    expect(res.currentSpendable).toBe(3.5)
+    expect(res.projectedSpendable).toBe(3.0)
+    expect(res.canAfford).toBe(true)
+  })
+
+  it('flags canAfford as false when spendable balance is less than reserve cost', () => {
+    const res = calculateSpendableAfterTrustline('0.3000000', 1)
+    expect(res.reserveCost).toBe(0.5)
+    expect(res.currentSpendable).toBe(0.3)
+    expect(res.projectedSpendable).toBe(0)
+    expect(res.canAfford).toBe(false)
   })
 })
 

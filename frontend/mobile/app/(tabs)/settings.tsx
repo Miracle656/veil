@@ -163,6 +163,7 @@ export default function SettingsScreen() {
       onPress: () => handleNetworkToggle(onTestnet),
       switch: { value: !onTestnet, onChange: (v) => handleNetworkToggle(v) },
     },
+    { key: 'trustlines', title: 'Trustlines & reserves', subtitle: 'Manage enabled assets and reclaim locked reserves (0.5 XLM each)', onPress: () => router.push('/assets') },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
     { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
     { key: 'about', title: 'About', subtitle: 'Version, updates, licences and support', onPress: () => router.push('/settings/about') },
