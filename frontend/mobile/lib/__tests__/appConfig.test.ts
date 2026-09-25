@@ -9,6 +9,7 @@ import {
   SEP7_SCHEME,
   resolveDeepLink,
 } from '../deepLinks';
+import { READ_ONLY_ACTIONS, actionUrl } from '../voice/actions';
 
 /**
  * `app.config.ts` cannot import from `lib/deepLinks.ts` — Expo transpiles the
@@ -98,6 +99,26 @@ describe('app.config.ts — claimed paths', () => {
   it('claims the payment-request path, which is the point of the exercise', () => {
     const prefixes = appLinkData.map((entry) => entry.pathPrefix);
     expect(prefixes).toContain('/pay');
+  });
+});
+
+describe('app.config.ts — launcher shortcuts', () => {
+  const entry = (config.plugins ?? []).find(
+    (plugin) => Array.isArray(plugin) && plugin[0] === './plugins/withAndroidShortcuts',
+  ) as [string, { shortcuts: { id: string; shortLabel: string; longLabel: string; url: string }[] }] | undefined;
+
+  it('registers the shortcuts plugin', () => {
+    expect(entry).toBeDefined();
+  });
+
+  it('mirrors READ_ONLY_ACTIONS exactly', () => {
+    const expected = READ_ONLY_ACTIONS.map((action) => ({
+      id: action.id,
+      shortLabel: action.shortLabel,
+      longLabel: action.longLabel,
+      url: actionUrl(action),
+    }));
+    expect(entry?.[1].shortcuts).toEqual(expected);
   });
 });
 

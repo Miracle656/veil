@@ -216,10 +216,7 @@ export function getAssociationSetContract(
 /** Categorized privacy error codes. */
 export type PrivacyErrorCode =
   | 'POLICY_REJECTED'
-  | 'PROVING_FAILED'
-  | 'INVALID_NOTE'
-  | 'NETWORK_ERROR'
-  | 'UNKNOWN';
+  | 'PROVING_FAILED';
 
 /** Formatted, UI-friendly privacy error structure. */
 export interface FormattedPrivacyError {
