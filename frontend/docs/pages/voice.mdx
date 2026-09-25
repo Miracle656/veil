@@ -1,0 +1,65 @@
+---
+title: Voice & Assistants
+description: What Veil's voice surface does, what it will never do, who authorises a payment, and the platform constraints on anything built on top.
+---
+
+import { Callout } from 'nextra/components'
+
+# Voice & Assistants
+
+Veil exposes a small, read-only surface to the platform assistants: Siri App Intents on iOS, Android App Shortcuts today. This page is the written boundary around it, so that "the wallet can talk" never quietly becomes "the wallet can pay because someone asked".
+
+The same boundary is inside the app, at **Settings → Voice & assistants**.
+
+<Callout type="warning">
+  **Voice never signs anything, and voice never authorises a payment.**
+
+  A payment is authorised only by you, on your device, completing the passkey ceremony — and that ceremony cannot be triggered by speech.
+</Callout>
+
+---
+
+## What the voice surface does
+
+- **Reads your balance**, through the same balance path the dashboard uses, and only when you have not hidden amounts.
+- **Reads the price of an asset** — XLM today — through the same price path the token screen uses.
+- **Opens a read-only screen**, such as your dashboard or a token page. An assistant can open one; it cannot choose what the screen shows.
+
+Every one of these is a read. None of them is a write, and none of them needs your approval, because none of them can cost you anything.
+
+When **hide amounts** is on, the assistant does not read a number out loud. It says that amounts are hidden and points you at the app instead. The preference is read at the moment of the answer, so turning it on takes effect immediately.
+
+## What the voice surface will never do
+
+- **Sign.** No intent can reach the transaction signer. Nothing in the voice path is able to build, sign or submit a transaction.
+- **Hold key material.** No seed phrase, passkey credential, private key or fee-payer secret is reachable from the voice path.
+- **Write to the network.** Everything the assistant can do reads.
+- **Authorise a payment.** See below.
+
+## Why voice alone cannot authorise a payment
+
+Voice is a poor authorisation channel. Anyone near the phone can say the words, and recorded or synthesised voices are convincing enough to matter. Intent is cheap to fake; approval is not.
+
+So the assistant carries intent, and **the device authorises**:
+
+1. You approve the payment on this device, with your fingerprint, face or device PIN.
+2. That gesture produces a WebAuthn passkey assertion.
+3. Your wallet contract verifies the assertion on-chain (`__check_auth`) before any value moves.
+4. Nothing spoken — and nobody speaking — can produce that assertion.
+
+The passkey lives in the device's secure enclave and cannot be exported. There is no code path from speech to a signature, which is what makes a read-only voice surface safe to ship.
+
+## Platform constraints
+
+These are constraints on anything that would move money by voice, not on the read-only surface above. Each was verified on the date shown, and platform rules move.
+
+| Constraint | What it means | Verified |
+|---|---|---|
+| **Apple organization enrolment** | A self-custody wallet app is submitted from an Apple Developer **organization** account, not an individual one. Organization enrolment is a business verification step with a queue, so it belongs at the start of a plan rather than at submission. | 2026-09-24 |
+| **Crypto is a highly regulated field** | Apple classifies cryptocurrency apps as a highly regulated field, which brings additional App Review scrutiny. Expect the review to ask how money moves, and be able to answer it. | 2026-09-24 |
+| **Android AppFunctions is in private preview** | Android 16 exposes apps to an assistant as an on-device MCP server, but the Gemini integration is a private preview for trusted testers, so it can neither be tested nor shipped. Android App Shortcuts are what ship today. | 2026-09-24 |
+| **App Actions is superseded** | Older Android guides recommend App Actions. That API is superseded; do not design against it. | 2026-09-24 |
+
+## What this page is not
+
+This page describes what Veil does **now**. It makes no claim about what a future version will support, and it is not a roadmap. If the behaviour in this document changes, the document and the app change together — the in-app page and this one are written from the same facts.
