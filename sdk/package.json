@@ -203,7 +203,10 @@
       "lib": [
         "es2020",
         "dom"
-      ]
+      ],
+      "paths": {
+        "invisible-wallet-sdk": ["./dist/index.d.ts"]
+      }
     }
   }
 }
