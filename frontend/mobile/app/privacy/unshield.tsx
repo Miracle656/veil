@@ -1,16 +1,15 @@
 /**
- * Unshield screen — Amount → Review → Proving → Complete
+ * Unshield screen (PREVIEW) — Amount → Review → pending notice.
  *
- * Withdraws XLM from the private pool back to the user's public wallet
- * address.  The exit proof demonstrates ownership of private notes
- * without revealing how much was previously held.
- *
- * Step machine: 'form' → 'authorizing' → 'proving' → 'submitting' → 'done' | 'error'
+ * Design preview of the "withdraw XLM from the private pool back to the public
+ * wallet" flow. There is no SPP engine yet (see lib/privacy.ts), so confirming
+ * does NOT move funds or generate an exit proof: it surfaces
+ * ENGINE_PENDING_MESSAGE. The form UI is kept intact for when the real prover
+ * (V142) lands.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -24,20 +23,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { useTheme } from '../../hooks/useTheme';
-import { useHiddenAmounts } from '../../hooks/useHiddenAmounts';
 import { useCurrency } from '../../hooks/useCurrency';
 import type { ThemeColors } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
 import { FlowHeader } from '../../components/FlowHeader';
 import { SlideToConfirm } from '../../components/SlideToConfirm';
-import { SuccessAnimation } from '../../components/SuccessAnimation';
-import { ProvingProgress } from '../../components/ProvingProgress';
-import { UnshieldIcon, CheckIcon } from '../../components/icons';
-import { requireSigner } from '../../lib/signer';
-import { unshieldXlm, getPrivateBalance } from '../../lib/privacy';
+import { UnshieldIcon } from '../../components/icons';
+import { unshieldXlm } from '../../lib/privacy';
+import { isPrivacyEnabled } from '../../lib/privacy/config';
 import { fetchPrice } from '../../lib/fetchPrice';
 
-type Step = 'form' | 'authorizing' | 'proving' | 'submitting' | 'done' | 'error';
+type Step = 'form' | 'error';
 
 function trimAmt(raw: string): string {
   const n = Number(raw);
@@ -48,7 +44,6 @@ function trimAmt(raw: string): string {
 export default function UnshieldScreen() {
   const router = useRouter();
   const { colors } = useTheme();
-  const { mask } = useHiddenAmounts();
   const { format } = useCurrency();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -56,87 +51,76 @@ export default function UnshieldScreen() {
   const [price, setPrice] = useState<number | null>(null);
 
   const [step, setStep] = useState<Step>('form');
-  const [provingPct, setProvingPct] = useState(0);
-  const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetchPrice('XLM', null).then(setPrice).catch(() => undefined);
   }, []);
 
-  const privateBalance = Number(getPrivateBalance() ?? '0');
   const amtNum = Number(amount);
-  const insufficient = amtNum > 0 && amtNum > privateBalance;
-  const canSubmit = amtNum > 0 && !insufficient && step === 'form';
+  const canSubmit = amtNum > 0 && step === 'form';
 
   const fiatLine =
     price !== null && amtNum > 0 && isFinite(amtNum)
       ? `≈ ${format(amtNum * price)}`
       : null;
 
-  const handleQuick = (frac: number) => {
-    if (privateBalance <= 0) return;
-    const val = privateBalance * frac;
-    setAmount(val.toFixed(val >= 1 ? 2 : 4));
-  };
-
   const handleConfirm = useCallback(async () => {
-    setStep('authorizing');
     setError(null);
     try {
-      const signer = await requireSigner();
-      setStep('proving');
-      setProvingPct(0);
-      abortRef.current = new AbortController();
-      const result = await unshieldXlm(
-        amount,
-        signer,
-        (pct) => setProvingPct(pct),
-        abortRef.current.signal,
-      );
-      setStep('submitting');
-      await new Promise((r) => setTimeout(r, 300));
-      setTxHash(result.hash);
-      setStep('done');
+      // No SPP engine yet — this always rejects with ENGINE_PENDING_MESSAGE.
+      // Nothing is signed, withdrawn, or broadcast.
+      await unshieldXlm();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
       setStep('error');
     }
-  }, [amount]);
+  }, []);
 
   const handleReset = () => {
-    abortRef.current?.abort();
-    setAmount('');
-    setProvingPct(0);
-    setTxHash(null);
     setError(null);
     setStep('form');
   };
 
-  // ── Done ──────────────────────────────────────────────────────────────────
-  if (step === 'done') {
+  // Feature gate — off by default and unconditionally off on mainnet, so a
+  // deep link can never surface the privacy UI where it must not exist.
+  if (!isPrivacyEnabled()) {
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <View style={styles.doneWrap}>
-          <SuccessAnimation
-            title="Unshielded"
-            subtitle={`${trimAmt(amount)} XLM returned to your public balance`}
-            FromIcon={UnshieldIcon}
-          />
-          {txHash ? (
-            <View style={styles.hashCard}>
-              <Text style={styles.hashLabel}>Transaction</Text>
-              <Text style={styles.hashValue} numberOfLines={1}>{txHash}</Text>
-            </View>
-          ) : null}
+          <UnshieldIcon size={48} color={colors.accent} />
+          <Text style={styles.provingTitle}>Private payments are not available</Text>
+          <Text style={styles.provingHint}>
+            This build has the privacy feature disabled.
+          </Text>
+          <Pressable
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.goldBtn, pressed && styles.pressed]}
+          >
+            <Text style={styles.goldBtnText}>Back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Pending notice ──────────────────────────────────────────────────────────
+  // Replaces the old success screen: with no engine, confirming lands here with
+  // an honest explanation instead of a fabricated transaction hash.
+  if (step === 'error') {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+        <View style={styles.doneWrap}>
+          <UnshieldIcon size={48} color={colors.accent} />
+          <Text style={styles.provingTitle}>Private payments are pending</Text>
+          <Text style={styles.provingHint}>{error}</Text>
           <Pressable
             onPress={handleReset}
             accessibilityRole="button"
             style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]}
           >
-            <Text style={styles.ghostBtnText}>Unshield more</Text>
+            <Text style={styles.ghostBtnText}>Back to form</Text>
           </Pressable>
           <Pressable
             onPress={() => router.back()}
@@ -145,36 +129,6 @@ export default function UnshieldScreen() {
           >
             <Text style={styles.goldBtnText}>Done</Text>
           </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // ── Proving / Authorizing / Submitting ────────────────────────────────────
-  if (step === 'proving' || step === 'submitting' || step === 'authorizing') {
-    return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <View style={styles.provingWrap}>
-          <UnshieldIcon size={48} color={colors.accent} />
-          <Text style={styles.provingTitle}>
-            {step === 'authorizing'
-              ? 'Waiting for passkey…'
-              : step === 'submitting'
-              ? 'Submitting…'
-              : 'Generating proof…'}
-          </Text>
-          {step === 'proving' ? (
-            <ProvingProgress pct={provingPct} />
-          ) : (
-            <ActivityIndicator color={colors.accent} style={{ marginTop: 24 }} />
-          )}
-          <Text style={styles.provingHint}>
-            {step === 'proving'
-              ? 'Zero-knowledge exit proof is being generated on-device.\nYour private history stays hidden.'
-              : step === 'submitting'
-              ? 'Broadcasting transaction…'
-              : 'Approve with Face ID or fingerprint.'}
-          </Text>
         </View>
       </SafeAreaView>
     );
@@ -196,17 +150,15 @@ export default function UnshieldScreen() {
           <FlowHeader title="Unshield" />
 
           <Text style={styles.description}>
-            Withdraw XLM from your private balance back to your public wallet.
-            A zero-knowledge exit proof is generated on-device — your private
-            history remains hidden.
+            Preview of the unshield flow. Private payments are not live in this
+            build yet — confirming will not move any funds or broadcast a
+            transaction.
           </Text>
 
-          {/* Private balance chip */}
+          {/* Private balance is unknown until a pool scanner exists. */}
           <View style={styles.balanceRow}>
             <Text style={styles.balanceLabel}>Private balance</Text>
-            <Text style={styles.balanceValue}>
-              {mask(`${trimAmt(String(privateBalance))} XLM`)}
-            </Text>
+            <Text style={styles.balanceValue}>Not available yet</Text>
           </View>
 
           {/* Amount input */}
@@ -230,34 +182,6 @@ export default function UnshieldScreen() {
             ) : null}
           </View>
 
-          {/* Quick chips */}
-          <View style={styles.quickRow}>
-            {([
-              { label: '25%', frac: 0.25 },
-              { label: '50%', frac: 0.5 },
-              { label: '75%', frac: 0.75 },
-              { label: 'Max', frac: 1 },
-            ] as const).map(({ label, frac }) => (
-              <Pressable
-                key={label}
-                onPress={() => handleQuick(frac)}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
-              >
-                <Text style={styles.chipText}>{label}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {insufficient ? (
-            <Text style={styles.errorText}>
-              Amount exceeds your private balance.
-            </Text>
-          ) : null}
-          {step === 'error' && error ? (
-            <Text style={styles.errorText}>{error}</Text>
-          ) : null}
-
           {/* Review card */}
           {canSubmit ? (
             <View style={styles.reviewCard}>
@@ -276,8 +200,8 @@ export default function UnshieldScreen() {
                 <Text style={styles.reviewRowValue}>Sponsored</Text>
               </View>
               <View style={styles.reviewRow}>
-                <Text style={styles.reviewRowLabel}>Privacy</Text>
-                <Text style={styles.reviewRowValue}>Exit proof (ZK)</Text>
+                <Text style={styles.reviewRowLabel}>Status</Text>
+                <Text style={styles.reviewRowValue}>Preview — engine pending</Text>
               </View>
             </View>
           ) : null}

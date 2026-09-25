@@ -1,29 +1,18 @@
 /**
- * PrivateBalanceCard — the dashboard card for the user's shielded XLM balance.
+ * PrivateBalanceCard — dashboard preview of the shielded (private) balance.
  *
- * Design intent
- * ─────────────
- * Sits directly below the SilverBalanceCard on the dashboard.  Where the
- * silver card represents the public "visible" balance, this card is dark and
- * minimal — near-black background, gold accents, a subtle shield glyph — to
- * signal that funds here are private.  The balance is masked by the
- * hide-amounts toggle exactly like the public card.
+ * Mirrors the web wallet's card (#751): it renders NOTHING unless the privacy
+ * feature is enabled — `isPrivacyEnabled()` from lib/privacy/config, which is a
+ * build-time flag and unconditionally off on mainnet — and it never paints an
+ * amount until a pool scan reports `up-to-date`.
  *
- * Action buttons
- * ──────────────
- * Three pill buttons on the bottom row: Shield (public → private), Send
- * (private send), Unshield (private → public).  All three push into the
- * /privacy/* sub-navigator.
- *
- * Refresh behaviour
- * ─────────────────
- * The card reads from the privacy external store (instant, cached) and calls
- * `refreshPrivateBalance()` on mount so the figure stays current after
- * transactions.  It does NOT poll — the dashboard already has a 15 s poller
- * that can call the refresh helper in a future iteration.
+ * There is no scanner yet (see lib/privacy.ts), so in practice the card sits in
+ * its honest "not available yet" state rather than showing a confident 0.00 XLM,
+ * which would read as "you have no private funds" when it means "we haven't
+ * looked". The shield / send / unshield buttons route into the preview screens.
  */
 
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
+import { useCallback, useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
@@ -31,11 +20,12 @@ import { useTheme } from '../hooks/useTheme';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
+import { isPrivacyEnabled } from '../lib/privacy/config';
 import {
-  getPrivateBalance,
-  isPrivateBalanceHydrated,
-  refreshPrivateBalance,
-  subscribeToPrivacy,
+  getPrivateBalances,
+  getPrivateSyncState,
+  type PrivateBalance,
+  type PrivateSyncState,
 } from '../lib/privacy';
 import { ShieldIcon, PaperPlaneIcon, UnshieldIcon } from './icons';
 
@@ -46,44 +36,31 @@ const GOLD_15 = 'rgba(253,218,36,0.15)';
 const GOLD_25 = 'rgba(253,218,36,0.25)';
 const NEAR_BLACK = '#0F0F0F';
 
-function trimAmt(raw: string): string {
-  const n = Number(raw);
-  if (!isFinite(n)) return raw;
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
-}
+const STATUS_COPY: Record<PrivateSyncState, string> = {
+  syncing: 'Syncing',
+  'up-to-date': 'Up to date',
+  'needs-history': 'Needs history',
+};
 
-export function PrivateBalanceCard() {
+export function PrivateBalanceCard({
+  balances = getPrivateBalances(),
+  syncState = getPrivateSyncState(),
+}: {
+  balances?: PrivateBalance[];
+  syncState?: PrivateSyncState;
+} = {}) {
   const router = useRouter();
   const { colors } = useTheme();
   const { mask, hidden } = useHiddenAmounts();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  // Subscribe to the privacy external store so the card re-renders whenever
-  // the balance changes (e.g. right after a shield/unshield completes).
-  const balance = useSyncExternalStore(
-    subscribeToPrivacy,
-    getPrivateBalance,
-    getPrivateBalance,
-  );
-  const hydrated = useSyncExternalStore(
-    subscribeToPrivacy,
-    isPrivateBalanceHydrated,
-    isPrivateBalanceHydrated,
-  );
-
-  // Refresh on mount — picks up any changes from the last session.
-  useEffect(() => {
-    void refreshPrivateBalance();
-  }, []);
-
-  const displayBalance =
-    !hydrated
-      ? '—'
-      : mask(`${trimAmt(balance ?? '0')} XLM`);
-
   const handleShield = useCallback(() => router.push('/privacy/shield'), [router]);
-  const handleSend   = useCallback(() => router.push('/privacy/send'),   [router]);
+  const handleSend = useCallback(() => router.push('/privacy/send'), [router]);
   const handleUnshield = useCallback(() => router.push('/privacy/unshield'), [router]);
+
+  // Single gate for the whole feature. Off by default and never on mainnet, so
+  // nothing below can leak the private UI into a production/mainnet build.
+  if (!isPrivacyEnabled()) return null;
 
   return (
     <View style={styles.card} accessibilityLabel="Private balance card">
@@ -99,19 +76,41 @@ export function PrivateBalanceCard() {
           <Text style={styles.headerLabel}>PRIVATE BALANCE</Text>
         </View>
         <View style={styles.privacyBadge}>
-          <Text style={styles.privacyBadgeText}>ZK-shielded</Text>
+          <Text style={styles.privacyBadgeText}>{STATUS_COPY[syncState]}</Text>
         </View>
       </View>
 
-      {/* Balance */}
-      <Text
-        style={styles.amount}
-        numberOfLines={1}
-        adjustsFontSizeToFit
-        accessibilityLabel={hidden ? 'Balance hidden' : `Private balance: ${balance ?? '0'} XLM`}
-      >
-        {displayBalance}
-      </Text>
+      {/* Balance — never an amount until the scan is up to date. */}
+      {syncState === 'up-to-date' ? (
+        balances.length === 0 ? (
+          <Text style={styles.pendingCopy}>No shielded balance yet.</Text>
+        ) : (
+          <View style={styles.balanceList}>
+            {balances.map((b) => (
+              <View key={b.code} style={styles.balanceRow}>
+                <Text style={styles.balanceCode}>{b.code}</Text>
+                <Text
+                  style={styles.balanceAmount}
+                  accessibilityLabel={
+                    hidden ? 'Balance hidden' : `Private balance: ${b.amount} ${b.code}`
+                  }
+                >
+                  {mask(`${parseFloat(b.amount).toFixed(4)} ${b.code}`)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )
+      ) : syncState === 'needs-history' ? (
+        <Text style={styles.pendingCopy}>
+          Pool history is older than the RPC window. Connect the bootnode to finish syncing.
+        </Text>
+      ) : (
+        <Text style={styles.pendingCopy}>
+          Private payments are not available in this build yet — balances appear once the pool
+          scanner is integrated.
+        </Text>
+      )}
 
       {/* Divider */}
       <View style={styles.divider} />
@@ -213,13 +212,32 @@ const createStyles = (c: ThemeColors) =>
       letterSpacing: 0.4,
     },
 
-    // Balance
-    amount: {
-      fontFamily: fontFamily.heading,
-      fontSize: 38,
-      lineHeight: 44,
-      color: GOLD,
+    // Balance / pending copy
+    pendingCopy: {
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 20,
+      color: 'rgba(246,247,248,0.5)',
       marginBottom: 18,
+    },
+    balanceList: {
+      gap: 8,
+      marginBottom: 18,
+    },
+    balanceRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    balanceCode: {
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 15,
+      color: GOLD,
+    },
+    balanceAmount: {
+      fontFamily: fontFamily.heading,
+      fontSize: 20,
+      color: GOLD,
     },
 
     // Divider

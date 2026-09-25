@@ -1,16 +1,14 @@
 /**
- * Private Send screen — Amount / Recipient → Review → Proving → Complete
+ * Private Send screen (PREVIEW) — Amount / Recipient → Review → pending notice.
  *
- * Transfers XLM out of the private pool to a recipient without revealing
- * the sender on-chain.  The recipient sees an inbound payment; the link
- * between sender and receiver is hidden by the ZK proof.
- *
- * Step machine: 'form' → 'authorizing' → 'proving' → 'submitting' → 'done' | 'error'
+ * Design preview of the "send XLM from the private pool" flow. There is no SPP
+ * engine yet (see lib/privacy.ts), so confirming does NOT move funds or reveal
+ * anything on-chain: it surfaces ENGINE_PENDING_MESSAGE. The recipient/amount UI
+ * is kept intact for when the real prover (V142) lands.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -24,22 +22,19 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
 import { useTheme } from '../../hooks/useTheme';
-import { useHiddenAmounts } from '../../hooks/useHiddenAmounts';
 import { useCurrency } from '../../hooks/useCurrency';
 import type { ThemeColors } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
 import { FlowHeader } from '../../components/FlowHeader';
 import { SlideToConfirm } from '../../components/SlideToConfirm';
-import { SuccessAnimation } from '../../components/SuccessAnimation';
-import { ProvingProgress } from '../../components/ProvingProgress';
-import { ShieldIcon, ShieldCheckIcon } from '../../components/icons';
-import { requireSigner } from '../../lib/signer';
-import { sendPrivate, getPrivateBalance } from '../../lib/privacy';
+import { ShieldIcon } from '../../components/icons';
+import { sendPrivate } from '../../lib/privacy';
+import { isPrivacyEnabled } from '../../lib/privacy/config';
 import { isValidDestination } from '../../lib/address';
 import { fetchPrice } from '../../lib/fetchPrice';
 import { truncateAddress } from '../../components/ui/AddressChip';
 
-type Step = 'form' | 'authorizing' | 'proving' | 'submitting' | 'done' | 'error';
+type Step = 'form' | 'error';
 
 function firstValue(v: string | string[] | undefined): string {
   return Array.isArray(v) ? (v[0] ?? '') : (v ?? '');
@@ -55,7 +50,6 @@ export default function PrivateSendScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ to?: string; amount?: string }>();
   const { colors } = useTheme();
-  const { mask } = useHiddenAmounts();
   const { format } = useCurrency();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
@@ -64,96 +58,79 @@ export default function PrivateSendScreen() {
   const [price, setPrice] = useState<number | null>(null);
 
   const [step, setStep] = useState<Step>('form');
-  const [provingPct, setProvingPct] = useState(0);
-  const [txHash, setTxHash] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     fetchPrice('XLM', null).then(setPrice).catch(() => undefined);
   }, []);
 
-  const privateBalance = Number(getPrivateBalance() ?? '0');
   const amtNum = Number(amount);
   const trimmed = recipient.trim();
   const recipientValid = isValidDestination(trimmed);
   const showRecipientError = trimmed.length > 0 && !recipientValid;
-  const insufficient = amtNum > 0 && amtNum > privateBalance;
-  const canSubmit =
-    recipientValid &&
-    amtNum > 0 &&
-    !insufficient &&
-    step === 'form';
+  const canSubmit = recipientValid && amtNum > 0 && step === 'form';
 
   const fiatLine =
     price !== null && amtNum > 0 && isFinite(amtNum)
       ? `≈ ${format(amtNum * price)}`
       : null;
 
-  const handleQuick = (frac: number) => {
-    if (privateBalance <= 0) return;
-    const val = privateBalance * frac;
-    setAmount(val.toFixed(val >= 1 ? 2 : 4));
-  };
-
   const handleConfirm = useCallback(async () => {
-    setStep('authorizing');
     setError(null);
     try {
-      const signer = await requireSigner();
-      setStep('proving');
-      setProvingPct(0);
-      abortRef.current = new AbortController();
-      const result = await sendPrivate(
-        amount,
-        trimmed,
-        signer,
-        (pct) => setProvingPct(pct),
-        abortRef.current.signal,
-      );
-      setStep('submitting');
-      await new Promise((r) => setTimeout(r, 300));
-      setTxHash(result.hash);
-      setStep('done');
+      // No SPP engine yet — this always rejects with ENGINE_PENDING_MESSAGE.
+      // Nothing is signed, sent, or broadcast.
+      await sendPrivate();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Unknown error');
       setStep('error');
     }
-  }, [amount, trimmed]);
+  }, []);
 
   const handleReset = () => {
-    abortRef.current?.abort();
-    setRecipient('');
-    setAmount('');
-    setProvingPct(0);
-    setTxHash(null);
     setError(null);
     setStep('form');
   };
 
-  // ── Done ──────────────────────────────────────────────────────────────────
-  if (step === 'done') {
+  // Feature gate — off by default and unconditionally off on mainnet, so a
+  // deep link can never surface the privacy UI where it must not exist.
+  if (!isPrivacyEnabled()) {
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
         <View style={styles.doneWrap}>
-          <SuccessAnimation
-            title="Sent privately"
-            subtitle={`${trimAmt(amount)} XLM → ${truncateAddress(trimmed)}`}
-            FromIcon={ShieldCheckIcon}
-          />
-          {txHash ? (
-            <View style={styles.hashCard}>
-              <Text style={styles.hashLabel}>Transaction</Text>
-              <Text style={styles.hashValue} numberOfLines={1}>{txHash}</Text>
-            </View>
-          ) : null}
+          <ShieldIcon size={48} color={colors.accent} />
+          <Text style={styles.provingTitle}>Private payments are not available</Text>
+          <Text style={styles.provingHint}>
+            This build has the privacy feature disabled.
+          </Text>
+          <Pressable
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.goldBtn, pressed && styles.pressed]}
+          >
+            <Text style={styles.goldBtnText}>Back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // ── Pending notice ──────────────────────────────────────────────────────────
+  // Replaces the old success screen: with no engine, confirming lands here with
+  // an honest explanation instead of a fabricated transaction hash.
+  if (step === 'error') {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+        <View style={styles.doneWrap}>
+          <ShieldIcon size={48} color={colors.accent} />
+          <Text style={styles.provingTitle}>Private payments are pending</Text>
+          <Text style={styles.provingHint}>{error}</Text>
           <Pressable
             onPress={handleReset}
             accessibilityRole="button"
             style={({ pressed }) => [styles.ghostBtn, pressed && styles.pressed]}
           >
-            <Text style={styles.ghostBtnText}>Send again</Text>
+            <Text style={styles.ghostBtnText}>Back to form</Text>
           </Pressable>
           <Pressable
             onPress={() => router.back()}
@@ -162,36 +139,6 @@ export default function PrivateSendScreen() {
           >
             <Text style={styles.goldBtnText}>Done</Text>
           </Pressable>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // ── Proving / Authorizing / Submitting ────────────────────────────────────
-  if (step === 'proving' || step === 'submitting' || step === 'authorizing') {
-    return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
-        <View style={styles.provingWrap}>
-          <ShieldIcon size={48} color={colors.accent} />
-          <Text style={styles.provingTitle}>
-            {step === 'authorizing'
-              ? 'Waiting for passkey…'
-              : step === 'submitting'
-              ? 'Submitting…'
-              : 'Generating proof…'}
-          </Text>
-          {step === 'proving' ? (
-            <ProvingProgress pct={provingPct} />
-          ) : (
-            <ActivityIndicator color={colors.accent} style={{ marginTop: 24 }} />
-          )}
-          <Text style={styles.provingHint}>
-            {step === 'proving'
-              ? 'Zero-knowledge proof is being generated on-device.\nThe sender is not revealed on-chain.'
-              : step === 'submitting'
-              ? 'Broadcasting transaction…'
-              : 'Approve with Face ID or fingerprint.'}
-          </Text>
         </View>
       </SafeAreaView>
     );
@@ -213,16 +160,15 @@ export default function PrivateSendScreen() {
           <FlowHeader title="Private Send" />
 
           <Text style={styles.description}>
-            Send XLM from your private balance. The transaction is shielded —
-            no on-chain link connects sender to receiver.
+            Preview of the private-send flow. Private payments are not live in
+            this build yet — confirming will not move any funds or broadcast a
+            transaction.
           </Text>
 
-          {/* Private balance chip */}
+          {/* Private balance is unknown until a pool scanner exists. */}
           <View style={styles.balanceRow}>
             <Text style={styles.balanceLabel}>Private balance</Text>
-            <Text style={styles.balanceValue}>
-              {mask(`${trimAmt(String(privateBalance))} XLM`)}
-            </Text>
+            <Text style={styles.balanceValue}>Not available yet</Text>
           </View>
 
           {/* Recipient field */}
@@ -264,34 +210,6 @@ export default function PrivateSendScreen() {
             ) : null}
           </View>
 
-          {/* Quick chips */}
-          <View style={styles.quickRow}>
-            {([
-              { label: '25%', frac: 0.25 },
-              { label: '50%', frac: 0.5 },
-              { label: '75%', frac: 0.75 },
-              { label: 'Max', frac: 1 },
-            ] as const).map(({ label, frac }) => (
-              <Pressable
-                key={label}
-                onPress={() => handleQuick(frac)}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.chip, pressed && styles.chipPressed]}
-              >
-                <Text style={styles.chipText}>{label}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {insufficient ? (
-            <Text style={styles.errorText}>
-              Amount exceeds your private balance.
-            </Text>
-          ) : null}
-          {step === 'error' && error ? (
-            <Text style={styles.errorText}>{error}</Text>
-          ) : null}
-
           {/* Review card */}
           {canSubmit ? (
             <View style={styles.reviewCard}>
@@ -318,8 +236,8 @@ export default function PrivateSendScreen() {
                 <Text style={styles.reviewRowValue}>Sponsored</Text>
               </View>
               <View style={styles.reviewRow}>
-                <Text style={styles.reviewRowLabel}>Privacy</Text>
-                <Text style={styles.reviewRowValue}>Zero-knowledge proof</Text>
+                <Text style={styles.reviewRowLabel}>Status</Text>
+                <Text style={styles.reviewRowValue}>Preview — engine pending</Text>
               </View>
             </View>
           ) : null}
