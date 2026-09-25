@@ -33,12 +33,13 @@ directly, so codegen is a hard ordering edge):
 1. `buildRust<abi>` compiles `rust/` per ABI with `cargo-ndk` into
    `build/jniLibs/<abi>/libspp_prover.so`.
 2. `generateUniffiBindings` runs the in-tree `uniffi-bindgen` binary against
-   the host build and emits Kotlin into the module's default source root,
-   `android/src/main/java/uniffi/spp_native/` (gitignored). It goes there
-   rather than `build/generated` because a custom `srcDirs` registration for a
-   generated folder was not picked up by `compile*Kotlin` under the
-   expo-module-gradle-plugin + AGP source-set wiring, whereas the default root
-   is always compiled.
+   the host build and emits Kotlin into `build/generated/uniffi` — generated
+   code is kept out of the handwritten sources in `src/main/java`. That folder
+   is registered as an extra Java source root *and* pushed onto each
+   `compile*Kotlin` task via `task.source(...)`, because the
+   expo-module-gradle-plugin + AGP wiring does not reliably feed a custom
+   source-set root into the Kotlin compile on its own. A `doLast` check fails
+   the build if codegen did not produce `uniffi/spp_native/`.
 
 Toolchain provisioning is a build-file concern, so it is wired into the app's
 `postinstall` (`sh ./modules/spp-native/scripts/install-rust-toolchain.sh`):

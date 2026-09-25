@@ -45,10 +45,5 @@ example
 /ios
 /android
 
-# uniffi-generated Kotlin bindings for the spp-native module. Written into the
-# module's default source root by the generateUniffiBindings Gradle task at
-# build time; never committed.
-modules/spp-native/android/src/main/java/uniffi/
-
 # Maestro
 maestro-report.xml

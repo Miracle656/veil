@@ -21,16 +21,14 @@ version = '0.1.0'
 def rustDir = file("${projectDir}/../rust")
 def cargoManifest = file("${rustDir}/Cargo.toml")
 def jniLibsDir = file("${buildDir}/jniLibs")
-// Generated uniffi bindings are written straight into the module's DEFAULT
-// Kotlin/Java source root (src/main/java) — the same root SppNativeModule.kt
-// lives in — rather than build/generated. Custom `java.srcDirs`/`kotlin.srcDirs`
-// registrations for a generated folder were NOT picked up by compile*Kotlin
-// under the expo-module-gradle-plugin + AGP source-set wiring, so every
-// `uniffi.spp_native` reference came back "Unresolved reference" even though
-// codegen succeeded. The default root is compiled unconditionally, so this
-// removes the wiring question entirely. The generated `uniffi/` package is
-// gitignored.
-def uniffiOutDir = file("${projectDir}/src/main/java")
+// Generated uniffi bindings go under build/generated/uniffi — generated code
+// must never be mixed with the handwritten Android sources in src/main/java.
+// The folder is registered as an extra Java source root below AND pushed
+// directly onto each compile*Kotlin task via task.source(...), because the
+// expo-module-gradle-plugin + AGP wiring does not reliably feed a custom
+// source-set root into the Kotlin compile. task.source() is the belt-and-
+// braces mechanism that guarantees the generated .kt is on the compile path.
+def uniffiOutDir = file("${buildDir}/generated/uniffi")
 
 // ABIs the APK ships. arm64-v8a covers every modern device; armeabi-v7a
 // keeps 2016-era phones working. x86_64 exists so emulators can run the
@@ -69,10 +67,11 @@ android {
 
   sourceSets {
     main {
-      // No custom registration for the generated bindings: they are written
-      // into src/main/java (the default root) by generateUniffiBindings, which
-      // compile*Kotlin already includes. Only the native libs need a non-default
-      // srcDir; the Rust tasks below move libspp_prover.so into jniLibs/<abi>/.
+      // Register the generated uniffi bindings as an extra Java source root so
+      // AGP/Kotlin see them alongside src/main/java. The compile*Kotlin tasks
+      // below ALSO add this folder via task.source() as a hard guarantee.
+      java.srcDir(uniffiOutDir)
+      // The Rust tasks move libspp_prover.so into jniLibs/<abi>/.
       jniLibs.srcDirs jniLibsDir.absolutePath
     }
   }
@@ -153,10 +152,27 @@ tasks.register('generateUniffiBindings', Exec) {
   dependsOn 'buildRustHost'
   workingDir rustDir
   def hostLib = file("${rustDir}/target/release/libspp_prover.so")
+  // Up-to-date / cache tracking: rerun only when the host cdylib changes, and
+  // treat the generated folder as this task's output.
+  inputs.file(hostLib)
+  outputs.dir(uniffiOutDir)
   doFirst {
     if (!org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_UNIX)) {
       throw new IllegalStateException('uniffi codegen requires a Unix host (CI/EAS provide one)')
     }
+    // Start from a clean output dir so stale bindings never linger.
+    delete(uniffiOutDir)
+    uniffiOutDir.mkdirs()
+  }
+  doLast {
+    // Fail loudly if codegen "succeeded" but produced no package — this is the
+    // diagnostic that distinguishes "no output generated" from "output not on
+    // the compile path".
+    def generatedPackage = new File(uniffiOutDir, 'uniffi/spp_native')
+    if (!generatedPackage.exists()) {
+      throw new GradleException("UniFFI generation completed but did not create ${generatedPackage}")
+    }
+    logger.lifecycle("[spp-native] Generated UniFFI Kotlin bindings under ${generatedPackage}")
   }
   commandLine 'cargo', 'run', '--release', '-p', 'spp-prover', '--bin', 'uniffi-bindgen',
     '--', 'generate',
@@ -177,7 +193,11 @@ tasks.matching { it.name == 'preBuild' }.configureEach {
 // Gradle's parallel execution the Kotlin compile can snapshot its sources
 // before generateUniffiBindings has written them, so every `uniffi.spp_native`
 // reference comes back "Unresolved reference". Depend on the codegen directly
-// from each Kotlin compile task to guarantee the generated .kt exists first.
-tasks.matching { it.name.startsWith('compile') && it.name.contains('Kotlin') }.configureEach {
-  dependsOn 'generateUniffiBindings'
+// from each Kotlin compile task AND add the generated folder to that task's
+// source set, so the generated .kt exists first and is definitely compiled.
+tasks.matching { it.name.startsWith('compile') && it.name.endsWith('Kotlin') }.configureEach { task ->
+  task.dependsOn 'generateUniffiBindings'
+  if (task.hasProperty('source')) {
+    task.source(uniffiOutDir)
+  }
 }
