@@ -73,7 +73,32 @@ describe('fetchPrice', () => {
   it('still prices USDC at 1, which is definitional rather than a guess', async () => {
     await expect(fetchPrice('USDC', null)).resolves.toBe(1.0);
   });
+
+  it('prices verified USDT0 as 1.0 (dollar stablecoin) without hitting the network', async () => {
+    const { USDT0_MAINNET_ISSUER } = require('../assets');
+    const spy = jest.fn();
+    global.fetch = spy as unknown as typeof fetch;
+    await expect(fetchPrice('USDT0', USDT0_MAINNET_ISSUER)).resolves.toBe(1.0);
+    await expect(fetchPrice('USDT0', undefined)).resolves.toBe(1.0);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('routes impostor USDT0 through Lens oracle by code:issuer', async () => {
+    const FAKE_ISSUER = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK';
+    const spy = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ price: 0.002 }),
+    });
+    global.fetch = spy as unknown as typeof fetch;
+    const price = await fetchPrice('USDT0', FAKE_ISSUER);
+    expect(price).toBe(0.002);
+    expect(spy).toHaveBeenCalledWith(
+      expect.stringContaining(`/price/USDT0%3A${FAKE_ISSUER}/`),
+      expect.any(Object),
+    );
+  });
 });
+
 
 describe('usdValue', () => {
   it('multiplies balance by price', () => {

@@ -19,7 +19,7 @@ import {
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
-import { USDY_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '@/lib/assets'
+import { USDY_MAINNET_ISSUER, USDT0_MAINNET_ISSUER, getRegisteredAsset, isRegisteredIssuer } from '@/lib/assets'
 import { fetchPrice } from '@/lib/fetchPrice'
 import {
   ISSUER_TOML_TTL_MS,
@@ -70,6 +70,7 @@ export default function AssetsPage() {
     }
     if (network.name === 'mainnet') {
       targets.set(`USDY:${USDY_MAINNET_ISSUER}`, { code: 'USDY', issuer: USDY_MAINNET_ISSUER })
+      targets.set(`USDT0:${USDT0_MAINNET_ISSUER}`, { code: 'USDT0', issuer: USDT0_MAINNET_ISSUER })
     }
     return [...targets.values()]
   }, [trustlines])
@@ -190,6 +191,7 @@ export default function AssetsPage() {
 
   const busy = status.kind === 'busy'
   const hasUsdy = hasTrustline(balances, 'USDY', USDY_MAINNET_ISSUER)
+  const hasUsdt0 = hasTrustline(balances, 'USDT0', USDT0_MAINNET_ISSUER)
 
   return (
     <div className="wallet-shell">
@@ -228,6 +230,37 @@ export default function AssetsPage() {
           >
             <p style={{ fontSize: '0.875rem', color: 'var(--off-white)' }}>{status.message}</p>
           </div>
+        )}
+
+        {/* Featured USDT0 enable card. Mainnet only — USDT0's issuer does not
+            exist on testnet, where changeTrust would fail with op_no_issuer. */}
+        {!hasUsdt0 && !loading && network.name === 'mainnet' && (
+          <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(38,161,123,0.3)', background: 'rgba(38,161,123,0.05)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <RegisteredAssetMark code="USDT0" meta={issuerMeta[`USDT0:${USDT0_MAINNET_ISSUER}`]} />
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ ...sectionHeadingStyle, color: '#26A17B' }}>Featured Asset: USDT0 (Tether USD)</h2>
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  Tether&apos;s USD stablecoin bridged to Stellar. Adding a USDT0 trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
+                </p>
+                <p style={{ color: 'rgba(246,247,248,0.55)', fontSize: '0.75rem', marginBottom: '0.75rem' }}>
+                  Note: The issuer retains freeze and clawback authority over this token on-chain.
+                </p>
+                {issuerMeta[`USDT0:${USDT0_MAINNET_ISSUER}`]?.description ? (
+                  <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                    {issuerMeta[`USDT0:${USDT0_MAINNET_ISSUER}`].description}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <button
+              onClick={() => void submitChangeTrust('USDT0', USDT0_MAINNET_ISSUER, false)}
+              disabled={busy}
+              style={primaryButtonStyle(busy)}
+            >
+              {busy ? 'Enabling USDT0…' : 'Enable USDT0 (0.5 XLM reserve)'}
+            </button>
+          </section>
         )}
 
         {/* Featured USDY enable card. Mainnet only — USDY's issuer does not
@@ -286,7 +319,11 @@ export default function AssetsPage() {
                       </p>
                       {registered ? (
                         <p style={mutedTextStyle}>Issuer: {registered.issuerName}</p>
-                      ) : null}
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: 'rgba(229,72,77,0.9)', background: 'rgba(229,72,77,0.1)', padding: '2px 6px', borderRadius: 4, display: 'inline-block', marginTop: 2, marginBottom: 2 }}>
+                          Unverified asset
+                        </span>
+                      )}
                       {meta?.description ? (
                         <p style={clampedNoteStyle}>{meta.description}</p>
                       ) : null}
