@@ -17,15 +17,19 @@ import { inclusionFee } from './fees';
  * Well-known issuers per network for the assets we route classically.
  * - Testnet USDC = the issuer the web wallet swaps against (the one with actual
  *   testnet DEX liquidity; differs from the Lens price-oracle issuer).
+ * - Testnet USDY = test issuer for yield-bearing stablecoin testing
  * - Mainnet USDC = Circle's issuer (verified via Horizon 2026-08-21: 2.35M
  *   authorized accounts). NGNC = Link.io's naira stablecoin (offramp rail).
+ * - Mainnet USDY = will be resolved from Soroswap token list
  */
 const ISSUERS: Record<'testnet' | 'mainnet', Record<string, string>> = {
   testnet: {
     USDC: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    USDY: 'GATEMHCCKCY67ZUCKTROYN24ZYT5GK4EQZ65JJLDHKHRUZI3EUEKMTCH', // Test issuer for USDY
   },
   mainnet: {
     USDC: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    USDY: 'GBUQWP3BOUZX34ULNQG23RQ6F4YUSXHTQSXUSMIQSTBE2BRUY4DQAT2B', // Mainnet USDY issuer
     NGNC: 'GASBV6W7GGED66MXEVC7YZHTWWYMSVYEY35USF2HJZBLABLYIFQGXZY6',
   },
 };

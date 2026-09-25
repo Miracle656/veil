@@ -15,6 +15,8 @@ import { TokenIcon } from '../components/TokenIcon';
 import { SuccessAnimation } from '../components/SuccessAnimation';
 import { getSoroswapQuote, buildSoroswapSwapXdr, ensureSwapOutTrustline, resolveTokenAddress, type SwapQuote } from '../lib/soroswap';
 import { getSdexQuote, sdexSwap, sdexSupported } from '../lib/sdexSwap';
+import { enhanceQuoteWithSpread, type HonestSwapQuote } from '../lib/soroswapEnhanced';
+import { PreConfirmationPanel } from '../components/PreConfirmationPanel';
 import { fetchContractAssetBalance, getFeePayerAddress } from '../lib/activity';
 import { getFeePayerXlm, sendAssetFromContract, type FeePayerXlm } from '../lib/contractSpend';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
@@ -27,17 +29,19 @@ import { getWalletAddress, getSignerSecret } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 
 type Token = { code: string; name: string };
-type Step = 'form' | 'signing' | 'submitting' | 'done' | 'error';
+type Step = 'form' | 'review' | 'signing' | 'submitting' | 'done' | 'error';
 
 const TOKENS: Token[] = [
   { code: 'XLM', name: 'Stellar Lumens' },
   { code: 'USDC', name: 'USD Coin' },
+  { code: 'USDY', name: 'USD Yield' },
   { code: 'EURC', name: 'Euro Coin' },
   { code: 'AQUA', name: 'Aquarius' },
 ];
 
 const SLIPPAGE_BPS = 50; // 0.5 %
 const DEBOUNCE_MS = 600;
+const PRICE_IMPACT_THRESHOLD_PCT = 5.0; // Refuse orders exceeding 5% total impact
 
 export default function SwapScreen() {
   const { colors, isDark } = useTheme();
@@ -121,6 +125,7 @@ export default function SwapScreen() {
   const fmtBal = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
 
   const [quote, setQuote] = useState<SwapQuote | null>(null);
+  const [honestQuote, setHonestQuote] = useState<HonestSwapQuote | null>(null);
   const [isFetchingQuote, setIsFetchingQuote] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
 
@@ -213,6 +218,33 @@ export default function SwapScreen() {
     };
   }, [amountIn, tokenIn.code, tokenOut.code, onTestnet]);
 
+  // ── Enhance quotes with spread and price impact data ──────────────────────
+  useEffect(() => {
+    if (!quote || onTestnet) {
+      setHonestQuote(null);
+      return;
+    }
+
+    let alive = true;
+    (async () => {
+      try {
+        const parsed = parseFloat(amountIn);
+        const enhanced = await enhanceQuoteWithSpread(
+          quote,
+          tokenIn.code,
+          tokenOut.code,
+          parsed,
+          PRICE_IMPACT_THRESHOLD_PCT,
+        );
+        if (alive) setHonestQuote(enhanced);
+      } catch (err) {
+        console.warn('[swap] Failed to enhance quote with spread:', err);
+        if (alive) setHonestQuote(quote as HonestSwapQuote);
+      }
+    })();
+    return () => { alive = false; };
+  }, [quote, tokenIn.code, tokenOut.code, amountIn, onTestnet]);
+
   /**
    * Make sure the spending account can cover an XLM swap, moving the shortfall
    * out of the smart wallet when it cannot.
@@ -257,9 +289,17 @@ export default function SwapScreen() {
     setContractXlm(Math.max(0, inContract - Number(move)));
   }
 
-  // ── Execution — unchanged engine ───────────────────────────────────────────
+  // ── Execution — with honest threshold check ───────────────────────────────
   async function handleExecute() {
     setExecError(null);
+    
+    // Check if order exceeds price impact threshold
+    if (honestQuote?.shouldRefuse && honestQuote?.refusalReason) {
+      setExecError(honestQuote.refusalReason);
+      setStep('error');
+      return;
+    }
+
     setStep('signing');
     try {
       const parsed = parseFloat(amountIn);
@@ -405,6 +445,7 @@ export default function SwapScreen() {
     }
     setPicker(null);
     setQuote(null);
+    setHonestQuote(null);
     setQuoteError(null);
   }
 
@@ -412,6 +453,7 @@ export default function SwapScreen() {
     setTokenIn(tokenOut);
     setTokenOut(tokenIn);
     setQuote(null);
+    setHonestQuote(null);
     setQuoteError(null);
   }
 
@@ -440,6 +482,59 @@ export default function SwapScreen() {
   // total — which sums the smart wallet as well — reported more locked than the
   // account even holds.
   const lockedXlm = feePayerXlm ? Math.max(0, feePayerXlm.balance - feePayerXlm.spendable) : null;
+
+  // ── Review screen with honest spread and impact ─────────────────────────────
+  if (step === 'review' && honestQuote && quote) {
+    const amountOut = Number(quote.amountOut) / 1e7;
+    const currentRate = amountOut / Number(amountIn);
+    return (
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="swap-review-screen">
+        <View style={styles.body}>
+          <FlowHeader 
+            title="Review Swap" 
+            onBack={() => { setStep('form'); }} 
+          />
+          
+          <View style={styles.reviewContent}>
+            <PreConfirmationPanel
+              data={{
+                tokenIn: tokenIn.code,
+                tokenOut: tokenOut.code,
+                amountIn: Number(amountIn),
+                amountOut,
+                rate: currentRate,
+                priceImpactPct: (honestQuote.impactAnalysis?.priceImpactPct ?? 0),
+                spreadPct: (honestQuote.impactAnalysis?.spreadPct ?? 0),
+                totalImpactPct: (honestQuote.impactAnalysis?.totalImpactPct ?? 0),
+                bestBid: honestQuote.spread?.bestBid,
+                bestAsk: honestQuote.spread?.bestAsk,
+                sellbackAmount: honestQuote.reverseQuote?.sellbackAmount,
+                spreadLossPct: honestQuote.reverseQuote?.spreadLossPct,
+                roundTripImpactPct: honestQuote.reverseQuote?.roundTripImpactPct,
+              }}
+              colors={colors}
+            />
+          </View>
+
+          <View style={styles.spacer} />
+
+          {honestQuote.shouldRefuse ? (
+            <View>
+              <Text style={styles.refusalBanner}>{honestQuote.refusalReason}</Text>
+              <Pressable
+                style={[styles.primaryBtn, styles.disabled]}
+                onPress={() => setStep('form')}
+              >
+                <Text style={styles.primaryText}>Back to form</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <SlideToConfirm label="Slide to confirm swap" onConfirm={handleExecute} />
+          )}
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   // ── Done / status ──────────────────────────────────────────────────────────
   if (step === 'done') {
@@ -554,7 +649,12 @@ export default function SwapScreen() {
             <Text style={styles.statusText}>{step === 'signing' ? 'Waiting for passkey…' : 'Submitting swap…'}</Text>
           </View>
         ) : canReview ? (
-          <SlideToConfirm label="Slide to swap" onConfirm={handleExecute} />
+          <Pressable
+            style={styles.primaryBtn}
+            onPress={() => setStep('review')}
+          >
+            <Text style={styles.primaryText}>Review swap</Text>
+          </Pressable>
         ) : (
           <View style={[styles.primaryBtn, styles.disabled]}>
             <Text style={styles.primaryText}>{hasAmount ? 'Fetching quote…' : 'Enter an amount'}</Text>
@@ -713,4 +813,14 @@ const createStyles = (colors: ThemeColors) =>
     sheetTitle: { color: colors.textFaint, fontFamily: fontFamily.bodySemiBold, fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 },
     sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
     sheetName: { color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 15 },
+    reviewContent: { flex: 1, marginTop: 12 },
+    refusalBanner: {
+      color: colors.danger,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      backgroundColor: colors.dangerSurface,
+      borderRadius: 10,
+      padding: 12,
+      marginBottom: 16,
+    },
   });

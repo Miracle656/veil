@@ -141,6 +141,14 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
+    // SPP state storage uses SQLite with SQLCipher for encryption.
+    // Database is encrypted at rest with a key held in the secure store.
+    [
+      'expo-sqlite',
+      {
+        useSQLCipher: true,
+      },
+    ],
     // Periodic background check for payments, so a notification can arrive
     // without the app being opened. Android runs it through WorkManager; the
     // plugin adds the iOS background-processing entitlement.
