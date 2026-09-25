@@ -126,4 +126,56 @@ describe('Hold USDT0 in mobile: trustline, balance and impostor check (Issue #79
   });
 });
 
+describe('fetchHeldAssets network binding', () => {
+  it('reads Horizon URL from active network instead of falling back to testnet', async () => {
+    const { fetchHeldAssets } = require('../assets');
+    const networkModule = require('../network');
+    const { Horizon } = require('@stellar/stellar-sdk');
+
+    const getNetworkSpy = jest.spyOn(networkModule, 'getNetwork').mockReturnValue({
+      name: 'mainnet',
+      displayName: 'Stellar Mainnet',
+      networkPassphrase: 'Public Global Stellar Network ; September 2015',
+      horizonUrl: 'https://horizon.stellar.org',
+      rpcUrl: 'https://app.useveilapp.xyz/api/rpc/mainnet',
+      factoryContractId: 'CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK',
+      friendbotUrl: null,
+    });
+
+    let observedServerUrl = '';
+    const loadAccountSpy = jest
+      .spyOn(Horizon.Server.prototype, 'loadAccount')
+      .mockImplementation(function (this: any) {
+        observedServerUrl = this.serverURL.toString();
+        return Promise.resolve({
+          balances: [
+            {
+              asset_type: 'credit_alphanum4',
+              asset_code: 'USDC',
+              asset_issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+              balance: '10.0000000',
+            },
+          ],
+        } as any);
+      });
+
+    const assets = await fetchHeldAssets('GACCOUNT123');
+
+    expect(observedServerUrl).toContain('https://horizon.stellar.org');
+    expect(observedServerUrl).not.toContain('horizon-testnet.stellar.org');
+    expect(assets).toEqual([
+      {
+        code: 'USDC',
+        issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+        balance: '10.0000000',
+        assetType: 'credit_alphanum4',
+      },
+    ]);
+
+    loadAccountSpy.mockRestore();
+    getNetworkSpy.mockRestore();
+  });
+});
+
+
 
