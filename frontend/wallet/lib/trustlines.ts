@@ -40,6 +40,14 @@ export interface AnchorAsset {
   issuer: string
 }
 
+/** Issuer flags read from Horizon for clawback and freeze disclosures (#789). */
+export interface IssuerFlags {
+  authRequired: boolean
+  authRevocable: boolean
+  authClawbackEnabled: boolean
+  authImmutable: boolean
+}
+
 /** Setting a trustline limit to zero removes it (only allowed at zero balance). */
 export const REMOVE_TRUSTLINE_LIMIT = '0'
 
@@ -133,4 +141,54 @@ export async function resolveAnchorAssets(
   return (toml.CURRENCIES ?? [])
     .filter((c): c is AnchorAsset => Boolean(c.code && c.issuer))
     .map((c) => ({ code: c.code, issuer: c.issuer }))
+}
+
+/**
+ * Fetches the flags of an asset issuer from Horizon.
+ * Injectable fetcher for unit testing without live network calls.
+ */
+export async function fetchIssuerFlags(
+  issuerAddress: string,
+  horizonUrl: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<IssuerFlags | null> {
+  if (!issuerAddress || !issuerAddress.trim()) return null
+  try {
+    const res = await fetchFn(`${horizonUrl}/accounts/${issuerAddress.trim()}`)
+    if (!res.ok) return null
+    const data = await res.json()
+    const flags = data.flags || {}
+    return {
+      authRequired: Boolean(flags.auth_required),
+      authRevocable: Boolean(flags.auth_revocable),
+      authClawbackEnabled: Boolean(flags.auth_clawback_enabled),
+      authImmutable: Boolean(flags.auth_immutable),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Returns a factual disclosure string if the asset issuer has freeze (revocable)
+ * or clawback flags enabled, or null if neither flag is active.
+ *
+ * Acceptance criteria (#789):
+ * - States who can do it and what happens in one sentence.
+ * - No hedging, no advice.
+ * - Clarifies this is a property of the asset, not of Veil.
+ */
+export function getAssetControlDisclosure(flags: IssuerFlags | null): string | null {
+  if (!flags) return null
+  const { authRevocable, authClawbackEnabled } = flags
+  if (authRevocable && authClawbackEnabled) {
+    return 'The asset issuer can freeze this balance or claw it back; this is a property of the asset, not of Veil.'
+  }
+  if (authRevocable) {
+    return 'The asset issuer can freeze this balance; this is a property of the asset, not of Veil.'
+  }
+  if (authClawbackEnabled) {
+    return 'The asset issuer can claw this balance back; this is a property of the asset, not of Veil.'
+  }
+  return null
 }

@@ -10,6 +10,8 @@ import {
   normalizeDomain,
   parseTrustlines,
   resolveAnchorAssets,
+  fetchIssuerFlags,
+  getAssetControlDisclosure,
   type HorizonBalanceLike,
 } from '../trustlines'
 
@@ -101,7 +103,101 @@ describe('resolveAnchorAssets', () => {
       called = true
       return {}
     }
-    expect(await resolveAnchorAssets('  ', resolver)).toEqual([])
+    const assets = await resolveAnchorAssets('   ', resolver)
+    expect(assets).toEqual([])
     expect(called).toBe(false)
+  })
+})
+
+describe('fetchIssuerFlags (#789)', () => {
+  it('fetches and parses flags from Horizon response', async () => {
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        flags: {
+          auth_required: false,
+          auth_revocable: true,
+          auth_clawback_enabled: true,
+          auth_immutable: false,
+        },
+      }),
+    }) as unknown as typeof fetch
+
+    const flags = await fetchIssuerFlags(ISSUER, 'https://horizon.stellar.org', mockFetch)
+    expect(flags).toEqual({
+      authRequired: false,
+      authRevocable: true,
+      authClawbackEnabled: true,
+      authImmutable: false,
+    })
+  })
+
+  it('returns null when horizon returns non-ok response', async () => {
+    const mockFetch = jest.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+    }) as unknown as typeof fetch
+
+    const flags = await fetchIssuerFlags(ISSUER, 'https://horizon.stellar.org', mockFetch)
+    expect(flags).toBeNull()
+  })
+
+  it('returns null on blank issuer address without calling fetch', async () => {
+    const mockFetch = jest.fn() as unknown as typeof fetch
+    const flags = await fetchIssuerFlags('', 'https://horizon.stellar.org', mockFetch)
+    expect(flags).toBeNull()
+    expect(mockFetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('getAssetControlDisclosure (#789)', () => {
+  it('returns one-sentence disclosure when both revocable and clawback are enabled (e.g. USDT0)', () => {
+    const disclosure = getAssetControlDisclosure({
+      authRequired: false,
+      authRevocable: true,
+      authClawbackEnabled: true,
+      authImmutable: false,
+    })
+    expect(disclosure).toBe(
+      'The asset issuer can freeze this balance or claw it back; this is a property of the asset, not of Veil.'
+    )
+  })
+
+  it('returns freeze disclosure when only revocable is enabled', () => {
+    const disclosure = getAssetControlDisclosure({
+      authRequired: false,
+      authRevocable: true,
+      authClawbackEnabled: false,
+      authImmutable: false,
+    })
+    expect(disclosure).toBe(
+      'The asset issuer can freeze this balance; this is a property of the asset, not of Veil.'
+    )
+  })
+
+  it('returns clawback disclosure when only clawback is enabled', () => {
+    const disclosure = getAssetControlDisclosure({
+      authRequired: false,
+      authRevocable: false,
+      authClawbackEnabled: true,
+      authImmutable: false,
+    })
+    expect(disclosure).toBe(
+      'The asset issuer can claw this balance back; this is a property of the asset, not of Veil.'
+    )
+  })
+
+  it('returns null when neither revocable nor clawback is enabled', () => {
+    const disclosure = getAssetControlDisclosure({
+      authRequired: true,
+      authRevocable: false,
+      authClawbackEnabled: false,
+      authImmutable: false,
+    })
+    expect(disclosure).toBeNull()
+  })
+
+  it('returns null when flags is null', () => {
+    expect(getAssetControlDisclosure(null)).toBeNull()
   })
 })

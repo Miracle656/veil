@@ -13,9 +13,12 @@ import {
   hasTrustline,
   parseTrustlines,
   resolveAnchorAssets,
+  fetchIssuerFlags,
+  getAssetControlDisclosure,
   type AnchorAsset,
   type HorizonBalanceLike,
   type Trustline,
+  type IssuerFlags,
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
@@ -49,6 +52,10 @@ export default function AssetsPage() {
   const [manualCode, setManualCode] = useState('')
   const [manualIssuer, setManualIssuer] = useState('')
 
+  // Disclosures state
+  const [disclosures, setDisclosures] = useState<Record<string, string | null>>({})
+  const [manualDisclosure, setManualDisclosure] = useState<string | null>(null)
+
   const trustlines: Trustline[] = useMemo(() => parseTrustlines(balances), [balances])
 
   const loadAccount = useCallback(async () => {
@@ -63,17 +70,49 @@ export default function AssetsPage() {
       const pubKey = Keypair.fromSecret(secret).publicKey()
       setSignerAddress(pubKey)
       const account = await server.loadAccount(pubKey)
-      setBalances(account.balances as unknown as HorizonBalanceLike[])
+      const bal = account.balances as unknown as HorizonBalanceLike[]
+      setBalances(bal)
+
+      // Fetch disclosures for existing trustlines
+      const lines = parseTrustlines(bal)
+      for (const line of lines) {
+        if (!disclosures[line.issuer]) {
+          void fetchIssuerFlags(line.issuer, network.horizonUrl).then((flags) => {
+            const disc = getAssetControlDisclosure(flags)
+            if (disc) {
+              setDisclosures((prev) => ({ ...prev, [line.issuer]: disc }))
+            }
+          })
+        }
+      }
     } catch (err) {
       setStatus({ kind: 'error', message: errorMessage(err) })
     } finally {
       setLoading(false)
     }
-  }, [server])
+  }, [server, disclosures])
 
   useEffect(() => {
     void loadAccount()
   }, [loadAccount])
+
+  // Fetch disclosure when manual issuer changes
+  useEffect(() => {
+    const trimmed = manualIssuer.trim()
+    if (trimmed.length >= 56 && trimmed.startsWith('G')) {
+      let active = true
+      void fetchIssuerFlags(trimmed, network.horizonUrl).then((flags) => {
+        if (active) {
+          setManualDisclosure(getAssetControlDisclosure(flags))
+        }
+      })
+      return () => {
+        active = false
+      }
+    } else {
+      setManualDisclosure(null)
+    }
+  }, [manualIssuer])
 
   const submitChangeTrust = useCallback(
     async (code: string, issuer: string, remove: boolean) => {
@@ -116,6 +155,16 @@ export default function AssetsPage() {
       setAnchorAssets(assets)
       if (assets.length === 0) {
         setStatus({ kind: 'error', message: `No assets found in ${domain || 'that domain'}'s stellar.toml.` })
+      } else {
+        // Fetch disclosures for searched assets
+        for (const asset of assets) {
+          void fetchIssuerFlags(asset.issuer, network.horizonUrl).then((flags) => {
+            const disc = getAssetControlDisclosure(flags)
+            if (disc) {
+              setDisclosures((prev) => ({ ...prev, [asset.issuer]: disc }))
+            }
+          })
+        }
       }
     } catch (err) {
       setStatus({ kind: 'error', message: `Could not read stellar.toml: ${errorMessage(err)}` })
@@ -184,22 +233,29 @@ export default function AssetsPage() {
             <p style={mutedTextStyle}>No trustlines yet. Add one below.</p>
           ) : (
             trustlines.map((line) => (
-              <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
-                <div style={{ minWidth: 0 }}>
-                  <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{line.code}</p>
-                  <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
-                    {line.issuer}
-                  </p>
-                  <p style={mutedTextStyle}>Balance: {line.balance}</p>
+              <div key={`${line.code}-${line.issuer}`} className="card" style={{ ...trustlineRowStyle, flexDirection: 'column', alignItems: 'stretch' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{line.code}</p>
+                    <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
+                      {line.issuer}
+                    </p>
+                    <p style={mutedTextStyle}>Balance: {line.balance}</p>
+                  </div>
+                  <button
+                    onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
+                    disabled={busy || !canRemoveTrustline(line)}
+                    title={canRemoveTrustline(line) ? 'Remove trustline' : 'Balance must be zero to remove'}
+                    style={removeButtonStyle(busy || !canRemoveTrustline(line))}
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
-                  disabled={busy || !canRemoveTrustline(line)}
-                  title={canRemoveTrustline(line) ? 'Remove trustline' : 'Balance must be zero to remove'}
-                  style={removeButtonStyle(busy || !canRemoveTrustline(line))}
-                >
-                  Remove
-                </button>
+                {disclosures[line.issuer] && (
+                  <p style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '0.5rem', lineHeight: 1.4 }}>
+                    {disclosures[line.issuer]}
+                  </p>
+                )}
               </div>
             ))
           )}
@@ -222,21 +278,29 @@ export default function AssetsPage() {
           </div>
           {anchorAssets.map((asset) => {
             const already = hasTrustline(balances, asset.code, asset.issuer)
+            const disclosure = disclosures[asset.issuer]
             return (
-              <div key={`${asset.code}-${asset.issuer}`} className="card" style={trustlineRowStyle}>
-                <div style={{ minWidth: 0 }}>
-                  <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{asset.code}</p>
-                  <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
-                    {asset.issuer}
-                  </p>
+              <div key={`${asset.code}-${asset.issuer}`} className="card" style={{ ...trustlineRowStyle, flexDirection: 'column', alignItems: 'stretch' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{asset.code}</p>
+                    <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
+                      {asset.issuer}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => void submitChangeTrust(asset.code, asset.issuer, false)}
+                    disabled={busy || already}
+                    style={primaryButtonStyle(busy || already)}
+                  >
+                    {already ? 'Added' : 'Add'}
+                  </button>
                 </div>
-                <button
-                  onClick={() => void submitChangeTrust(asset.code, asset.issuer, false)}
-                  disabled={busy || already}
-                  style={primaryButtonStyle(busy || already)}
-                >
-                  {already ? 'Added' : 'Add'}
-                </button>
+                {disclosure && !already && (
+                  <p style={{ fontSize: '0.75rem', color: '#f59e0b', marginTop: '0.5rem', lineHeight: 1.4 }}>
+                    {disclosure}
+                  </p>
+                )}
               </div>
             )
           })}
@@ -248,7 +312,7 @@ export default function AssetsPage() {
           <input
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
-            placeholder="Asset code, e.g. USDC"
+            placeholder="Asset code, e.g. USDT0"
             style={{ ...inputStyle, marginBottom: '0.5rem' }}
             aria-label="Asset code"
           />
@@ -259,6 +323,24 @@ export default function AssetsPage() {
             style={{ ...inputStyle, marginBottom: '0.75rem' }}
             aria-label="Issuer address"
           />
+
+          {manualDisclosure && (
+            <div
+              style={{
+                fontSize: '0.8125rem',
+                color: '#f59e0b',
+                background: 'rgba(245, 158, 11, 0.08)',
+                border: '1px solid rgba(245, 158, 11, 0.25)',
+                padding: '0.625rem 0.75rem',
+                borderRadius: '0.5rem',
+                marginBottom: '0.75rem',
+                lineHeight: 1.5,
+              }}
+            >
+              {manualDisclosure}
+            </div>
+          )}
+
           <button onClick={handleManualAdd} disabled={busy} style={primaryButtonStyle(busy)}>
             Add trustline
           </button>
