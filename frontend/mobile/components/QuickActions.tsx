@@ -4,7 +4,7 @@ import { useRouter, type Href } from 'expo-router';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
-import { fontFamily } from '../theme/typography';
+import { fontFamily } from '../theme/fontFamily';
 import { BuyIcon, ReceiveIcon, SendIcon, SwapIcon, type IconProps } from './icons';
 
 export interface QuickActionItem {
