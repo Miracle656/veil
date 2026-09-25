@@ -22,6 +22,18 @@ function fmtAmount(raw: string): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 
+export function partitionHoldings(holdings: Holding[]) {
+  return {
+    verified: holdings.filter((holding) => holding.native || holding.verification.verified),
+    unverified: holdings.filter((holding) => !holding.native && !holding.verification.verified),
+  };
+}
+
+export function visibleHoldings(holdings: Holding[], showUnverified: boolean) {
+  const { verified, unverified } = partitionHoldings(holdings);
+  return showUnverified ? [...verified, ...unverified] : verified;
+}
+
 /**
  * The wallet's portfolio — one row per held asset (native XLM + trustlines), with
  * a token badge, name, on-chain balance, and its value in the user's currency.
@@ -72,6 +84,7 @@ export function AssetsList({
             balance: fallbackXlm,
             usd: fallbackUsd,
             native: true,
+            verification: { verified: true, impersonates: null },
           },
         ]);
         setLoadError(false);
@@ -124,8 +137,7 @@ export function AssetsList({
         </Text>
       ) : (
         (() => {
-          const verified = holdings.filter((h) => h.native || h.verification.verified);
-          const unverified = holdings.filter((h) => !h.native && !h.verification.verified);
+          const { verified, unverified } = partitionHoldings(holdings);
           return (
             <>
               {verified.map((h, i) => (

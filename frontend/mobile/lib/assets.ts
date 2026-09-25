@@ -12,7 +12,6 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon } from '@stellar/stellar-sdk';
-import { verifyAsset, type AssetVerification } from './assetRegistry';
 import { getNetwork } from './network';
 
 import { getNetwork } from './network';
@@ -41,7 +40,13 @@ export interface RegisteredAsset {
   sacContractId?: string;
 }
 
+export type AssetVerification = {
+  verified: boolean;
+  impersonates: RegisteredAsset | null;
+};
+
 export const USDY_MAINNET_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6';
+export const BENJI_MAINNET_ISSUER = 'GBHNGLLIE3KWGKCHIKMHJ5VZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5';
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
 
@@ -57,6 +62,14 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     network: 'mainnet',
     kind: 'treasury',
     reserveXlm: 0.5,
+  },
+  BENJI: {
+    code: 'BENJI',
+    issuer: BENJI_MAINNET_ISSUER,
+    name: 'Franklin OnChain U.S. Government Money Fund',
+    issuerName: 'Franklin Templeton',
+    network: 'mainnet',
+    kind: 'fund',
   },
   USDC: {
     code: 'USDC',
@@ -130,6 +143,7 @@ export function isRegisteredIssuer(
   return asset.issuer === issuer;
 }
 
+<<<<<<< HEAD
 /**
  * The registry entry for an asset, but only when BOTH its code (exactly — codes
  * are case-sensitive) and its issuer are the registered ones. A code match on
@@ -146,6 +160,19 @@ export function verifiedAsset(
   const registered = ASSET_REGISTRY[code.toUpperCase()];
   if (!registered || registered.code !== code) return null;
   return isRegisteredIssuer(code, issuer, network) ? registered : null;
+=======
+export function verifyAsset(
+  code: string,
+  issuer: string,
+  network: 'mainnet' | 'testnet'
+): AssetVerification {
+  const registered = getRegisteredAsset(code, network);
+  if (!registered) return { verified: false, impersonates: null };
+  if (code !== registered.code) return { verified: false, impersonates: registered };
+  return isRegisteredIssuer(code, issuer, network)
+    ? { verified: true, impersonates: null }
+    : { verified: false, impersonates: registered };
+>>>>>>> 58afcb5 (fix asset verification review feedback)
 }
 
 /** A single non-native asset held by the wallet. */

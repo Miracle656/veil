@@ -129,6 +129,7 @@ export default function AssetsScreen() {
     if (state.kind !== 'ready') return false;
     return state.assets.some(
       (a) => a.code.toUpperCase() === 'USDY' && a.issuer === USDY_MAINNET_ISSUER
+<<<<<<< HEAD
     );
   }, [state]);
 
@@ -136,6 +137,8 @@ export default function AssetsScreen() {
     if (state.kind !== 'ready') return false;
     return state.assets.some(
       (a) => a.code.toUpperCase() === 'USDT0' && a.issuer === USDT0_MAINNET_ISSUER
+=======
+>>>>>>> 58afcb5 (fix asset verification review feedback)
     );
   }, [state]);
 
@@ -249,6 +252,7 @@ export default function AssetsScreen() {
           </Text>
         ) : (
           <View style={styles.list}>
+<<<<<<< HEAD
             {state.assets
               .filter((asset) => asset.verification.verified)
               .map((asset) => renderAsset(asset, state.prices))}
@@ -267,6 +271,23 @@ export default function AssetsScreen() {
                     .map((asset) => renderAsset(asset, state.prices))}
               </>
             )}
+=======
+            {/* Asset grouping is currently implemented on the dashboard; this detail screen remains out of scope for this PR. */}
+            {state.assets.map((asset) => {
+              const key = `${asset.code}:${asset.issuer}`;
+              const price = state.prices[key] ?? null;
+              const val = usdValue(asset.balance, price);
+              const formattedVal = formatUsd(val);
+
+              return (
+                <AssetRow
+                  key={key}
+                  asset={asset}
+                  usdValueFormatted={formattedVal !== '—' ? formattedVal : undefined}
+                />
+              );
+            })}
+>>>>>>> 58afcb5 (fix asset verification review feedback)
           </View>
         ))}
     </ScrollView>
@@ -369,11 +390,5 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.dangerSurface,
       borderRadius: 8,
       padding: 10,
-    },
-    sectionLabel: {
-      color: colors.textSecondary,
-      fontSize: 13,
-      fontWeight: '600',
-      paddingVertical: 8,
     },
   });

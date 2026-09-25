@@ -98,6 +98,12 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 12,
       fontFamily: 'monospace',
     },
+    warning: {
+      color: colors.danger,
+      fontSize: 11,
+      fontWeight: '600',
+      marginTop: 2,
+    },
     right: {
       alignItems: 'flex-end',
       gap: 2,

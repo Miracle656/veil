@@ -1,12 +1,13 @@
-"use client";
-import { walletLocal, walletSession } from "@/lib/walletStorage";
+'use client'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic'
 
-import { inclusionFee } from "@/lib/fees";
-import { Suspense, useEffect, useRef, useCallback, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { inclusionFee } from '@/lib/fees'
+import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
+<<<<<<< HEAD
   Horizon,
   Keypair,
   rpc as SorobanRpc,
@@ -72,128 +73,120 @@ import {
   hydrateActivityFeed,
   appendActivityFeed,
 } from "@/lib/activityFeed";
+=======
+  Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
+  TransactionBuilder, BASE_FEE, Networks, Asset, nativeToScVal, scValToNative,
+} from '@stellar/stellar-sdk'
+const Server = Horizon.Server
+import { ConnectDAppModal } from '@/components/ConnectDAppModal'
+import { WalletConnectApprovalModal } from '@/components/WalletConnectApprovalModal'
+import { DepositModal } from '@/components/DepositModal'
+import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
+import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
+import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
+import { fetchPrices } from '@/lib/fetchPrice'
+import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
+import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName, walletConfig } from '@/lib/network'
+import { isMultisigAvailable } from '@/lib/multisigConfig'
+import { sweepContractBalance } from '@/lib/sweepContractBalance'
+import { derToRawSignature, hexToUint8Array } from '@veil/utils'
+import { useInvisibleWallet, type WebAuthnSignature } from '@veil/sdk'
+import { ensureWalletDeployed } from '@/lib/walletDeployment'
+import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
+import { VeilMark } from '@/components/ui/VeilMark'
+import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
+import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
+import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { verifyAsset, type AssetVerification } from '@/lib/assets'
+>>>>>>> 58afcb5 (fix asset verification review feedback)
 
 const network = getNetwork();
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface WalletAsset {
-  code: string;
-  issuer: string | null;
-  balance: string;
-  verification: AssetVerification;
+  code: string
+  issuer: string | null
+  balance: string
+  verification: AssetVerification
 }
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
 type HorizonOp = {
-  id: string;
-  type: string;
-  from?: string;
-  to?: string;
-  funder?: string;
-  account?: string;
-  amount?: string;
-  starting_balance?: string;
-  asset_type?: string;
-  asset_code?: string;
-  asset_issuer?: string;
-  source_amount?: string;
-  source_asset_type?: string;
-  source_asset_code?: string;
-  created_at: string;
-  transaction_hash: string;
-  transaction?: { memo?: string };
-};
+  id: string; type: string
+  from?: string; to?: string; funder?: string; account?: string
+  amount?: string; starting_balance?: string
+  asset_type?: string; asset_code?: string; asset_issuer?: string
+  source_amount?: string
+  source_asset_type?: string; source_asset_code?: string
+  created_at: string; transaction_hash: string
+  transaction?: { memo?: string }
+}
 
 type WraithTransfer = {
-  id: number;
-  eventType: string;
-  fromAddress: string | null;
-  toAddress: string | null;
-  amount: string;
-  ledger: number;
-  ledgerClosedAt: string;
-  txHash: string;
-  contractId: string;
-};
+  id: number; eventType: string; fromAddress: string | null
+  toAddress: string | null; amount: string; ledger: number
+  ledgerClosedAt: string; txHash: string; contractId: string
+}
 
-type WraithPage = { transfers: WraithTransfer[]; next_cursor?: string | null };
+type WraithPage = { transfers: WraithTransfer[], next_cursor?: string | null }
 
-function mapHorizonOps(
-  ops: HorizonOp[],
-  signerPublicKey: string,
-): import("@/components/TxDetailSheet").TxRecord[] {
+function mapHorizonOps(ops: HorizonOp[], signerPublicKey: string): import('@/components/TxDetailSheet').TxRecord[] {
   return ops
-    .filter(
-      (p) =>
-        p.type === "payment" ||
-        p.type === "create_account" ||
-        p.type === "path_payment_strict_send",
-    )
-    .map((p) => {
-      if (p.type === "create_account") {
+    .filter(p => p.type === 'payment' || p.type === 'create_account' || p.type === 'path_payment_strict_send')
+    .map(p => {
+      if (p.type === 'create_account') {
         return {
-          id: p.id,
-          type: "received" as const,
-          amount: p.starting_balance ?? "0",
-          asset: "XLM",
-          counterparty: p.funder ?? "Friendbot",
+          id: p.id, type: 'received' as const,
+          amount: p.starting_balance ?? '0', asset: 'XLM',
+          counterparty: p.funder ?? 'Friendbot',
           timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
           hash: p.transaction_hash,
-        };
+        }
       }
-      if (p.type === "path_payment_strict_send") {
-        const srcAsset =
-          p.source_asset_type === "native"
-            ? "XLM"
-            : (p.source_asset_code ?? "XLM");
-        const dstAsset =
-          p.asset_type === "native" ? "XLM" : (p.asset_code ?? "");
+      if (p.type === 'path_payment_strict_send') {
+        const srcAsset = p.source_asset_type === 'native' ? 'XLM' : (p.source_asset_code ?? 'XLM')
+        const dstAsset = p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? '')
         return {
-          id: p.id,
-          type: "swapped" as const,
-          amount: p.source_amount ?? "0",
-          asset: srcAsset,
-          destAmount: p.amount ?? "0",
-          destAsset: dstAsset,
-          counterparty: "Stellar DEX",
+          id: p.id, type: 'swapped' as const,
+          amount: p.source_amount ?? '0', asset: srcAsset,
+          destAmount: p.amount ?? '0', destAsset: dstAsset,
+          counterparty: 'Stellar DEX',
           timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
           hash: p.transaction_hash,
-        };
+        }
       }
       return {
         id: p.id,
-        type:
-          p.from === signerPublicKey
-            ? ("sent" as const)
-            : ("received" as const),
-        amount: p.amount ?? "0",
-        asset: p.asset_type === "native" ? "XLM" : (p.asset_code ?? ""),
-        counterparty:
-          p.from === signerPublicKey ? (p.to ?? "") : (p.from ?? ""),
+        type: p.from === signerPublicKey ? 'sent' as const : 'received' as const,
+        amount: p.amount ?? '0',
+        asset: p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? ''),
+        counterparty: p.from === signerPublicKey ? (p.to ?? '') : (p.from ?? ''),
         timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
         hash: p.transaction_hash,
         memo: p.transaction?.memo,
-      };
-    });
+      }
+    })
 }
 
 // ── Module-level cache ────────────────────────────────────────────────────────
 // Survives component unmount/remount within the SPA so navigating away and
 // back doesn't flash the skeleton state. Cleared on hard refresh (intentional).
 // Refetch still happens in the background to keep data fresh.
-let cachedAssets: WalletAsset[] | null = null;
-let cachedContractXlm: number | null = null;
-let cachedPrices: Record<string, number | null> = {};
+let cachedAssets:      WalletAsset[]                 | null = null
+let cachedContractXlm: number                        | null = null
+let cachedPrices:      Record<string, number | null>        = {}
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
 function DashboardPageContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  useInactivityLock();
-  const wallet = useInvisibleWallet(walletConfig);
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  useInactivityLock()
+  const wallet = useInvisibleWallet(walletConfig)
 
+<<<<<<< HEAD
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [assets, setAssets] = useState<WalletAsset[]>(() => cachedAssets ?? []);
   const [reserveInfo, setReserveInfo] =
@@ -231,109 +224,120 @@ function DashboardPageContent() {
   // #711: true when this wallet's privacy keys cannot be re-derived from a
   // passkey elsewhere — the private-balance card warns before anything shields.
   const privacyRecoveryUnsupported = usePrivacyRecoveryNotice();
+=======
+  const [walletAddress, setWalletAddress] = useState<string | null>(null)
+  const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
+  const [showUnverified, setShowUnverified] = useState(false)
+  const transactions                      = useActivityFeed()
+  const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
+  const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
+  const [loading, setLoading]             = useState(cachedAssets === null)
+  const [prices, setPrices]               = useState<Record<string, number | null>>(() => cachedPrices)
+  const [isFunding, setIsFunding]         = useState(false)
+  const [fundingError, setFundingError]   = useState<string | null>(null)
+  const [copied, setCopied]               = useState(false)
+  const [hasFeePayerKey, setHasFeePayerKey] = useState(true)
+  const [agentBadge, setAgentBadge]         = useState(false)
+  const [contractXlm, setContractXlm]       = useState(() => cachedContractXlm ?? 0)
+  const [isSweeping, setIsSweeping]         = useState(false)
+  const [sweepError, setSweepError]         = useState<string | null>(null)
+  const [sweepDismissed, setSweepDismissed] = useState(false)
+  const [showConnectDapp, setShowConnectDapp] = useState(false)
+  const [connectToast, setConnectToast] = useState<string | null>(null)
+  const [sep24Modal, setSep24Modal] = useState<'deposit' | 'withdraw' | null>(null)
+  const [wraithInCursor, setWraithInCursor]   = useState<string | null>(null)
+  const [wraithOutCursor, setWraithOutCursor] = useState<string | null>(null)
+  const [hasMorePages, setHasMorePages]       = useState(false)
+  const [isLoadingMore, setIsLoadingMore]     = useState(false)
+  // PRF downgrade: surfaced as a dismissible banner (issue #629).
+  const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
+  const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
+>>>>>>> 58afcb5 (fix asset verification review feedback)
 
   // Shoulder-surfing guard. Persisted, but read after mount so the server and
   // client render the same first paint.
-  const [hideAmounts, setHideAmounts] = useState(false);
-  const hideLoaded = useRef(false);
+  const [hideAmounts, setHideAmounts] = useState(false)
+  const hideLoaded = useRef(false)
   useEffect(() => {
-    try {
-      setHideAmounts(localStorage.getItem("veil_hide_amounts") === "1");
-    } catch {
-      /* blocked storage */
-    }
-    hideLoaded.current = true;
-  }, []);
+    try { setHideAmounts(localStorage.getItem('veil_hide_amounts') === '1') } catch { /* blocked storage */ }
+    hideLoaded.current = true
+  }, [])
   useEffect(() => {
-    if (!hideLoaded.current) return;
-    try {
-      localStorage.setItem("veil_hide_amounts", hideAmounts ? "1" : "0");
-    } catch {
-      /* blocked storage */
-    }
-  }, [hideAmounts]);
+    if (!hideLoaded.current) return
+    try { localStorage.setItem('veil_hide_amounts', hideAmounts ? '1' : '0') } catch { /* blocked storage */ }
+  }, [hideAmounts])
 
   // Time-of-day greeting is resolved after mount: the server's clock and the
   // viewer's are not the same, and a mismatch breaks hydration.
-  const [greeting, setGreeting] = useState("Welcome back");
+  const [greeting, setGreeting] = useState('Welcome back')
   useEffect(() => {
-    const h = new Date().getHours();
-    setGreeting(
-      h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening",
-    );
-  }, []);
+    const h = new Date().getHours()
+    setGreeting(h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening')
+  }, [])
 
   const priceOf = useCallback(
     (a: { code: string; issuer?: string | null }) =>
       prices[a.issuer ? `${a.code}:${a.issuer}` : a.code] ?? null,
     [prices],
-  );
+  )
 
   // Balances are priced in USD upstream; this renders them in whichever
   // currency the user picked (naira by default for the launch market).
-  const { code: currencyCode, rate: fxRate } = useCurrency();
-  useEffect(() => {
-    hydrateCurrency();
-  }, []);
-  const usd = (n: number) => formatFiat(n, currencyCode, fxRate);
+  const { code: currencyCode, rate: fxRate } = useCurrency()
+  useEffect(() => { hydrateCurrency() }, [])
+  const usd = (n: number) => formatFiat(n, currencyCode, fxRate)
 
-  const pricedAssets = assets.filter((a) => priceOf(a) != null);
+  const pricedAssets = assets.filter((a) => priceOf(a) != null)
   const totalUsd = pricedAssets.reduce(
     (sum, a) => sum + parseFloat(a.balance) * (priceOf(a) as number),
     0,
-  );
+  )
   // Only show a total once at least one asset has a price. A partial sum
   // rendered as "the" balance understates the wallet without saying so.
-  const totalLabel = pricedAssets.length > 0 ? usd(totalUsd) : "—";
+  const totalLabel = pricedAssets.length > 0 ? usd(totalUsd) : '—'
 
   // 24h change on the total. Recorded locally rather than fetched: Lens serves
   // a spot price and nothing historical, so this is the change in what the
   // wallet is worth. Null — and so hidden — until a snapshot is a day old.
-  const [dayChange, setDayChange] = useState<number | null>(null);
+  const [dayChange, setDayChange] = useState<number | null>(null)
   useEffect(() => {
     // A partial total is not comparable with a full one, and recording it would
     // report a price-feed outage as a loss. Drop the chip entirely until every
     // asset is priced rather than showing a number nobody can act on.
-    if (
-      !walletAddress ||
-      !isComparableTotal(assets.length, pricedAssets.length)
-    ) {
-      setDayChange(null);
-      return;
+    if (!walletAddress || !isComparableTotal(assets.length, pricedAssets.length)) {
+      setDayChange(null)
+      return
     }
-    const key = historyKey(getNetworkName(), walletAddress);
-    const now = Date.now();
-    const history = recordSnapshot(readHistory(key), totalUsd, now);
-    writeHistory(key, history);
-    setDayChange(change24h(history, totalUsd, now));
-  }, [walletAddress, totalUsd, assets.length, pricedAssets.length]);
+    const key = historyKey(getNetworkName(), walletAddress)
+    const now = Date.now()
+    const history = recordSnapshot(readHistory(key), totalUsd, now)
+    writeHistory(key, history)
+    setDayChange(change24h(history, totalUsd, now))
+  }, [walletAddress, totalUsd, assets.length, pricedAssets.length])
 
   const balanceLine = assets
     .slice()
     .sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance))
     .slice(0, 2)
     .map((a) => `${parseFloat(a.balance).toFixed(2)} ${a.code}`)
-    .join(" · ");
+    .join(' · ')
 
-  const recent = transactions.slice(0, 4);
+  const recent = transactions.slice(0, 4)
 
-  const [multisigAvailable, setMultisigAvailable] = useState(false);
+  const [multisigAvailable, setMultisigAvailable] = useState(false)
 
-  const horizonNextRef = useRef<(() => Promise<any>) | null>(null);
+  const horizonNextRef = useRef<(() => Promise<any>) | null>(null)
 
   useEffect(() => {
-    const stored = walletSession.getItem("invisible_wallet_address");
-    if (!stored) {
-      router.replace("/lock");
-      return;
-    }
-    setWalletAddress(stored);
+    const stored = walletSession.getItem('invisible_wallet_address')
+    if (!stored) { router.replace('/lock'); return }
+    setWalletAddress(stored)
 
     // The chip is the main way into /multisig, and that route is gated on
     // networks where the contract is not installed (#672) — so offering the
     // chip there would just bounce the user straight back here. Resolved after
     // mount because the active network lives in localStorage.
-    setMultisigAvailable(isMultisigAvailable());
+    setMultisigAvailable(isMultisigAvailable())
 
     // Establish the fee-payer for this session (idempotent, fire-and-forget).
     // PRF wallets keep the seed in sessionStorage only — never copied to
@@ -341,75 +345,66 @@ function DashboardPageContent() {
     void ensureFeePayer().then(() => {
       // After the fee-payer is established, check whether a silent PRF→legacy
       // downgrade occurred (issue #629). Show a banner if so.
-      setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()));
-    });
-  }, [router]);
+      setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
+    })
+  }, [router])
 
   const fetchData = useCallback(async () => {
-    if (!walletAddress) return; // keep loading=true until address is ready
-    if (cachedAssets === null) setLoading(true);
-    horizonNextRef.current = null;
-    setWraithInCursor(null);
-    setWraithOutCursor(null);
-    setHasMorePages(false);
+    if (!walletAddress) return   // keep loading=true until address is ready
+    if (cachedAssets === null) setLoading(true)
+    horizonNextRef.current = null
+    setWraithInCursor(null)
+    setWraithOutCursor(null)
+    setHasMorePages(false)
 
-    const horizonServer = new Server(network.horizonUrl);
-    const rpcServer = new SorobanRpc.Server(network.rpcUrl);
+    const horizonServer = new Server(network.horizonUrl)
+    const rpcServer     = new SorobanRpc.Server(network.rpcUrl)
 
     // ── 1. Wallet contract (C...) XLM balance via native SAC ────────────────
     // This is the canonical on-chain balance — survives cache clears and
     // cross-device recovery because it reads directly from the ledger.
-    let contractXlm = 0;
+    let contractXlm = 0
     try {
-      const sacAddress = getNativeAssetContractId();
-      const sacContract = new Contract(sacAddress);
-      const dummyKp = Keypair.random();
-      const dummyAcct = new Account(dummyKp.publicKey(), "0");
-      const balanceTx = new TransactionBuilder(dummyAcct, {
-        fee: inclusionFee(),
-        networkPassphrase: network.networkPassphrase,
+      const sacAddress  = getNativeAssetContractId()
+      const sacContract = new Contract(sacAddress)
+      const dummyKp     = Keypair.random()
+      const dummyAcct   = new Account(dummyKp.publicKey(), '0')
+      const balanceTx   = new TransactionBuilder(dummyAcct, {
+        fee: inclusionFee(), networkPassphrase: network.networkPassphrase,
       })
-        .addOperation(
-          sacContract.call(
-            "balance",
-            nativeToScVal(walletAddress, { type: "address" }),
-          ),
-        )
+        .addOperation(sacContract.call('balance', nativeToScVal(walletAddress, { type: 'address' })))
         .setTimeout(30)
-        .build();
+        .build()
 
-      const sim = await rpcServer.simulateTransaction(balanceTx);
+      const sim = await rpcServer.simulateTransaction(balanceTx)
       if (!SorobanRpc.Api.isSimulationError(sim)) {
-        const result = (
-          sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
-        ).result;
+        const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
         if (result) {
-          const stroops = scValToNative(result.retval) as bigint;
-          contractXlm = Number(stroops) / 10_000_000;
+          const stroops = scValToNative(result.retval) as bigint
+          contractXlm  = Number(stroops) / 10_000_000
         }
       }
-    } catch {
-      /* contract has no balance entry yet */
-    }
+    } catch { /* contract has no balance entry yet */ }
 
-    cachedContractXlm = contractXlm;
-    setContractXlm(contractXlm);
+    cachedContractXlm = contractXlm
+    setContractXlm(contractXlm)
 
     // ── 2. Fee-payer G... balance (holds the testnet faucet XLM) ────────────
-    const signerSecret = walletSession.getItem("veil_signer_secret");
+    const signerSecret    = walletSession.getItem('veil_signer_secret')
     const signerPublicKey = signerSecret
       ? Keypair.fromSecret(signerSecret).publicKey()
-      : walletLocal.getItem("veil_signer_public_key") || null;
+      : (walletLocal.getItem('veil_signer_public_key') || null)
 
     // Track whether fee-payer exists so we can show a recovery banner
-    setHasFeePayerKey(!!signerPublicKey);
+    setHasFeePayerKey(!!signerPublicKey)
 
-    let feePayerXlm = 0;
-    let otherAssets: WalletAsset[] = [];
-    let txRecords: TxRecord[] = [];
+    let feePayerXlm = 0
+    let otherAssets: WalletAsset[] = []
+    let txRecords: TxRecord[] = []
 
     if (signerPublicKey) {
       try {
+<<<<<<< HEAD
         const account = await horizonServer.loadAccount(signerPublicKey);
         const native = account.balances.find(
           (b: any) => b.asset_type === "native",
@@ -417,445 +412,340 @@ function DashboardPageContent() {
         feePayerXlm = native ? parseFloat(native.balance) : 0;
         const rInfo = calculateAccountReserve(account as any);
         setReserveInfo(rInfo);
+=======
+        const account = await horizonServer.loadAccount(signerPublicKey)
+        const native  = account.balances.find((b: any) => b.asset_type === 'native')
+        feePayerXlm   = native ? parseFloat(native.balance) : 0
+>>>>>>> 58afcb5 (fix asset verification review feedback)
 
         // All non-XLM balances (e.g. USDC from swaps)
         otherAssets = (account.balances as any[])
-          .filter((b) => b.asset_type !== "native" && parseFloat(b.balance) > 0)
-          .map((b) => ({
+          .filter(b => b.asset_type !== 'native' && parseFloat(b.balance) > 0)
+          .map(b => ({
             code: b.asset_code,
             issuer: b.asset_issuer,
             balance: b.balance,
-            verification: verifyAsset(
-              b.asset_code,
-              b.asset_issuer,
-              getNetworkName(),
-            ),
-          }));
+            verification: verifyAsset(b.asset_code, b.asset_issuer, getNetworkName()),
+          }))
 
         // Transaction history (fee-payer account)
         const paymentsPage = await horizonServer
           .payments()
           .forAccount(signerPublicKey)
           .limit(20)
-          .order("desc")
-          .call();
+          .order('desc')
+          .call()
 
-        horizonNextRef.current =
-          paymentsPage.records.length >= 20 ? paymentsPage.next : null;
-        txRecords = mapHorizonOps(
-          paymentsPage.records as HorizonOp[],
-          signerPublicKey,
-        );
-      } catch {
-        /* not yet funded */
-      }
+        horizonNextRef.current = paymentsPage.records.length >= 20 ? paymentsPage.next : null
+        txRecords = mapHorizonOps(paymentsPage.records as HorizonOp[], signerPublicKey)
+      } catch { /* not yet funded */ }
     }
 
     // ── 3. Wraith: incoming SAC transfers to the wallet contract ────────────
-    const wraithUrl = process.env.NEXT_PUBLIC_WRAITH_URL;
-    let localInCursor: string | null = null;
-    let localOutCursor: string | null = null;
+    const wraithUrl = process.env.NEXT_PUBLIC_WRAITH_URL
+    let localInCursor: string | null = null
+    let localOutCursor: string | null = null
     if (wraithUrl) {
       try {
         // Incoming: to wallet C... address
         // Outgoing: from fee-payer G... address (sends go from fee-payer, not contract)
-        const feePayerAddr = signerPublicKey || walletAddress;
+        const feePayerAddr = signerPublicKey || walletAddress
         const [inRes, outRes] = await Promise.all([
           fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20`),
           fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20`),
-        ]);
-        const inData = inRes.ok
-          ? ((await inRes.json()) as WraithPage)
-          : { transfers: [] as WraithTransfer[], next_cursor: null };
-        const outData = outRes.ok
-          ? ((await outRes.json()) as WraithPage)
-          : { transfers: [] as WraithTransfer[], next_cursor: null };
-        localInCursor = inData.next_cursor ?? null;
-        localOutCursor = outData.next_cursor ?? null;
-        setWraithInCursor(localInCursor);
-        setWraithOutCursor(localOutCursor);
+        ])
+        const inData  = inRes.ok  ? await inRes.json()  as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+        const outData = outRes.ok ? await outRes.json() as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+        localInCursor  = inData.next_cursor  ?? null
+        localOutCursor = outData.next_cursor ?? null
+        setWraithInCursor(localInCursor)
+        setWraithOutCursor(localOutCursor)
 
         const wraithRecords: TxRecord[] = [
-          ...inData.transfers.map((t) => ({
-            id: `w-${t.id}`,
-            type: "received" as const,
-            amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
-            asset: "XLM",
-            counterparty: t.fromAddress ?? "unknown",
-            timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
-            hash: t.txHash,
+          ...inData.transfers.map(t => ({
+            id:           `w-${t.id}`,
+            type:         'received' as const,
+            amount:       (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+            asset:        'XLM',
+            counterparty: t.fromAddress ?? 'unknown',
+            timestamp:    Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
+            hash:         t.txHash,
           })),
-          ...outData.transfers.map((t) => ({
-            id: `w-${t.id}`,
-            type: "sent" as const,
-            amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
-            asset: "XLM",
-            counterparty: t.toAddress ?? "unknown",
-            timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
-            hash: t.txHash,
+          ...outData.transfers.map(t => ({
+            id:           `w-${t.id}`,
+            type:         'sent' as const,
+            amount:       (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+            asset:        'XLM',
+            counterparty: t.toAddress ?? 'unknown',
+            timestamp:    Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
+            hash:         t.txHash,
           })),
-        ];
+        ]
 
         // Merge Wraith records with Horizon records, deduplicate by hash, sort newest first
         const merged = [...wraithRecords, ...txRecords]
-          .filter(
-            (tx, i, arr) => arr.findIndex((t) => t.hash === tx.hash) === i,
-          )
+          .filter((tx, i, arr) => arr.findIndex(t => t.hash === tx.hash) === i)
           .sort((a, b) => b.timestamp - a.timestamp)
-          .slice(0, 30);
-        txRecords = merged;
-      } catch {
-        /* Wraith offline — fall back to Horizon only */
-      }
+          .slice(0, 30)
+        txRecords = merged
+      } catch { /* Wraith offline — fall back to Horizon only */ }
     }
 
     // ── 4. Check for new incoming transfers → agent notification badge ─────
-    const lastVisit = parseInt(
-      localStorage.getItem("veil_agent_last_visit") ?? "0",
-      10,
-    );
+    const lastVisit = parseInt(localStorage.getItem('veil_agent_last_visit') ?? '0', 10)
     const newIncoming = txRecords.filter(
-      (tx) => tx.type === "received" && tx.timestamp * 1000 > lastVisit,
-    );
+      tx => tx.type === 'received' && tx.timestamp * 1000 > lastVisit,
+    )
     if (newIncoming.length > 0) {
-      const latest = newIncoming[0];
-      localStorage.setItem(
-        "veil_agent_notification",
-        JSON.stringify({
-          amount: parseFloat(latest.amount).toFixed(2),
-          asset: latest.asset,
-          from: latest.counterparty,
-          timestamp: latest.timestamp,
-        }),
-      );
-      setAgentBadge(true);
+      const latest = newIncoming[0]
+      localStorage.setItem('veil_agent_notification', JSON.stringify({
+        amount: parseFloat(latest.amount).toFixed(2),
+        asset: latest.asset,
+        from: latest.counterparty,
+        timestamp: latest.timestamp,
+      }))
+      setAgentBadge(true)
     } else {
       // Check if a stale notification exists
-      setAgentBadge(!!localStorage.getItem("veil_agent_notification"));
+      setAgentBadge(!!localStorage.getItem('veil_agent_notification'))
     }
 
     // ── 5. Combine and display ───────────────────────────────────────────────
-    const totalXlm = (contractXlm + feePayerXlm).toFixed(7);
+    const totalXlm = (contractXlm + feePayerXlm).toFixed(7)
     const finalAssets: WalletAsset[] = [
-      {
-        code: "XLM",
-        issuer: null,
-        balance: totalXlm,
-        verification: { verified: true, impersonates: null },
-      },
+      { code: 'XLM', issuer: null, balance: totalXlm, verification: { verified: true, impersonates: null } },
       ...otherAssets,
-    ];
-    cachedAssets = finalAssets;
-    setAssets(finalAssets);
+    ]
+    cachedAssets = finalAssets
+    setAssets(finalAssets)
 
     // Seed the live feed with history and start streaming from now.
     // hydrateActivityFeed notifies all subscribers (including useActivityFeed),
     // so no separate setTransactions call is needed.
-    hydrateActivityFeed(txRecords);
-    if (signerPublicKey) initActivityFeed(signerPublicKey);
+    hydrateActivityFeed(txRecords)
+    if (signerPublicKey) initActivityFeed(signerPublicKey)
 
-    setHasMorePages(
-      horizonNextRef.current !== null ||
-        localInCursor !== null ||
-        localOutCursor !== null,
-    );
-    setLoading(false);
-  }, [walletAddress]);
+    setHasMorePages(horizonNextRef.current !== null || localInCursor !== null || localOutCursor !== null)
+    setLoading(false)
+  }, [walletAddress])
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchData()
+  }, [fetchData])
 
   useEffect(() => {
-    if (!connectToast) return;
-    const timer = setTimeout(() => setConnectToast(null), 2500);
-    return () => clearTimeout(timer);
-  }, [connectToast]);
+    if (!connectToast) return
+    const timer = setTimeout(() => setConnectToast(null), 2500)
+    return () => clearTimeout(timer)
+  }, [connectToast])
 
   // Re-fetch when user navigates back to this tab/page (e.g. after sending)
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible") fetchData();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [fetchData]);
+    const onVisible = () => { if (document.visibilityState === 'visible') fetchData() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [fetchData])
 
   const handleLoadMore = useCallback(async () => {
-    if (!walletAddress) return;
-    setIsLoadingMore(true);
+    if (!walletAddress) return
+    setIsLoadingMore(true)
     try {
-      const signerSecret = walletSession.getItem("veil_signer_secret");
+      const signerSecret    = walletSession.getItem('veil_signer_secret')
       const signerPublicKey = signerSecret
         ? Keypair.fromSecret(signerSecret).publicKey()
-        : walletLocal.getItem("veil_signer_public_key") || "";
+        : (walletLocal.getItem('veil_signer_public_key') || '')
 
-      const additionalRecords: import("@/components/TxDetailSheet").TxRecord[] =
-        [];
+      const additionalRecords: import('@/components/TxDetailSheet').TxRecord[] = []
 
       if (horizonNextRef.current) {
         try {
-          const page = await horizonNextRef.current();
-          additionalRecords.push(
-            ...mapHorizonOps(page.records as HorizonOp[], signerPublicKey),
-          );
-          horizonNextRef.current = page.records.length >= 20 ? page.next : null;
-        } catch {
-          /* Horizon unavailable */
-        }
+          const page = await horizonNextRef.current()
+          additionalRecords.push(...mapHorizonOps(page.records as HorizonOp[], signerPublicKey))
+          horizonNextRef.current = page.records.length >= 20 ? page.next : null
+        } catch { /* Horizon unavailable */ }
       }
 
-      const wraithUrl = process.env.NEXT_PUBLIC_WRAITH_URL;
-      let newInCursor: string | null = null;
-      let newOutCursor: string | null = null;
+      const wraithUrl = process.env.NEXT_PUBLIC_WRAITH_URL
+      let newInCursor: string | null = null
+      let newOutCursor: string | null = null
 
       if (wraithUrl && (wraithInCursor || wraithOutCursor)) {
         try {
-          const feePayerAddr = signerPublicKey || walletAddress;
-          const fetches: Promise<Response>[] = [];
-          if (wraithInCursor)
-            fetches.push(
-              fetch(
-                `${wraithUrl}/transfers/incoming/${walletAddress}?limit=20&cursor=${wraithInCursor}`,
-              ),
-            );
-          if (wraithOutCursor)
-            fetches.push(
-              fetch(
-                `${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20&cursor=${wraithOutCursor}`,
-              ),
-            );
-          const responses = await Promise.all(fetches);
-          let idx = 0;
+          const feePayerAddr = signerPublicKey || walletAddress
+          const fetches: Promise<Response>[] = []
+          if (wraithInCursor)  fetches.push(fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20&cursor=${wraithInCursor}`))
+          if (wraithOutCursor) fetches.push(fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20&cursor=${wraithOutCursor}`))
+          const responses = await Promise.all(fetches)
+          let idx = 0
 
           if (wraithInCursor) {
-            const res = responses[idx++];
-            const data = res.ok
-              ? ((await res.json()) as WraithPage)
-              : { transfers: [] as WraithTransfer[], next_cursor: null };
-            newInCursor = data.next_cursor ?? null;
-            additionalRecords.push(
-              ...data.transfers.map((t) => ({
-                id: `w-${t.id}`,
-                type: "received" as const,
-                amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
-                asset: "XLM",
-                counterparty: t.fromAddress ?? "unknown",
-                timestamp: Math.floor(
-                  new Date(t.ledgerClosedAt).getTime() / 1000,
-                ),
-                hash: t.txHash,
-              })),
-            );
+            const res = responses[idx++]
+            const data = res.ok ? await res.json() as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+            newInCursor = data.next_cursor ?? null
+            additionalRecords.push(...data.transfers.map(t => ({
+              id: `w-${t.id}`, type: 'received' as const,
+              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7), asset: 'XLM',
+              counterparty: t.fromAddress ?? 'unknown',
+              timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
+              hash: t.txHash,
+            })))
           }
 
           if (wraithOutCursor) {
-            const res = responses[idx++];
-            const data = res.ok
-              ? ((await res.json()) as WraithPage)
-              : { transfers: [] as WraithTransfer[], next_cursor: null };
-            newOutCursor = data.next_cursor ?? null;
-            additionalRecords.push(
-              ...data.transfers.map((t) => ({
-                id: `w-${t.id}`,
-                type: "sent" as const,
-                amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
-                asset: "XLM",
-                counterparty: t.toAddress ?? "unknown",
-                timestamp: Math.floor(
-                  new Date(t.ledgerClosedAt).getTime() / 1000,
-                ),
-                hash: t.txHash,
-              })),
-            );
+            const res = responses[idx++]
+            const data = res.ok ? await res.json() as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
+            newOutCursor = data.next_cursor ?? null
+            additionalRecords.push(...data.transfers.map(t => ({
+              id: `w-${t.id}`, type: 'sent' as const,
+              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7), asset: 'XLM',
+              counterparty: t.toAddress ?? 'unknown',
+              timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
+              hash: t.txHash,
+            })))
           }
-        } catch {
-          /* Wraith unavailable — hide button, keep existing list */
-        }
+        } catch { /* Wraith unavailable — hide button, keep existing list */ }
       }
 
-      setWraithInCursor(newInCursor);
-      setWraithOutCursor(newOutCursor);
-      setHasMorePages(
-        horizonNextRef.current !== null ||
-          newInCursor !== null ||
-          newOutCursor !== null,
-      );
-      if (additionalRecords.length > 0) appendActivityFeed(additionalRecords);
+      setWraithInCursor(newInCursor)
+      setWraithOutCursor(newOutCursor)
+      setHasMorePages(horizonNextRef.current !== null || newInCursor !== null || newOutCursor !== null)
+      if (additionalRecords.length > 0) appendActivityFeed(additionalRecords)
     } finally {
-      setIsLoadingMore(false);
+      setIsLoadingMore(false)
     }
-  }, [walletAddress, wraithInCursor, wraithOutCursor]);
+  }, [walletAddress, wraithInCursor, wraithOutCursor])
 
   // Fetch live USDC prices from Lens after balances load.
   // Runs in the background — does not block balance rendering and does not
   // interact with the inactivity lock (no user-activity signals are emitted).
   useEffect(() => {
-    if (assets.length === 0) return;
-    let cancelled = false;
-    fetchPrices(assets.map((a) => ({ code: a.code, issuer: a.issuer }))).then(
-      (result) => {
-        if (!cancelled) {
-          cachedPrices = result;
-          setPrices(result);
-        }
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [assets]);
+    if (assets.length === 0) return
+    let cancelled = false
+    fetchPrices(assets.map(a => ({ code: a.code, issuer: a.issuer }))).then(result => {
+      if (!cancelled) {
+        cachedPrices = result
+        setPrices(result)
+      }
+    })
+    return () => { cancelled = true }
+  }, [assets])
 
   // ── Service worker registration + background polling ─────────────────────
   useEffect(() => {
-    if (
-      !walletAddress ||
-      typeof window === "undefined" ||
-      !("serviceWorker" in navigator)
-    )
-      return;
-    navigator.serviceWorker
-      .register("/sw.js")
-      .then((reg) => {
-        const sw = reg.active ?? reg.installing ?? reg.waiting;
-        sw?.postMessage({
-          type: "VEIL_REGISTER_ACCOUNT",
-          account: walletAddress,
-          cursor: "now",
-        });
-      })
-      .catch(() => {
-        /* SW registration failed — non-fatal */
-      });
-  }, [walletAddress]);
+    if (!walletAddress || typeof window === 'undefined' || !('serviceWorker' in navigator)) return
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      const sw = reg.active ?? reg.installing ?? reg.waiting
+      sw?.postMessage({ type: 'VEIL_REGISTER_ACCOUNT', account: walletAddress, cursor: 'now' })
+    }).catch(() => { /* SW registration failed — non-fatal */ })
+  }, [walletAddress])
 
   // ── Notification permission — ask once after first successful data load ───
   useEffect(() => {
-    if (loading || transactions.length === 0) return;
-    if (typeof Notification === "undefined") return;
-    if (Notification.permission !== "default") return;
-    if (localStorage.getItem("veil_notif_asked")) return;
-    localStorage.setItem("veil_notif_asked", "1");
-    Notification.requestPermission().catch(() => {
-      /* denied — graceful degradation */
-    });
-  }, [loading, transactions]);
+    if (loading || transactions.length === 0) return
+    if (typeof Notification === 'undefined') return
+    if (Notification.permission !== 'default') return
+    if (localStorage.getItem('veil_notif_asked')) return
+    localStorage.setItem('veil_notif_asked', '1')
+    Notification.requestPermission().catch(() => { /* denied — graceful degradation */ })
+  }, [loading, transactions])
 
   // ── Deep-link: ?tx=<hash> from notification tap ───────────────────────────
   useEffect(() => {
-    const hash = searchParams?.get("tx");
-    if (!hash || transactions.length === 0) return;
-    const tx = transactions.find((t) => t.hash === hash);
-    if (tx) setSelectedTx(tx);
-  }, [searchParams, transactions]);
+    const hash = searchParams?.get('tx')
+    if (!hash || transactions.length === 0) return
+    const tx = transactions.find(t => t.hash === hash)
+    if (tx) setSelectedTx(tx)
+  }, [searchParams, transactions])
 
-  const xlmBalance = assets.find((a) => a.code === "XLM")?.balance ?? null;
+  const xlmBalance = assets.find(a => a.code === 'XLM')?.balance ?? null
 
   const handleFund = async () => {
-    setIsFunding(true);
-    setFundingError(null);
+    setIsFunding(true)
+    setFundingError(null)
     try {
       // Friendbot only funds classic G... accounts, not C... contract addresses.
       // ensureFeePayer re-establishes the fee-payer (PRF-derived when supported,
       // legacy fallback otherwise) without persisting the seed to localStorage.
-      const feePayer = await ensureFeePayer();
-      if (!feePayer)
-        throw new Error("No passkey found. Please register again.");
-      const signerPublicKey = feePayer.publicKey();
+      const feePayer = await ensureFeePayer()
+      if (!feePayer) throw new Error('No passkey found. Please register again.')
+      const signerPublicKey = feePayer.publicKey()
 
-      const friendbotUrl = buildFriendbotUrl(signerPublicKey);
+      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
       if (!friendbotUrl) {
-        await fetchData();
+        await fetchData()
         setFundingError(
-          `Fee-payer restored. Fund ${signerPublicKey} with XLM from an external wallet to send or swap on mainnet.`,
-        );
-        return;
+          `Fee-payer restored. Fund ${signerPublicKey} with XLM from an external wallet to send or swap on mainnet.`
+        )
+        return
       }
 
-      const res = await fetch(friendbotUrl);
+      const res = await fetch(friendbotUrl)
       if (!res.ok) {
         // 400 means the account is already funded — just refresh balances
         if (res.status === 400) {
-          await fetchData();
-          return;
+          await fetchData()
+          return
         }
-        throw new Error("Friendbot failed");
+        throw new Error('Friendbot failed')
       }
-      await new Promise((r) => setTimeout(r, 2000));
-      await fetchData();
+      await new Promise(r => setTimeout(r, 2000))
+      await fetchData()
     } catch (err: unknown) {
-      setFundingError(
-        err instanceof Error
-          ? err.message
-          : "Funding failed. Please try again.",
-      );
+      setFundingError(err instanceof Error ? err.message : 'Funding failed. Please try again.')
     } finally {
-      setIsFunding(false);
+      setIsFunding(false)
     }
-  };
+  }
 
   // ── Sweep C... SAC balance to fee-payer ─────────────────────────────────────
   // Mirrors the signAuthEntry logic from useInvisibleWallet but without React
   // state management so it can be used in a plain async handler.
   const handleSweep = async () => {
-    setIsSweeping(true);
-    setSweepError(null);
+    setIsSweeping(true)
+    setSweepError(null)
     try {
-      const signerSecret =
-        walletSession.getItem("veil_signer_secret") ||
-        walletLocal.getItem("veil_signer_secret");
-      if (!signerSecret)
-        throw new Error(
-          'Signing key not found. Return to dashboard and tap "Set up fee-payer".',
-        );
-      const feePayerKp = Keypair.fromSecret(signerSecret);
+      const signerSecret = walletSession.getItem('veil_signer_secret')
+        || walletLocal.getItem('veil_signer_secret')
+      if (!signerSecret) throw new Error('Signing key not found. Return to dashboard and tap "Set up fee-payer".')
+      const feePayerKp = Keypair.fromSecret(signerSecret)
 
-      const localSignAuthEntry = async (
-        payload: Uint8Array,
-      ): Promise<WebAuthnSignature | null> => {
-        const keyId = walletLocal.getItem("invisible_wallet_key_id");
-        const publicKeyHex = walletLocal.getItem("invisible_wallet_public_key");
-        if (!keyId || !publicKeyHex)
-          throw new Error(
-            "No passkey found. Please register the wallet first.",
-          );
+      const localSignAuthEntry = async (payload: Uint8Array): Promise<WebAuthnSignature | null> => {
+        const keyId        = walletLocal.getItem('invisible_wallet_key_id')
+        const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
+        if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
 
-        const challenge = payload.buffer.slice(
-          payload.byteOffset,
-          payload.byteOffset + payload.byteLength,
-        ) as ArrayBuffer;
-        const normalized = keyId.replace(/-/g, "+").replace(/_/g, "/");
-        const padded =
-          normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
-        const credIdBin = atob(padded);
-        const credId = Uint8Array.from(credIdBin, (c) => c.charCodeAt(0));
+        const challenge  = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer
+        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const credIdBin  = atob(padded)
+        const credId     = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
 
-        const assertion = (await navigator.credentials.get({
+        const assertion = await navigator.credentials.get({
           publicKey: {
             challenge,
-            allowCredentials: [{ id: credId, type: "public-key" }],
-            userVerification: "required",
+            allowCredentials: [{ id: credId, type: 'public-key' }],
+            userVerification: 'required',
           },
-        })) as PublicKeyCredential | null;
+        }) as PublicKeyCredential | null
 
-        if (!assertion) return null;
+        if (!assertion) return null
 
-        const response = assertion.response as AuthenticatorAssertionResponse;
-        const rawSig = derToRawSignature(response.signature);
-        const publicKeyBytes = hexToUint8Array(publicKeyHex);
+        const response   = assertion.response as AuthenticatorAssertionResponse
+        const rawSig     = derToRawSignature(response.signature)
+        const publicKeyBytes = hexToUint8Array(publicKeyHex)
 
         return {
-          publicKey: publicKeyBytes,
-          authData: new Uint8Array(response.authenticatorData),
+          publicKey:      publicKeyBytes,
+          authData:       new Uint8Array(response.authenticatorData),
           clientDataJSON: new Uint8Array(response.clientDataJSON),
-          signature: rawSig,
-        };
-      };
+          signature:      rawSig,
+        }
+      }
 
       // Moving the contract's own balance is a call `__check_auth` answers, so
       // the contract must exist. Wallets are deployed on first use; funds can
       // sit at an undeployed address, and this is exactly that first use.
-      await ensureWalletDeployed(wallet.deploy, walletAddress);
+      await ensureWalletDeployed(wallet.deploy, walletAddress)
 
       await sweepContractBalance(
         walletAddress!,
@@ -863,119 +753,73 @@ function DashboardPageContent() {
         localSignAuthEntry,
         network.rpcUrl,
         network.networkPassphrase,
-      );
-      setSweepDismissed(false);
-      await fetchData();
+      )
+      setSweepDismissed(false)
+      await fetchData()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = err instanceof Error ? err.message : String(err)
       setSweepError(
-        msg.includes("NotAllowedError") || msg.includes("cancelled")
-          ? "Passkey verification was cancelled. Please try again."
-          : msg,
-      );
+        msg.includes('NotAllowedError') || msg.includes('cancelled')
+          ? 'Passkey verification was cancelled. Please try again.'
+          : msg
+      )
     } finally {
-      setIsSweeping(false);
+      setIsSweeping(false)
     }
-  };
+  }
 
   return (
     <div className="wallet-shell">
+
       {/* Header */}
       <header className="wallet-nav">
-        <span
-          style={{
-            fontFamily: "Anton, Impact, sans-serif",
-            fontSize: "1.25rem",
-            letterSpacing: "0.08em",
-            color: "var(--gold)",
-            userSelect: "none",
-          }}
-        >
+        <span style={{
+          fontFamily: 'Anton, Impact, sans-serif',
+          fontSize: '1.25rem', letterSpacing: '0.08em',
+          color: 'var(--gold)', userSelect: 'none',
+        }}>
           VEIL
         </span>
         {walletAddress && (
           <button
             onClick={async () => {
-              await navigator.clipboard.writeText(walletAddress);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 2000);
+              await navigator.clipboard.writeText(walletAddress)
+              setCopied(true)
+              setTimeout(() => setCopied(false), 2000)
             }}
-            className="settings-button"
-            style={{ color: "var(--color-muted)" }}
+            className='settings-button'
+            style={{ color: "var(--color-muted)"}}
             title="Copy wallet address"
           >
             <span className="address-chip">
               {walletAddress.slice(0, 6)}…{walletAddress.slice(-6)}
             </span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              style={{
-                color: copied ? "var(--teal)" : "rgba(246,247,248,0.35)",
-                flexShrink: 0,
-              }}
-            >
-              {copied ? (
-                <path
-                  d="M20 6L9 17l-5-5"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              ) : (
-                <>
-                  <rect
-                    x="9"
-                    y="9"
-                    width="13"
-                    height="13"
-                    rx="2"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                  />
-                  <path
-                    d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"
-                    stroke="currentColor"
-                    strokeWidth="1.75"
-                  />
-                </>
-              )}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ color: copied ? 'var(--teal)' : 'rgba(246,247,248,0.35)', flexShrink: 0 }}>
+              {copied
+                ? <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                : <><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="1.75"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" strokeWidth="1.75"/></>
+              }
             </svg>
           </button>
         )}
         <button
-          aria-label="Settings"
-          onClick={() => router.push("/settings")}
-          className="settings-button"
-          style={{ color: "var(--color-muted)" }}
+          aria-label='Settings'
+          onClick={() => router.push('/settings')}
+          className='settings-button'
+          style={{ color: "var(--color-muted)"}}
           title="Settings"
         >
+          
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <circle
-              cx="12"
-              cy="12"
-              r="3"
-              stroke="currentColor"
-              strokeWidth="1.75"
-            />
-            <path
-              d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
-              stroke="currentColor"
-              strokeWidth="1.75"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.75"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
       </header>
 
-      <main
-        className="wallet-main wallet-main--wide"
-        style={{ paddingTop: "3rem", paddingBottom: "3rem" }}
-      >
+      <main className="wallet-main wallet-main--wide" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
+
+
         {/* ── Header row: greeting, hide-amounts, add money, send ── */}
         <div className="vw-head">
           <div>
@@ -983,19 +827,11 @@ function DashboardPageContent() {
             <div className="vw-title">Your wallet</div>
           </div>
           <div className="vw-actions">
-            <button
-              className="vw-pill"
-              onClick={() => setHideAmounts((v) => !v)}
-            >
-              {hideAmounts ? "Show balances" : "Hide balances"}
+            <button className="vw-pill" onClick={() => setHideAmounts(v => !v)}>
+              {hideAmounts ? 'Show balances' : 'Hide balances'}
             </button>
-            <button
-              className="vw-pill"
-              onClick={() => setSep24Modal("deposit")}
-            >
-              Add money
-            </button>
-            <button className="vw-pill" onClick={() => router.push("/send")}>
+            <button className="vw-pill" onClick={() => setSep24Modal('deposit')}>Add money</button>
+            <button className="vw-pill" onClick={() => router.push('/send')}>
               <span aria-hidden="true">↗</span> Send
             </button>
           </div>
@@ -1003,137 +839,65 @@ function DashboardPageContent() {
 
         {/* ── Fee-payer missing banner (after cache clear) ── */}
         {!loading && !hasFeePayerKey && (
-          <div
-            style={{
-              marginBottom: "1.5rem",
-              padding: "1rem 1.25rem",
-              background: "var(--surface-md)",
-              border: "1px solid var(--border-dim)",
-              borderRadius: "12px",
-            }}
-          >
-            <p
-              style={{
-                fontSize: "0.875rem",
-                color: "var(--off-white)",
-                marginBottom: "0.5rem",
-                fontWeight: 500,
-              }}
-            >
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
+            borderRadius: '12px',
+          }}>
+            <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', marginBottom: '0.5rem', fontWeight: 500 }}>
               Signing key not found
             </p>
-            <p
-              style={{
-                fontSize: "0.8125rem",
-                color: "rgba(246,247,248,0.55)",
-                marginBottom: "0.875rem",
-                lineHeight: 1.5,
-              }}
-            >
-              Your browser storage was cleared. Tap below to set up a new
-              fee-payer account so you can send, swap, and use the agent.
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              Your browser storage was cleared. Tap below to set up a new fee-payer account so you can send, swap, and use the agent.
             </p>
             <button
               className="btn-secondary"
               onClick={handleFund}
               disabled={isFunding}
-              style={{
-                fontSize: "0.875rem",
-                padding: "0.625rem 1.25rem",
-                width: "auto",
-              }}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
             >
-              {isFunding ? (
-                <div
-                  className="spinner"
-                  style={{ width: "14px", height: "14px" }}
-                />
-              ) : (
-                "Set up fee-payer"
-              )}
+              {isFunding
+                ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                : 'Set up fee-payer'}
             </button>
             {fundingError && (
-              <p
-                style={{
-                  color: "var(--teal)",
-                  fontSize: "0.75rem",
-                  marginTop: "0.625rem",
-                }}
-              >
-                {fundingError}
-              </p>
+              <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginTop: '0.625rem' }}>{fundingError}</p>
             )}
           </div>
         )}
 
         {/* ── PRF downgrade warning banner (issue #629) ── */}
         {!loading && showPrfDowngrade && !prfDowngradeDismissed && (
-          <div
-            style={{
-              marginBottom: "1.5rem",
-              padding: "1rem 1.25rem",
-              background: "rgba(220,38,38,0.06)",
-              border: "1px solid rgba(220,38,38,0.3)",
-              borderRadius: "12px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <p
-                style={{
-                  fontSize: "0.875rem",
-                  color: "var(--off-white)",
-                  fontWeight: 500,
-                  marginBottom: "0.375rem",
-                }}
-              >
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'rgba(220,38,38,0.06)',
+            border: '1px solid rgba(220,38,38,0.3)',
+            borderRadius: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
                 Fee payer: PRF unavailable on this device
               </p>
               <button
                 id="dashboard-prf-downgrade-dismiss"
                 onClick={() => setPrfDowngradeDismissed(true)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "var(--color-muted)",
-                  fontSize: "1rem",
-                  lineHeight: 1,
-                  padding: "0 0 0 0.5rem",
-                }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-muted)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
                 title="Dismiss"
               >
                 ×
               </button>
             </div>
-            <p
-              style={{
-                fontSize: "0.8125rem",
-                color: "rgba(246,247,248,0.55)",
-                marginBottom: "0.875rem",
-                lineHeight: 1.5,
-              }}
-            >
-              This wallet requested a WebAuthn PRF result but the authenticator
-              didn&apos;t provide one. It fell back to the legacy fee payer,
-              which will look like a different wallet on a PRF-capable device.
-              If this is unexpected, copy the diagnostics in Settings → Fee
-              Payer and share them.
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              This wallet requested a WebAuthn PRF result but the authenticator didn&apos;t provide one. It fell back to the legacy fee payer, which will look like a different wallet on a PRF-capable device. If this is unexpected, copy the diagnostics in Settings → Fee Payer and share them.
             </p>
             <button
               id="dashboard-prf-downgrade-details"
               className="btn-gold"
-              onClick={() => router.push("/settings/fee-payer")}
-              style={{
-                fontSize: "0.875rem",
-                padding: "0.625rem 1.25rem",
-                color: "var(--color-muted)",
-              }}
+              onClick={() => router.push('/settings/fee-payer')}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', color: 'var(--color-muted)' }}
             >
               View diagnostics
             </button>
@@ -1142,92 +906,44 @@ function DashboardPageContent() {
 
         {/* ── Sweep prompt: contract SAC balance detected ── */}
         {!loading && contractXlm > 0 && !sweepDismissed && (
-          <div
-            style={{
-              marginBottom: "1.5rem",
-              padding: "1rem 1.25rem",
-              background: "var(--surface-md)",
-              border: "1px solid var(--border-dim)",
-              borderRadius: "12px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <p
-                style={{
-                  fontSize: "0.875rem",
-                  color: "var(--off-white)",
-                  fontWeight: 500,
-                  marginBottom: "0.375rem",
-                }}
-              >
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
+            borderRadius: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
                 Funds in contract wallet
               </p>
               <button
                 onClick={() => setSweepDismissed(true)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  color: "var(--color-muted)",
-                  fontSize: "1rem",
-                  lineHeight: 1,
-                  padding: "0 0 0 0.5rem",
-                }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-muted)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
                 title="Dismiss"
               >
                 ×
               </button>
             </div>
-            <p
-              style={{
-                fontSize: "0.8125rem",
-                color: "rgba(246,247,248,0.55)",
-                marginBottom: "0.875rem",
-                lineHeight: 1.5,
-              }}
-            >
-              {contractXlm.toFixed(7)} XLM arrived at your contract address (C…)
-              and can&apos;t be spent directly. Move it to your spending wallet
-              to use it.
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              {contractXlm.toFixed(7)} XLM arrived at your contract address (C…) and can&apos;t be spent directly. Move it to your spending wallet to use it.
             </p>
             {sweepError && (
-              <p
-                style={{
-                  color: "var(--teal)",
-                  fontSize: "0.75rem",
-                  marginBottom: "0.625rem",
-                }}
-              >
-                {sweepError}
-              </p>
+              <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginBottom: '0.625rem' }}>{sweepError}</p>
             )}
             <button
               className="btn-secondary"
               onClick={handleSweep}
               disabled={isSweeping}
-              style={{
-                fontSize: "0.875rem",
-                padding: "0.625rem 1.25rem",
-                width: "auto",
-              }}
+              style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
             >
-              {isSweeping ? (
-                <div
-                  className="spinner"
-                  style={{ width: "14px", height: "14px" }}
-                />
-              ) : (
-                "Move to spending wallet"
-              )}
+              {isSweeping
+                ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                : 'Move to spending wallet'}
             </button>
           </div>
         )}
+
 
         {/* ── Three-column layout: center + right rail ──
             The row container. `.vw-center-col` and `.vw-rail` were written as
@@ -1236,51 +952,40 @@ function DashboardPageContent() {
             it. The CSS for the layout was there the whole time; nothing put the
             two columns in a row. */}
         {/* ── Balance plate and earning: full width, above the columns ── */}
-        <div className="vw-balance-row">
-          <div className="vw-silver">
-            <div className="vw-silver__sheen" />
-            <div
-              style={{
-                position: "relative",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-              }}
-            >
-              <div className="vw-silver__label">Total balance</div>
-              <VeilMark size={28} color="#0F0F0F" />
-            </div>
-            <div className="vw-silver__amountrow">
-              <div className="vw-silver__amount">
-                {hideAmounts ? "••••" : totalLabel}
+          <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
+          <div className="vw-balance-row">
+            <div className="vw-silver">
+              <div className="vw-silver__sheen" />
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <div className="vw-silver__label">Total balance</div>
+                <VeilMark size={28} color="#0F0F0F" />
               </div>
-              {!hideAmounts && dayChange !== null && (
-                <span
-                  className={
-                    "vw-silver__delta " +
-                    (dayChange >= 0
-                      ? "vw-silver__delta--up"
-                      : "vw-silver__delta--down")
-                  }
-                >
-                  {dayChange >= 0 ? "▲" : "▼"} {Math.abs(dayChange).toFixed(2)}%
-                  · 24h
-                </span>
-              )}
-            </div>
-            <div
-              style={{
-                position: "relative",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginTop: "24px",
-                gap: "12px",
-              }}
-            >
-              <div className="vw-silver__sub">
-                {hideAmounts ? "••••" : balanceLine || "No assets yet"}
+              <div className="vw-silver__amountrow">
+                <div className="vw-silver__amount">{hideAmounts ? '••••' : totalLabel}</div>
+                {!hideAmounts && dayChange !== null && (
+                  <span className={'vw-silver__delta ' + (dayChange >= 0 ? 'vw-silver__delta--up' : 'vw-silver__delta--down')}>
+                    {dayChange >= 0 ? '▲' : '▼'} {Math.abs(dayChange).toFixed(2)}% · 24h
+                  </span>
+                )}
               </div>
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', gap: '12px' }}>
+                <div className="vw-silver__sub">{hideAmounts ? '••••' : (balanceLine || 'No assets yet')}</div>
+              </div>
+            </div>
+
+            <div className="vw-panel" style={{ flex: 1, minWidth: 0, padding: '26px 28px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' }}>
+                <div className="vw-label">Earning</div>
+                <div className="vw-meta">Blend USDC pool</div>
+              </div>
+              <p style={{ fontSize: '14px', color: 'rgba(246,247,248,0.6)', lineHeight: 1.7, marginTop: '16px' }}>
+                Idle USDC can earn in the Blend pool. Nothing is deposited automatically —
+                you approve every move with your passkey.
+              </p>
+              <div style={{ flex: 1 }} />
+              <button className="vw-pill" style={{ alignSelf: 'flex-start', marginTop: '18px' }} onClick={() => router.push('/earn')}>
+                Open earn
+              </button>
             </div>
             {reserveInfo && !hideAmounts && (
               <div
@@ -1333,6 +1038,7 @@ function DashboardPageContent() {
           </div>
         </div>
 
+<<<<<<< HEAD
         {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
             scan stub below stands in for the V134 client until it lands. */}
         <PrivateBalanceCard
@@ -1341,6 +1047,8 @@ function DashboardPageContent() {
           hideAmounts={hideAmounts}
           recoveryWarning={privacyRecoveryUnsupported}
         />
+=======
+>>>>>>> 58afcb5 (fix asset verification review feedback)
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.
@@ -1349,291 +1057,120 @@ function DashboardPageContent() {
             width under the feed. The layout CSS was there the whole time;
             nothing put the two columns in a row. */}
         <div className="vw-dash-row">
-          <div className="vw-center-col">
-            {/* ── Activity feed ── */}
-            <div className="vw-panel" style={{ padding: "8px 26px 16px" }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "baseline",
-                  padding: "20px 0 4px",
-                }}
-              >
-                <div className="vw-label">Activity</div>
-                <button
-                  className="vw-meta"
-                  style={{ background: "none", border: 0, cursor: "pointer" }}
-                  onClick={() => router.push("/activity")}
-                >
-                  See all
-                </button>
-              </div>
-              {recent.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: "13px",
-                    color: "rgba(246,247,248,0.4)",
-                    padding: "14px 0",
-                  }}
-                >
-                  {loading ? "Loading…" : "Nothing yet."}
-                </p>
-              ) : (
-                recent.map((tx) => (
-                  <Row
-                    key={tx.id}
-                    className="vw-listrow"
-                    onClick={() => setSelectedTx(tx)}
-                  >
-                    <span
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: "2px",
-                        minWidth: 0,
-                      }}
-                    >
-                      <span style={{ fontSize: "14px", fontWeight: 500 }}>
-                        {tx.type === "sent"
-                          ? "Sent"
-                          : tx.type === "swapped"
-                            ? "Swapped"
-                            : "Received"}
-                      </span>
-                      <span className="vw-meta">
-                        {tx.counterparty.length > 12
-                          ? tx.counterparty.slice(0, 6) +
-                            "…" +
-                            tx.counterparty.slice(-6)
-                          : tx.counterparty}
-                      </span>
-                    </span>
-                    <Amount
-                      className={`text-sm font-semibold shrink-0 ${tx.type === "received" ? "text-teal" : "text-off-white"}`}
-                    >
-                      {hideAmounts
-                        ? "••••"
-                        : (tx.type === "sent"
-                            ? "-"
-                            : tx.type === "received"
-                              ? "+"
-                              : "") +
-                          tx.amount +
-                          " " +
-                          tx.asset}
-                    </Amount>
-                  </Row>
-                ))
-              )}
+        <div className="vw-center-col">
+          {/* ── Activity feed ── */}
+          <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 4px' }}>
+              <div className="vw-label">Activity</div>
+              <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/activity')}>See all</button>
             </div>
-
-            {/* ── Agent card (center bottom) ── */}
-            <div className="vw-agent">
-              <div
-                style={{ display: "flex", alignItems: "center", gap: "10px" }}
-              >
-                <div
-                  style={{
-                    width: "28px",
-                    height: "28px",
-                    borderRadius: "50%",
-                    background: "rgba(183,172,232,0.16)",
-                    border: "1px solid rgba(183,172,232,0.35)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "13px",
-                    color: "#B7ACE8",
-                    flexShrink: 0,
-                  }}
-                >
-                  ✦
-                </div>
-                <div className="vw-label vw-label--lilac">Agent</div>
-              </div>
-              <div
-                style={{
-                  fontFamily: "Lora, Georgia, serif",
-                  fontStyle: "italic",
-                  fontWeight: 600,
-                  fontSize: "19px",
-                  lineHeight: 1.4,
-                }}
-              >
-                &ldquo;Swap 10 XLM to USDC and send it to Ada.&rdquo;
-              </div>
-              <p
-                style={{
-                  fontSize: "13px",
-                  color: "rgba(246,247,248,0.55)",
-                  lineHeight: 1.6,
-                }}
-              >
-                It builds the transactions. You sign each one with your passkey.
+            {recent.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '14px 0' }}>
+                {loading ? 'Loading…' : 'Nothing yet.'}
               </p>
-              <button
-                onClick={() => router.push("/agent")}
-                style={{
-                  border: "1px solid rgba(183,172,232,0.35)",
-                  color: "#B7ACE8",
-                  background: "none",
-                  borderRadius: "100px",
-                  padding: "10px 20px",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  marginTop: "4px",
-                }}
-              >
-                Open agent
-              </button>
-            </div>
+            ) : recent.map((tx) => (
+              <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>
+                <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                  <span style={{ fontSize: '14px', fontWeight: 500 }}>
+                    {tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'}
+                  </span>
+                  <span className="vw-meta">
+                    {tx.counterparty.length > 12
+                      ? tx.counterparty.slice(0, 6) + '…' + tx.counterparty.slice(-6)
+                      : tx.counterparty}
+                  </span>
+                </span>
+                <Amount className={`text-sm font-semibold shrink-0 ${tx.type === 'received' ? 'text-teal' : 'text-off-white'}`}>
+                  {hideAmounts
+                    ? '••••'
+                    : (tx.type === 'sent' ? '-' : tx.type === 'received' ? '+' : '') + tx.amount + ' ' + tx.asset}
+                </Amount>
+              </Row>
+            ))}
           </div>
 
-          {/* ── Right rail: assets with live fiat values ── */}
-          <div className="vw-rail">
-            <div className="vw-panel" style={{ padding: "8px 28px 18px" }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "baseline",
-                  padding: "20px 0 6px",
-                }}
-              >
-                <Label className="vw-label">Assets</Label>
-                <button
-                  className="vw-meta"
-                  style={{ background: "none", border: 0, cursor: "pointer" }}
-                  onClick={() => router.push("/assets")}
-                >
-                  Manage
-                </button>
-              </div>
-              {loading && assets.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: "13px",
-                    color: "rgba(246,247,248,0.4)",
-                    padding: "16px 0",
-                  }}
-                >
-                  Loading…
-                </p>
-              ) : assets.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: "13px",
-                    color: "rgba(246,247,248,0.4)",
-                    padding: "16px 0",
-                  }}
-                >
-                  No assets yet. Fund this address to get started.
-                </p>
-              ) : (
-                (() => {
-                  const verifiedAssets = assets.filter(
-                    (asset) => asset.verification.verified,
-                  );
-                  const unverifiedAssets = assets.filter(
-                    (asset) => !asset.verification.verified,
-                  );
-                  const renderAsset = (asset: WalletAsset) => {
-                    const price = priceOf(asset);
-                    const value =
-                      price != null ? parseFloat(asset.balance) * price : null;
-                    return (
-                      <Row
-                        key={asset.code + "-" + (asset.issuer ?? "native")}
-                        className="vw-listrow"
-                        onClick={() =>
-                          router.push(
-                            asset.issuer
-                              ? "/token/" +
-                                  asset.code +
-                                  "?issuer=" +
-                                  asset.issuer
-                              : "/token/" + asset.code,
-                          )
-                        }
-                      >
-                        <span
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "14px",
-                            minWidth: 0,
-                          }}
-                        >
-                          <TokenIcon code={asset.code} size={38} />
-                          <span
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: "2px",
-                              minWidth: 0,
-                            }}
-                          >
-                            <span style={{ fontSize: "15px", fontWeight: 600 }}>
-                              {asset.code}
-                            </span>
-                            <span className="vw-meta">
-                              {hideAmounts
-                                ? "••••"
-                                : parseFloat(asset.balance).toFixed(4) +
-                                  " " +
-                                  asset.code}
-                            </span>
-                            {asset.verification.impersonates && (
-                              <span
-                                style={{ color: "#E8A87C", fontSize: "11px" }}
-                              >
-                                Impersonates{" "}
-                                {asset.verification.impersonates.issuerName}
-                                &apos;s {asset.code}
-                              </span>
-                            )}
-                          </span>
-                        </span>
-                        <Amount className="text-[15px] font-semibold shrink-0">
-                          {hideAmounts
-                            ? "••••"
-                            : value != null
-                              ? usd(value)
-                              : "—"}
-                        </Amount>
-                      </Row>
-                    );
-                  };
-                  return (
-                    <>
-                      {verifiedAssets.map(renderAsset)}
-                      {unverifiedAssets.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setShowUnverified((open) => !open)}
-                          style={{
-                            background: "none",
-                            border: 0,
-                            color: "rgba(246,247,248,0.6)",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                            padding: "12px 0",
-                            textAlign: "left",
-                          }}
-                        >
-                          {showUnverified ? "Hide" : "Show"} unverified (
-                          {unverifiedAssets.length})
-                        </button>
-                      )}
-                      {showUnverified && unverifiedAssets.map(renderAsset)}
-                    </>
-                  );
-                })()
-              )}
+          {/* ── Agent card (center bottom) ── */}
+          <div className="vw-agent">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'rgba(183,172,232,0.16)', border: '1px solid rgba(183,172,232,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', color: '#B7ACE8', flexShrink: 0 }}>✦</div>
+              <div className="vw-label vw-label--lilac">Agent</div>
             </div>
+            <div style={{ fontFamily: 'Lora, Georgia, serif', fontStyle: 'italic', fontWeight: 600, fontSize: '19px', lineHeight: 1.4 }}>
+              &ldquo;Swap 10 XLM to USDC and send it to Ada.&rdquo;
+            </div>
+            <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.55)', lineHeight: 1.6 }}>
+              It builds the transactions. You sign each one with your passkey.
+            </p>
+            <button
+              onClick={() => router.push('/agent')}
+              style={{ border: '1px solid rgba(183,172,232,0.35)', color: '#B7ACE8', background: 'none', borderRadius: '100px', padding: '10px 20px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', marginTop: '4px' }}
+            >
+              Open agent
+            </button>
           </div>
+        </div>
+
+        {/* ── Right rail: assets with live fiat values ── */}
+        <div className="vw-rail">
+          <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
+              <Label className="vw-label">Assets</Label>
+              <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
+            </div>
+            {loading && assets.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>Loading…</p>
+            ) : assets.length === 0 ? (
+              <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>
+                No assets yet. Fund this address to get started.
+              </p>
+            ) : (() => {
+              const verifiedAssets = assets.filter(asset => asset.verification.verified)
+              const unverifiedAssets = assets.filter(asset => !asset.verification.verified)
+              const renderAsset = (asset: WalletAsset) => {
+              const price = priceOf(asset)
+              const value = price != null ? parseFloat(asset.balance) * price : null
+              return (
+                <Row
+                  key={asset.code + '-' + (asset.issuer ?? 'native')}
+                  className="vw-listrow"
+                  onClick={() => router.push(asset.issuer ? '/token/' + asset.code + '?issuer=' + asset.issuer : '/token/' + asset.code)}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+                    <TokenIcon code={asset.code} size={38} />
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                      <span style={{ fontSize: '15px', fontWeight: 600 }}>{asset.code}</span>
+                      <span className="vw-meta">
+                        {hideAmounts ? '••••' : parseFloat(asset.balance).toFixed(4) + ' ' + asset.code}
+                      </span>
+                      {asset.verification.impersonates && (
+                        <span style={{ color: '#E8A87C', fontSize: '11px' }}>
+                          Impersonates {asset.verification.impersonates.issuerName}&apos;s {asset.code}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <Amount className="text-[15px] font-semibold shrink-0">
+                    {hideAmounts ? '••••' : (value != null ? usd(value) : '—')}
+                  </Amount>
+                </Row>
+              )
+              }
+              return <>
+                {verifiedAssets.map(renderAsset)}
+                {unverifiedAssets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowUnverified(open => !open)}
+                    style={{ background: 'none', border: 0, color: 'rgba(246,247,248,0.6)', cursor: 'pointer', fontSize: '12px', padding: '12px 0', textAlign: 'left' }}
+                  >
+                    {showUnverified ? 'Hide' : 'Show'} unverified ({unverifiedAssets.length})
+                  </button>
+                )}
+                {showUnverified && unverifiedAssets.map(renderAsset)}
+              </>
+            })()}
+          </div>
+        </div>
         </div>
 
         {/* ── The routes the sidebar does not carry ───────────────────────
@@ -1641,33 +1178,17 @@ function DashboardPageContent() {
             these are somewhere to go afterwards, and they are the only way to
             reach Assets, Vault, Pools, NFTs and dApp connections at all. */}
         <div className="vw-more vw-more--scroll">
-          <button className="vw-chip" onClick={() => router.push("/assets")}>
-            Assets
-          </button>
-          <button className="vw-chip" onClick={() => setSep24Modal("withdraw")}>
-            Withdraw
-          </button>
-          <button className="vw-chip" onClick={() => router.push("/vault")}>
-            Vault
-          </button>
-          <button className="vw-chip" onClick={() => router.push("/pools")}>
-            Pools
-          </button>
-          <button className="vw-chip" onClick={() => router.push("/nfts")}>
-            NFTs
-          </button>
+          <button className="vw-chip" onClick={() => router.push('/assets')}>Assets</button>
+          <button className="vw-chip" onClick={() => setSep24Modal('withdraw')}>Withdraw</button>
+          <button className="vw-chip" onClick={() => router.push('/vault')}>Vault</button>
+          <button className="vw-chip" onClick={() => router.push('/pools')}>Pools</button>
+          <button className="vw-chip" onClick={() => router.push('/nfts')}>NFTs</button>
           {multisigAvailable ? (
-            <button
-              className="vw-chip"
-              onClick={() => router.push("/multisig")}
-            >
-              Multisig
-            </button>
+            <button className="vw-chip" onClick={() => router.push('/multisig')}>Multisig</button>
           ) : null}
-          <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>
-            Connect dApp
-          </button>
+          <button className="vw-chip" onClick={() => setShowConnectDapp(true)}>Connect dApp</button>
         </div>
+
       </main>
 
       {selectedTx && (
@@ -1678,25 +1199,25 @@ function DashboardPageContent() {
         isOpen={showConnectDapp}
         onClose={() => setShowConnectDapp(false)}
         onConnected={(name) => {
-          setShowConnectDapp(false);
-          setConnectToast(`Connected to ${name}`);
+          setShowConnectDapp(false)
+          setConnectToast(`Connected to ${name}`)
         }}
       />
 
       {connectToast && (
         <div
           style={{
-            position: "fixed",
-            left: "50%",
-            bottom: "1.25rem",
-            transform: "translateX(-50%)",
+            position: 'fixed',
+            left: '50%',
+            bottom: '1.25rem',
+            transform: 'translateX(-50%)',
             zIndex: 70,
-            background: "rgba(32, 34, 38, 0.95)",
-            border: "1px solid var(--border-dim)",
-            borderRadius: "999px",
-            padding: "0.625rem 0.95rem",
-            color: "var(--off-white)",
-            fontSize: "0.8125rem",
+            background: 'rgba(32, 34, 38, 0.95)',
+            border: '1px solid var(--border-dim)',
+            borderRadius: '999px',
+            padding: '0.625rem 0.95rem',
+            color: 'var(--off-white)',
+            fontSize: '0.8125rem',
           }}
         >
           {connectToast}
@@ -1713,61 +1234,36 @@ function DashboardPageContent() {
         />
       )}
     </div>
-  );
+  )
 }
 
 export default function DashboardPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="wallet-shell">
-          <main className="wallet-main" />
-        </div>
-      }
-    >
+    <Suspense fallback={<div className="wallet-shell"><main className="wallet-main" /></div>}>
       <DashboardPageContent />
     </Suspense>
-  );
+  )
 }
 
-function ActionButton({
-  label,
-  onClick,
-  icon,
-  badge,
-}: {
-  label: string;
-  onClick: () => void;
-  icon: React.ReactNode;
-  badge?: boolean;
-}) {
+function ActionButton({ label, onClick, icon, badge }: { label: string; onClick: () => void; icon: React.ReactNode; badge?: boolean }) {
   return (
-    <button onClick={onClick} className="card action-btn">
+    <button
+      onClick={onClick}
+      className="card action-btn"
+    >
       {badge && (
-        <span
-          style={{
-            position: "absolute",
-            top: "8px",
-            right: "8px",
-            width: "10px",
-            height: "10px",
-            borderRadius: "50%",
-            background: "var(--gold)",
-            border: "2px solid var(--near-black)",
-            animation: "badgePulse 2s ease-in-out infinite",
-          }}
-        />
+        <span style={{
+          position: 'absolute', top: '8px', right: '8px',
+          width: '10px', height: '10px', borderRadius: '50%',
+          background: 'var(--gold)',
+          border: '2px solid var(--near-black)',
+          animation: 'badgePulse 2s ease-in-out infinite',
+        }} />
       )}
-      <svg
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        style={{ color: "var(--gold)" }}
-      >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--gold)' }}>
         {icon}
       </svg>
       <span>{label}</span>
     </button>
-  );
+  )
 }
