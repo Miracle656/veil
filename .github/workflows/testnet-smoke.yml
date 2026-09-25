@@ -31,7 +31,17 @@ jobs:
       # ── Install the Stellar CLI (used for friendbot funding) ───────────────
       - name: Install Stellar CLI
         run: |
-          curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
+          stellar_version='28.0.0'
+          stellar_archive="stellar-cli-${stellar_version}-x86_64-unknown-linux-gnu.tar.gz"
+          stellar_url="https://github.com/stellar/stellar-cli/releases/download/v${stellar_version}/${stellar_archive}"
+          stellar_sha256='207544486734fccb4df1afc4a7745478f9f1e21688b2f9506f0ef36f60ce3fdc'
+          stellar_tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$stellar_tmp_dir"' EXIT
+          curl -fsSL "$stellar_url" -o "$stellar_tmp_dir/$stellar_archive"
+          echo "$stellar_sha256  $stellar_tmp_dir/$stellar_archive" | sha256sum --check --status
+          mkdir -p "$HOME/.stellar/bin"
+          tar -xzf "$stellar_tmp_dir/$stellar_archive" -C "$stellar_tmp_dir"
+          install -m 0755 "$stellar_tmp_dir/stellar" "$HOME/.stellar/bin/stellar"
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
       # ── Install Node dependencies (stellar-sdk for smoke script) ──────────

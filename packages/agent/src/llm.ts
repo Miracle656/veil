@@ -165,61 +165,73 @@ type OpenAiMessage =
     }
   | { role: 'tool'; tool_call_id: string; content: string }
 
+function createOpenAiCompatibleSession(
+  system: string,
+  history: ChatTurn[],
+  userMessage: string,
+  tools: ToolSpec[],
+  completeTurn: (messages: OpenAiMessage[], functions: any[]) => Promise<any>,
+): LlmSession {
+  const messages: OpenAiMessage[] = [
+    { role: 'system', content: system },
+    ...history.map((t) => ({ role: t.role, content: t.content }) as OpenAiMessage),
+    { role: 'user', content: userMessage },
+  ]
+  const functions = tools.map((t) => ({
+    type: 'function' as const,
+    function: { name: t.name, description: t.description ?? '', parameters: t.input_schema },
+  }))
+
+  return {
+    async next() {
+      const body = await completeTurn(messages, functions)
+
+      const message = body?.choices?.[0]?.message ?? {}
+      const rawCalls: any[] = Array.isArray(message.tool_calls) ? message.tool_calls : []
+      messages.push({
+        role: 'assistant',
+        content: message.content ?? null,
+        ...(rawCalls.length ? { tool_calls: rawCalls } : {}),
+      })
+
+      const toolCalls: ToolCall[] = rawCalls.map((c) => {
+        let input: Record<string, unknown> = {}
+        try {
+          input = JSON.parse(c?.function?.arguments || '{}')
+        } catch {
+          // Malformed arguments from a weaker model: let the tool report it
+          // rather than guessing what was meant.
+          input = { __invalid_arguments: c?.function?.arguments ?? '' }
+        }
+        return { id: String(c.id), name: String(c?.function?.name ?? ''), input }
+      })
+
+      return { text: typeof message.content === 'string' ? message.content : '', toolCalls }
+    },
+
+    addToolResults(results) {
+      for (const r of results) messages.push({ role: 'tool', tool_call_id: r.id, content: r.content })
+    },
+  }
+}
+
 export function openRouterProvider(options: { apiKey: string; models?: string[] }): LlmProvider {
   const models = options.models?.length ? options.models : DEFAULT_FREE_MODELS
 
   return {
     label: `openrouter:${models.join(',')}`,
     start(system, history, userMessage, tools) {
-      const messages: OpenAiMessage[] = [
-        { role: 'system', content: system },
-        ...history.map((t) => ({ role: t.role, content: t.content }) as OpenAiMessage),
-        { role: 'user', content: userMessage },
-      ]
-      const functions = tools.map((t) => ({
-        type: 'function' as const,
-        function: { name: t.name, description: t.description ?? '', parameters: t.input_schema },
-      }))
-
-      return {
-        async next() {
-          const body = await completeWithFallback(options.apiKey, models, {
-            messages,
-            tools: functions,
-            tool_choice: 'auto',
-            max_tokens: 4_096,
-            // Keep reasoning models from spending the whole budget on thinking.
-            // OpenRouter maps this per model and ignores it where unsupported.
-            reasoning: { effort: 'low' },
-          })
-
-          const message = body?.choices?.[0]?.message ?? {}
-          const rawCalls: any[] = Array.isArray(message.tool_calls) ? message.tool_calls : []
-          messages.push({
-            role: 'assistant',
-            content: message.content ?? null,
-            ...(rawCalls.length ? { tool_calls: rawCalls } : {}),
-          })
-
-          const toolCalls: ToolCall[] = rawCalls.map((c) => {
-            let input: Record<string, unknown> = {}
-            try {
-              input = JSON.parse(c?.function?.arguments || '{}')
-            } catch {
-              // Malformed arguments from a weaker model: let the tool report it
-              // rather than guessing what was meant.
-              input = { __invalid_arguments: c?.function?.arguments ?? '' }
-            }
-            return { id: String(c.id), name: String(c?.function?.name ?? ''), input }
-          })
-
-          return { text: typeof message.content === 'string' ? message.content : '', toolCalls }
-        },
-
-        addToolResults(results) {
-          for (const r of results) messages.push({ role: 'tool', tool_call_id: r.id, content: r.content })
-        },
-      }
+      return createOpenAiCompatibleSession(system, history, userMessage, tools, (messages, functions) =>
+        completeWithFallback(options.apiKey, models, {
+          messages,
+          tools: functions,
+          tool_choice: 'auto',
+          max_tokens: 4_096,
+          // Keep reasoning models from spending the whole budget on thinking.
+          // OpenRouter maps this per model and ignores it where unsupported.
+          reasoning: { effort: 'low' },
+        }),
+      )
     },
   }
 }
@@ -306,7 +318,10 @@ async function tryModels(
       continue
     }
 
-    const status = Number(body?.error?.code ?? res.status)
+    // DeepSeek's OpenAI-format envelope carries `error.code` as a string, so a
+  // bare Number() is NaN and every status comparison below silently fails.
+  const bodyCode = Number(body?.error?.code)
+  const status = Number.isFinite(bodyCode) ? bodyCode : res.status
     const detail = String(body?.error?.message ?? res.statusText ?? '').slice(0, 300)
     const upstream = body?.error?.metadata?.provider_name
     const raw = String(body?.error?.metadata?.raw ?? '').slice(0, 200)
@@ -325,22 +340,115 @@ async function tryModels(
   return null
 }
 
+// ── DeepSeek (OpenAI-compatible chat completions) ────────────────────────────
+
+export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-flash'
+export const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
+
+export function deepseekProvider(options: { apiKey: string; model?: string }): LlmProvider {
+  const model = options.model ?? process.env.DEEPSEEK_MODEL ?? DEFAULT_DEEPSEEK_MODEL
+
+  return {
+    label: `deepseek:${model}`,
+    start(system, history, userMessage, tools) {
+      return createOpenAiCompatibleSession(system, history, userMessage, tools, (messages, functions) =>
+        completeDeepSeek(options.apiKey, model, {
+          messages,
+          tools: functions,
+          tool_choice: 'auto',
+          max_tokens: 4_096,
+        }),
+      )
+    },
+  }
+}
+
+async function completeDeepSeek(
+  apiKey: string,
+  model: string,
+  payload: Record<string, unknown>,
+): Promise<any> {
+  const res = await fetch(DEEPSEEK_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ ...payload, model }),
+    signal: AbortSignal.timeout(20_000),
+  })
+
+  const body = (await res.json().catch(() => ({}))) as any
+  const status = Number(body?.error?.code ?? res.status)
+  const detail = String(body?.error?.message ?? res.statusText ?? '').slice(0, 300)
+
+  if (res.ok && !body?.error) {
+    const choice = body?.choices?.[0]
+    const hasTools = Array.isArray(choice?.message?.tool_calls) && choice.message.tool_calls.length > 0
+    const hasText = typeof choice?.message?.content === 'string' && choice.message.content.trim() !== ''
+    if (hasTools || hasText) return body
+    console.error('[agent] DeepSeek returned empty reply')
+    throw new Error('DeepSeek returned an empty reply')
+  }
+
+  // Handle specific errors:
+  // 1. Insufficient balance: DeepSeek is prepaid; dry account returns an error rather than rate limit
+  if (
+    status === 402 ||
+    body?.error?.type === 'insufficient_balance' ||
+    /insufficient.*balance|balance.*insufficient/i.test(detail)
+  ) {
+    console.error('[agent] DeepSeek insufficient balance:', detail)
+    throw new Error(`DeepSeek insufficient balance: ${detail || 'account balance exhausted'}`)
+  }
+
+  // 2. Rate limit: HTTP 429
+  if (status === 429) {
+    console.error('[agent] DeepSeek rate limit exceeded:', detail)
+    throw new Error(`DeepSeek rate limit exceeded: ${detail || 'too many requests'}`)
+  }
+
+  // 3. Auth error: HTTP 401
+  if (status === 401) {
+    console.error('[agent] DeepSeek authentication failed:', detail)
+    throw new Error(`DeepSeek authentication failed: ${detail || 'invalid API key'}`)
+  }
+
+  // Generic provider failure
+  console.error('[agent] DeepSeek provider error:', status, detail)
+  throw new Error(`DeepSeek provider error: ${status} ${detail}`)
+}
+
 // ── Selection ────────────────────────────────────────────────────────────────
 
 /**
  * The provider for this deployment, from the environment.
  *
- * LLM_PROVIDER=anthropic|openrouter forces a choice. Otherwise OpenRouter is
- * used when OPENROUTER_API_KEY is set, and Claude when it is not.
+ * LLM_PROVIDER=anthropic|openrouter|deepseek forces a choice.
+ * Otherwise OpenRouter is used when OPENROUTER_API_KEY is set, DeepSeek when
+ * DEEPSEEK_API_KEY is set, and Claude when neither is set.
  */
 export function providerFromEnv(): LlmProvider {
   const forced = process.env.LLM_PROVIDER?.trim().toLowerCase()
   const openRouterKey = process.env.OPENROUTER_API_KEY?.trim()
+  const deepSeekKey = process.env.DEEPSEEK_API_KEY?.trim()
+
+  if (forced === 'deepseek') {
+    if (!deepSeekKey) throw new Error('LLM_PROVIDER=deepseek needs DEEPSEEK_API_KEY')
+    const model = process.env.DEEPSEEK_MODEL?.trim()
+    return deepseekProvider({ apiKey: deepSeekKey, model })
+  }
 
   if (forced === 'openrouter' || (!forced && openRouterKey)) {
     if (!openRouterKey) throw new Error('LLM_PROVIDER=openrouter needs OPENROUTER_API_KEY')
     const models = process.env.AGENT_MODELS?.split(',').map((m) => m.trim()).filter(Boolean)
     return openRouterProvider({ apiKey: openRouterKey, models })
   }
+
+  if (!forced && deepSeekKey) {
+    const model = process.env.DEEPSEEK_MODEL?.trim()
+    return deepseekProvider({ apiKey: deepSeekKey, model })
+  }
+
   return anthropicProvider()
 }

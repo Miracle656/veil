@@ -1,5 +1,6 @@
 import {
   anthropicProvider,
+  deepseekProvider,
   openRouterProvider,
   type ChatTurn,
   type LlmProvider,
@@ -16,6 +17,10 @@ export interface AgentConfig {
   anthropicApiKey?: string
   /** OpenRouter API key. When set, free OpenRouter models are used instead of Claude. */
   openRouterApiKey?: string
+  /** DeepSeek API key. When set, DeepSeek model is used instead of Claude/OpenRouter. */
+  deepSeekApiKey?: string
+  /** DeepSeek model ID. Default: deepseek-flash. */
+  deepSeekModel?: string
   /** OpenRouter model ids, in preference order. Default: llm.ts DEFAULT_FREE_MODELS. */
   models?: string[]
   /** A ready-made provider; overrides the keys above. */
@@ -46,12 +51,22 @@ interface ResolvedConfig {
 }
 
 function resolveConfig(config: AgentConfig): ResolvedConfig {
+  let llm: LlmProvider
+  if (config.provider) {
+    llm = config.provider
+  } else if (config.openRouterApiKey) {
+    // Same order as providerFromEnv(). The two selectors disagreeing about
+    // precedence would make an SDK consumer and a deployment pick differently
+    // from the same set of keys.
+    llm = openRouterProvider({ apiKey: config.openRouterApiKey, models: config.models })
+  } else if (config.deepSeekApiKey) {
+    llm = deepseekProvider({ apiKey: config.deepSeekApiKey, model: config.deepSeekModel })
+  } else {
+    llm = anthropicProvider({ apiKey: config.anthropicApiKey, model: config.model })
+  }
+
   return {
-    llm:
-      config.provider ??
-      (config.openRouterApiKey
-        ? openRouterProvider({ apiKey: config.openRouterApiKey, models: config.models })
-        : anthropicProvider({ apiKey: config.anthropicApiKey, model: config.model })),
+    llm,
     wraithUrl: config.wraithUrl ?? '',
     horizonUrl: config.horizonUrl ?? HORIZON_URL,
     sorobanRpcUrl: config.sorobanRpcUrl ?? SOROBAN_RPC_URL,

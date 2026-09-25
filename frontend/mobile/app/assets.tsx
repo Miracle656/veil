@@ -10,12 +10,13 @@ import {
   fetchHeldAssets,
   loadWalletAddress,
   USDY_MAINNET_ISSUER,
+  USDT0_MAINNET_ISSUER,
   getRegisteredAsset,
   type HeldAsset,
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
 import { getNetworkName } from '../lib/network';
-import { enableUsdy, AccountNotFunded, NotEnoughXlm } from '../lib/enableUsdc';
+import { enableUsdc, enableUsdy, enableUsdt0, AccountNotFunded, NotEnoughXlm } from '../lib/enableUsdc';
 
 type State =
   | { kind: 'loading' }
@@ -29,6 +30,8 @@ export default function AssetsScreen() {
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [enablingUsdy, setEnablingUsdy] = useState(false);
   const [usdyActionMessage, setUsdyActionMessage] = useState<string | null>(null);
+  const [enablingUsdt0, setEnablingUsdt0] = useState(false);
+  const [usdt0ActionMessage, setUsdt0ActionMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
@@ -87,6 +90,34 @@ export default function AssetsScreen() {
     }
   }, [load]);
 
+  const handleEnableUsdt0 = useCallback(async () => {
+    setEnablingUsdt0(true);
+    setUsdt0ActionMessage(null);
+    try {
+      const txHash = await enableUsdt0();
+      if (txHash) {
+        setUsdt0ActionMessage(`USDT0 trustline enabled successfully! (Tx: ${txHash.slice(0, 8)}…)`);
+      } else {
+        setUsdt0ActionMessage('USDT0 trustline is already enabled.');
+      }
+      await load();
+    } catch (err) {
+      if (err instanceof NotEnoughXlm) {
+        setUsdt0ActionMessage(
+          `This account holds ${err.have} XLM. Adding a USDT0 trustline needs about 0.6 XLM of refundable reserve.`,
+        );
+      } else if (err instanceof AccountNotFunded) {
+        setUsdt0ActionMessage(
+          'This account does not exist on the network yet, so it cannot add a trustline.',
+        );
+      } else {
+        setUsdt0ActionMessage(errorMessage(err));
+      }
+    } finally {
+      setEnablingUsdt0(false);
+    }
+  }, [load]);
+
   const hasUsdy = useMemo(() => {
     if (state.kind !== 'ready') return false;
     return state.assets.some(
@@ -94,7 +125,15 @@ export default function AssetsScreen() {
     );
   }, [state]);
 
+  const hasUsdt0 = useMemo(() => {
+    if (state.kind !== 'ready') return false;
+    return state.assets.some(
+      (a) => a.code.toUpperCase() === 'USDT0' && a.issuer === USDT0_MAINNET_ISSUER,
+    );
+  }, [state]);
+
   const usdyRegistered = getRegisteredAsset('USDY');
+  const usdt0Registered = getRegisteredAsset('USDT0');
 
   const onMainnet = getNetworkName() === 'mainnet';
 
@@ -108,16 +147,51 @@ export default function AssetsScreen() {
 
       {/* Featured USDY One-Tap Trustline Action */}
       {state.kind === 'ready' && !hasUsdy && (
+      {/* Featured USDT0 One-Tap Trustline Action. Mainnet only — USDT0's issuer
+          does not exist on testnet. */}
+      {state.kind === 'ready' && !hasUsdt0 && onMainnet && (
+        <View style={styles.banner}>
+          <View style={styles.bannerInfo}>
+            <Text style={styles.bannerTitle}>Enable USDT0</Text>
+            <Text style={styles.bannerDescription}>
+              {usdt0Registered?.name ?? "Tether's USD stablecoin bridged to Stellar."}
+            </Text>
+            <Text style={styles.reserveNotice}>
+              Reserve cost: 0.5 XLM refundable reserve required upfront.
+            </Text>
+            <Text style={styles.disclosureText}>
+              Note: The issuer can freeze this balance or take it back.
+            </Text>
+          </View>
+          <Pressable
+            onPress={handleEnableUsdt0}
+            disabled={enablingUsdt0}
+            style={({ pressed }) => [
+              styles.enableButton,
+              (enablingUsdt0 || pressed) && styles.buttonPressed,
+            ]}
+          >
+            {enablingUsdt0 ? (
+              <ActivityIndicator size="small" color={colors.onAccent} />
+            ) : (
+              <Text style={styles.enableButtonText}>Enable USDT0</Text>
+            )}
+          </Pressable>
+        </View>
+      )}
+
+      {usdt0ActionMessage && <Text style={styles.actionNotice}>{usdt0ActionMessage}</Text>}
+
       {/* Featured USDY One-Tap Trustline Action. Mainnet only — USDY's issuer
           does not exist on testnet. */}
       {state.kind === 'ready' && !hasUsdy && onMainnet && (
-        <View style={styles.usdyBanner}>
-          <View style={styles.usdyInfo}>
-            <Text style={styles.usdyTitle}>Enable USDY</Text>
-            <Text style={styles.usdyDescription}>
+        <View style={styles.banner}>
+          <View style={styles.bannerInfo}>
+            <Text style={styles.bannerTitle}>Enable USDY</Text>
+            <Text style={styles.bannerDescription}>
               {usdyRegistered?.name ?? "Ondo's US Treasuries-backed, yield-bearing token."}
             </Text>
-            <Text style={styles.usdyReserveNotice}>
+            <Text style={styles.reserveNotice}>
               Reserve cost: 0.5 XLM refundable reserve required upfront.
             </Text>
           </View>
@@ -197,7 +271,7 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textSecondary,
       fontSize: 15,
     },
-    usdyBanner: {
+    banner: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
       borderWidth: 1,
@@ -205,23 +279,29 @@ const createStyles = (colors: ThemeColors) =>
       padding: 16,
       gap: 12,
     },
-    usdyInfo: {
+    bannerInfo: {
       gap: 4,
     },
-    usdyTitle: {
+    bannerTitle: {
       color: colors.textStrong,
       fontSize: 17,
       fontWeight: '700',
     },
-    usdyDescription: {
+    bannerDescription: {
       color: colors.textSecondary,
       fontSize: 13,
       lineHeight: 18,
     },
-    usdyReserveNotice: {
+    reserveNotice: {
       color: colors.accent,
       fontSize: 12,
       fontWeight: '600',
+      marginTop: 2,
+    },
+    disclosureText: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontStyle: 'italic',
       marginTop: 2,
     },
     enableButton: {
