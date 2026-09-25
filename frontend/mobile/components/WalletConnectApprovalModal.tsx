@@ -22,6 +22,7 @@ import {
   type WalletConnectRequest,
 } from '../lib/walletConnect';
 import { extractRequestXdr, isUserRejection } from '../lib/walletConnectHelpers';
+import { OriginDisplay } from './OriginDisplay';
 
 type ParsedRequestDetails = {
   operationType: 'payment' | 'contract' | 'unknown';
@@ -122,6 +123,7 @@ export function WalletConnectApprovalModal() {
 
   const dappName = dappMetadata?.name || 'Unknown dApp';
   const dappIcon = dappMetadata?.icons?.[0];
+  const dappUrl = dappMetadata?.url || '';
 
   const handleApprove = useCallback(async () => {
     if (!request) return;
@@ -181,6 +183,7 @@ export function WalletConnectApprovalModal() {
                   <Text style={styles.muted}>WalletConnect request</Text>
                 </View>
               </View>
+              {!!dappUrl && <OriginDisplay url={dappUrl} />}
             </View>
 
             <View style={styles.card}>
