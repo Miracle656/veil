@@ -8,7 +8,7 @@ import { useRouter } from 'next/navigation'
 
 import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation,
-  Contract, rpc as SorobanRpc, nativeToScVal, Horizon,
+  Contract, rpc as SorobanRpc, nativeToScVal, Horizon, Memo,
 } from '@stellar/stellar-sdk'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
@@ -54,6 +54,7 @@ export default function SendPage() {
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
+  const [memoType, setMemoType]       = useState('')
 
   /**
    * Prefill from the query string, so another screen can hand off a payment it
@@ -70,9 +71,11 @@ export default function SendPage() {
     const to = q.get('to')
     const amt = q.get('amount')
     const m = q.get('memo')
+    const mt = q.get('memo_type')
     if (to) setRecipient(to)
     if (amt) setAmount(amt)
     if (m) setMemo(m)
+    if (mt) setMemoType(mt)
   }, [])
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
@@ -241,10 +244,24 @@ export default function SendPage() {
       }
 
       const horizonServer = new Server(network.horizonUrl)
+      
+      let txMemo = Memo.none()
+      if (memo) {
+        const mt = memoType.toUpperCase()
+        if (mt === 'MEMO_ID' || mt === 'ID') {
+          txMemo = Memo.id(memo)
+        } else if (mt === 'MEMO_HASH' || mt === 'HASH') {
+          txMemo = Memo.hash(memo)
+        } else if (mt === 'MEMO_RETURN' || mt === 'RETURN') {
+          txMemo = Memo.return(memo)
+        } else {
+          txMemo = Memo.text(memo)
+        }
+      }
 
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
-        const tx = new TransactionBuilder(account, {
+        const builder = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
@@ -254,7 +271,10 @@ export default function SendPage() {
             amount,
           }))
           .setTimeout(30)
-          .build()
+          
+        if (memo) builder.addMemo(txMemo)
+        const tx = builder.build()
+        
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
         setTxHash(result.hash)
@@ -264,7 +284,7 @@ export default function SendPage() {
         const sacContract   = new Contract(getNativeAssetContractId())
         const amountStroops = BigInt(Math.round(parseFloat(amount) * 10_000_000))
 
-        const tx = new TransactionBuilder(feePayerAcct, {
+        const builder = new TransactionBuilder(feePayerAcct, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
@@ -275,7 +295,9 @@ export default function SendPage() {
             nativeToScVal(amountStroops,          { type: 'i128' }),
           ))
           .setTimeout(30)
-          .build()
+          
+        if (memo) builder.addMemo(txMemo)
+        const tx = builder.build()
 
         const sim = await rpcServer.simulateTransaction(tx)
         if (SorobanRpc.Api.isSimulationError(sim)) {
