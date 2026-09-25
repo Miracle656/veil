@@ -84,6 +84,7 @@ export default function SettingsScreen() {
     { key: 'passkeys', title: 'Passkeys', subtitle: 'Devices registered on this wallet', onPress: () => router.push('/settings/passkeys') },
     { key: 'recovery', title: 'Recovery', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
     { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
+    { key: 'privacy', title: 'Privacy', subtitle: 'Error reporting & private payments', onPress: () => router.push('/settings/privacy') },
   ];
 
   // Live notification preferences.
