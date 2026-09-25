@@ -62,8 +62,13 @@ android {
     main {
       // Generated uniffi bindings land here; the generateUniffiBindings task
       // runs before compilation, so the folder exists by the time Kotlin
-      // compiles.
+      // compiles. Register on the `kotlin` source set explicitly: adding only
+      // to `java.srcDirs` does not reliably feed compile*Kotlin, which is why
+      // every `uniffi.spp_native` reference came back "Unresolved reference"
+      // even though the bindings were generated. `java.srcDirs` is kept so the
+      // Java toolchain and IDEs also see the folder.
       java.srcDirs uniffiOutDir.absolutePath
+      kotlin.srcDirs uniffiOutDir.absolutePath
       // Compiled .so files, moved into jniLibs/<abi>/lib*.so by the tasks
       // below.
       jniLibs.srcDirs jniLibsDir.absolutePath

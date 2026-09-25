@@ -4,7 +4,7 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ExecutorCoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import uniffi.spp_native.ProveOutcome
@@ -34,7 +34,9 @@ import java.util.concurrent.Executors
  * not a caller error) rejects with `E_PROVER`.
  */
 class SppNativeModule : Module() {
-    private val proverDispatcher: CoroutineDispatcher by lazy {
+    // ExecutorCoroutineDispatcher (not the CoroutineDispatcher supertype) so
+    // OnDestroy can call close() — close() only exists on the executor subtype.
+    private val proverDispatcher: ExecutorCoroutineDispatcher by lazy {
         Executors.newSingleThreadExecutor { r -> Thread(r, "spp-prover") }.asCoroutineDispatcher()
     }
 
