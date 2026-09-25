@@ -19,6 +19,7 @@ import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
+import { calculateAccountReserve, type AccountReserveBreakdown } from '@/lib/reserves'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
 import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { isMultisigAvailable } from '@/lib/multisigConfig'
@@ -118,6 +119,7 @@ function DashboardPageContent() {
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
+  const [reserveInfo, setReserveInfo]     = useState<AccountReserveBreakdown | null>(null)
   const transactions                      = useActivityFeed()
   const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
@@ -296,6 +298,8 @@ function DashboardPageContent() {
         const account = await horizonServer.loadAccount(signerPublicKey)
         const native  = account.balances.find((b: any) => b.asset_type === 'native')
         feePayerXlm   = native ? parseFloat(native.balance) : 0
+        const rInfo   = calculateAccountReserve(account as any)
+        setReserveInfo(rInfo)
 
         // All non-XLM balances (e.g. USDC from swaps)
         otherAssets = (account.balances as any[])
@@ -844,6 +848,11 @@ function DashboardPageContent() {
               <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', gap: '12px' }}>
                 <div className="vw-silver__sub">{hideAmounts ? '••••' : (balanceLine || 'No assets yet')}</div>
               </div>
+              {reserveInfo && !hideAmounts && (
+                <div style={{ position: 'relative', marginTop: '10px', fontSize: '11px', color: '#0F0F0F', opacity: 0.8, lineHeight: 1.4 }}>
+                  Reserved: <strong>{reserveInfo.totalReserve.toFixed(1)} XLM</strong> ({reserveInfo.reason})
+                </div>
+              )}
             </div>
 
             <div className="vw-panel" style={{ flex: 1, minWidth: 0, padding: '26px 28px' }}>

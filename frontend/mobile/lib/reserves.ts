@@ -1,19 +1,17 @@
 /**
- * Reserve-aware spendable balance calculation.
+ * Reserve calculations and explanations for Stellar accounts (Issue #824).
  *
- * A Stellar account cannot spend down to zero: it must retain (2 + subentries)
- * x the 0.5 XLM base reserve, plus anything already committed as selling
- * liabilities on the DEX.
- *
- * Ignoring that is invisible on testnet, where a Friendbot account holds
- * 10,000 XLM and the reserve is noise. On mainnet, where balances are small and
- * real, a "Max" that offers the full balance builds a transaction that cannot
- * succeed (tx_insufficient_balance) — and the user only finds out after
- * signing.
- *
- * Trustlines and data entries each add a subentry, so the reserve is read from
- * the account rather than assumed.
+ * Every Stellar account must lock (2 + subentries) * 0.5 XLM as base reserve.
+ * Each trustline added creates a subentry that locks an additional 0.5 XLM.
+ * This reserve is locked, not spent, and is released if the trustline is removed.
  */
+
+export const BASE_RESERVE_XLM = 0.5;
+export const TRUSTLINE_RESERVE_COST_XLM = 0.5;
+
+export const TRUSTLINE_RESERVE_EXPLANATION =
+  'Adding a trustline locks 0.5 XLM of your account reserve. This XLM is locked, not spent, and is released back to your available balance if the trustline is removed.';
+
 export type HorizonAccountLike = {
   subentry_count?: number;
   balances?: Array<{
@@ -22,36 +20,6 @@ export type HorizonAccountLike = {
     selling_liabilities?: string;
   }>;
 };
-
-/** Native XLM that can actually leave the account, as a decimal string. */
-export function spendableNativeXlm(account: HorizonAccountLike): string {
-  const native = (account.balances ?? []).find((b) => b.asset_type === 'native');
-  if (!native?.balance) return '0';
-
-  const balance = Number(native.balance);
-  if (!Number.isFinite(balance)) return '0';
-
-  const subentries = Number(account.subentry_count ?? 0);
-  const reserve = (2 + subentries) * 0.5;
-  const liabilities = Number(native.selling_liabilities ?? '0') || 0;
-
-  const spendable = balance - reserve - liabilities;
-  if (!(spendable > 0)) return '0';
-
-  // Truncate rather than round: rounding up re-creates the overspend this
-  // function exists to prevent. Stellar amounts carry 7 decimal places.
-  return (Math.floor(spendable * 1e7) / 1e7).toFixed(7);
-}
-
-/** Stellar base reserve per entry in XLM (0.5 XLM). */
-export const BASE_RESERVE_XLM = 0.5;
-
-/** Trustline creation reserve cost in XLM (one subentry = 0.5 XLM). */
-export const TRUSTLINE_RESERVE_COST_XLM = 0.5;
-
-/** Standard explanation of the trustline reserve requirement. */
-export const TRUSTLINE_RESERVE_EXPLANATION =
-  'Adding a trustline locks 0.5 XLM of your account reserve. This XLM is locked, not spent, and is released back to your available balance if the trustline is removed.';
 
 export type AccountReserveBreakdown = {
   /** Total XLM held by the account */
@@ -69,6 +37,24 @@ export type AccountReserveBreakdown = {
   /** Human-readable explanation of why this amount is reserved */
   reason: string;
 };
+
+/** Native XLM that can actually leave the account, as a decimal string. */
+export function spendableNativeXlm(account: HorizonAccountLike): string {
+  const native = (account.balances ?? []).find((b) => b.asset_type === 'native');
+  if (!native?.balance) return '0';
+
+  const balance = Number(native.balance);
+  if (!Number.isFinite(balance)) return '0';
+
+  const subentries = Number(account.subentry_count ?? 0);
+  const reserve = (2 + subentries) * 0.5;
+  const liabilities = Number(native.selling_liabilities ?? '0') || 0;
+
+  const spendable = balance - reserve - liabilities;
+  if (!(spendable > 0)) return '0';
+
+  return (Math.floor(spendable * 1e7) / 1e7).toFixed(7);
+}
 
 /**
  * Calculates the exact reserve breakdown for a Stellar account.
