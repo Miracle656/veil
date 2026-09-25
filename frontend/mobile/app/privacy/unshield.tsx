@@ -24,9 +24,11 @@ import { useRouter } from 'expo-router';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useCurrency } from '../../hooks/useCurrency';
+import { usePrivacyRecoveryNotice } from '../../hooks/usePrivacyRecoveryNotice';
 import type { ThemeColors } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
 import { FlowHeader } from '../../components/FlowHeader';
+import { RecoveryWarning } from '../../components/RecoveryWarning';
 import { SlideToConfirm } from '../../components/SlideToConfirm';
 import { UnshieldIcon } from '../../components/icons';
 import { unshieldXlm } from '../../lib/privacy';
@@ -52,6 +54,10 @@ export default function UnshieldScreen() {
 
   const [step, setStep] = useState<Step>('form');
   const [error, setError] = useState<string | null>(null);
+
+  // #711: same notice as the other privacy actions — the pool notes behind an
+  // un-recoverable key can never be rescanned on another device.
+  const recovery = usePrivacyRecoveryNotice();
 
   useEffect(() => {
     fetchPrice('XLM', null).then(setPrice).catch(() => undefined);
@@ -182,6 +188,8 @@ export default function UnshieldScreen() {
             ) : null}
           </View>
 
+          {recovery.needsAck ? <RecoveryWarning onAcknowledge={recovery.acknowledge} /> : null}
+
           {/* Review card */}
           {canSubmit ? (
             <View style={styles.reviewCard}>
@@ -211,7 +219,7 @@ export default function UnshieldScreen() {
           <SlideToConfirm
             label="Slide to unshield"
             onConfirm={handleConfirm}
-            disabled={!canSubmit}
+            disabled={!canSubmit || recovery.needsAck}
           />
         </View>
       </KeyboardAvoidingView>

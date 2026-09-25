@@ -13,6 +13,11 @@
  * `isPrivacyEnabled()`; attempting an actual transfer surfaces
  * {@link ENGINE_PENDING_MESSAGE} rather than pretending to succeed.
  *
+ * The key machinery #711 asks for already lives beside it in
+ * `lib/privacy/keys.ts`: the SPP key-derivation signature produced with the
+ * passkey's PRF-derived spend key, and the recovery warning the screens show
+ * before anything moves when that key cannot be re-derived elsewhere.
+ *
  * When V142 ships, replace the three `*Pending` bodies below with the real SPP
  * client calls (they will take an amount, a recipient for sends, a signer, and a
  * progress callback) and the screens need no structural changes.
