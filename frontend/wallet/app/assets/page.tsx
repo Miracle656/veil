@@ -232,6 +232,8 @@ export default function AssetsPage() {
           </div>
         )}
 
+        {/* Featured USDY enable card */}
+        {!hasUsdy && !loading && (
         {/* Featured USDT0 enable card. Mainnet only — USDT0's issuer does not
             exist on testnet, where changeTrust would fail with op_no_issuer. */}
         {!hasUsdt0 && !loading && network.name === 'mainnet' && (
