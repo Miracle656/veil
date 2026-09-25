@@ -13,6 +13,7 @@
     "test": "jest",
     "e2e": "maestro test .maestro",
     "e2e:device": "maestro test --include-tags device .maestro",
+    "postinstall": "sh ./modules/spp-native/scripts/install-rust-toolchain.sh",
     "build:android:dev": "npx --yes eas-cli@latest build -p android --profile development",
     "build:android:preview": "npx --yes eas-cli@latest build -p android --profile preview",
     "build:android:production": "npx --yes eas-cli@latest build -p android --profile production"

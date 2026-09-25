@@ -1,0 +1,199 @@
+// spp-native Android module build.
+//
+// Follows the Expo SDK 54 module pattern (see expo-haptics): the
+// expo-module-gradle-plugin supplies the Android library scaffold, SDK
+// versions from the app project, and the expo-modules-core dependency, so
+// this file only adds what the module actually builds: the Rust prover
+// (cargo-ndk per ABI) and the uniffi Kotlin bindings.
+//
+// Note: only `build.gradle` — no `build.gradle.kts`. Gradle prefers a Groovy
+// build file over the Kotlin DSL when both exist, and a file pair makes one
+// of the two silently dead.
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'xyz.veil.wallet'
+version = '0.1.0'
+
+def rustDir = file("${projectDir}/../rust")
+def cargoManifest = file("${rustDir}/Cargo.toml")
+def jniLibsDir = file("${buildDir}/jniLibs")
+// Generated uniffi bindings go under build/generated/uniffi — generated code
+// must never be mixed with the handwritten Android sources in src/main/java.
+// The folder is registered as an extra Java source root below AND pushed
+// directly onto each compile*Kotlin task via task.source(...), because the
+// expo-module-gradle-plugin + AGP wiring does not reliably feed a custom
+// source-set root into the Kotlin compile. task.source() is the belt-and-
+// braces mechanism that guarantees the generated .kt is on the compile path.
+def uniffiOutDir = file("${buildDir}/generated/uniffi")
+
+// ABIs the APK ships. arm64-v8a covers every modern device; armeabi-v7a
+// keeps 2016-era phones working. x86_64 exists so emulators can run the
+// benchmark screen without a physical device.
+def rustTargets = [
+  [abi: 'arm64-v8a', triple: 'aarch64-linux-android'],
+  [abi: 'armeabi-v7a', triple: 'armv7-linux-androideabi'],
+  [abi: 'x86_64', triple: 'x86_64-linux-android'],
+]
+
+// Toolchain probe at configuration time. If cargo is missing (a bare gradle
+// run on a machine without Rust) the Rust tasks skip with a warning — the
+// app builds without the .so, the JS layer detects the missing module, and
+// everything falls back to WASM, exactly like a binary built before this
+// module existed. CI and EAS always install the toolchain.
+def cargoAvailable = {
+  try {
+    def proc = ['which', 'cargo'].execute()
+    proc.waitFor()
+    proc.exitValue() == 0
+  } catch (IOException ignored) {
+    false
+  }
+}()
+
+android {
+  namespace "xyz.veil.wallet.spp"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+
+  lint {
+    abortOnError false
+  }
+
+  sourceSets {
+    main {
+      // Register the generated uniffi bindings as an extra Java source root so
+      // AGP/Kotlin see them alongside src/main/java. The compile*Kotlin tasks
+      // below ALSO add this folder via task.source() as a hard guarantee.
+      java.srcDir(uniffiOutDir)
+      // The Rust tasks move libspp_prover.so into jniLibs/<abi>/.
+      jniLibs.srcDirs jniLibsDir.absolutePath
+    }
+  }
+}
+
+dependencies {
+  // The uniffi-generated Kotlin loads libspp_prover.so through JNA. The
+  // @aar classifier is the Android packaging of JNA (Java classes + native
+  // helper); plain "com.sun.jna:jna" is not a published coordinate and fails
+  // dependency resolution at :app level.
+  implementation "net.java.dev.jna:jna:5.13.0@aar"
+}
+
+// ── Rust ────────────────────────────────────────────────────────────────────
+//
+// Why cargo-ndk and not hand-rolled cargo invocations: it pins the correct
+// linker per ABI and produces the jniLibs layout in one pass, per target.
+
+rustTargets.each { target ->
+  tasks.register("buildRust${target.abi}", Exec) {
+    group = 'spp'
+    description = "Compiles the Rust SPP prover for ${target.abi}"
+    onlyIf { cargoAvailable }
+    workingDir rustDir
+    commandLine 'cargo', 'ndk',
+      '-t', target.triple,
+      '-o', jniLibsDir.absolutePath,
+      '--manifest-path', cargoManifest.absolutePath,
+      '--', 'build', '--release', '-p', 'spp-prover'
+    environment CARGO_TERM_COLOR: 'never',
+      // Deterministic builds: embed no absolute paths.
+      RUSTFLAGS: "--remap-path-prefix=${System.getProperty('user.home')}=~"
+    doFirst {
+      if (!cargoAvailable) {
+        logger.warn("[spp-native] cargo not found — skipping Rust build for ${target.abi}. " +
+          "The app will launch without the native prover and fall back to WASM.")
+      }
+    }
+    doLast {
+      // cargo-ndk emits to $jniLibsDir/<triple>/libspp_prover.so; move it
+      // into the jniLibs layout Android expects (jniLibs/<abi>/lib*.so).
+      def soName = 'libspp_prover.so'
+      def produced = new File(jniLibsDir, target.triple)
+      def dest = new File(jniLibsDir, target.abi)
+      if (produced.isDirectory()) {
+        produced.listFiles()?.findAll { it.name == soName }?.each { f ->
+          dest.mkdirs()
+          f.renameTo(new File(dest, soName))
+        }
+        produced.deleteRecursively()
+      }
+    }
+  }
+}
+
+// Generate the uniffi Kotlin bindings from the UDL.
+//
+// UDL-mode (bindgen parses spp_native.udl directly) instead of `--library`
+// mode. This crate's whole interface lives in the UDL — there are no proc-macro
+// `#[uniffi::export]` items — so reading the UDL text yields byte-identical
+// Kotlin to reading it back out of the compiled library, and it removes the
+// dependency that was failing: `--library` needs the host cdylib to expose a
+// valid uniffi metadata symbol, and on CI the release-profile build (lto=fat,
+// strip=true) left bindgen finding no metadata, so it exited 0 having emitted
+// no Kotlin and the doLast check below threw on an empty out-dir. A plain host
+// `cargo build` of the cdylib purely to feed that symbol is therefore gone too.
+tasks.register('generateUniffiBindings', Exec) {
+  group = 'spp'
+  description = 'Generates Kotlin bindings from spp_native.udl'
+  onlyIf { cargoAvailable }
+  workingDir rustDir
+  def udlFile = file("${rustDir}/spp-prover/src/spp_native.udl")
+  // Up-to-date / cache tracking: rerun only when the UDL changes, and treat
+  // the generated folder as this task's output.
+  inputs.file(udlFile)
+  outputs.dir(uniffiOutDir)
+  doFirst {
+    if (!org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_UNIX)) {
+      throw new IllegalStateException('uniffi codegen requires a Unix host (CI/EAS provide one)')
+    }
+    // Start from a clean output dir so stale bindings never linger.
+    delete(uniffiOutDir)
+    uniffiOutDir.mkdirs()
+  }
+  doLast {
+    // uniffi's generated-Kotlin layout differs between patch versions — some
+    // write <out>/uniffi/<ns>/<ns>.kt, others <out>/<ns>/. Don't hardcode the
+    // subpath: scan recursively for any generated .kt and log what was found.
+    // Throws only when codegen produced no Kotlin at all, which distinguishes
+    // "no output" from "output landed at a path this check didn't expect".
+    def generated = fileTree(dir: uniffiOutDir, includes: ['**/*.kt']).files
+    if (generated.isEmpty()) {
+      def seen = uniffiOutDir.exists() ? (uniffiOutDir.listFiles()*.toString()) : ['<out-dir missing>']
+      throw new GradleException(
+        "UniFFI generation produced no Kotlin under ${uniffiOutDir}; directory contents: ${seen}")
+    }
+    logger.lifecycle("[spp-native] Generated UniFFI Kotlin bindings: ${generated*.name} under ${uniffiOutDir}")
+  }
+  commandLine 'cargo', 'run', '--release', '-p', 'spp-prover', '--bin', 'uniffi-bindgen',
+    '--', 'generate',
+    udlFile.absolutePath,
+    '--language', 'kotlin',
+    '--out-dir', uniffiOutDir.absolutePath
+}
+
+// Wire the Rust tasks ahead of the Kotlin compile. `preBuild` is the earliest
+// hook every android variant depends on, so the .so files and bindings exist
+// before either compiles.
+tasks.matching { it.name == 'preBuild' }.configureEach {
+  dependsOn 'generateUniffiBindings'
+  rustTargets.each { target -> dependsOn "buildRust${target.abi}" }
+}
+
+// `preBuild` alone is NOT a hard ordering edge to `compile*Kotlin`: under
+// Gradle's parallel execution the Kotlin compile can snapshot its sources
+// before generateUniffiBindings has written them, so every `uniffi.spp_native`
+// reference comes back "Unresolved reference". Depend on the codegen directly
+// from each Kotlin compile task AND add the generated folder to that task's
+// source set, so the generated .kt exists first and is definitely compiled.
+tasks.matching { it.name.startsWith('compile') && it.name.endsWith('Kotlin') }.configureEach { task ->
+  task.dependsOn 'generateUniffiBindings'
+  if (task.hasProperty('source')) {
+    task.source(uniffiOutDir)
+  }
+}

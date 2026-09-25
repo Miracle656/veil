@@ -46,12 +46,32 @@ test.describe('Onboarding — new wallet creation', () => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
+    // The waiting card flashes by in milliseconds under a virtual
+    // authenticator (the passkey prompt resolves instantly), so watching for
+    // it with expect(...).toBeVisible() races the stub and fails maybe every
+    // other run. Observe DOM mutations instead: the card's text is recorded
+    // the frame it renders, however briefly, and asserted once the flow has
+    // settled.
+    await page.evaluate(() => {
+      const w = window as unknown as { __sawWaitingCard?: boolean }
+      w.__sawWaitingCard = false
+      const waiting = /waiting for biometric|setting up your wallet/i
+      const observer = new MutationObserver(() => {
+        if (waiting.test(document.body.innerText)) w.__sawWaitingCard = true
+      })
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+    })
+
     await page.getByRole('button', { name: /create wallet/i }).click({ force: true })
 
-    // Should show the "Waiting for biometric..." or "Deploying wallet on-chain..." card
-    await expect(
-      page.getByText(/waiting for biometric|deploying wallet on-chain/i),
-    ).toBeVisible({ timeout: 10_000 })
+    // The flow reaches its settled state — the success card...
+    await expect(page.getByText(/wallet created/i)).toBeVisible({ timeout: 30_000 })
+
+    // ...and passed through the waiting card on the way.
+    const sawWaitingCard = await page.evaluate(
+      () => (window as unknown as { __sawWaitingCard?: boolean }).__sawWaitingCard,
+    )
+    expect(sawWaitingCard).toBe(true)
   })
 
   test('full onboarding flow: create wallet → dashboard redirect', async ({ page }) => {

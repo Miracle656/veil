@@ -256,9 +256,10 @@ export default function RecoverPage() {
     <div className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
       <div style={{ maxWidth: 400, width: '100%' }}>
 
-        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
+        {/* NetworkSwitcher needs a landmark ancestor for the axe region rule */}
+        <nav aria-label="Network" style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
           <NetworkSwitcher />
-        </div>
+        </nav>
 
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', marginBottom: '2.5rem' }}>

@@ -1,6 +1,15 @@
 import { buildSponsoredFeeBumpTransaction } from '../feeBump'
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
 
+// feeBump → lib/fees → @veil/sdk, which jest maps to the real SDK source —
+// and sdk/src/core.ts reads Horizon.Server at module scope. Under the partial
+// stellar-sdk mock below that chain used to explode before any test ran.
+// Mocking @veil/sdk keeps the real SDK source out of this suite entirely; the
+// fee path is not exercised here (baseFee is always supplied), so a stub bid
+// is enough.
+jest.mock('@veil/sdk', () => ({
+  inclusionFee: () => '100',
+}))
 // `lib/fees` imports one function from the `@veil/sdk` barrel, and that barrel
 // loads the whole SDK core — which reads `Horizon.Server` at module scope. With
 // `@stellar/stellar-sdk` mocked below, `Horizon` is undefined and the suite dies

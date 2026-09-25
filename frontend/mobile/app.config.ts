@@ -168,6 +168,12 @@ const config: ExpoConfig = {
         color: '#FDDA24',
       },
     ],
+    // The SPP native prover (Rust/uniffi, Android-first) needs no `plugins`
+    // entry: expo-modules-autolinking scans the app's `modules/` directory and
+    // wires the Gradle project itself (local Expo modules ship an
+    // `expo-module.config.json`, not a config plugin). Listing a local module
+    // path here makes `expo prebuild` evaluate the package root as a plugin,
+    // which cannot work for a module whose JS entry re-exports TypeScript.
   ],
   experiments: {
     typedRoutes: true,
