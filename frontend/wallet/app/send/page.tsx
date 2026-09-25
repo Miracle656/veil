@@ -15,7 +15,7 @@ const Server = Horizon.Server
 import { ContactPicker } from '@/components/ContactPicker'
 import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { parseQrValue } from '@/lib/sep7'
+import { parseQrValue, buildSep7Memo, type Sep7MemoType } from '@/lib/sep7'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
 
 import { getNativeAssetContractId, getNetwork } from '@/lib/network'
@@ -54,6 +54,7 @@ export default function SendPage() {
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
+  const [memoType, setMemoType]       = useState<Sep7MemoType | string | undefined>()
 
   /**
    * Prefill from the query string, so another screen can hand off a payment it
@@ -70,9 +71,11 @@ export default function SendPage() {
     const to = q.get('to')
     const amt = q.get('amount')
     const m = q.get('memo')
+    const mt = q.get('memo_type')
     if (to) setRecipient(to)
     if (amt) setAmount(amt)
     if (m) setMemo(m)
+    if (mt) setMemoType(mt)
   }, [])
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
@@ -244,7 +247,7 @@ export default function SendPage() {
 
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
-        const tx = new TransactionBuilder(account, {
+        const builder = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
@@ -254,7 +257,10 @@ export default function SendPage() {
             amount,
           }))
           .setTimeout(30)
-          .build()
+        if (memo.trim()) {
+          builder.addMemo(buildSep7Memo(memo.trim(), memoType))
+        }
+        const tx = builder.build()
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
         setTxHash(result.hash)
@@ -676,24 +682,28 @@ export default function SendPage() {
       {showScanner && (
         <QrScanner
           onScan={value => {
-            const parsed = parseQrValue(value)
-            if (!parsed) return
+            try {
+              const parsed = parseQrValue(value)
+              if (!parsed) return
 
-            if ('destination' in parsed) {
-              if (parsed.destination) setRecipient(parsed.destination)
-              if ('amount' in parsed && parsed.amount) setAmount(parsed.amount)
-            } else {
-              // Sep7Parsed
-              if (parsed.destination) setRecipient(parsed.destination)
-              if (parsed.amount) setAmount(parsed.amount)
+              if ('destination' in parsed) {
+                if (parsed.destination) setRecipient(parsed.destination)
+                if ('amount' in parsed && parsed.amount) setAmount(parsed.amount)
+              } else {
+                // Sep7Parsed
+                if (parsed.destination) setRecipient(parsed.destination)
+                if (parsed.amount) setAmount(parsed.amount)
+              }
 
-              // If asset info is present, we could later auto-select asset.
+              // If SEP-7 URI provided a memo, we can also fill it.
+              if (typeof parsed !== 'string' && 'memo' in parsed && parsed.memo) setMemo(parsed.memo)
+              if (typeof parsed !== 'string' && 'memoType' in parsed && parsed.memoType) setMemoType(parsed.memoType)
+
+              setShowScanner(false)
+            } catch (err: unknown) {
+              setErrorMsg(err instanceof Error ? err.message : String(err))
+              setShowScanner(false)
             }
-
-            // If SEP-7 URI provided a memo, we can also fill it.
-            if (typeof parsed !== 'string' && 'memo' in parsed && parsed.memo) setMemo(parsed.memo)
-
-            setShowScanner(false)
           }}
           onClose={() => setShowScanner(false)}
         />
