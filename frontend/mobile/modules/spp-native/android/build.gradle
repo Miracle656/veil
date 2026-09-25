@@ -127,34 +127,26 @@ rustTargets.each { target ->
   }
 }
 
-// uniffi-bindgen reads its metadata from the compiled host cdylib, so that
-// library has to exist first. `cargo run --bin uniffi-bindgen` only builds the
-// rlib the binary links against — never the cdylib — so without this task the
-// `generate` step below fails with "No such file or directory" for
-// target/release/libspp_prover.so. A plain host `cargo build` of the package
-// emits every crate-type (cdylib, staticlib, rlib) plus the bin, so the
-// subsequent `cargo run` finds it all cached.
-tasks.register('buildRustHost', Exec) {
-  group = 'spp'
-  description = 'Builds the host cdylib uniffi-bindgen reads metadata from'
-  onlyIf { cargoAvailable }
-  workingDir rustDir
-  commandLine 'cargo', 'build', '--release', '-p', 'spp-prover'
-  environment CARGO_TERM_COLOR: 'never',
-    RUSTFLAGS: "--remap-path-prefix=${System.getProperty('user.home')}=~"
-}
-
-// Generate the uniffi Kotlin bindings from the compiled host library.
+// Generate the uniffi Kotlin bindings from the UDL.
+//
+// UDL-mode (bindgen parses spp_native.udl directly) instead of `--library`
+// mode. This crate's whole interface lives in the UDL — there are no proc-macro
+// `#[uniffi::export]` items — so reading the UDL text yields byte-identical
+// Kotlin to reading it back out of the compiled library, and it removes the
+// dependency that was failing: `--library` needs the host cdylib to expose a
+// valid uniffi metadata symbol, and on CI the release-profile build (lto=fat,
+// strip=true) left bindgen finding no metadata, so it exited 0 having emitted
+// no Kotlin and the doLast check below threw on an empty out-dir. A plain host
+// `cargo build` of the cdylib purely to feed that symbol is therefore gone too.
 tasks.register('generateUniffiBindings', Exec) {
   group = 'spp'
   description = 'Generates Kotlin bindings from spp_native.udl'
   onlyIf { cargoAvailable }
-  dependsOn 'buildRustHost'
   workingDir rustDir
-  def hostLib = file("${rustDir}/target/release/libspp_prover.so")
-  // Up-to-date / cache tracking: rerun only when the host cdylib changes, and
-  // treat the generated folder as this task's output.
-  inputs.file(hostLib)
+  def udlFile = file("${rustDir}/spp-prover/src/spp_native.udl")
+  // Up-to-date / cache tracking: rerun only when the UDL changes, and treat
+  // the generated folder as this task's output.
+  inputs.file(udlFile)
   outputs.dir(uniffiOutDir)
   doFirst {
     if (!org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_UNIX)) {
@@ -180,7 +172,7 @@ tasks.register('generateUniffiBindings', Exec) {
   }
   commandLine 'cargo', 'run', '--release', '-p', 'spp-prover', '--bin', 'uniffi-bindgen',
     '--', 'generate',
-    '--library', hostLib.absolutePath,
+    udlFile.absolutePath,
     '--language', 'kotlin',
     '--out-dir', uniffiOutDir.absolutePath
 }
