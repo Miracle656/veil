@@ -36,13 +36,14 @@ jobs:
       run:
         working-directory: frontend/mobile
     env:
-      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
       EAS_SKIP_AUTO_FINGERPRINT: '1'
       APK_PATH: ${{ github.workspace }}/veil-community.apk
     steps:
       # Runs before checkout, so it cannot use the frontend/mobile default.
       - name: Require EXPO_TOKEN
         working-directory: .
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           if [ -z "$EXPO_TOKEN" ]; then
             echo "::error::Add the EXPO_TOKEN secret (Settings → Secrets and variables → Actions) before building."
@@ -66,10 +67,10 @@ jobs:
 
       # Plain npm, not --legacy-peer-deps: the mobile lockfile is kept that way.
       - name: Install app dependencies
-        run: npm ci || npm install
+        run: npm ci --ignore-scripts
 
       - name: Install EAS CLI
-        run: npm install --global eas-cli@latest
+        run: npm install --global eas-cli@24.7.0
 
       # Expo's generated android/gradle.properties caps the Gradle daemon at
       # 2 GB, and packaging this APK (four ABIs, ~120 MB) ran out of heap after
@@ -85,6 +86,8 @@ jobs:
           cat "$dir/gradle.properties"
 
       - name: Build APK locally with EAS
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: >-
           eas build
           --platform android

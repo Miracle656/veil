@@ -19,6 +19,7 @@ import type * as PasskeysModule from 'react-native-passkeys';
 import { getNetwork, type VeilNetwork } from './network';
 import { setPasskeyCredential, setWalletAddress } from './walletStore';
 import { base64UrlToUint8Array, uint8ArrayToBase64Url } from './webauthn';
+import { isRegisteredSigner } from '@veil/sdk';
 
 let cachedPasskeys: typeof PasskeysModule | null | undefined;
 function passkeys(): typeof PasskeysModule {
@@ -461,9 +462,8 @@ export async function walletHasSigner(
   publicKey: Uint8Array,
   network: VeilNetwork = getNetwork()
 ): Promise<boolean> {
-  const target = toHex(publicKey);
   const signers = await fetchWalletSigners(walletAddress, network);
-  return signers.some((signer) => toHex(signer) === target);
+  return isRegisteredSigner(signers, publicKey);
 }
 
 // ── Recovery transactions ─────────────────────────────────────────────────────

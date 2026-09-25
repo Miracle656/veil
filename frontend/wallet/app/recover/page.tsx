@@ -5,7 +5,8 @@ import { inclusionFee } from '@/lib/fees'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { VeilMark } from '@/components/ui/VeilMark'
-import { derToRawSignature, bufferToHex, hexToUint8Array } from '@veil/utils'
+import { bufferToHex, hexToUint8Array } from '@veil/utils'
+import { matchWebAuthnSigner } from '@veil/sdk'
 import { ensureFeePayer, resetFeePayer } from '@/lib/feePayer'
 import { getNetwork } from '@/lib/network'
 import {
@@ -94,45 +95,14 @@ export default function RecoverPage() {
 
       if (!assertion) throw new Error('Passkey prompt was cancelled.')
 
-      const response      = assertion.response as AuthenticatorAssertionResponse
-      const authData      = new Uint8Array(response.authenticatorData)
-      const clientDataJSON = new Uint8Array(response.clientDataJSON)
-      const sigDer        = new Uint8Array(response.signature)
-      const rawSig        = derToRawSignature(sigDer.buffer.slice(sigDer.byteOffset, sigDer.byteOffset + sigDer.byteLength) as ArrayBuffer)
+      const response = assertion.response as AuthenticatorAssertionResponse
 
       // ── 3. Verify signature against each on-chain public key ─────────────
-      // WebAuthn signed: SHA-256(authData || SHA-256(clientDataJSON))
-      // SubtleCrypto ECDSA hashes internally so we pass authData || SHA-256(clientDataJSON)
-      const clientDataHash = new Uint8Array(
-        await crypto.subtle.digest('SHA-256', clientDataJSON.buffer as ArrayBuffer)
-      )
-      const message = new Uint8Array([...authData, ...clientDataHash])
-
-      let matchedHex: string | null = null
-
-      for (const pubKeyBytes of publicKeys) {
-        try {
-          const cryptoKey = await crypto.subtle.importKey(
-            'raw',
-            pubKeyBytes.buffer as ArrayBuffer,
-            { name: 'ECDSA', namedCurve: 'P-256' },
-            false,
-            ['verify']
-          )
-          const valid = await crypto.subtle.verify(
-            { name: 'ECDSA', hash: { name: 'SHA-256' } },
-            cryptoKey,
-            rawSig.buffer as ArrayBuffer,
-            message.buffer as ArrayBuffer
-          )
-          if (valid) {
-            matchedHex = bufferToHex(pubKeyBytes)
-            break
-          }
-        } catch {
-          // Try next key
-        }
-      }
+      const matchedHex = await matchWebAuthnSigner(publicKeys, {
+        authenticatorData: response.authenticatorData,
+        clientDataJSON: response.clientDataJSON,
+        signature: response.signature,
+      })
 
       if (!matchedHex) {
         throw new Error(
