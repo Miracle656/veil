@@ -32,6 +32,7 @@ import {
 const ADDRESS_KEY = 'invisible_wallet_address';
 const PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
 const SETTINGS_KEY = 'veil_wallet_settings';
+export const BACKUP_LAST_EXPORTED_KEY = 'veil_backup_last_exported_at';
 
 const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
 
@@ -78,11 +79,13 @@ export async function collectWalletMetadata(
     signers,
     settings: overrides.settings ?? (await readSettings()),
     factoryAddress:
-      overrides.factoryAddress || process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID']?.trim() || undefined,
+      overrides.factoryAddress ||
+      process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID']?.trim() ||
+      undefined,
     networkPassphrase:
-      overrides.networkPassphrase
-      || process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim()
-      || TESTNET_PASSPHRASE,
+      overrides.networkPassphrase ||
+      process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim() ||
+      TESTNET_PASSPHRASE,
     rpId: overrides.rpId || process.env['EXPO_PUBLIC_RP_ID']?.trim() || undefined,
     createdAt: overrides.createdAt ?? Date.now(),
   };
@@ -189,7 +192,15 @@ export async function exportBackupToFile(
   const file = backend.files.get(id);
   if (!file) throw new BackupError('Backup was encrypted but no file was written');
 
+  await AsyncStorage.setItem(BACKUP_LAST_EXPORTED_KEY, String(Date.now()));
+
   return { id, encrypted, uri: file.uri, filename: file.name };
+}
+
+export async function getLastBackupExportedAt(): Promise<number | null> {
+  const raw = await AsyncStorage.getItem(BACKUP_LAST_EXPORTED_KEY);
+  const timestamp = raw ? Number(raw) : NaN;
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
 }
 
 /**
