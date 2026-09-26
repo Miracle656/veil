@@ -10,6 +10,7 @@ import { requirePasskey } from './passkey';
 import { sendPayment } from './sendPayment';
 import { requireSigner } from './signer';
 import { getWalletAddress } from './walletStore';
+import { assertFeePayerCanCoverFee } from './feePayerCheck';
 
 /**
  * Send an asset, choosing the source the way the send screen does.
@@ -50,15 +51,7 @@ export class NotEnoughToSend extends Error {
   }
 }
 
-/** The spending account cannot pay the network fee, whatever it is sending. */
-export class NeedsXlmForFee extends Error {
-  constructor(readonly spendingAddress: string) {
-    super(
-      `Your spending account needs a little XLM to pay the network fee. Send about 0.1 XLM to ${spendingAddress} and try again.`,
-    );
-    this.name = 'NeedsXlmForFee';
-  }
-}
+// Removed NeedsXlmForFee (now handled by feePayerCheck)
 
 function fmt(n: number): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 7 });
@@ -102,11 +95,7 @@ export async function spendAsset(params: {
   // cannot cover the fee bid above its reserve, the network refuses with
   // tx_insufficient_balance, which reads as "not enough USDC" to anyone
   // holding plenty. Say what is actually missing, before building anything.
-  // A failed read (all zeros) is unknown, not empty: let the network decide.
-  const xlm = await getFeePayerXlm();
-  const xlmKnown = xlm.balance > 0 || xlm.reserve > 0;
-  const freeXlm = xlmKnown ? xlm.balance - xlm.reserve : Number.POSITIVE_INFINITY;
-  if (freeXlm < feeHeadroomXlm()) throw new NeedsXlmForFee(feePayer);
+  await assertFeePayerCanCoverFee(feePayer);
 
   const inWallet = contract ? await fetchContractAssetBalance(contract, asset) : 0;
 
@@ -147,7 +136,14 @@ export async function spendAsset(params: {
     }
     if (plan.kind === 'move' && contract) {
       // Two transactions from the spending account now, so two fees.
-      if (freeXlm < 2 * feeHeadroomXlm()) throw new NeedsXlmForFee(feePayer);
+      // (The initial check covered one; a second full fee is a conservative bound)
+      const xlm = await getFeePayerXlm();
+      const freeXlm = (xlm.balance > 0 || xlm.reserve > 0) ? xlm.balance - xlm.reserve : Number.POSITIVE_INFINITY;
+      if (freeXlm < 2 * feeHeadroomXlm()) {
+        await assertFeePayerCanCoverFee(feePayer); // Trigger standard error if it fails even for 1
+        // Fallback generic throw if 1 works but 2 doesn't
+        throw new Error(`Your spending account needs a little more XLM to cover the double fee. Send a small amount to ${feePayer}.`);
+      }
       await deployWalletIfNeeded(deploy, contract);
       await sendAssetFromContract(contract, feePayer, plan.amount, asset);
       passkeyShown = true;

@@ -32,6 +32,7 @@ import {
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
 import { horizonErrorMessage } from './horizonError';
+import { assertFeePayerCanCoverFee } from './feePayerCheck';
 
 // All endpoints follow the ACTIVE network — module-level env consts froze
 // these to testnet and sent mainnet payments at testnet Horizon.
@@ -149,6 +150,8 @@ export async function sendPayment(
 
   const to = recipient.trim();
   const memoText = memo?.trim();
+
+  await assertFeePayerCanCoverFee(signer.publicKey);
 
   // Native XLM unless a classic (issued) asset is supplied.
   const sendAsset =
