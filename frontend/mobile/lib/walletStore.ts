@@ -103,11 +103,45 @@ export async function setSignerSecret(secret: string): Promise<void> {
  * refuses with "one of the excluded credentials exists on the local device".
  * The result was a wallet that could be reset but never re-created.
  */
-const SDK_KEYS = [
+export const SDK_KEYS = [
   'invisible_wallet_key_id',
   'invisible_wallet_public_key',
   'invisible_wallet_address',
   'invisible_wallet_user_id',
+] as const;
+
+/**
+ * Secure-store keys backing the WalletProvider's persisted signer session.
+ *
+ * Deliberately NOT network-namespaced (see components/WalletProvider.tsx): the
+ * session is the currently-unlocked wallet, whichever network that is. A reset
+ * therefore clears them unconditionally.
+ */
+export const WALLET_SESSION_ADDRESS_KEY = 'veil_wallet_session_address';
+export const WALLET_SESSION_SIGNER_SECRET_KEY = 'veil_wallet_session_signer_secret';
+export const SESSION_KEYS = [
+  WALLET_SESSION_ADDRESS_KEY,
+  WALLET_SESSION_SIGNER_SECRET_KEY,
+] as const;
+
+/**
+ * Cached, wallet-derived AsyncStorage state.
+ *
+ * None of these are wallet identity, but all of them describe a wallet that is
+ * about to cease to exist: a queued spend, apps still connected to it, its
+ * multisig contract, a pending recovery, its seen-notifications watermark and
+ * its non-secret settings. Left behind, they make a "reset" wallet that still
+ * believes it has an outbox, sessions or a contract — the half-reset the danger
+ * screen exists to prevent. These keys are not network-namespaced in the rest of
+ * the app, so they are removed unsuffixed.
+ */
+export const WALLET_CACHE_KEYS = [
+  'veil_outbox_v1',
+  'veil_walletconnect_sessions',
+  'veil_multisig_contract',
+  'veil_notified_movements',
+  'veil_wallet_settings',
+  'veil_pending_recovery_v1',
 ] as const;
 
 /** Wipe the ACTIVE NETWORK's stored wallet identifiers only. */
@@ -119,5 +153,22 @@ export async function clearWalletStore(): Promise<void> {
     key(SecureKey.passkeyPublicKey).then(deleteSecureItem),
     key(SecureKey.signerSecret).then(deleteSecureItem),
     ...SDK_KEYS.map((k) => AsyncStorage.removeItem(`${k}${suffix}`)),
+  ]);
+}
+
+/**
+ * Full wallet reset for the ACTIVE NETWORK.
+ *
+ * Composes {@link clearWalletStore} with the persisted signer session and every
+ * piece of wallet-derived cached state, so the device is left with nothing that
+ * can present itself as a partially-configured wallet. The OTHER network's
+ * wallet is intentionally untouched — that is what the per-network namespacing
+ * is for. Callers are responsible for routing back to onboarding afterwards.
+ */
+export async function resetWallet(): Promise<void> {
+  await Promise.all([
+    clearWalletStore(),
+    Promise.all(SESSION_KEYS.map((k) => deleteSecureItem(k))),
+    ...WALLET_CACHE_KEYS.map((k) => AsyncStorage.removeItem(k)),
   ]);
 }
