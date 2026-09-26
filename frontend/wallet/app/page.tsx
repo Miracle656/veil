@@ -222,7 +222,7 @@ export default function OnboardingPage() {
           {/* ── WebAuthn footnote ── */}
           <p
             id="webauthn-footnote"
-            style={{ textAlign: 'center', fontSize: '0.75rem', color: 'rgba(246,247,248,0.3)', marginTop: '2.5rem' }}
+            style={{ textAlign: 'center', fontSize: '0.75rem', color: 'rgba(246,247,248,0.55)', marginTop: '2.5rem' }}
           >
             Secured by{' '}
             <span style={{ color: 'rgba(246,247,248,0.6)' }}>WebAuthn</span>

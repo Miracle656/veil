@@ -165,6 +165,7 @@ export default function SettingsScreen() {
     },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
     { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
+    { key: 'dapps', title: 'Discover dApps', subtitle: 'Browse the curated directory', onPress: () => router.push('/dapps') },
     { key: 'about', title: 'About', subtitle: 'Version, updates, licences and support', onPress: () => router.push('/settings/about') },
   ];
   // NoticeModal rather than Alert.alert: these report an outcome, and the

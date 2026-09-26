@@ -2,6 +2,18 @@
 # Allowlist for testnet public values (NEXT_PUBLIC_* are browser-exposed constants)
 
 matches:
+  - name: Svelte example network config
+    # `examples/sveltekit/src/lib/network.ts` assigns a `*passphrase`
+    # identifier straight from the SDK constants, which the generic-password
+    # detector reads as a hardcoded credential. The file already carries an
+    # inline `gitguardian:ignore` annotation and still trips the check, so the
+    # false positive is allowlisted here instead. The pattern is deliberately
+    # blank and the scope is deliberately one demo config file: there is no
+    # credential anywhere in it, only `Networks.PUBLIC`/`Networks.TESTNET`.
+    match: '.*'
+    reason: Demo app wired to the public Stellar network; no literal secret
+    ignore_on:
+      - path: examples/sveltekit/src/lib/network.ts
   - name: Testnet Contract ID
     match: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
     reason: Public testnet contract address (NEXT_PUBLIC_FACTORY_CONTRACT_ID)
