@@ -32,6 +32,7 @@ import {
 } from '../lib/notifications';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
 import { WalletProvider } from '../components/WalletProvider';
+import { BootnodeBanner } from '../components/BootnodeBanner';
 
 // Hold the native splash screen until the brand fonts are ready, so the UI
 // never flashes a system font on first paint.
@@ -101,6 +102,7 @@ export default function RootLayout() {
         <BottomSheetModalProvider>
           <ConnectivityProvider>
             <WalletProvider>
+              <BootnodeBanner />
               <ConnectivityGate />
               <OutboxReplayGate />
               <InactivityLockGate />
