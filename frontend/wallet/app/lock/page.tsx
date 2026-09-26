@@ -176,15 +176,18 @@ export default function LockPage() {
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
       <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem' }}>
-        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
-          <NetworkSwitcher />
-        </div>
-
-        <header style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'center' }}>
+        {/* The wordmark and the network switcher both sit in the banner
+            landmark: left outside it, the switcher is page content that
+            belongs to no landmark, which is what axe reports as a `region`
+            violation on every route that bounces here without a wallet. */}
+        <header style={{ padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.75rem', width: '100%' }}>
            {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
         <span style={{ fontFamily: 'Anton, Impact, sans-serif', fontSize: '2rem', letterSpacing: '0.08em', color: 'var(--gold)', userSelect: 'none' }}>
           VEIL
         </span>
+          <div style={{ width: '100%', maxWidth: 260, margin: '0 auto' }}>
+            <NetworkSwitcher />
+          </div>
         </header>
        
         <main style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
