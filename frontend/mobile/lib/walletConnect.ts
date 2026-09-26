@@ -19,7 +19,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { Core } from '@walletconnect/core';
 import { getSdkError } from '@walletconnect/utils';
-import { Web3Wallet, type IWeb3Wallet } from '@walletconnect/web3wallet';
+import { WalletKit, type IWalletKit } from '@reown/walletkit';
 import { Buffer } from 'buffer';
 import * as Crypto from 'expo-crypto';
 
@@ -89,8 +89,8 @@ type SessionListener = (sessions: WalletConnectSession[]) => void;
 type ProposalListener = (proposal: WalletConnectProposal | null) => void;
 type RequestListener = (requests: WalletConnectRequest[]) => void;
 
-let _client: IWeb3Wallet | null = null;
-let _clientPromise: Promise<IWeb3Wallet> | null = null;
+let _client: IWalletKit | null = null;
+let _clientPromise: Promise<IWalletKit> | null = null;
 let _sessions: WalletConnectSession[] = [];
 let _pendingProposal: WalletConnectProposal | null = null;
 let _pendingRequests: WalletConnectRequest[] = [];
@@ -157,7 +157,7 @@ async function persistSessions(sessions: WalletConnectSession[]): Promise<void> 
   }
 }
 
-async function syncSessionsFromClient(client: IWeb3Wallet): Promise<void> {
+async function syncSessionsFromClient(client: IWalletKit): Promise<void> {
   const fallbackChainId = getChainId();
   _sessions = Object.values(client.getActiveSessions()).map((session) =>
     parseWalletConnectSession(session, fallbackChainId)
@@ -496,7 +496,7 @@ export function getPendingWalletConnectRequests(): WalletConnectRequest[] {
 
 // ── Client lifecycle ──────────────────────────────────────────────────────────
 
-async function initClient(): Promise<IWeb3Wallet> {
+async function initClient(): Promise<IWalletKit> {
   const projectId = process.env['EXPO_PUBLIC_WC_PROJECT_ID']?.trim();
   if (!projectId) {
     throw new Error('EXPO_PUBLIC_WC_PROJECT_ID is missing.');
@@ -507,8 +507,8 @@ async function initClient(): Promise<IWeb3Wallet> {
   _sessions = await loadStoredSessions();
   notifySessions();
 
-  const client = await Web3Wallet.init({
-    core: new Core({ projectId }),
+  const client = await WalletKit.init({
+    core: new Core({ projectId }) as any,
     metadata: {
       name: 'Veil Wallet',
       description: 'Passkey-powered Stellar wallet.',
@@ -542,7 +542,7 @@ async function initClient(): Promise<IWeb3Wallet> {
  * Lazily initialise the WalletConnect client. Concurrent callers share one
  * in-flight init; a failed init is not cached, so a later call can retry.
  */
-export function getWalletConnectClient(): Promise<IWeb3Wallet> {
+export function getWalletConnectClient(): Promise<IWalletKit> {
   if (_client) return Promise.resolve(_client);
   if (!_clientPromise) {
     _clientPromise = initClient().catch((error) => {
