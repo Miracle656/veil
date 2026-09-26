@@ -8,7 +8,7 @@
  */
 export function VeilMark({
   size = 26,
-  color = '#FDDA24',
+  color = 'var(--gold)',
   className,
 }: {
   size?: number

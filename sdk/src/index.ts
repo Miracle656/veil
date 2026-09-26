@@ -1,3 +1,4 @@
+export type * from './types';
 export * from './useInvisibleWallet';
 export * from './utils';
 export * from './outbox';
@@ -41,4 +42,11 @@ export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';
 export * from './claimableBalance';
+export * from './network';
+export * from './fees';
+export * from './reserves';
+export * from './deriveFeePayer';
+export * from './feePayer';
+export * from './walletStorage';
+
 

@@ -1,10 +1,10 @@
 {
-  "name": "create-veil-app",
+  "name": "create-veil-wallet",
   "version": "0.1.0",
   "description": "Scaffold a new Veil passkey-wallet app from a template (Next.js, Vite, or vanilla JS)",
   "type": "module",
   "bin": {
-    "create-veil-app": "./dist/index.js"
+    "create-veil-wallet": "./dist/index.js"
   },
   "files": [
     "dist"

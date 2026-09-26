@@ -7,13 +7,17 @@
  * - Dismiss persists across sessions (parent stores dismissal).
  * - Exposes `__e2eSkipTutorial` so e2e tests can bypass the overlay.
  *
+ * Themed from `useTheme`, like every other screen. It used to import the fixed
+ * dark palette from theme/colors, so it stayed near-black in light mode — the
+ * first thing a new user saw was the one screen that ignored their setting.
+ *
  * Acceptance:
  *   - Tutorial shows once
  *   - Dismiss persists
  *   - Skip flag available for tests
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Modal,
@@ -24,7 +28,8 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { colors } from '../theme/colors';
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { radii, spacing } from '../theme/spacing';
 
@@ -54,10 +59,12 @@ export function setE2eSkipTutorial(skip: boolean): void {
 
 // ── Step data ─────────────────────────────────────────────────────────────
 
+type IconProps = { color: string };
+
 interface Step {
   title: string;
   description: string;
-  icon: React.ReactNode;
+  Icon: (props: IconProps) => React.ReactElement;
 }
 
 const STEPS: Step[] = [
@@ -65,59 +72,59 @@ const STEPS: Step[] = [
     title: 'No seed phrase',
     description:
       "Veil uses your device's biometrics as your key. No seed phrase, no private key file — just your fingerprint or Face ID.",
-    icon: <KeyholeIcon />,
+    Icon: KeyholeIcon,
   },
   {
     title: 'Your passkey, your wallet',
     description:
       'When you create a wallet, your device registers a passkey. The cryptographic public key is stored on-chain. Only your device can sign.',
-    icon: <ShieldIcon />,
+    Icon: ShieldIcon,
   },
   {
     title: 'Ready to start',
     description:
       'Tap Create wallet to register your passkey and deploy your wallet on Stellar. It takes about 10 seconds.',
-    icon: <WandIcon />,
+    Icon: WandIcon,
   },
 ];
 
 // ── Inline icons (no external SVG library) ────────────────────────────────
 
 /** Keyhole / fingerprint icon — inner circle + outer arc. */
-function KeyholeIcon() {
+function KeyholeIcon({ color }: IconProps) {
   return (
     <View style={iconStyles.container}>
-      <View style={iconStyles.outerRing} />
-      <View style={iconStyles.innerCircle} />
-      <View style={iconStyles.keyStem} />
-      <View style={iconStyles.keyBit} />
+      <View style={[iconStyles.outerRing, { borderColor: color }]} />
+      <View style={[iconStyles.innerCircle, { backgroundColor: color }]} />
+      <View style={[iconStyles.keyStem, { backgroundColor: color }]} />
+      <View style={[iconStyles.keyBit, { backgroundColor: color }]} />
     </View>
   );
 }
 
 /** Shield / lock icon — rounded rect with a lock bar. */
-function ShieldIcon() {
+function ShieldIcon({ color }: IconProps) {
   return (
     <View style={iconStyles.container}>
-      <View style={iconStyles.shieldBody} />
-      <View style={iconStyles.shieldArc} />
-      <View style={iconStyles.lockBar} />
+      <View style={[iconStyles.shieldBody, { borderColor: color }]} />
+      <View style={[iconStyles.shieldArc, { borderColor: color }]} />
+      <View style={[iconStyles.lockBar, { backgroundColor: color }]} />
     </View>
   );
 }
 
 /** Wand / magic icon — star + stick. */
-function WandIcon() {
+function WandIcon({ color }: IconProps) {
   return (
     <View style={iconStyles.container}>
-      <View style={iconStyles.wandStick} />
-      <View style={iconStyles.starCenter} />
+      <View style={[iconStyles.wandStick, { backgroundColor: color }]} />
+      <View style={[iconStyles.starCenter, { backgroundColor: color }]} />
       {[0, 1, 2, 3].map((i) => (
         <View
           key={i}
           style={[
             iconStyles.starPoint,
-            { transform: [{ rotate: `${i * 90}deg` }] },
+            { backgroundColor: color, transform: [{ rotate: `${i * 90}deg` }] },
           ]}
         />
       ))}
@@ -126,6 +133,7 @@ function WandIcon() {
 }
 
 const ICON_SIZE = 48;
+// Geometry only; the colour arrives as a prop from the theme.
 const iconStyles = StyleSheet.create({
   container: {
     width: ICON_SIZE,
@@ -140,7 +148,6 @@ const iconStyles = StyleSheet.create({
     height: 30,
     borderRadius: 15,
     borderWidth: 2.5,
-    borderColor: colors.gold,
     top: 4,
   },
   innerCircle: {
@@ -148,14 +155,12 @@ const iconStyles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: colors.gold,
     top: 9,
   },
   keyStem: {
     position: 'absolute',
     width: 2.5,
     height: 14,
-    backgroundColor: colors.gold,
     top: 20,
     left: 23,
   },
@@ -163,7 +168,6 @@ const iconStyles = StyleSheet.create({
     position: 'absolute',
     width: 2.5,
     height: 5,
-    backgroundColor: colors.gold,
     top: 24,
     left: 26,
   },
@@ -174,7 +178,6 @@ const iconStyles = StyleSheet.create({
     height: 34,
     borderRadius: 6,
     borderWidth: 2.5,
-    borderColor: colors.gold,
   },
   shieldArc: {
     position: 'absolute',
@@ -183,7 +186,6 @@ const iconStyles = StyleSheet.create({
     borderBottomLeftRadius: 17,
     borderBottomRightRadius: 17,
     borderWidth: 2.5,
-    borderColor: colors.gold,
     backgroundColor: 'transparent',
     top: 16,
   },
@@ -191,7 +193,6 @@ const iconStyles = StyleSheet.create({
     position: 'absolute',
     width: 14,
     height: 2.5,
-    backgroundColor: colors.gold,
     top: 18,
     left: 10,
     borderRadius: 1,
@@ -201,7 +202,6 @@ const iconStyles = StyleSheet.create({
     position: 'absolute',
     width: 2.5,
     height: 32,
-    backgroundColor: colors.gold,
     borderRadius: 1.25,
     bottom: 2,
     right: 8,
@@ -212,7 +212,6 @@ const iconStyles = StyleSheet.create({
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: colors.gold,
     top: 8,
     left: 12,
   },
@@ -220,7 +219,6 @@ const iconStyles = StyleSheet.create({
     position: 'absolute',
     width: 2.5,
     height: 10,
-    backgroundColor: colors.gold,
     borderRadius: 1.25,
     top: 7,
     left: 22.75,
@@ -234,12 +232,15 @@ interface OnboardingTutorialProps {
 }
 
 export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [step, setStep] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(0)).current;
   const [animating, setAnimating] = useState(false);
 
   const isLastStep = step === STEPS.length - 1;
+  const { Icon } = STEPS[step];
 
   const animateToStep = useCallback(
     (nextStep: number) => {
@@ -329,7 +330,9 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
           ]}
         >
           {/* Icon */}
-          <View style={styles.iconWrapper}>{STEPS[step].icon}</View>
+          <View style={styles.iconWrapper}>
+            <Icon color={colors.accent} />
+          </View>
 
           {/* Title */}
           <Text
@@ -350,7 +353,7 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
                 key={i}
                 style={[
                   styles.dot,
-                  { backgroundColor: i === step ? colors.gold : 'rgba(246,247,248,0.2)' },
+                  { backgroundColor: i === step ? colors.accent : colors.border },
                 ]}
               />
             ))}
@@ -384,81 +387,78 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
 
 // ── Styles ────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: colors.nearBlack,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.lg * 2,
-  },
-  content: {
-    maxWidth: 400,
-    width: '100%',
-    alignItems: 'center',
-    gap: spacing.lg + spacing.sm,
-  },
-  iconWrapper: {
-    marginBottom: spacing.md,
-  },
-  title: {
-    fontFamily: fontFamily.heading,
-    fontStyle: 'italic',
-    fontWeight: '600',
-    fontSize: 28,
-    color: '#D4D4D4',
-    textAlign: 'center',
-  },
-  description: {
-    fontFamily: fontFamily.body,
-    fontSize: 16,
-    lineHeight: 26,
-    color: 'rgba(246,247,248,0.6)',
-    textAlign: 'center',
-  },
-  dotsRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: spacing.sm,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  buttonsContainer: {
-    width: '100%',
-    marginTop: spacing.xl,
-    gap: 12,
-  },
-  primaryButton: {
-    backgroundColor: '#C9A227',
-    paddingVertical: 14,
-    borderRadius: radii.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryButtonText: {
-    color: '#111111',
-    fontFamily: fontFamily.body,
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  skipButton: {
-    paddingVertical: 12,
-    borderRadius: radii.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  skipButtonText: {
-    color: '#A0A0A0',
-    fontFamily: fontFamily.body,
-    fontWeight: '500',
-    fontSize: 14,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: colors.background,
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: spacing.lg * 2,
+    },
+    content: {
+      maxWidth: 400,
+      width: '100%',
+      alignItems: 'center',
+      gap: spacing.lg + spacing.sm,
+    },
+    iconWrapper: {
+      marginBottom: spacing.md,
+    },
+    title: {
+      fontFamily: fontFamily.heading,
+      fontSize: 28,
+      color: colors.textStrong,
+      textAlign: 'center',
+    },
+    description: {
+      fontFamily: fontFamily.body,
+      fontSize: 16,
+      lineHeight: 26,
+      color: colors.textSecondary,
+      textAlign: 'center',
+    },
+    dotsRow: {
+      flexDirection: 'row',
+      gap: 12,
+      marginTop: spacing.sm,
+    },
+    dot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    buttonsContainer: {
+      width: '100%',
+      marginTop: spacing.xl,
+      gap: 12,
+    },
+    primaryButton: {
+      backgroundColor: colors.accent,
+      paddingVertical: 14,
+      borderRadius: radii.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    primaryButtonText: {
+      color: colors.onAccent,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 15,
+    },
+    skipButton: {
+      paddingVertical: 12,
+      borderRadius: radii.full,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    skipButtonText: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 14,
+    },
+  });
 
 /**
  * Drop-in wrapper that decides for itself whether the tutorial should appear.

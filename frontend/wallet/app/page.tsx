@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Horizon, Keypair } from '@stellar/stellar-sdk'
+import { Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { OnboardingTutorial } from '@/components/OnboardingTutorial'
 import { useInvisibleWallet } from '@veil/sdk'
@@ -12,7 +12,6 @@ import { trackWalletCreated } from '@/lib/supabase'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const network = getNetwork()
-const HorizonServer = Horizon.Server
 
 type Step = 'landing' | 'registering' | 'deploying' | 'done'
 
@@ -76,45 +75,32 @@ export default function OnboardingPage() {
       // funding retries regardless of derivation mode.
       walletLocal.setItem('veil_signer_public_key', signerKeypair.publicKey())
 
+      // Testnet only: give the spending account some XLM so the wallet is
+      // usable straight away. Best-effort — a faucet hiccup must not stop a
+      // wallet from being created, since nothing below depends on it.
       const friendbotUrl = buildFriendbotUrl(signerKeypair.publicKey())
       if (friendbotUrl) {
-        const friendbotRes = await fetch(friendbotUrl)
-        if (!friendbotRes.ok) throw new Error('Friendbot funding failed — try again')
-      } else {
-        const horizonServer = new HorizonServer(network.horizonUrl)
-        try {
-          await horizonServer.loadAccount(signerKeypair.publicKey())
-        } catch {
-          throw new Error(
-            `Mainnet deployment requires a funded signer account. Fund ${signerKeypair.publicKey()} with XLM for fees, then tap Create wallet again.`
-          )
-        }
+        await fetch(friendbotUrl).catch(() => null)
       }
 
-      // Pass secret string so the SDK uses its own Keypair instance internally,
-      // avoiding XDR type mismatches between two stellar-sdk copies.
-      const deployed = await wallet.deploy(signerSecret)
+      // No deploy here. The wallet address is a pure function of the factory,
+      // the network and the passkey's public key — `register` already computed
+      // and stored it — so it exists and can receive before the contract does.
+      // Deploying at creation put a brand new mainnet user in front of "fund
+      // this signer account" before they had a wallet at all. The contract is
+      // deployed on first use instead (lib/walletDeployment.ts), as on mobile.
+      const walletAddress = walletLocal.getItem('invisible_wallet_address')
+      if (!walletAddress) throw new Error('Could not work out your wallet address. Try again.')
 
-      // Persist minimal session to sessionStorage for the dashboard. The
-      // fee-payer secret is already in sessionStorage (ensureFeePayer set it).
-      walletSession.setItem('invisible_wallet_address', deployed.walletAddress)
-      setAddress(deployed.walletAddress)
+      walletSession.setItem('invisible_wallet_address', walletAddress)
+      setAddress(walletAddress)
       setStep('done')
       success = true
 
       // Track wallet creation (fire-and-forget — never blocks the flow)
-      trackWalletCreated(deployed.walletAddress, signerKeypair.publicKey())
+      trackWalletCreated(walletAddress, signerKeypair.publicKey())
     } catch (err: unknown) {
-      let msg = err instanceof Error ? err.message : String(err)
-      if (
-        !network.friendbotUrl
-        && signerKeypair
-        && !msg.includes(signerKeypair.publicKey())
-        && /account|source|balance|insufficient/i.test(msg)
-      ) {
-        msg = `Mainnet deployment requires a funded signer account. Fund ${signerKeypair.publicKey()} with XLM for fees, then tap Create wallet again.`
-      }
-      setError(msg)
+      setError(err instanceof Error ? err.message : String(err))
       setStep('landing')
     }
 
@@ -133,97 +119,119 @@ export default function OnboardingPage() {
     <>
     <main>
       {showTutorial && <OnboardingTutorial onComplete={handleTutorialComplete} />}
-      <div className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
-      <div style={{ maxWidth: 400, width: '100%' }}>
+      <div
+        className="wallet-shell"
+        style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}
+      >
+        <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
 
-        {/* Logo + wordmark */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem', marginBottom: '3rem' }}>
-          <div style={{ position: 'relative' }} className="biometric-pulse">
-            <VeilMark size={64} />
-          </div>
-          <div style={{ textAlign: 'center' }}>
-            <h1 style={{ fontFamily: 'Anton, Impact, sans-serif', fontSize: '2.5rem', letterSpacing: '0.08em', color: 'var(--gold)' }}>
-              VEIL
-            </h1>
-            <p style={{ fontSize: '0.9375rem', color: 'rgba(246,247,248,0.5)', marginTop: '0.25rem' }}>
-              Your passkey is your wallet
-            </p>
-          </div>
-        </div>
+          {/* ── Hero ── */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2rem', marginBottom: '3rem', textAlign: 'center' }}>
 
-        {/* Main card */}
-        
-
-        
-        {step === 'landing' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <button className="btn-gold" onClick={handleCreate}>
-              Create wallet
-            </button>
-            <button className="btn-ghost" onClick={() => router.push('/recover')}>
-              Recover existing wallet
-            </button>
-            {error && (
-              <p style={{ fontSize: '0.8125rem', color: 'var(--teal)', textAlign: 'center', marginTop: '0.5rem' }}>
-                {error}
-              </p>
-            )}
-          </div>
-        )}
-
-        {(step === 'registering' || step === 'deploying') && (
-          <div className="card" style={{ textAlign: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
-              <div className="spinner spinner-light" />
-            </div>
-            <p style={{ fontFamily: 'Inter', fontWeight: 500, color: 'var(--off-white)' }}>
-              {step === 'registering' ? 'Waiting for biometric...' : 'Deploying wallet on-chain...'}
-            </p>
-            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.5rem' }}>
-              {step === 'registering'
-                ? 'Approve the passkey prompt on your device'
-                : `Broadcasting to ${network.displayName}`}
-            </p>
-          </div>
-        )}
-
-        {step === 'done' && address && (
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div style={{ textAlign: 'center' }}>
-              <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style={{ margin: '0 auto 0.75rem' }}>
-                <circle cx="20" cy="20" r="19" stroke="var(--teal)" strokeWidth="1.5" />
-                <path d="M13 20.5l5 5 9-9" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <p style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.25rem', color: 'var(--off-white)' }}>
-                Wallet created
-              </p>
+            {/* Biometric pulse ring */}
+            <div className="biometric-pulse" style={{ width: 96, height: 96 }}>
+              <VeilMark size={64} />
             </div>
 
+            {/* Headline + lede */}
             <div>
-              <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', marginBottom: '0.5rem', fontFamily: 'Inter' }}>
-                YOUR WALLET ADDRESS
+              <h1
+                style={{
+                  fontFamily: 'Lora, Georgia, serif',
+                  fontWeight: 600,
+                  fontStyle: 'italic',
+                  fontSize: 'clamp(1.75rem, 6vw, 2.25rem)',
+                  lineHeight: 1.25,
+                  color: 'var(--off-white)',
+                  marginBottom: '1rem',
+                }}
+              >
+                Your passkey is{' '}
+                <span className="hl" style={{ color: 'var(--gold)', fontStyle: 'italic' }}>
+                  your wallet.
+                </span>
+              </h1>
+              <p style={{ fontSize: '0.9375rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.6 }}>
+                No seed phrase. No password. Just your biometric — securing a smart contract wallet on Stellar.
               </p>
-              <div className="address-chip" style={{ width: '100%', justifyContent: 'center', borderRadius: 12, padding: '0.75rem 1rem' }}>
-                {address.slice(0, 8)}...{address.slice(-8)}
-              </div>
             </div>
-
-            <button className="btn-gold" onClick={handleContinue}>
-              Open wallet
-            </button>
           </div>
-        )}
 
-        {/* Footer */}
-        <p
-        id= "tutorial-title"
-        style={{ textAlign: 'center', fontSize: '0.75rem', color: '#7c7c7c', marginTop: '2rem' }}>
-          No seed phrase. No private key. Powered by{' '}
-          <span style={{ color: 'rgba(246,247,248,0.88)' }}>Stellar Soroban</span>
-        </p>
-      
+          {/* ── CTAs ── */}
+          {step === 'landing' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
+              <button id="onboarding-create" className="btn-gold" onClick={handleCreate}>
+                Create wallet
+              </button>
+              <button id="onboarding-recover" className="btn-ghost" onClick={() => router.push('/recover')}>
+                Recover existing wallet
+              </button>
+              {error && (
+                <p style={{ fontSize: '0.8125rem', color: 'var(--teal)', textAlign: 'center', marginTop: '0.5rem' }}>
+                  {error}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* ── In-progress states ── */}
+          {(step === 'registering' || step === 'deploying') && (
+            <div className="card" style={{ textAlign: 'center', width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+                <div className="spinner spinner-light" />
+              </div>
+              <p style={{ fontFamily: 'Inter', fontWeight: 500, color: 'var(--off-white)' }}>
+                {step === 'registering' ? 'Waiting for biometric...' : 'Setting up your wallet...'}
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.5rem' }}>
+                {step === 'registering'
+                  ? 'Approve the passkey prompt on your device'
+                  : `Broadcasting to ${network.displayName}`}
+              </p>
+            </div>
+          )}
+
+          {/* ── Success ── */}
+          {step === 'done' && address && (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', width: '100%' }}>
+              <div style={{ textAlign: 'center' }}>
+                <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style={{ margin: '0 auto 0.75rem' }}>
+                  <circle cx="20" cy="20" r="19" stroke="var(--teal)" strokeWidth="1.5" />
+                  <path d="M13 20.5l5 5 9-9" stroke="var(--teal)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <p style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.25rem', color: 'var(--off-white)' }}>
+                  Wallet created
+                </p>
+              </div>
+
+              <div>
+                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                  YOUR WALLET ADDRESS
+                </p>
+                <div className="address-chip" style={{ width: '100%', justifyContent: 'center', borderRadius: 12, padding: '0.75rem 1rem' }}>
+                  {address.slice(0, 8)}...{address.slice(-8)}
+                </div>
+              </div>
+
+              <button className="btn-gold" onClick={handleContinue}>
+                Open wallet
+              </button>
+            </div>
+          )}
+
+          {/* ── WebAuthn footnote ── */}
+          <p
+            id="webauthn-footnote"
+            style={{ textAlign: 'center', fontSize: '0.75rem', color: 'rgba(246,247,248,0.3)', marginTop: '2.5rem' }}
+          >
+            Secured by{' '}
+            <span style={{ color: 'rgba(246,247,248,0.6)' }}>WebAuthn</span>
+            {' '}on{' '}
+            <span style={{ color: 'rgba(246,247,248,0.6)' }}>Stellar</span>
+          </p>
+
+        </div>
       </div>
-    </div>
     </main>
     </>
   )

@@ -11,6 +11,19 @@ jest.mock('@stellar/stellar-sdk', () => ({
     TESTNET: 'Test SDF Network ; September 2015',
     PUBLIC: 'Public Global Stellar Network ; September 2015',
   },
+  // A SAC id stub: 'CXLM' for native, 'CUSDC' for USDC, whatever the issuer.
+  Asset: class {
+    code: string;
+    constructor(code: string) {
+      this.code = code;
+    }
+    static native() {
+      return { contractId: () => 'CXLM' };
+    }
+    contractId() {
+      return `C${this.code}`;
+    }
+  },
   Account: class {},
   BASE_FEE: '100',
   TransactionBuilder: class {},
@@ -21,6 +34,8 @@ jest.mock('@stellar/stellar-sdk', () => ({
     assembleTransaction: () => ({}),
   },
 }));
+
+jest.mock('../receiveReadiness', () => ({ usdcIssuerFor: () => 'GISSUER' }));
 
 const mockPoolV2Load = jest.fn();
 const mockPoolV1Load = jest.fn();
@@ -33,7 +48,7 @@ jest.mock('@blend-capital/blend-sdk', () => ({
   RequestType: { Supply: 2, Withdraw: 3 },
 }));
 
-import { loadBlendPools, loadBlendPositions } from '../blend';
+import { loadBlendPools, loadBlendPositions, withdrawAllAmount } from '../blend';
 
 type ReserveStub = { assetId: string; supply: bigint; apy: number };
 
@@ -85,15 +100,15 @@ describe('blend', () => {
       expect(mockPoolV2Load).not.toHaveBeenCalled();
     });
 
-    it('averages the reserve APYs and sums total supply', async () => {
+    it("keeps each reserve's own APY rather than averaging them", async () => {
       process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
       mockPoolV2Load.mockResolvedValue(
         poolStub({
           id: 'CPOOL1',
-          name: 'Testnet USDC',
+          name: 'Fixed',
           reserves: [
-            { assetId: 'CUSDC', supply: 1_000n, apy: 0.04 },
-            { assetId: 'CXLM', supply: 500n, apy: 0.06 },
+            { assetId: 'CXLM', supply: 500n, apy: 0.002 },
+            { assetId: 'CUSDC', supply: 1_000n, apy: 0.09 },
           ],
         })
       );
@@ -102,11 +117,29 @@ describe('blend', () => {
 
       expect(pool).toEqual({
         id: 'CPOOL1',
-        name: 'Testnet USDC',
-        supplyApy: 0.05,
-        totalSupply: '1500',
-        assets: ['CUSDC', 'CXLM'],
+        name: 'Fixed',
+        reserves: [
+          { assetId: 'CXLM', code: 'XLM', supplyApy: 0.002, totalSupply: '500' },
+          { assetId: 'CUSDC', code: 'USDC', supplyApy: 0.09, totalSupply: '1000' },
+        ],
       });
+    });
+
+    it('leaves out reserves the wallet cannot fund', async () => {
+      process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
+      mockPoolV2Load.mockResolvedValue(
+        poolStub({
+          id: 'CPOOL1',
+          reserves: [
+            { assetId: 'CEURC', supply: 9n, apy: 0.05 },
+            { assetId: 'CUSDC', supply: 1n, apy: 0.09 },
+          ],
+        })
+      );
+
+      const [pool] = await loadBlendPools();
+
+      expect(pool.reserves.map((r) => r.code)).toEqual(['USDC']);
     });
 
     it('falls back to a truncated id when the pool has no name', async () => {
@@ -130,7 +163,7 @@ describe('blend', () => {
       const [pool] = await loadBlendPools();
 
       expect(pool.name).toBe('V1');
-      expect(pool.totalSupply).toBe('7');
+      expect(pool.reserves[0].totalSupply).toBe('7');
     });
 
     it('drops a pool that cannot be loaded rather than failing the whole list', async () => {
@@ -147,19 +180,20 @@ describe('blend', () => {
       expect(pools[0].id).toBe('CPOOL1');
     });
 
-    it('reports a zero APY for a pool with no reserves instead of NaN', async () => {
-      process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CEMPTY';
-      mockPoolV2Load.mockResolvedValue(poolStub({ id: 'CEMPTY', name: 'Empty', reserves: [] }));
+    it('reports a zero APY instead of NaN', async () => {
+      process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
+      mockPoolV2Load.mockResolvedValue(
+        poolStub({ id: 'CPOOL1', reserves: [{ assetId: 'CXLM', supply: 0n, apy: Number.NaN }] })
+      );
 
       const [pool] = await loadBlendPools();
 
-      expect(pool.supplyApy).toBe(0);
-      expect(pool.totalSupply).toBe('0');
+      expect(pool.reserves[0].supplyApy).toBe(0);
     });
   });
 
   describe('loadBlendPositions', () => {
-    it('keeps only reserves the user actually supplied', async () => {
+    it('keeps only reserves the user actually supplied, valued in the underlying asset', async () => {
       process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
       mockPoolV2Load.mockResolvedValue(
         poolStub({
@@ -178,26 +212,11 @@ describe('blend', () => {
         {
           poolId: 'CPOOL1',
           asset: 'CUSDC',
+          code: 'USDC',
           deposited: '130',
           bTokenBalance: '100',
-          accruedInterest: '30',
         },
       ]);
-    });
-
-    it('never reports negative accrued interest', async () => {
-      process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
-      mockPoolV2Load.mockResolvedValue(
-        poolStub({
-          id: 'CPOOL1',
-          reserves: [{ assetId: 'CUSDC', supply: 1_000n, apy: 0.04 }],
-          supply: { CUSDC: { bTokens: 100n, deposited: 90n } },
-        })
-      );
-
-      const [position] = await loadBlendPositions('GUSER');
-
-      expect(position.accruedInterest).toBe('0');
     });
 
     it('returns an empty list for an unreachable pool', async () => {
@@ -206,6 +225,16 @@ describe('blend', () => {
       mockPoolV1Load.mockRejectedValue(new Error('rpc down'));
 
       await expect(loadBlendPositions('GUSER')).resolves.toEqual([]);
+    });
+  });
+
+  describe('withdrawAllAmount', () => {
+    it('asks for more than the position, so interest accrued since the read is included', () => {
+      expect(withdrawAllAmount(1_000_000_000n)).toBe(1_100_000_001n);
+    });
+
+    it('is never zero', () => {
+      expect(withdrawAllAmount(0n)).toBe(1n);
     });
   });
 });

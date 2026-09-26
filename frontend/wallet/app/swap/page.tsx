@@ -4,7 +4,14 @@ import { spendableNativeXlm } from '@/lib/reserves'
 import { getUsdcIssuer } from '@/lib/network'
 import { inclusionFee } from '@/lib/fees'
 import { PageHeader, Card, SectionLabel, Pill } from '@/components/ui/primitives'
-import { DEST_CODES, makeDestAsset, resolveFlip, type StellarAsset } from './direction'
+import {
+  DEST_CODES,
+  makeDestAsset,
+  parseSwapPrefill,
+  resolveFlip,
+  type StellarAsset,
+  type SwapPrefill,
+} from './direction'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -88,6 +95,18 @@ export default function SwapPage() {
   const server = new Server(network.horizonUrl)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // A swap handed over by the agent (/swap?from=XLM&to=USDC&amount=10). Read on
+  // mount, before balances load, so the pay side can pick the named asset.
+  const prefillRef = useRef<SwapPrefill | null>(null)
+  useEffect(() => {
+    const prefill = parseSwapPrefill(window.location.search)
+    prefillRef.current = prefill
+    if (prefill.to && (DEST_CODES as readonly string[]).includes(prefill.to) && prefill.to !== prefill.from) {
+      setDestAsset(makeDestAsset(prefill.to, DEFAULT_USDC.issuer))
+    }
+    if (prefill.amount) setSourceAmount(prefill.amount)
+  }, [])
+
   // ── Load session ──
   useEffect(() => {
     const addr = walletSession.getItem('invisible_wallet_address')
@@ -116,7 +135,13 @@ export default function SwapPage() {
         }))
         setSpendableXlm(spendableNativeXlm(data))
         setSourceBalances(assets)
-        setSourceAsset(assets.find((a) => a.code === 'XLM') || assets[0])
+        // The asset the agent named, if the account holds it; otherwise XLM.
+        const wanted = prefillRef.current?.from
+        setSourceAsset(
+          (wanted && assets.find((a) => a.code === wanted)) ||
+            assets.find((a) => a.code === 'XLM') ||
+            assets[0],
+        )
       }
     } catch (err) {
       console.error('Failed to fetch balances', err)
@@ -377,6 +402,8 @@ export default function SwapPage() {
       : null
 
   const slippageTolerance = slippageBps / 10000
+  /** Same derivation the send screen uses, so the two quote the fee alike. */
+  const feeXlm = (Number(inclusionFee()) / 10_000_000).toFixed(7)
 
   const flip = resolveFlip(sourceAsset?.code, destAsset.code, sourceBalances, DEFAULT_USDC.issuer)
 
@@ -595,36 +622,49 @@ export default function SwapPage() {
             </div>
 
             <div className="vw-swapside">
-            {/* Quote panel */}
-            {rate && !errorMsg && (
+            {/* Route panel.
+                Always rendered, with a dash where a figure is not known yet.
+                It was gated on having a quote, so the whole right-hand column
+                was empty until an amount was typed and then appeared all at
+                once. Showing the shape of the answer before there is one also
+                tells the user what they will be told before they commit: which
+                venue, how much impact, what the fee is. */}
               <Card>
-                <SectionLabel tone="dim" className="mb-3">Quote details</SectionLabel>
+                <SectionLabel tone="dim" className="mb-3">Route</SectionLabel>
                 <div className="flex flex-col gap-2">
-                  <Row label="Rate" value={`1 ${sourceAsset?.code} ≈ ${rate} ${destAsset.code}`} />
-                  {usingSoroswap && quote && (
-                    <>
-                      <Row
-                        label="Price impact"
-                        value={
-                          quote.priceImpact < 0.005
-                            ? '< 0.01%'
-                            : `${(quote.priceImpact * 100).toFixed(2)}%`
-                        }
-                      />
-                      <Row label="Route" value={quote.protocols.join(' · ')} />
-                    </>
-                  )}
-                  {!usingSoroswap && (
-                    <Row label="Route" value="SDEX" />
-                  )}
+                  <Row
+                    label="Rate"
+                    value={rate ? `1 ${sourceAsset?.code} ≈ ${rate} ${destAsset.code}` : '—'}
+                  />
+                  <Row
+                    label="Venue"
+                    value={rate ? (usingSoroswap && quote ? quote.protocols.join(' · ') : 'SDEX') : '—'}
+                  />
+                  <Row
+                    label="Price impact"
+                    value={
+                      usingSoroswap && quote && rate
+                        ? quote.priceImpact < 0.005
+                          ? '< 0.01%'
+                          : `${(quote.priceImpact * 100).toFixed(2)}%`
+                        : '—'
+                    }
+                  />
                   <Row label="Slippage" value={`${slippageBps / 100}%`} />
+                  {/* Just the figure. The longer "paid by fee-payer" broke
+                      mid-word in this column, and the confirm step says who
+                      pays it anyway. */}
+                  <Row label="Network fee" value={`${feeXlm} XLM`} />
                   <Row
                     label="Min. received"
-                    value={`${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${destAsset.code}`}
+                    value={
+                      rate && destAmount
+                        ? `${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${destAsset.code}`
+                        : '—'
+                    }
                   />
                 </div>
               </Card>
-            )}
             </div>
           </div>
         )}

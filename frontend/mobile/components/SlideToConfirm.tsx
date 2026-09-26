@@ -113,6 +113,18 @@ const createStyles = (colors: ThemeColors) =>
       fontFamily: fontFamily.bodyMedium,
       fontSize: 14,
       letterSpacing: 0.4,
+      // Centre the label in the track *to the right of the thumb*, not in the
+      // whole track. The thumb is absolutely positioned and paints over the
+      // label, so a track-centred label loses its first word behind the knob —
+      // "Slide to confirm" reads as "to confirm".
+      //
+      // A margin rather than track padding: `alignItems: 'center'` centres the
+      // margin box, so this shifts the text by exactly half the thumb's
+      // footprint, which is the offset that centres it in the space that is
+      // left. Padding on the track would work too in CSS, but Yoga offsets
+      // absolutely-positioned children by their parent's padding, so it would
+      // drag the thumb along with it.
+      marginLeft: THUMB + EDGE * 2,
     },
     thumb: {
       position: 'absolute',

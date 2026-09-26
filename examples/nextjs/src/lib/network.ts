@@ -20,6 +20,11 @@ export const walletConfig: WalletConfig = {
   factoryAddress: network.factoryContractId,
   rpcUrl: network.rpcUrl,
   networkPassphrase: network.networkPassphrase,
+  // Allow the relying-party id and origin to be explicitly configured via
+  // environment variables (NEXT_PUBLIC_RP_ID / NEXT_PUBLIC_ORIGIN). This is
+  // necessary for native builds where window.location is not available.
+  rpId: process.env.NEXT_PUBLIC_RP_ID?.trim() || undefined,
+  origin: process.env.NEXT_PUBLIC_ORIGIN?.trim() || undefined,
 }
 
 export function getNativeAssetContractId(): string {

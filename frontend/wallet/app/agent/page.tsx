@@ -8,6 +8,11 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import {
+  proposalRefusal,
+  reviewProposedTransaction,
+  type ProposalReview,
+} from '@veil/agent-review'
 
 const network = getNetwork()
 
@@ -15,7 +20,35 @@ interface Message {
   role: 'user' | 'agent'
   content: string
   pendingTxXdr?: string
+  /** The agent's own description of the transaction — a claim, not evidence. */
   pendingTxSummary?: string
+  /** What the transaction actually does, decoded here. Null when it would not decode. */
+  review?: ProposalReview | null
+  /** A swap the agent handed to the Swap screen, which quotes and confirms it. */
+  swapIntent?: { from: string; to: string; amount?: string }
+}
+
+/** Link into the Swap screen, pre-filled. The Swap page validates it again. */
+function swapHref(intent: { from: string; to: string; amount?: string }): string {
+  const q = new URLSearchParams({ from: intent.from, to: intent.to })
+  if (intent.amount) q.set('amount', intent.amount)
+  return `/swap?${q}`
+}
+
+/** Earlier turns for the agent, as plain text. The server keeps no history. */
+function historyForAgent(messages: Message[]) {
+  return messages.map((m) => ({
+    role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+    content: m.content,
+  }))
+}
+
+function decode(xdr: string): ProposalReview | null {
+  try {
+    return reviewProposedTransaction(xdr, network.networkPassphrase)
+  } catch {
+    return null
+  }
 }
 
 // Agent output relays third-party data (transfer memos, token metadata, price
@@ -189,7 +222,6 @@ export default function AgentPage() {
   const [pendingTxXdr, setPendingTxXdr] = useState<string | null>(null)
   const [pendingTxSummary, setPendingTxSummary] = useState<string | null>(null)
   const [approving, setApproving] = useState(false)
-  const wsRef = useRef<WebSocket | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -210,64 +242,18 @@ export default function AgentPage() {
     } catch { return '' }
   })()
 
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const connect = useCallback(() => {
-    const wsUrl = process.env.NEXT_PUBLIC_AGENT_WS_URL ?? 'ws://localhost:3001'
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
-
-    ws.onclose = () => {
-      reconnectTimer.current = setTimeout(connect, 2000)
-    }
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-
-      if (data.type === 'thinking') {
-        setIsThinking(true)
-        return
-      }
-
-      if (data.type === 'response') {
-        setIsThinking(false)
-        const msg: Message = { role: 'agent', content: data.message }
-        if (data.pendingTxXdr) {
-          msg.pendingTxXdr = data.pendingTxXdr
-          msg.pendingTxSummary = data.pendingTxSummary
-          setPendingTxXdr(data.pendingTxXdr)
-          setPendingTxSummary(data.pendingTxSummary ?? null)
-        }
-        setMessages((prev) => [...prev, msg])
-        return
-      }
-
-      if (data.type === 'error') {
-        setIsThinking(false)
-        setMessages((prev) => [
-          ...prev,
-          { role: 'agent', content: `Something went wrong: ${data.message}` },
-        ])
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    connect()
-    return () => {
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
-      wsRef.current?.close()
-    }
-  }, [connect])
-
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isThinking])
 
-  const sendMessage = useCallback(() => {
+  // One POST per message to the wallet's own /api/agent route. It used to be a
+  // WebSocket to a separate always-on server; the route is serverless, so the
+  // recent conversation travels with each request instead.
+  const sendMessage = useCallback(async () => {
     const text = input.trim()
-    if (!text || isThinking || !wsRef.current) return
+    if (!text || isThinking) return
 
+    const history = historyForAgent(messages)
     setMessages((prev) => [...prev, { role: 'user', content: text }])
     setInput('')
 
@@ -284,10 +270,43 @@ export default function AgentPage() {
       return
     }
 
-    wsRef.current.send(
-      JSON.stringify({ type: 'chat', walletAddress, feePayerAddress, message: text, profile: getUserProfile() }),
-    )
-  }, [input, isThinking, walletAddress, feePayerAddress])
+    setIsThinking(true)
+    try {
+      const res = await fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: text,
+          walletAddress,
+          feePayerAddress,
+          profile: getUserProfile(),
+          history,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`)
+
+      const msg: Message = { role: 'agent', content: data.response ?? '' }
+      if (data.swapIntent && typeof data.swapIntent.from === 'string' && typeof data.swapIntent.to === 'string') {
+        msg.swapIntent = data.swapIntent
+      }
+      if (data.pendingTxXdr) {
+        msg.pendingTxXdr = data.pendingTxXdr
+        msg.pendingTxSummary = data.pendingTxSummary
+        msg.review = decode(data.pendingTxXdr)
+        setPendingTxXdr(data.pendingTxXdr)
+        setPendingTxSummary(data.pendingTxSummary ?? null)
+      }
+      setMessages((prev) => [...prev, msg])
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        { role: 'agent', content: `Something went wrong: ${(err as Error).message}` },
+      ])
+    } finally {
+      setIsThinking(false)
+    }
+  }, [input, isThinking, messages, walletAddress, feePayerAddress])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -299,6 +318,25 @@ export default function AgentPage() {
   const approveTransaction = async () => {
     if (!pendingTxXdr) return
     const xdrToSubmit = pendingTxXdr
+
+    // Decide from the decoded transaction, never from the agent's summary: the
+    // source must be this wallet's fee payer and every operation one we can
+    // show. The same rule the mobile app applies (proposalRefusal).
+    const refusal = proposalRefusal(decode(xdrToSubmit), feePayerAddress || null)
+    if (refusal) {
+      setMessages((prev) => [
+        ...prev.map((m) =>
+          m.pendingTxXdr === xdrToSubmit
+            ? { ...m, pendingTxXdr: undefined, pendingTxSummary: undefined, review: undefined }
+            : m,
+        ),
+        { role: 'agent', content: refusal },
+      ])
+      setPendingTxXdr(null)
+      setPendingTxSummary(null)
+      return
+    }
+
     setApproving(true)
     // Remove the approval card immediately so it can't be double-submitted
     setMessages((prev) =>
@@ -363,8 +401,6 @@ export default function AgentPage() {
   }
 
   const clearHistory = () => {
-    if (!walletAddress || !wsRef.current) return
-    wsRef.current.send(JSON.stringify({ type: 'clear_history', walletAddress }))
     const profile = getUserProfile()
     setMessages([{ role: 'agent', content: buildGreeting(profile) }])
   }
@@ -402,6 +438,14 @@ export default function AgentPage() {
 
         <main className="wallet-main" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingTop: '2rem' }}>
 
+          {/* The page's own title, above the wizard rather than inside its
+              first step. It was nested in step 0, so naming yourself and then
+              answering two more questions happened on a screen with no title
+              on it, which reads as having fallen out of the app. */}
+          <div style={{ marginBottom: '1.25rem' }}>
+            <PageHeader eyebrow="Assistant" title="Agent" />
+          </div>
+
           {/* Progress dots */}
           <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
             {[0, 1, 2].map(i => (
@@ -416,9 +460,6 @@ export default function AgentPage() {
           {/* Step 0: Name */}
           {onboardingStep === 0 && (
             <>
-              <div style={{ marginBottom: '1.75rem' }}>
-          <PageHeader eyebrow="Assistant" title="Agent" />
-        </div>
               <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.5)', textAlign: 'center', lineHeight: 1.6 }}>
                 Your agent will greet you by name and personalize conversations.
               </p>
@@ -546,40 +587,39 @@ export default function AgentPage() {
     )
   }
 
-  // ── Chat UI ──────────────────────────────────────────────────────────────
+  // ── Chat UI (redesigned) ─────────────────────────────────────────────────
   return (
-    <div className="wallet-shell">
-      {/* Header */}
-      <header className="wallet-nav">
+    <div className="agent-chat">
+      {/* Header — online status + agent identity */}
+      <header className="agent-header">
         <button
           onClick={() => router.back()}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: 'var(--warm-grey)', display: 'flex' }}
+          className="agent-header__back"
+          aria-label="Back"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
             <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-          <div style={{
-            width: '2rem', height: '2rem', borderRadius: '50%',
-            background: 'rgba(253,218,36,0.12)',
-            border: '1px solid rgba(253,218,36,0.25)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4zm0 10c-4 0-7 2-7 4v1h14v-1c0-2-3-4-7-4z" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        <div className="agent-header__identity">
+          <div className="agent-header__avatar">
+            {/* Agent sparkle icon */}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z" stroke="var(--gold)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
+            {/* Online indicator */}
+            <span className="agent-header__online" />
           </div>
-          <div>
-            <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--off-white)' }}>Veil Agent</div>
-            <div style={{ fontSize: '0.6875rem', color: 'var(--warm-grey)' }}>Powered by Claude · x402 enabled</div>
+          <div className="agent-header__text">
+            <div className="agent-header__name">Veil Agent</div>
+            <div className="agent-header__status">Online · Claude · x402</div>
           </div>
         </div>
 
         <button
           onClick={clearHistory}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0.25rem', color: 'var(--warm-grey)', display: 'flex' }}
+          className="agent-header__action"
           title="Clear history"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
@@ -589,51 +629,75 @@ export default function AgentPage() {
         </button>
       </header>
 
-      {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* Messages area */}
+      <div className="agent-messages">
         {messages.map((msg, i) => (
-          <div key={i} style={{ display: 'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-            <div style={{
-              maxWidth: '82%',
-              minWidth: 0,
-              padding: '0.75rem 1rem',
-              borderRadius: msg.role === 'user' ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-              background: msg.role === 'user'
-                ? 'rgba(253,218,36,0.12)'
-                : 'var(--surface-md)',
-              border: `1px solid ${msg.role === 'user' ? 'rgba(253,218,36,0.22)' : 'var(--border-dim)'}`,
-              fontSize: '0.875rem',
-              lineHeight: 1.6,
-              color: 'var(--off-white)',
-              wordBreak: 'break-word',
-              overflowWrap: 'anywhere',
-            }}>
-              <div style={{ whiteSpace: 'pre-wrap', fontSize: '0.875rem' }}
+          <div key={i} className={`agent-bubble-row ${msg.role === 'user' ? 'agent-bubble-row--user' : 'agent-bubble-row--agent'}`}>
+            {/* Agent avatar — only on agent messages */}
+            {msg.role === 'agent' && (
+              <div className="agent-bubble__avatar">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z" stroke="var(--lilac)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+            )}
+
+            <div className={`agent-bubble ${msg.role === 'user' ? 'agent-bubble--user' : 'agent-bubble--agent'}`}>
+              <div
+                className="agent-bubble__content"
                 dangerouslySetInnerHTML={{ __html: renderAgentMarkup(msg.content) }}
               />
 
-              {/* Transaction approval card */}
-              {msg.pendingTxXdr && (
-                <div style={{
-                  marginTop: '0.875rem',
-                  padding: '0.875rem',
-                  background: 'rgba(253,218,36,0.06)',
-                  border: '1px solid rgba(253,218,36,0.2)',
-                  borderRadius: '12px',
-                }}>
-                  <div style={{ fontSize: '0.6875rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.08em', color: 'var(--warm-grey)', marginBottom: '0.5rem' }}>
-                    TRANSACTION READY
+              {/* Swap hand-off — the Swap screen quotes, shows the route and confirms */}
+              {msg.swapIntent && (
+                <div className="agent-tx-card">
+                  <div className="agent-tx-card__header">
+                    <span className="agent-tx-card__label">Swap ready</span>
                   </div>
+                  <div className="agent-tx-card__summary">
+                    {msg.swapIntent.amount ? `${msg.swapIntent.amount} ` : ''}
+                    {msg.swapIntent.from} → {msg.swapIntent.to}
+                  </div>
+                  <button
+                    onClick={() => router.push(swapHref(msg.swapIntent!))}
+                    className="agent-tx-card__btn"
+                  >
+                    Open Swap
+                  </button>
+                </div>
+              )}
+
+              {/* Transaction approval card — inline, passkey-gated */}
+              {msg.pendingTxXdr && (
+                <div className="agent-tx-card">
+                  <div className="agent-tx-card__header">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="var(--gold)" strokeWidth="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round"/>
+                    </svg>
+                    <span className="agent-tx-card__label">Transaction ready</span>
+                  </div>
+                  {msg.review ? (
+                    <div className="agent-tx-card__summary">
+                      {msg.review.operations.map((op, j) => (
+                        <div key={j}>{op}</div>
+                      ))}
+                      <div style={{ opacity: 0.6, marginTop: 6 }}>Fee: {Number(msg.review.fee) / 1e7} XLM</div>
+                    </div>
+                  ) : (
+                    <div className="agent-tx-card__summary">
+                      This transaction could not be decoded and cannot be approved.
+                    </div>
+                  )}
                   {msg.pendingTxSummary && (
-                    <div style={{ fontSize: '0.8125rem', color: 'var(--off-white)', marginBottom: '0.75rem', lineHeight: 1.5 }}>
-                      {msg.pendingTxSummary}
+                    <div className="agent-tx-card__summary" style={{ opacity: 0.6 }}>
+                      Agent says: {msg.pendingTxSummary}
                     </div>
                   )}
                   <button
                     onClick={approveTransaction}
                     disabled={approving}
-                    className="btn-gold"
-                    style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem' }}
+                    className="agent-tx-card__btn"
                   >
                     {approving ? (
                       <>
@@ -658,22 +722,15 @@ export default function AgentPage() {
 
         {/* Thinking dots */}
         {isThinking && (
-          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
-            <div style={{
-              padding: '0.75rem 1rem',
-              borderRadius: '18px 18px 18px 4px',
-              background: 'var(--surface-md)',
-              border: '1px solid var(--border-dim)',
-              display: 'flex', alignItems: 'center', gap: '5px',
-            }}>
+          <div className="agent-bubble-row agent-bubble-row--agent">
+            <div className="agent-bubble__avatar">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2z" stroke="var(--lilac)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            <div className="agent-bubble agent-bubble--agent agent-bubble--thinking">
               {[0, 150, 300].map((delay) => (
-                <span key={delay} style={{
-                  width: '6px', height: '6px',
-                  borderRadius: '50%',
-                  background: 'var(--gold)',
-                  display: 'inline-block',
-                  animation: `bounce 1.2s ${delay}ms ease-in-out infinite`,
-                }} />
+                <span key={delay} className="agent-thinking-dot" style={{ animationDelay: `${delay}ms` }} />
               ))}
             </div>
           </div>
@@ -682,66 +739,39 @@ export default function AgentPage() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input area */}
-      <div style={{
-        borderTop: '1px solid var(--border-dim)',
-        padding: '0.875rem 1.25rem 1.5rem',
-        background: 'rgba(15,15,15,0.9)',
-        backdropFilter: 'blur(12px)',
-      }}>
-        {/* Suggestion chips — role-aware */}
-        <div style={{ display: 'flex', gap: '0.5rem', overflowX: 'auto', paddingBottom: '0.75rem', scrollbarWidth: 'none' }}>
+      {/* Input area — suggestion chips + rounded input bar */}
+      <div className="agent-input-area">
+        {/* Suggestion chips — role-aware, horizontally scrollable */}
+        <div className="agent-chips">
           {suggestions.map((s) => (
             <button
               key={s}
+              className="agent-chip"
               onClick={() => { setInput(s); inputRef.current?.focus() }}
-              style={{
-                flexShrink: 0,
-                fontSize: '0.75rem',
-                padding: '0.375rem 0.875rem',
-                background: 'var(--surface)',
-                border: '1px solid var(--border-dim)',
-                borderRadius: '100px',
-                color: 'var(--warm-grey)',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                transition: 'border-color 120ms, color 120ms',
-              }}
-              onMouseEnter={e => { (e.target as HTMLElement).style.color = 'var(--off-white)'; (e.target as HTMLElement).style.borderColor = 'rgba(253,218,36,0.3)' }}
-              onMouseLeave={e => { (e.target as HTMLElement).style.color = 'var(--warm-grey)'; (e.target as HTMLElement).style.borderColor = 'var(--border-dim)' }}
             >
               {s}
             </button>
           ))}
         </div>
 
-        {/* Input row */}
-        <div style={{ display: 'flex', gap: '0.625rem', alignItems: 'center' }}>
+        {/* Rounded input bar */}
+        <div className="agent-input-bar">
           <input
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Try /history or ask me anything..."
+            placeholder="Ask me anything…"
             disabled={isThinking}
-            className="input-field"
-            style={{ flex: 1 }}
+            className="agent-input"
           />
           <button
             onClick={sendMessage}
             disabled={!input.trim() || isThinking}
-            style={{
-              flexShrink: 0,
-              width: '44px', height: '44px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: !input.trim() || isThinking ? 'rgba(253,218,36,0.3)' : 'var(--gold)',
-              color: 'var(--near-black)',
-              border: 'none', borderRadius: '12px',
-              cursor: !input.trim() || isThinking ? 'not-allowed' : 'pointer',
-              transition: 'background 120ms',
-            }}
+            className={`agent-send ${!input.trim() || isThinking ? 'agent-send--disabled' : ''}`}
+            aria-label="Send message"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
               <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </button>
@@ -749,9 +779,9 @@ export default function AgentPage() {
       </div>
 
       <style>{`
-        @keyframes bounce {
-          0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-          40% { transform: translateY(-6px); opacity: 1; }
+        @keyframes agentBounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+          40% { transform: translateY(-5px); opacity: 1; }
         }
       `}</style>
     </div>

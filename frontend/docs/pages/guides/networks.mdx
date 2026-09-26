@@ -233,6 +233,84 @@ soroban contract invoke \
 **BE CAREFUL ON MAINNET.** Every transaction costs real XLM. Test thoroughly on Testnet first. Never deploy unaudited code to Mainnet.
 </Callout>
 
+## Runtime Network Switching & Per-Network Storage
+
+The deployed wallet is not pinned to one network at build time — a visitor can
+switch between Testnet and Mainnet from the `NetworkSwitcher` control without a
+redeploy. When mainnet traffic goes through the same-origin proxy (the
+default), the switcher first probes `GET /api/rpc/mainnet` and only enables
+the Mainnet option when it reports `{"configured": true}` — meaning the server
+has `MAINNET_RPC_URL` set. A deployment that instead points
+`NEXT_PUBLIC_MAINNET_RPC_URL` straight at an RPC skips the probe and enables
+Mainnet directly. Either way, an unconfigured Mainnet renders disabled with a
+tooltip explaining why, rather than as an enabled control that would fail on
+first use.
+
+<Callout type="warning">
+**The same passkey resolves to a DIFFERENT wallet address on each network.**
+The wallet contract is deployed per network — Testnet and Mainnet each have
+their own factory contract (`CAUK4…` vs `CCZ3J…`) — so the `C…` address your
+passkey derives on Testnet is not the same account as the one it derives on
+Mainnet. Any integration, support flow, or mental model that assumes "one
+passkey → one address" is wrong for this wallet.
+</Callout>
+
+### Why storage is namespaced per network
+
+Early on, wallet identity (`invisible_wallet_address`, `veil_signer_secret`,
+and related keys — see the full list in `lib/network.ts`'s `WALLET_KEYS`) was
+stored under plain, un-namespaced `localStorage`/`sessionStorage` keys. Because
+one passkey maps to two different addresses, this let one network's data
+clobber the other's:
+
+- Switching to Testnet stranded the Mainnet address.
+- Registering a new wallet on one network silently overwrote the other's keys.
+- Worst case: using **"Reset wallet" while on Testnet could delete the bare
+  keys and destroy a real-funds Mainnet wallet**, since Testnet reads/writes
+  those same un-suffixed keys.
+
+The fix (mirrored from the mobile app's `lib/walletStore.ts`) gives each
+network its own storage slot:
+
+- **Testnet** keeps the historical, un-suffixed keys, so existing installs
+  keep working with no migration needed.
+- **Mainnet** keys carry a `_mainnet` suffix.
+- `namespaceKey()` in `lib/network.ts` is the single place that maps a logical
+  key to its per-network physical slot; `lib/walletStorage.ts` wraps
+  `localStorage`/`sessionStorage` with it so app code never has to namespace
+  keys by hand.
+- `clearActiveNetworkWallet()` (the "Reset wallet" primitive) only ever
+  touches the active network's namespaced keys — it cannot reach the other
+  network's slot.
+- A **one-time legacy migration** (`migrateLegacyStorageOnce`, gated by a
+  `veil_storage_schema` flag) copies a pre-namespacing Mainnet install's bare
+  keys into the new `_mainnet` slots the first time this code runs, so
+  existing Mainnet users don't lose access to an already-funded wallet.
+
+### What happens on switch
+
+`setActiveNetwork()` persists the choice to `localStorage` and then **reloads
+the page** — deliberately, rather than swapping state in place. Every module
+that captured a value derived from the old network (the SDK client, cached
+balances, in-flight requests) is rebuilt from scratch against the new one,
+which avoids a stale RPC client quietly reading Testnet data while the UI
+claims to be on Mainnet.
+
+The switch also drops the current network's **session** address
+(`invisible_wallet_address` in `sessionStorage`) before reloading. This is
+intentional: after the reload, `/lock` re-derives the address against the new
+network's factory. If the old address were left in place, `/lock` would see a
+stored address that doesn't match the freshly-derived one and treat it as
+tampering ("Account mismatch") — the wrong verdict for someone who simply
+changed networks. The fee-payer key is *not* dropped on switch, since a
+Stellar `G…` keypair is the same address on every network.
+
+<Callout type="info">
+If you're integrating against this wallet: never assume a user's address is
+stable across a network switch, and always re-read the active address after a
+switch completes rather than caching it.
+</Callout>
+
 ## Recommended Development Workflow
 
 ### Stage 1: Local Development

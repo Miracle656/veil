@@ -436,7 +436,7 @@ export default function VaultPage() {
                     />
                   </div>
                   <button
-                    className="btn-gold"
+                    className="btn-secondary"
                     type="submit"
                     disabled={
                       action !== null
@@ -524,7 +524,7 @@ export default function VaultPage() {
                             </button>
                             {ready && (
                               <button
-                                className="btn-gold"
+                                className="btn-secondary"
                                 disabled={action !== null}
                                 onClick={() => runAction(
                                   `execute-${withdrawal.id}`,

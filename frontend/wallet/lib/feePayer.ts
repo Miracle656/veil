@@ -31,6 +31,7 @@ const KEY_ID = 'invisible_wallet_key_id'
 const SECRET = 'veil_signer_secret'
 const PUBKEY = 'veil_signer_public_key'
 const MODE = 'veil_feepayer_mode'
+const DIAGNOSTICS = 'veil_feepayer_diagnostics'
 
 /**
  * How the fee-payer seed is produced.
@@ -45,10 +46,45 @@ const MODE = 'veil_feepayer_mode'
  */
 export type FeePayerMode = 'prf-raw' | 'prf-hkdf' | 'legacy'
 
+/** Outcome of one candidate's on-chain existence probe (see {@link pickFundedCandidate}). */
+export type FeePayerProbeStatus = 'exists' | 'not-found' | 'network-error' | 'not-probed'
+
+/** One derivation candidate considered while establishing the fee-payer, and what the probe found. */
+export type FeePayerCandidateResult = {
+  mode: FeePayerMode
+  publicKey: string
+  status: FeePayerProbeStatus
+}
+
+/**
+ * A record of how the active fee-payer was chosen, kept so Settings can show
+ * "which G… am I paying from and why" without a debugger (issue #629), and so
+ * a user can copy it verbatim into a bug report.
+ */
+export type FeePayerDiagnostics = {
+  /** ISO timestamp of when this record was captured. */
+  at: string
+  /** Whether a PRF ceremony was attempted this run (skipped for an already-pinned legacy wallet). */
+  prfAttempted: boolean
+  /** Outcome of the PRF ceremony, when attempted; null when not attempted. */
+  prfOutcome: 'success' | 'unavailable' | 'error' | null
+  /** Error message from the PRF ceremony, when prfOutcome === 'error'. */
+  prfError?: string
+  /** Whether the Horizon existence probe actually ran (skipped once the mode is pinned). */
+  probed: boolean
+  /** Every derivation candidate considered, and its probe result. */
+  candidates: FeePayerCandidateResult[]
+  /** The derivation mode ultimately selected. */
+  chosenMode: FeePayerMode
+  /** The public key ultimately selected. */
+  chosenPublicKey: string
+}
+
 // Session-scoped, in-memory cache. For the PRF mode this (plus sessionStorage)
 // is the ONLY place the seed lives — it is re-derived via a passkey assertion
 // when the session is cold. Cleared on lock via clearFeePayer().
 let cached: Keypair | null = null
+let cachedDiagnostics: FeePayerDiagnostics | null = null
 
 function hasWindow(): boolean {
   return typeof window !== 'undefined'
@@ -87,6 +123,50 @@ export function peekFeePayerKeypair(): Keypair | null {
 }
 
 /**
+ * The diagnostic record from the last time {@link ensureFeePayer} ran in this
+ * session — which candidates were derived, which existed on-chain, and whether
+ * a PRF ceremony was attempted/failed. Falls back to the persisted copy in
+ * sessionStorage so a Settings page opened after the establishing call (e.g. a
+ * fresh render of the same tab) can still show it. Returns null before
+ * {@link ensureFeePayer} has run at least once this session.
+ */
+export function getFeePayerDiagnostics(): FeePayerDiagnostics | null {
+  if (cachedDiagnostics) return cachedDiagnostics
+  if (!hasWindow()) return null
+  const raw = walletSession.getItem(DIAGNOSTICS)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as FeePayerDiagnostics
+  } catch {
+    return null
+  }
+}
+
+/**
+ * True when the active fee-payer is a silent PRF→legacy downgrade: a PRF
+ * ceremony was attempted but did not produce a usable key, and legacy is what
+ * ended up chosen. A wallet in this state will NOT reproduce the same
+ * fee-payer address on a PRF-capable device (issue #629).
+ */
+export function isFeePayerPrfDowngrade(diagnostics: FeePayerDiagnostics | null = getFeePayerDiagnostics()): boolean {
+  if (!diagnostics) return false
+  return diagnostics.prfAttempted && diagnostics.prfOutcome !== 'success' && diagnostics.chosenMode === 'legacy'
+}
+
+/** Render a diagnostics record as plain text suitable for pasting into a bug report. */
+export function formatFeePayerDiagnostics(diagnostics: FeePayerDiagnostics): string {
+  const lines = [
+    `Veil fee-payer diagnostics — ${diagnostics.at}`,
+    `Chosen: ${diagnostics.chosenMode} (${diagnostics.chosenPublicKey})`,
+    `PRF: ${diagnostics.prfAttempted ? diagnostics.prfOutcome ?? 'unknown' : 'not attempted'}${diagnostics.prfError ? ` — ${diagnostics.prfError}` : ''}`,
+    `Probe: ${diagnostics.probed ? 'ran' : 'skipped (mode already pinned)'}`,
+    'Candidates:',
+    ...diagnostics.candidates.map((c) => `  - ${c.mode}: ${c.publicKey} [${c.status}]`),
+  ]
+  return lines.join('\n')
+}
+
+/**
  * Establish the fee-payer for this session, deriving it if necessary. Idempotent
  * and memoised — the interactive PRF assertion runs at most once per cold
  * session. Call this at session entry points (wallet create, recover, unlock,
@@ -106,9 +186,22 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
   const existing = peekFeePayerSecret()
 
   // Fast path: the session already holds a secret under a pinned mode → reuse it
-  // with no prompt.
+  // with no prompt. Still records a diagnostics entry (unless one from a fuller
+  // run already exists this session) so Settings has something to show even
+  // though no new derivation/probe happened.
   if (existing && pinned) {
     cached = Keypair.fromSecret(existing)
+    if (!getFeePayerDiagnostics()) {
+      setDiagnostics({
+        at: new Date().toISOString(),
+        prfAttempted: false,
+        prfOutcome: null,
+        probed: false,
+        candidates: [{ mode: pinned, publicKey: cached.publicKey(), status: 'not-probed' }],
+        chosenMode: pinned,
+        chosenPublicKey: cached.publicKey(),
+      })
+    }
     return cached
   }
 
@@ -126,7 +219,12 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
 
   const candidates: Array<{ mode: FeePayerMode; kp: Keypair }> = []
 
+  let prfAttempted = false
+  let prfOutcome: FeePayerDiagnostics['prfOutcome'] = null
+  let prfError: string | undefined
+
   if (effectiveMode !== 'legacy') {
+    prfAttempted = true
     try {
       const prf = await evaluateFeePayerPrf(credentialId, undefined, evaluator)
       if (prf && prf.length >= 32) {
@@ -137,9 +235,15 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
         candidates.push({ mode: 'prf-raw', kp: Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32))) })
         const hkdf = await deriveFeePayerSeedFromPrf(prf)
         candidates.push({ mode: 'prf-hkdf', kp: Keypair.fromRawEd25519Seed(Buffer.from(hkdf)) })
+        prfOutcome = 'success'
+      } else {
+        // Authenticator did not surface a PRF result — unsupported, not an error.
+        prfOutcome = 'unavailable'
       }
-    } catch {
+    } catch (err) {
       // PRF cancelled/unsupported → the legacy candidate below still applies.
+      prfOutcome = 'error'
+      prfError = err instanceof Error ? err.message : String(err)
     }
   }
 
@@ -147,9 +251,18 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
 
   // If the wallet was pinned, honour that exactly — moving a funded account
   // because a probe failed would be worse than a failed probe.
-  const chosen = effectiveMode
-    ? candidates.find((c) => c.mode === effectiveMode) ?? candidates[0]!
-    : (await pickFundedCandidate(candidates)) ?? candidates[0]!
+  let chosen: { mode: FeePayerMode; kp: Keypair }
+  let probed = false
+  let probeResults: FeePayerCandidateResult[] | null = null
+
+  if (effectiveMode) {
+    chosen = candidates.find((c) => c.mode === effectiveMode) ?? candidates[0]!
+  } else {
+    probed = true
+    const picked = await pickFundedCandidate(candidates)
+    probeResults = picked.results
+    chosen = picked.chosen ?? candidates[0]!
+  }
 
   cached = chosen.kp
   localStorage.setItem(MODE, chosen.mode)
@@ -161,7 +274,25 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
     walletLocal.setItem(SECRET, chosen.kp.secret())
     walletLocal.setItem(PUBKEY, chosen.kp.publicKey())
   }
+
+  setDiagnostics({
+    at: new Date().toISOString(),
+    prfAttempted,
+    prfOutcome,
+    prfError,
+    probed,
+    candidates: probeResults ?? candidates.map((c) => ({ mode: c.mode, publicKey: c.kp.publicKey(), status: 'not-probed' as const })),
+    chosenMode: chosen.mode,
+    chosenPublicKey: chosen.kp.publicKey(),
+  })
+
   return chosen.kp
+}
+
+/** Cache + persist a diagnostics record (sessionStorage — metadata only, no secret). */
+function setDiagnostics(diagnostics: FeePayerDiagnostics): void {
+  cachedDiagnostics = diagnostics
+  walletSession.setItem(DIAGNOSTICS, JSON.stringify(diagnostics))
 }
 
 /**
@@ -172,23 +303,38 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
  * guessing: guessing wrong strands the user on an unfunded fee-payer with no
  * error message and no way to pay the fee that would fix it.
  *
- * Returns null when none exist (a genuinely new wallet), leaving the caller to
- * take the first candidate — prf-raw, which is what mobile produces, so a wallet
- * created here stays recoverable there.
+ * Stops at the first hit — the remaining candidates are recorded as
+ * `not-probed` rather than checked, so a genuinely new wallet still only costs
+ * up to 3 requests. Returns a null `chosen` when none exist (a genuinely new
+ * wallet), leaving the caller to take the first candidate — prf-raw, which is
+ * what mobile produces, so a wallet created here stays recoverable there.
  */
 async function pickFundedCandidate(
   candidates: Array<{ mode: FeePayerMode; kp: Keypair }>,
-): Promise<{ mode: FeePayerMode; kp: Keypair } | null> {
+): Promise<{ chosen: { mode: FeePayerMode; kp: Keypair } | null; results: FeePayerCandidateResult[] }> {
   const { horizonUrl } = getNetwork()
+  const results: FeePayerCandidateResult[] = []
+  let chosen: { mode: FeePayerMode; kp: Keypair } | null = null
+
   for (const candidate of candidates) {
+    if (chosen) {
+      results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'not-probed' })
+      continue
+    }
     try {
       const res = await fetch(`${horizonUrl}/accounts/${candidate.kp.publicKey()}`)
-      if (res.ok) return candidate
+      if (res.ok) {
+        results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'exists' })
+        chosen = candidate
+      } else {
+        results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'not-found' })
+      }
     } catch {
       // Network trouble — try the next rather than claiming this one is absent.
+      results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'network-error' })
     }
   }
-  return null
+  return { chosen, results }
 }
 
 /**
@@ -211,9 +357,11 @@ export function clearFeePayer(): void {
  */
 export function resetFeePayer(): void {
   cached = null
+  cachedDiagnostics = null
   if (!hasWindow()) return
   walletSession.removeItem(SECRET)
   walletSession.removeItem(PUBKEY)
+  walletSession.removeItem(DIAGNOSTICS)
   walletLocal.removeItem(SECRET)
   walletLocal.removeItem(PUBKEY)
   localStorage.removeItem(MODE)

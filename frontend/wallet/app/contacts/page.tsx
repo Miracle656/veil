@@ -14,14 +14,22 @@ export default function ContactsPage() {
   const [error, setError] = useState<string | null>(null)
   const [showAddForm, setShowAddForm] = useState(false)
 
+  const canSave = name.trim().length > 0 && address.trim().length > 0
+
+  const closeAddForm = () => {
+    setShowAddForm(false)
+    setName('')
+    setAddress('')
+    setError(null)
+  }
+
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    if (!canSave) return
     setError(null)
     try {
       addContact(name, address)
-      setName('')
-      setAddress('')
-      setShowAddForm(false)
+      closeAddForm()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -49,17 +57,19 @@ export default function ContactsPage() {
           <div style={{ marginBottom: '1.75rem' }}>
           <PageHeader eyebrow="Address book" title="Contacts" />
         </div>
-          <button
-            className="btn-gold"
-            style={{ width: 'auto', padding: '0.5rem 1rem', fontSize: '0.8125rem' }}
-            onClick={() => setShowAddForm(!showAddForm)}
-          >
-            {showAddForm ? 'Cancel' : 'Add contact'}
-          </button>
+          {!showAddForm && (
+            <button
+              className="btn-gold"
+              style={{ width: 'auto', padding: '0.5rem 1rem', fontSize: '0.8125rem' }}
+              onClick={() => setShowAddForm(true)}
+            >
+              Add contact
+            </button>
+          )}
         </div>
 
         {showAddForm && (
-          <form className="card" onSubmit={handleAddSubmit} style={{ marginBottom: '2rem', border: '1px solid var(--gold)' }}>
+          <form className="card" onSubmit={handleAddSubmit} style={{ marginBottom: '2rem' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
                 <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
@@ -70,7 +80,7 @@ export default function ContactsPage() {
                   type="text"
                   placeholder="e.g. Alice"
                   value={name}
-                  onChange={e => setName(e.target.value)}
+                  onChange={e => { setName(e.target.value); setError(null) }}
                   autoFocus
                 />
               </div>
@@ -84,7 +94,7 @@ export default function ContactsPage() {
                   type="text"
                   placeholder="G..."
                   value={address}
-                  onChange={e => setAddress(e.target.value.trim())}
+                  onChange={e => { setAddress(e.target.value.trim()); setError(null) }}
                 />
               </div>
 
@@ -92,8 +102,13 @@ export default function ContactsPage() {
                 <p style={{ fontSize: '0.8125rem', color: 'var(--teal)' }}>{error}</p>
               )}
 
-              <button type="submit" className="btn-gold">
-                Save contact
+              {canSave && (
+                <button type="submit" className="btn-gold">
+                  Save contact
+                </button>
+              )}
+              <button type="button" className="btn-ghost" onClick={closeAddForm}>
+                Cancel
               </button>
             </div>
           </form>

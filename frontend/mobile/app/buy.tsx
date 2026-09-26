@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
@@ -23,10 +24,8 @@ import {
 } from '../lib/sep24';
 import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 
-// Falls back to env so the screen can be exercised against a testnet anchor
-// before a wallet exists on the device.
 const FALLBACK_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
-const DEFAULT_ANCHOR_DOMAIN = process.env['EXPO_PUBLIC_SEP24_ANCHOR_DOMAIN']?.trim() || 'testanchor.stellar.org';
+const DEFAULT_ANCHOR_DOMAIN = process.env['EXPO_PUBLIC_SEP24_ANCHOR_DOMAIN']?.trim() || '';
 
 /**
  * Authenticate with the anchor if it advertises a SEP-10 endpoint.
@@ -158,7 +157,7 @@ export default function BuyScreen() {
       setStep('pending');
       startPolling(server, deposit.id);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not connect to anchor.');
+      setError(errorMessage(err));
       setStep('error');
     }
   };
@@ -173,7 +172,7 @@ export default function BuyScreen() {
         setStep('success');
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not fetch transaction status.');
+      setError(errorMessage(err));
     }
   };
 

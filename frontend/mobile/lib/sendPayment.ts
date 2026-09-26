@@ -14,6 +14,7 @@
  * one missing native piece lives behind {@link requireSigner} in `lib/signer.ts`.
  */
 
+import { rejectionFromResult } from './networkErrors';
 import {
   Asset,
   BASE_FEE,
@@ -30,6 +31,7 @@ import {
 
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
+import { horizonErrorMessage } from './horizonError';
 
 // All endpoints follow the ACTIVE network — module-level env consts froze
 // these to testnet and sent mainnet payments at testnet Horizon.
@@ -39,6 +41,15 @@ function net() {
 /** Native XLM SAC id — deterministic per network; env var is an override only. */
 function nativeSac(): string {
   return process.env['EXPO_PUBLIC_XLM_CONTRACT_ID']?.trim() || Asset.native().contractId(net().networkPassphrase);
+}
+
+/**
+ * The SAC id for any asset. Derived from the asset and the network passphrase,
+ * so no asset needs configuring; native keeps its env override because that one
+ * predates this and some setups pin it.
+ */
+function assetSac(asset: Asset): string {
+  return asset.isNative() ? nativeSac() : asset.contractId(net().networkPassphrase);
 }
 
 const STROOPS_PER_XLM = 10_000_000;
@@ -189,24 +200,27 @@ export async function sendPayment(
       return { hash: res.hash };
     } catch (err) {
       // Surface Horizon's real result codes instead of a bare axios "400".
-      const extras = (err as { response?: { data?: { extras?: { result_codes?: unknown } } } })?.response?.data?.extras;
-      if (extras?.result_codes) {
-        throw new Error(`Payment rejected: ${JSON.stringify(extras.result_codes)}`);
-      }
+      // In words, not JSON. This used to throw `Payment rejected:
+      // {"transaction":"tx_insufficient_balance"}`, which also hid the codes from
+      // the translator errorMessage runs, so the screen showed the raw object.
+      const data = (err as { response?: { data?: unknown } })?.response?.data;
+      const readable = horizonErrorMessage(data);
+      if (readable) throw new Error(readable);
       throw err;
     }
   }
 
-  // Contract (C…) recipient below. Only native XLM is wired over the SAC path.
-  if (!sendAsset.isNative()) {
-    throw new Error(
-      `Sending ${sendAsset.getCode()} to a smart-contract wallet isn't supported yet — use a classic (G…) address.`,
-    );
-  }
-
+  // Contract (C…) recipient. Any asset works here, not just native: a
+  // contract's balance is a SAC contract-storage entry rather than a trustline,
+  // so the recipient does not have to trust the asset first — and it could not,
+  // since changeTrust cannot name a contract as its source.
+  //
+  // This is also the only way to move an issued asset INTO a smart wallet:
+  // classic payment operations reject a contract destination outright, so an
+  // exchange or ordinary wallet can only ever pay the G address.
   const server = new SorobanRpc.Server(net().rpcUrl);
   const account = await server.getAccount(signer.publicKey);
-  const contract = new Contract(nativeSac());
+  const contract = new Contract(assetSac(sendAsset));
   const tx = new TransactionBuilder(account, {
     fee: inclusionFee(),
     networkPassphrase: net().networkPassphrase,
@@ -231,7 +245,7 @@ export async function sendPayment(
 
   const sendResult = await server.sendTransaction(assembled);
   if (sendResult.status === 'ERROR') {
-    throw new Error(`Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown'}`);
+    throw new Error(rejectionFromResult(sendResult.errorResult));
   }
 
   return { hash: await pollForResult(server, sendResult.hash) };

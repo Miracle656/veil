@@ -21,8 +21,8 @@ import {
 } from '@/lib/network'
 
 const OPTIONS: { name: VeilNetworkName; label: string; dot: string }[] = [
-  { name: 'testnet', label: 'Testnet', dot: '#00A7B5' },
-  { name: 'mainnet', label: 'Mainnet', dot: '#FDDA24' },
+  { name: 'testnet', label: 'Testnet', dot: 'var(--teal)' },
+  { name: 'mainnet', label: 'Mainnet', dot: 'var(--gold)' },
 ]
 
 export function NetworkSwitcher({ className = '' }: { className?: string }) {
@@ -87,9 +87,9 @@ export function NetworkSwitcher({ className = '' }: { className?: string }) {
               }}
               className="flex-1 flex items-center justify-center gap-[6px] rounded-pill px-[10px] py-[5px] text-[11px] font-mono transition-colors duration-150 disabled:cursor-not-allowed"
               style={{
-                background: isActive ? 'rgba(253,218,36,0.1)' : 'transparent',
-                border: `1px solid ${isActive ? 'rgba(253,218,36,0.25)' : 'transparent'}`,
-                color: isActive ? '#FDDA24' : 'rgba(246,247,248,0.5)',
+                background: isActive ? 'var(--surface-md)' : 'transparent',
+                border: `1px solid ${isActive ? 'var(--gold)' : 'transparent'}`,
+                color: isActive ? 'var(--gold)' : 'rgba(246,247,248,0.5)',
                 opacity: disabled ? 0.4 : 1,
               }}
             >

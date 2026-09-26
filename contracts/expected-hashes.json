@@ -7,7 +7,7 @@
     "multisig_wallet.wasm": "8d8a46da7219530a977c56a5fe1301461428d4c317fd9ccc6b2fd8dff2e144b9",
     "vault.wasm": "bddded7ee3b0700c82232f145a783cc45ac3d68dfb621b3d72266f132b80e9d7"
   },
-  "image": "rust:1.85.0-bookworm",
+  "image": "rust:1.85.0-bookworm@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e",
   "target": "wasm32-unknown-unknown",
   "toolchain": "1.85.0"
 }

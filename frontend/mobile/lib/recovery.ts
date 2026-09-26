@@ -1,3 +1,4 @@
+import { rejectionFromResult } from './networkErrors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Account,
@@ -585,7 +586,7 @@ export async function submitRecoveryTransaction(
   const sent = await server.sendTransaction(tx);
   if (sent.status === 'ERROR') {
     throw new Error(
-      `Transaction rejected: ${sent.errorResult?.toXDR('base64') ?? 'unknown reason'}`
+      rejectionFromResult(sent.errorResult)
     );
   }
 

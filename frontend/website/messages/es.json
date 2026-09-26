@@ -18,13 +18,19 @@
   },
   "hero": {
     "tagline": "Sin frase semilla. Sin compromisos.",
-    "title1": "La billetera inteligente",
-    "title2": "que nunca ves",
-    "title3": "pero siempre confías.",
+    "title1": "La billetera passkey",
+    "title2": "con agente",
+    "title3": "para Stellar.",
     "subtitle": "Cuentas inteligentes con passkey en Stellar Soroban. Tu biometría es la clave — sin frase que anotar, sin clave que perder.",
     "cta1": "Obtener Acceso Anticipado",
     "cta2": "Leer la Documentación",
-    "builtOn": "Construido en Stellar Soroban"
+    "builtOn": "Construido en Stellar Soroban",
+    "notes": [
+      "Envía y recibe USDC y XLM, liquidado en segundos.",
+      "Intercambia con Soroswap y gana con Blend, sin salir de la billetera.",
+      "Pide un pago al agente; apruébalo con tu huella.",
+      "Consulta cada saldo en tu moneda local."
+    ]
   },
   "howItWorks": {
     "sectionLabel": "El Apretón de Manos Invisible",
@@ -179,7 +185,7 @@
       },
       {
         "name": "Moneda local",
-        "blurb": "Lee tu saldo en naira, cedi, chelín o dólares."
+        "blurb": "Lee tu saldo en naira, cedi, chelín, rand o dólares."
       },
       {
         "name": "Agente de IA",
@@ -286,5 +292,19 @@
       }
     ],
     "index": "[ 04 DE 06 ] · EL AGENTE"
+  },
+  "mobileLive": {
+    "badge": "YA DISPONIBLE",
+    "titleLead": "El móvil ya está",
+    "titleAccent": "aquí",
+    "body": "La cartera entera en tu bolsillo. Ábrela con la misma huella que abre tu app del banco, paga en tu moneda y sigue generando rendimiento sobre lo que aún no has gastado.",
+    "points": [
+      "Sin frase semilla para restaurar en un teléfono nuevo",
+      "Retira a una cuenta bancaria en menos de un minuto",
+      "0 XLM para tu primera transacción"
+    ],
+    "ctaPrimary": "Descargar para Android",
+    "ctaSecondary": "iPhone: apúntate a la lista de TestFlight",
+    "qrLabel": "Escanea para instalar"
   }
 }

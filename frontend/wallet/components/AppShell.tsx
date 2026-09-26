@@ -18,6 +18,8 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState, type ReactNode } from 'react'
 
+import { isMultisigAvailable } from '@/lib/multisigConfig'
+
 import { CurrencyPicker } from './CurrencyPicker'
 import { NetworkSwitcher } from './NetworkSwitcher'
 import { TabBar, showsTabBar } from './ui/TabBar'
@@ -36,6 +38,7 @@ const NAV_MAIN: NavItem[] = [
   { href: '/send', label: 'Send', icon: '↗' },
   { href: '/receive', label: 'Receive', icon: '↙' },
   { href: '/swap', label: 'Swap', icon: '⇅' },
+  { href: '/cashout', label: 'Cash out', icon: '⇲' },
   { href: '/earn', label: 'Earn', icon: '◎' },
   { href: '/bills', label: 'Bills & airtime', icon: '▤' },
   { href: '/agent', label: 'Agent', icon: '✦' },
@@ -46,6 +49,15 @@ const NAV_FOOT: NavItem[] = [
   { href: '/settings/passkeys', label: 'Passkeys', icon: '⬡' },
   { href: '/settings', label: 'Settings', icon: '⚙' },
 ]
+
+/**
+ * Only offered where the multisig contract is actually installed (#672). It
+ * goes in the footer group rather than NAV_MAIN because it is an advanced,
+ * occasional flow — the everyday row is already seven items wide and repeats
+ * icon-only in the narrow top bar. `/dashboard`'s chip row remains the
+ * discovery path on small screens.
+ */
+const NAV_MULTISIG: NavItem = { href: '/multisig', label: 'Multisig', icon: '◈' }
 
 /** Shorten a Stellar address for the sidebar chip: `GDKF…9QX3`. */
 function shortAddress(addr: string): string {
@@ -59,9 +71,9 @@ function NavRow({ item, active }: { item: NavItem; active: boolean }) {
       aria-current={active ? 'page' : undefined}
       className="flex items-center justify-between rounded-xl px-[14px] py-[11px] transition-colors duration-150"
       style={{
-        background: active ? 'rgba(253,218,36,0.08)' : 'transparent',
-        border: `1px solid ${active ? 'rgba(253,218,36,0.2)' : 'transparent'}`,
-        color: active ? '#FDDA24' : 'rgba(246,247,248,0.72)',
+        background: active ? 'var(--surface-md)' : 'transparent',
+        border: `1px solid ${active ? 'var(--gold)' : 'transparent'}`,
+        color: active ? 'var(--gold)' : 'rgba(246,247,248,0.72)',
         fontWeight: active ? 600 : 400,
       }}
     >
@@ -89,6 +101,7 @@ export function AppShell({
   const pathname = usePathname() ?? ''
   const [profileName, setProfileName] = useState<string | null>(null)
   const [address, setAddress] = useState<string | null>(null)
+  const [showMultisig, setShowMultisig] = useState(false)
 
   // Read on the client only: these live in localStorage, and touching them
   // during render would break hydration.
@@ -103,6 +116,10 @@ export function AppShell({
       // A malformed profile is not worth failing navigation over.
     }
     setAddress(walletLocal.getItem('veil_signer_public_key'))
+    // The active network comes from localStorage too, so this has to wait for
+    // mount like the rest — starting false means the server pass and the first
+    // client render agree, and the entry appears only where /multisig works.
+    setShowMultisig(isMultisigAvailable())
   }, [])
 
   // `/settings` would otherwise light up for `/settings/passkeys` too, so the
@@ -113,6 +130,8 @@ export function AppShell({
   const mainItems = NAV_MAIN.map((item) =>
     item.href === '/earn' && earnBadge ? { ...item, badge: earnBadge } : item,
   )
+
+  const footItems = showMultisig ? [NAV_MULTISIG, ...NAV_FOOT] : NAV_FOOT
 
   const initial = (profileName?.trim()?.[0] ?? 'V').toUpperCase()
 
@@ -132,7 +151,7 @@ export function AppShell({
 
           <div className="h-px bg-border-dim mx-2 my-[14px]" />
 
-          {NAV_FOOT.map((item) => (
+          {footItems.map((item) => (
             <NavRow key={item.href} item={item} active={isActive(item.href)} />
           ))}
         </nav>
@@ -141,7 +160,7 @@ export function AppShell({
 
         <div className="bg-surface border border-border-dim rounded-2xl px-4 py-[14px] flex flex-col gap-[10px]">
           <div className="flex items-center gap-[10px]">
-            <div className="w-[30px] h-[30px] rounded-full bg-[rgba(253,218,36,0.1)] border border-[rgba(253,218,36,0.3)] flex items-center justify-center text-xs text-gold font-bold shrink-0">
+            <div className="w-[30px] h-[30px] rounded-full bg-surface-md border border-border-dim flex items-center justify-center text-xs text-gold font-bold shrink-0">
               {initial}
             </div>
             <div className="flex flex-col gap-px min-w-0">
@@ -174,8 +193,8 @@ export function AppShell({
               aria-label={item.label}
               className="px-3 py-2 rounded-lg text-[15px] shrink-0"
               style={{
-                color: isActive(item.href) ? '#FDDA24' : 'rgba(246,247,248,0.6)',
-                background: isActive(item.href) ? 'rgba(253,218,36,0.08)' : 'transparent',
+                color: isActive(item.href) ? 'var(--gold)' : 'rgba(246,247,248,0.6)',
+                background: isActive(item.href) ? 'var(--surface-md)' : 'transparent',
               }}
             >
               {item.icon}

@@ -7,24 +7,41 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch: {}   # allow manual trigger for debugging
 
+permissions:
+  contents: read
+
 jobs:
   testnet-smoke:
     name: Stellar testnet — deploy wallet, fund, send, verify
     runs-on: ubuntu-latest
+    permissions:
+      # Open GitHub issue on failure (github-script).
+      contents: read
+      issues: write
     # Skip on dependabot branches so dependency PRs don't trigger a burner-key spend
     if: ${{ !startsWith(github.head_ref, 'dependabot/') }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
 
       # ── Install the Stellar CLI (used for friendbot funding) ───────────────
       - name: Install Stellar CLI
         run: |
-          curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
+          stellar_version='28.0.0'
+          stellar_archive="stellar-cli-${stellar_version}-x86_64-unknown-linux-gnu.tar.gz"
+          stellar_url="https://github.com/stellar/stellar-cli/releases/download/v${stellar_version}/${stellar_archive}"
+          stellar_sha256='207544486734fccb4df1afc4a7745478f9f1e21688b2f9506f0ef36f60ce3fdc'
+          stellar_tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$stellar_tmp_dir"' EXIT
+          curl -fsSL "$stellar_url" -o "$stellar_tmp_dir/$stellar_archive"
+          echo "$stellar_sha256  $stellar_tmp_dir/$stellar_archive" | sha256sum --check --status
+          mkdir -p "$HOME/.stellar/bin"
+          tar -xzf "$stellar_tmp_dir/$stellar_archive" -C "$stellar_tmp_dir"
+          install -m 0755 "$stellar_tmp_dir/stellar" "$HOME/.stellar/bin/stellar"
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
       # ── Install Node dependencies (stellar-sdk for smoke script) ──────────
@@ -150,7 +167,7 @@ jobs:
       # Option B — Open a GitHub issue on failure (always available, no extra secret).
       - name: Open GitHub issue on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const title = `Nightly testnet smoke test failed — ${new Date().toISOString().slice(0, 10)}`;

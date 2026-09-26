@@ -1,4 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { AppState, type NativeEventSubscription } from 'react-native';
+
+import { getNetwork } from './network';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -18,13 +21,43 @@ export interface TxRecord {
 
 type ActivityListener = (records: TxRecord[]) => void;
 
+/**
+ * The indexer is reachable but does not index this network.
+ *
+ * Distinct from a failure on purpose. Wraith runs testnet only today; a mainnet
+ * wallet asking it for transfers is not broken, it is asking a question this
+ * deployment cannot answer, and the app already has Horizon for that. Logging
+ * it as a failure every fifteen seconds teaches the user to distrust a working
+ * app.
+ */
+export class IndexerNetworkUnsupported extends Error {
+  readonly network: string;
+  constructor(network: string) {
+    super(`The indexer does not serve ${network}`);
+    this.name = 'IndexerNetworkUnsupported';
+    this.network = network;
+  }
+}
+
 // ── Module-level store (survives component remounts) ────────────────────────
 
 let _records: TxRecord[] = [];
 let _listeners = new Set<ActivityListener>();
 let _pollInterval: ReturnType<typeof setInterval> | null = null;
+let _appStateSub: NativeEventSubscription | null = null;
 let _currentAddress: string | null = null;
 let _wraithUrl: string | null = null;
+/** Reset whenever polling is re-armed, so a network switch can say its piece once. */
+let _warnedUnsupported = false;
+
+/** A request we cancelled ourselves, not a network that failed. */
+function isAbort(err: unknown): boolean {
+  if (typeof DOMException !== 'undefined' && err instanceof DOMException) {
+    return err.name === 'AbortError' || err.name === 'TimeoutError';
+  }
+  if (!(err instanceof Error)) return false;
+  return err.name === 'AbortError' || err.name === 'TimeoutError' || err.message === 'Aborted';
+}
 
 // Default polling interval: 15 seconds
 const POLL_MS = 15_000;
@@ -118,8 +151,23 @@ async function fetchTransfers(
   wraithUrl: string,
   address: string,
 ): Promise<TxRecord[]> {
-  const url = `${wraithUrl.replace(/\/+$/, '')}/transfers/${encodeURIComponent(address)}?limit=50`;
+  // /accounts/:address/transfers, not /transfers/:address. The path was
+  // inverted, so every poll 404'd — invisible until EXPO_PUBLIC_WRAITH_URL was
+  // set, because with no URL configured the fetch never ran at all.
+  //
+  // The network has to travel with the request. Without it the indexer answers
+  // for its own default, so a mainnet wallet was being shown a testnet index —
+  // an empty feed that looked like "no transfers" rather than "asked the wrong
+  // chain", which is the only reason it went unnoticed. Asking for a network an
+  // indexer does not serve is a deployment fact, not a fault: it is reported as
+  // its own error so the caller can fall back to Horizon quietly.
+  const network = getNetwork().name;
+  const base = wraithUrl.replace(/\/+$/, '');
+  const url = `${base}/accounts/${encodeURIComponent(address)}/transfers?limit=50&network=${network}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (res.status === 400 || res.status === 404) {
+    throw new IndexerNetworkUnsupported(network);
+  }
   if (!res.ok) {
     throw new Error(`Wraith returned HTTP ${res.status}`);
   }
@@ -155,21 +203,43 @@ export function hydrateActivityFeed(records: TxRecord[], options?: { merge?: boo
     return;
   }
 
-  const byId = new Map<string, TxRecord>();
-  for (const r of _records) byId.set(r.id, r);
-  for (const r of records) byId.set(r.id, r);
-  _records = [...byId.values()].sort((a, b) => b.timestamp - a.timestamp);
+  const byMovement = new Map<string, TxRecord>();
+  for (const r of _records) byMovement.set(movementKey(r), r);
+  // Incoming wins on collision: it is the fresher read of the same movement,
+  // and may carry a richer version of it (a swap rather than a bare transfer).
+  for (const r of records) byMovement.set(movementKey(r), r);
+  _records = [...byMovement.values()].sort((a, b) => b.timestamp - a.timestamp);
   notify();
 }
 
 /**
- * Append new records, deduplicating by tx hash and sorting newest-first.
+ * Identity of a *movement of funds*, as distinct from identity of a row.
+ *
+ * A payment can reach this feed through two sources with two different ids:
+ * the contract's SAC transfer event and the fee-payer's classic Horizon
+ * payment. `loadHorizonActivity` reconciles them by hash within a single
+ * fetch, but across polls the winning source can change — the classic leg is
+ * indexed a moment later than the event — so the same payment arrives first as
+ * `ev.id` and then as the Horizon operation id. Keyed by id, both survive and
+ * the user sees their transfer twice.
+ *
+ * The hash alone is too coarse to key on: a bulk payout is one transaction
+ * carrying many payments, and collapsing by hash would show one row instead of
+ * five. Counterparty, amount and asset separate those, and are identical
+ * across the two sources describing one movement.
+ */
+export function movementKey(r: TxRecord): string {
+  if (!r.hash) return r.id;
+  return `${r.hash}|${r.type}|${r.counterparty}|${r.amount}|${r.asset}`;
+}
+
+/**
+ * Append new records, deduplicating by movement and sorting newest-first.
  * Notifies all subscribers.
  */
 export function appendActivityFeed(newRecords: TxRecord[]): void {
-  const deduped = newRecords.filter(
-    (r) => !_records.some((existing) => existing.hash === r.hash && existing.hash !== undefined),
-  );
+  const present = new Set(_records.map(movementKey));
+  const deduped = newRecords.filter((r) => !present.has(movementKey(r)));
   if (deduped.length === 0) return;
   _records = [..._records, ...deduped].sort((a, b) => b.timestamp - a.timestamp);
   notify();
@@ -202,24 +272,73 @@ export function startPolling(address: string, wraithUrl: string | null): void {
   }
 
   stopPolling();
+  _warnedUnsupported = false;
   _currentAddress = address;
   _wraithUrl = wraithUrl;
 
   if (!wraithUrl) return;
 
-  // Poll on an interval
-  _pollInterval = setInterval(async () => {
-    const fresh = await fetchTransfers(wraithUrl, address);
-    if (fresh.length > 0) {
-      appendActivityFeed(fresh);
+  const tick = async () => {
+    try {
+      const fresh = await fetchTransfers(wraithUrl, address);
+      if (fresh.length > 0) {
+        appendActivityFeed(fresh);
+      }
+    } catch (err) {
+      // A poll failure is not the caller's problem to handle — it runs on a
+      // timer with nobody awaiting it, so an unhandled rejection here becomes
+      // a red box on the screen every few seconds while the feed itself is
+      // perfectly usable from Horizon. The initial load still throws, because
+      // there the caller CAN distinguish "unreachable" from "no transfers".
+      //
+      // Two things are not failures and must not be logged as such. A cancelled
+      // request is the app's own doing (a reload, a teardown), and this line
+      // printing "poll failed: Aborted" after every Fast Refresh reads as a
+      // broken network. A network the indexer does not serve is a deployment
+      // fact, true on every tick, and worth saying exactly once.
+      if (isAbort(err)) return;
+      if (err instanceof IndexerNetworkUnsupported) {
+        if (!_warnedUnsupported) {
+          _warnedUnsupported = true;
+          console.info(`[activity] ${err.message} — using Horizon for this wallet.`);
+        }
+        return;
+      }
+      console.warn('[activity] poll failed:', err instanceof Error ? err.message : err);
     }
-  }, POLL_MS);
+  };
+
+  const start = () => {
+    if (_pollInterval === null) _pollInterval = setInterval(() => void tick(), POLL_MS);
+  };
+  const stop = () => {
+    if (_pollInterval !== null) {
+      clearInterval(_pollInterval);
+      _pollInterval = null;
+    }
+  };
+
+  if (AppState.currentState === 'active') start();
+
+  // Backgrounded, this stops. Nothing reads the feed behind a locked screen,
+  // and every tick is an indexer request; a phone left in a pocket would
+  // otherwise spend the hour making them.
+  _appStateSub = AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      void tick();
+      start();
+    } else {
+      stop();
+    }
+  });
 }
 
 /**
  * Stop the polling loop and clear the current address.
  */
 export function stopPolling(): void {
+  _appStateSub?.remove();
+  _appStateSub = null;
   if (_pollInterval !== null) {
     clearInterval(_pollInterval);
     _pollInterval = null;
@@ -282,7 +401,15 @@ export function useInitActivityFeed(
       }
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load activity');
+      // An indexer that does not serve this network is not an error the user
+      // can act on, and the dashboard loads the same history from Horizon
+      // anyway. Surfacing it would put a red banner over a screen that is
+      // about to fill with correct data.
+      if (err instanceof IndexerNetworkUnsupported || isAbort(err)) {
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load activity');
+      }
     } finally {
       setLoading(false);
     }

@@ -19,6 +19,7 @@ import { Buffer } from 'buffer';
 
 type MutableGlobal = typeof globalThis & {
   Buffer?: typeof Buffer;
+  AbortSignal?: typeof AbortSignal;
   process?: { env?: Record<string, string | undefined>; version?: string };
 };
 
@@ -30,6 +31,23 @@ if (typeof globalScope.Buffer === 'undefined') {
 
 if (globalScope.process && typeof globalScope.process.version !== 'string') {
   globalScope.process.version = '';
+}
+
+// Kept in step with the native file. Browsers have shipped
+// AbortSignal.timeout for a while, so this is almost always a no-op here — but
+// leaving it out would mean the two files disagree about which gaps exist, and
+// that disagreement is exactly what makes a shim get lost.
+const signalCtor = globalScope.AbortSignal as unknown as
+  | { timeout?: (ms: number) => AbortSignal }
+  | undefined;
+
+if (signalCtor && typeof signalCtor.timeout !== 'function') {
+  signalCtor.timeout = (ms: number): AbortSignal => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    controller.signal.addEventListener?.('abort', () => clearTimeout(timer));
+    return controller.signal;
+  };
 }
 
 export {};

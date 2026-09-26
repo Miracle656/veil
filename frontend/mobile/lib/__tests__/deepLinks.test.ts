@@ -34,19 +34,40 @@ describe('resolveDeepLink — veil:// custom scheme', () => {
   });
 });
 
+describe('resolveDeepLink — read-only launcher destinations', () => {
+  it('opens the dashboard', () => {
+    expect(resolveDeepLink('veil://dashboard')).toBe('/dashboard');
+  });
+
+  it('opens the XLM token page, keeping the asset code upper-case', () => {
+    // Paths are lowercased before lookup; the token screen's id is not.
+    expect(resolveDeepLink('veil://token/XLM')).toBe('/token/XLM');
+    expect(resolveDeepLink('veil://token/xlm')).toBe('/token/XLM');
+  });
+
+  it('exposes no other token page', () => {
+    expect(resolveDeepLink('veil://token/USDC')).toBe(FALLBACK_ROUTE);
+  });
+
+  it('forwards no parameters to either', () => {
+    expect(resolveDeepLink(`veil://dashboard?to=${DESTINATION}&amount=10`)).toBe('/dashboard');
+    expect(resolveDeepLink('veil://token/XLM?asset=USDC')).toBe('/token/XLM');
+  });
+});
+
 describe('resolveDeepLink — universal / app links', () => {
   it('routes an associated-domain link', () => {
-    expect(resolveDeepLink(`https://app.veil.xyz/pay?to=${DESTINATION}`)).toBe(
+    expect(resolveDeepLink(`https://app.useveilapp.xyz/pay?to=${DESTINATION}`)).toBe(
       `/pay?to=${DESTINATION}`,
     );
   });
 
   it('ignores the port', () => {
-    expect(resolveDeepLink('https://app.veil.xyz:443/receive')).toBe('/receive');
+    expect(resolveDeepLink('https://app.useveilapp.xyz:443/receive')).toBe('/receive');
   });
 
   it('matches the host case-insensitively', () => {
-    expect(resolveDeepLink('https://APP.VEIL.XYZ/send')).toBe('/send');
+    expect(resolveDeepLink('https://APP.USEVEILAPP.XYZ/send')).toBe('/send');
   });
 
   it('rejects a foreign host', () => {
@@ -54,11 +75,11 @@ describe('resolveDeepLink — universal / app links', () => {
   });
 
   it('rejects a look-alike subdomain', () => {
-    expect(resolveDeepLink('https://app.veil.xyz.evil.example/pay')).toBe(FALLBACK_ROUTE);
+    expect(resolveDeepLink('https://app.useveilapp.xyz.evil.example/pay')).toBe(FALLBACK_ROUTE);
   });
 
   it('rejects userinfo smuggling', () => {
-    expect(resolveDeepLink('https://app.veil.xyz@evil.example/pay')).toBe(FALLBACK_ROUTE);
+    expect(resolveDeepLink('https://app.useveilapp.xyz@evil.example/pay')).toBe(FALLBACK_ROUTE);
   });
 });
 
@@ -135,7 +156,7 @@ describe('resolveDeepLink — hostile and malformed input', () => {
 describe('resolveDeepLink — cold start vs warm resume', () => {
   const links = [
     'veil://pay?to=' + DESTINATION,
-    'https://app.veil.xyz/receive',
+    'https://app.useveilapp.xyz/receive',
     'web+stellar:pay?destination=' + DESTINATION,
     'veil://create-wallet',
   ];

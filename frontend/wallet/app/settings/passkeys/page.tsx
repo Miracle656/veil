@@ -6,6 +6,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { ChevronLeft, KeyRound, Plus, Trash2 } from 'lucide-react'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
+import { ensureWalletDeployed, getDeploymentState } from '@/lib/walletDeployment'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
@@ -26,12 +27,25 @@ export default function PasskeysPage() {
     return Keypair.fromSecret(secret)
   }
 
+  /** 'loading' | 'ready' | an error message. */
+  const [loadState, setLoadState] = useState<string>('loading')
+
   const fetchSigners = useCallback(async () => {
+    setLoadState('loading')
     try {
+      // Not on chain yet means no signer list to read — the passkey that created
+      // the wallet is its signer, and the contract is deployed on first use.
+      if ((await getDeploymentState(walletSession.getItem('invisible_wallet_address'))) === 'undeployed') {
+        setSigners([])
+        setLoadState('undeployed')
+        return
+      }
       const list = await wallet.getSigners()
       setSigners(list)
+      setLoadState('ready')
     } catch (e) {
       console.error('Failed to fetch signers', e)
+      setLoadState(e instanceof Error ? e.message : 'Could not read the passkeys on this wallet.')
     }
   }, [wallet.getSigners])
 
@@ -51,6 +65,7 @@ export default function PasskeysPage() {
       const signerKeypair = getSignerKeypair()
       const result = await wallet.register()
       if (!result?.publicKeyBytes) throw new Error('Registration returned no public key')
+      await ensureWalletDeployed(wallet.deploy, walletSession.getItem('invisible_wallet_address'))
       const res = await wallet.addSigner(signerKeypair, result.publicKeyBytes)
       setStatus({ text: `New passkey added at index ${res.signerIndex}`, ok: true })
       await fetchSigners()
@@ -67,6 +82,7 @@ export default function PasskeysPage() {
     setStatus(null)
     try {
       const signerKeypair = getSignerKeypair()
+      await ensureWalletDeployed(wallet.deploy, walletSession.getItem('invisible_wallet_address'))
       await wallet.removeSigner(signerKeypair, index)
       setStatus({ text: `Passkey #${index} removed`, ok: true })
       await fetchSigners()
@@ -116,9 +132,44 @@ export default function PasskeysPage() {
 
         {/* Signers list */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '1.5rem' }}>
-          {signers.length === 0 && (
+          {/* Three states, not one. A failed read used to render as "Loading
+              passkeys…" and stay there, so a wallet whose signers could not be
+              fetched looked like a wallet that was still thinking about it,
+              forever. On a screen about the keys that control the account, the
+              difference between "none" and "we could not tell" matters. */}
+          {signers.length === 0 && loadState === 'loading' && (
             <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
               <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.3)' }}>Loading passkeys…</p>
+            </div>
+          )}
+          {signers.length === 0 && loadState === 'ready' && (
+            <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
+              <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.45)' }}>
+                No passkeys registered on this wallet yet.
+              </p>
+            </div>
+          )}
+          {signers.length === 0 && loadState === 'undeployed' && (
+            <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
+              <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.7)', marginBottom: '0.375rem' }}>
+                This passkey is your wallet&rsquo;s only signer.
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.45)', lineHeight: 1.5 }}>
+                Your wallet is set up on-chain the first time it&rsquo;s needed. Adding a backup passkey does that now.
+              </p>
+            </div>
+          )}
+          {signers.length === 0 && loadState !== 'loading' && loadState !== 'ready' && loadState !== 'undeployed' && (
+            <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--danger)', marginBottom: '0.5rem' }}>
+                Could not read this wallet&rsquo;s passkeys.
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
+                {loadState}
+              </p>
+              <button className="btn-secondary" style={{ marginTop: '0.875rem' }} onClick={() => void fetchSigners()}>
+                Try again
+              </button>
             </div>
           )}
 

@@ -303,6 +303,39 @@ The **Executive Order on Virtual Assets Coordination (signed 17 July 2026)** spl
 - **July 2026 Executive Order**: payments-style stablecoin flows may migrate toward CBN
   jurisdiction — watch.
 
+## Decided sequencing — bills first, offramp gated (2026-08-26)
+
+**The two halves of this document carry very different regulatory weight, and we are shipping them separately.**
+
+| Half | Posture | Status |
+|---|---|---|
+| **Spend crypto on airtime / data / bills** | The aggregator holds the NCC/NERC licence and the vend runs under it. We are a reseller buying a product, closer to merchant acceptance than to intermediation. `reseller-needs-no-licence` remains an **inference, not a verified rule** — but it is the same posture other Nigerian crypto-bills platforms already operate under | **Build now** |
+| **Crypto → naira in a user's bank account** | The *arranging* limb of ISA 2025 Sch.2 Pt.II ¶2, no exclusions schedule, s.61 criminal liability. Self-custody does not help here | **Gated** on the SEC letter or the CBN sandbox |
+
+All the weight in "The licensing question" above attaches to the **second** row. Nothing in this document says a reseller buying airtime needs a VASP registration.
+
+### The constraint that keeps this safe
+
+**Closed internal testing only — the team and an invited tester group. No public availability, no marketing, no promotion, no waitlist copy implying a live bills product.**
+
+That last point is not cosmetic. The SEC's 14 May 2026 notice expressly reaches **promotion**, and promotion is what got Chaka restrained — it held no assets and executed nothing. A closed group testing a build is a materially different fact pattern from a marketed consumer service, and the difference is worth preserving deliberately.
+
+### Why it is worth doing anyway
+
+The SCF application currently has to describe the naira story rather than show it. A working airtime or data purchase, paid from a passkey smart wallet, settled in USDC on Stellar, is a demonstrable end-to-end claim in a way that a mock is not.
+
+### What it is not
+
+**Not a revenue line.** Verified first-hand: median margin is **1%** on MTN and Airtel, and every MTN and Airtel SME plan is currently `Unavailable` — the tiers that carry Nigerian volume cannot be sold at any margin. Glo SME is the only 10% inventory and Glo is a distant third by subscriber share. Bills is a **retention feature**. No model may assume otherwise.
+
+### First blocker
+
+**The eBills "reseller role"** — transactional endpoints require it, and how it is granted is behind the login wall. Thirty minutes of clicking settles it and nothing else starts until it does.
+
+### UI consequence, already shipped
+
+The dashboard `Pay for` grid used to render eight tiles, none of which did anything — `PayForGrid` was mounted with no `onSelect` at all. Each service now carries `status: 'live' | 'soon'`; the dashboard renders only `live` ones and hides the card entirely when there are none, while everything unshipped is listed in `ServicesDrawer` behind a "soon" badge, opened from the drape mark in the header. A service moves onto the dashboard by flipping one field.
+
 ## Phased build
 
 **Adapter design rule (settled by the bills research):** the `BillsProvider` interface must be built around **"requery by *our* reference"**. eBills, Monnify and Plustive all support it; Pairgate does not — so Pairgate becomes the single implementation that has to persist a `reference → reference_code` mapping, instead of its weaker model leaking into the core interface.
@@ -335,7 +368,7 @@ dashboards for the two prefunded wallets.
 ## Open items
 
 **Needs a human with a login (cannot be desk-researched):**
-- **eBills "reseller role"** — transactional endpoints require it; cost/approval is behind the login wall. Thirty minutes of clicking settles it. *Blocks the first adapter.*
+- ~~**eBills "reseller role"**~~ — **SETTLED 2026-08-26: the role is gated on funding the eBills wallet.** Probed directly: `/jwt-auth/v1/token` authenticates fine on an unfunded account, `GET /api/v2/balance` returns `403 rest_forbidden`. So the role is not a support request or a form — it is a deposit. **This is now a money blocker, not a paperwork one**, and the airtime build is parked until there is float to fund. Probe kept at `scripts/ebills-probe.mjs`; re-run it after funding to confirm.
 - **eBills duplicate semantics** — does replaying a `request_id` after the 3-minute `duplicate_order` window create a **second vend**? Ask support before any retry logic ships.
 - **eBills margins on a funded account** — confirm the live 1%-median finding before any revenue model depends on it.
 - **eBills top-up mechanism** — undocumented publicly.

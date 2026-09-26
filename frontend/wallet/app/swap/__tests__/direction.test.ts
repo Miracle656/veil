@@ -1,4 +1,4 @@
-import { resolveFlip } from '../direction'
+import { parseSwapPrefill, resolveFlip } from '../direction'
 
 const USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 const XLM = { code: 'XLM', balance: '100.0' }
@@ -34,5 +34,22 @@ describe('resolveFlip', () => {
 
   it('refuses to flip before balances have loaded', () => {
     expect(resolveFlip(undefined, 'USDC', [], USDC_ISSUER)).toBeNull()
+  })
+})
+
+describe('parseSwapPrefill', () => {
+  it('reads a hand-off from the agent', () => {
+    expect(parseSwapPrefill('?from=xlm&to=USDC&amount=10')).toEqual({ from: 'XLM', to: 'USDC', amount: '10' })
+  })
+
+  it('drops anything malformed instead of guessing', () => {
+    expect(parseSwapPrefill('?from=<script>&to=USDC&amount=1e9')).toEqual({ from: undefined, to: 'USDC', amount: undefined })
+    expect(parseSwapPrefill('?amount=-5').amount).toBeUndefined()
+    expect(parseSwapPrefill('?amount=0').amount).toBeUndefined()
+    expect(parseSwapPrefill('?amount=1.12345678').amount).toBeUndefined() // beyond Stellar's 7 decimals
+  })
+
+  it('opens an empty form when there is no hand-off', () => {
+    expect(parseSwapPrefill('')).toEqual({ from: undefined, to: undefined, amount: undefined })
   })
 })

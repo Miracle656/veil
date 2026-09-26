@@ -1,0 +1,23 @@
+{
+  "name": "@veil/invisible-wallet-svelte",
+  "version": "0.1.0",
+  "description": "Svelte store for Invisible Wallet (Soroban + WebAuthn) — ships inside invisible-wallet-sdk as the `/svelte` subpath",
+  "private": true,
+  "sideEffects": false,
+  "main": "../dist/svelte/index.js",
+  "module": "../dist/svelte/index.js",
+  "types": "../dist/svelte/index.d.ts",
+  "peerDependencies": {
+    "svelte": ">=4.0.0"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "webauthn",
+    "passkeys",
+    "wallet",
+    "svelte",
+    "sveltekit"
+  ],
+  "license": "MIT"
+}

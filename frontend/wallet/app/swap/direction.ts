@@ -40,3 +40,30 @@ export function resolveFlip(
   if (!nextSource) return null
   return { nextSource, nextDest: makeDestAsset(sourceCode, usdcIssuer) }
 }
+
+/** A swap the agent handed over: `/swap?from=XLM&to=USDC&amount=10`. */
+export interface SwapPrefill {
+  from?: string
+  to?: string
+  amount?: string
+}
+
+/**
+ * Reads a hand-off from the query string. Anything malformed is dropped rather
+ * than guessed at, so a bad link opens the ordinary empty form: codes must be
+ * short uppercase tickers and the amount a plain positive number with at most
+ * seven decimals (Stellar's precision).
+ */
+export function parseSwapPrefill(search: string): SwapPrefill {
+  const q = new URLSearchParams(search)
+  const code = (v: string | null) => {
+    const c = v?.trim().toUpperCase()
+    return c && /^[A-Z0-9]{1,12}$/.test(c) ? c : undefined
+  }
+  const amount = q.get('amount')?.trim()
+  return {
+    from: code(q.get('from')),
+    to: code(q.get('to')),
+    amount: amount && /^\d+(\.\d{1,7})?$/.test(amount) && Number(amount) > 0 ? amount : undefined,
+  }
+}

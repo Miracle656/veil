@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -56,7 +57,7 @@ export function useWalletConnect(): UseWalletConnect {
       .catch((initError: unknown) => {
         if (!mounted) return;
         setIsReady(false);
-        setError(initError instanceof Error ? initError.message : String(initError));
+        setError(errorMessage(initError));
       });
 
     const unsubscribeSessions = subscribeWalletConnectSessions(setSessions);

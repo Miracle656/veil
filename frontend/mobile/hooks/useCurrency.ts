@@ -46,15 +46,30 @@ export function useCurrency(): UseCurrency {
     () => `${getCurrency()}:${getRate(getCurrency())}:${areRatesLive() ? 1 : 0}`,
     [],
   );
-  useSyncExternalStore(subscribeToCurrency, snapshot, snapshot);
+
+  // The snapshot's VALUE is what the rest of this hook derives from, rather
+  // than calling getCurrency() again below.
+  //
+  // That distinction is load-bearing with the React Compiler enabled
+  // (app.config.ts `experiments.reactCompiler`). `getCurrency()` is a plain
+  // module read with no argument and no hook call in it, so the compiler is
+  // free to treat it as loop-invariant and cache the first result. The
+  // component then re-rendered on every currency change — useSyncExternalStore
+  // did its job — while still painting the memoised original value, so the new
+  // currency only appeared after a relaunch re-initialised the module.
+  //
+  // Reading through the subscribed snapshot makes the dependency explicit and
+  // is what `useTheme` already does.
+  const snapshotValue = useSyncExternalStore(subscribeToCurrency, snapshot, snapshot);
   const isHydrated = useSyncExternalStore(
     subscribeToCurrency,
     isCurrencyHydrated,
     isCurrencyHydrated,
   );
 
-  const currency = getCurrency();
-  const rate = getRate(currency);
+  const [snapshotCurrency, snapshotRate] = snapshotValue.split(':');
+  const currency = snapshotCurrency as CurrencyCode;
+  const rate = Number(snapshotRate);
 
   const select = useCallback((code: CurrencyCode) => {
     // A failed persist is not worth interrupting the user; the currency has
@@ -74,11 +89,12 @@ export function useCurrency(): UseCurrency {
       currency,
       meta: CURRENCIES[currency],
       rate,
-      ratesLive: areRatesLive(),
+      // Also from the snapshot, for the same reason as `currency` above.
+      ratesLive: snapshotValue.endsWith(':1'),
       isHydrated,
       select,
       format,
     }),
-    [currency, rate, isHydrated, select, format],
+    [currency, rate, snapshotValue, isHydrated, select, format],
   );
 }

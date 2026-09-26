@@ -12,57 +12,6 @@ import { Asset, Operation, TransactionBuilder, type Transaction } from '@stellar
  * Ported from the message handling in `frontend/wallet/app/agent/page.tsx`.
  */
 
-// ── Wire protocol ─────────────────────────────────────────────────────────────
-
-/** Frames the agent service sends (`packages/agent/src/server.ts`). */
-export type AgentServerEvent =
-  | { type: 'thinking' }
-  | { type: 'response'; message: string; pendingTxXdr?: string; pendingTxSummary?: string }
-  | { type: 'error'; message: string }
-  | { type: 'history_cleared' };
-
-/**
- * Decode a frame from the agent service.
- *
- * Returns null for anything unrecognised — a malformed or future frame is
- * ignored rather than rendered as a message the user might act on.
- */
-export function parseAgentServerEvent(raw: string): AgentServerEvent | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== 'object') return null;
-  const frame = parsed as Record<string, unknown>;
-
-  switch (frame['type']) {
-    case 'thinking':
-      return { type: 'thinking' };
-    case 'history_cleared':
-      return { type: 'history_cleared' };
-    case 'error':
-      return typeof frame['message'] === 'string'
-        ? { type: 'error', message: frame['message'] }
-        : null;
-    case 'response': {
-      if (typeof frame['message'] !== 'string') return null;
-      const event: AgentServerEvent = { type: 'response', message: frame['message'] };
-      if (typeof frame['pendingTxXdr'] === 'string' && frame['pendingTxXdr'].length > 0) {
-        event.pendingTxXdr = frame['pendingTxXdr'];
-        if (typeof frame['pendingTxSummary'] === 'string') {
-          event.pendingTxSummary = frame['pendingTxSummary'];
-        }
-      }
-      return event;
-    }
-    default:
-      return null;
-  }
-}
-
 // ── Message model ─────────────────────────────────────────────────────────────
 
 /** Where a proposed transaction has got to. */
@@ -72,6 +21,9 @@ export type ProposalStatus =
   | { state: 'submitted'; hash: string }
   | { state: 'declined' }
   | { state: 'failed'; reason: string };
+
+/** A swap the agent handed to the Swap screen. Codes as the Swap screen lists them. */
+export type SwapIntent = { from: string; to: string; amount?: string };
 
 /** What a transaction the agent proposed will actually do, decoded locally. */
 export type ProposalReview = {
@@ -90,6 +42,8 @@ export type AgentMessage =
   | { id: string; kind: 'user'; text: string }
   /** Prose from the agent. */
   | { id: string; kind: 'agent'; text: string }
+  /** Prose from the agent plus a swap for the Swap screen to quote and confirm. */
+  | { id: string; kind: 'swap'; text: string; intent: SwapIntent }
   /** A failure, from the service or from this app. */
   | { id: string; kind: 'error'; text: string }
   /** App-generated context, never attributed to the agent. */
@@ -234,6 +188,32 @@ export function isProposalForFeePayer(
   feePayerAddress: string | null
 ): boolean {
   return !!feePayerAddress && review.source === feePayerAddress;
+}
+
+/**
+ * Why a proposed transaction must not be signed, or null when it may be offered
+ * for approval. Shared by the mobile Agent tab and the web agent page, so the two
+ * cannot drift apart on what gets signed.
+ *
+ * Two rules, both fail-closed:
+ * - the source must be this wallet's own fee payer (see isProposalForFeePayer);
+ * - every operation must be one this app can describe. An operation it cannot
+ *   name — `setOptions`, `accountMerge`, anything new — is exactly the kind a
+ *   manipulated agent would slip in, and a user cannot meaningfully approve what
+ *   the screen cannot show them.
+ */
+export function proposalRefusal(
+  review: ProposalReview | null,
+  feePayerAddress: string | null
+): string | null {
+  if (!review) return 'This transaction could not be decoded, so it cannot be approved here.';
+  if (!isProposalForFeePayer(review, feePayerAddress)) {
+    return `This transaction is sourced from ${shortenAddress(review.source)}, which is not this wallet's fee payer. Nothing was signed.`;
+  }
+  if (review.hasUnknownOperation) {
+    return 'This transaction contains an operation this app cannot show you, so it will not be signed. Nothing was signed.';
+  }
+  return null;
 }
 
 /** Horizon buries the useful part of a failure in `extras.result_codes`. */

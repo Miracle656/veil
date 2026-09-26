@@ -7,3 +7,13 @@ matches:
     reason: Public testnet contract address (NEXT_PUBLIC_FACTORY_CONTRACT_ID)
     ignore_on:
       - path: .github/workflows/ci.yml
+  - name: Pinned SPP testnet contract IDs
+    match: '[CG][A-Z2-7]{55}'
+    reason: >-
+      Public testnet Soroban contract addresses pinned from
+      NethermindEth/stellar-private-payments deployments.json at commit
+      91ba67d659cb50a66ecba7ba42e27f8e686117f4 (V131 privacy config). They are
+      deployed contracts, not credentials, and cannot be rotated.
+    ignore_on:
+      - path: frontend/wallet/lib/privacy/**
+      - path: frontend/mobile/lib/privacy/**

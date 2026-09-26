@@ -62,6 +62,26 @@ async function scanWindow(
   return events;
 }
 
+
+/**
+ * The asset code carried in a SAC transfer's fourth topic.
+ *
+ * The Stellar Asset Contract emits "native" for XLM and "CODE:ISSUER" for an
+ * issued asset. Falls back to XLM when the topic is absent, which is what older
+ * events look like.
+ */
+function assetFromTopic(topic: unknown): string {
+  if (!topic) return 'XLM';
+  try {
+    const raw = String(scValToNative(topic as never));
+    if (!raw || raw === 'native') return 'XLM';
+    const code = raw.split(':')[0];
+    return code && code.length > 0 ? code : 'XLM';
+  } catch {
+    return 'XLM';
+  }
+}
+
 async function loadContractSacActivity(addresses: string[], limit: number): Promise<TxRecord[]> {
   const net = getNetwork();
   const key = `${net.name}|${[...addresses].sort().join(',')}`;
@@ -69,7 +89,6 @@ async function loadContractSacActivity(addresses: string[], limit: number): Prom
   try {
     const mine = new Set(addresses);
     const server = new SorobanRpc.Server(net.rpcUrl);
-    const sac = Asset.native().contractId(net.networkPassphrase);
     const latest = await server.getLatestLedger();
 
     const transferSym = xdr.ScVal.scvSymbol('transfer').toXDR('base64');
@@ -80,7 +99,12 @@ async function loadContractSacActivity(addresses: string[], limit: number): Prom
         [transferSym, '*', scv, '*'],
       ];
     });
-    const filters = [{ type: 'contract' as const, contractIds: [sac], topics }];
+    // No contractIds restriction. Pinning this to the native SAC meant the feed
+    // could only ever see XLM movements — a USDC transfer out of the smart
+    // wallet emitted its event on USDC's SAC and matched nothing, so a
+    // confirmed on-chain spend simply never appeared. Matching on topics alone
+    // catches every token, which is what the feed is supposed to show.
+    const filters = [{ type: 'contract' as const, topics }];
 
     const events: SorobanRpc.Api.EventResponse[] = [];
     const incremental = !!cached && cached.lastLedger > 0 && latest.sequence - cached.lastLedger < CHUNK;
@@ -124,7 +148,10 @@ async function loadContractSacActivity(addresses: string[], limit: number): Prom
           id: ev.id,
           type: sent ? 'sent' : 'received',
           amount: (Number(stroops) / 10_000_000).toLocaleString('en-US', { maximumFractionDigits: 4 }),
-          asset: 'XLM',
+          // The SAC puts the asset in the fourth topic ("native", or
+          // "CODE:ISSUER"), which is why the filters above reserve a slot for
+          // it. Hardcoding XLM here labelled every USDC movement as XLM.
+          asset: assetFromTopic(topic[3]),
           counterparty: sent ? to : from,
           timestamp: ev.ledgerClosedAt ? Math.floor(new Date(ev.ledgerClosedAt).getTime() / 1000) : 0,
           hash: ev.txHash,

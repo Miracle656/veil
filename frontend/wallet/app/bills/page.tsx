@@ -32,9 +32,9 @@ const SERVICES: Service[] = [
 ]
 
 const TONE_FG = {
-  gold: '#FDDA24',
-  teal: '#00A7B5',
-  lilac: '#B7ACE8',
+  gold: 'var(--gold)',
+  teal: 'var(--teal)',
+  lilac: 'var(--lilac)',
 } as const
 
 export default function BillsPage() {

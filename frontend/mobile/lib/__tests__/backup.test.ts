@@ -18,8 +18,10 @@ jest.mock('expo-crypto', () => ({
 import {
   BACKUP_FORMAT_VERSION,
   BackupError,
+  BackupTamperError,
   assertNoSecretMaterial,
   createBackup,
+  decryptBackup,
   deriveBackupId,
   encryptBackup,
   serializeBackup,
@@ -156,6 +158,25 @@ describe('encryptBackup', () => {
     const blob = serializeBackup(encryptBackup(metadata, PASSPHRASE, { iterations: TEST_ITERATIONS }));
     expect(blob).not.toContain(metadata.address);
     expect(blob).not.toContain(metadata.signers[0].publicKey);
+  });
+});
+
+describe('backward compatibility — version-1 envelopes', () => {
+  it('decrypts a version-1 envelope at 210,000 iterations', () => {
+    const metadata = makeMetadata();
+    // Encrypt at the old work factor and manually downgrade the version to
+    // simulate an envelope written before the PBKDF2 iteration bump.
+    const envelope = encryptBackup(metadata, PASSPHRASE, { iterations: 210_000 });
+    const v1Envelope = { ...envelope, version: 1 };
+
+    const restored = decryptBackup(v1Envelope, PASSPHRASE);
+    expect(restored).toEqual(metadata);
+  });
+
+  it('rejects versions other than 1 or the current format', () => {
+    const envelope = encryptBackup(makeMetadata(), PASSPHRASE, { iterations: TEST_ITERATIONS });
+    const brokenEnvelope = { ...envelope, version: 3 } as EncryptedBackup;
+    expect(() => decryptBackup(brokenEnvelope, PASSPHRASE)).toThrow(BackupError);
   });
 });
 

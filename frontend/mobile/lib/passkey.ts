@@ -35,6 +35,7 @@ import {
   type WebAuthnSignature,
 } from './walletConnect';
 import { isUserRejection } from './walletConnectHelpers';
+import { prfFromAssertion, prfFromError, type PrfEvaluation } from './prfOutcome';
 import { getPasskeyId, getPasskeyPublicKey, getSignerSecret } from './walletStore';
 import { base64UrlToUint8Array, derToRawSignature, hexToUint8Array, uint8ArrayToBase64Url } from './webauthn';
 
@@ -115,6 +116,37 @@ export function registerPasskeySigner(): () => void {
   return registerAuthEntrySigner(signer);
 }
 
+
+/**
+ * Whether the platform is telling us the credential does not exist here.
+ *
+ * This is not the same as "no passkey is registered": the credential id and its
+ * public key can be sitting in secure storage while the OS holds nothing that
+ * matches, because a passkey is bound to the relying party it was created
+ * against. Veil's RP moved to app.useveilapp.xyz on 2026-08-22, so wallets
+ * created before that — in practice the older testnet ones — still have stored
+ * credentials that no assertion can ever satisfy (see lib/relyingParty.ts).
+ *
+ * Worth naming precisely, because the raw platform error reads as "couldn't
+ * find a passkey", which sounds like nothing is registered and sends you
+ * looking in the wrong place.
+ */
+function isCredentialNotFound(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+  return (
+    message.includes('no credentials') ||
+    message.includes('not found') ||
+    message.includes('no passkey') ||
+    message.includes('nomatchingcredential') ||
+    message.includes('no matching credential')
+  );
+}
+
+/** The message shown when a stored credential no longer resolves on-device. */
+export const CREDENTIAL_ORPHANED_MESSAGE =
+  'This wallet’s passkey was created against an earlier Veil domain, so this device can no longer use it. ' +
+  'Create a new wallet on this network — your wallets on other networks are unaffected.';
+
 /**
  * Gate a sensitive action behind the device passkey.
  *
@@ -147,6 +179,7 @@ export async function requirePasskey(): Promise<void> {
     if (!assertion) throw new Error('Passkey cancelled. Please try again.');
   } catch (error: unknown) {
     if (isUserRejection(error)) throw new Error('Passkey cancelled. Please try again.');
+    if (isCredentialNotFound(error)) throw new Error(CREDENTIAL_ORPHANED_MESSAGE);
     throw error;
   }
 }
@@ -168,33 +201,61 @@ function parsePrfOutput(assertion: unknown): Uint8Array | null {
   return null;
 }
 
-export function nativePrfEvaluator(credentialId: string): (salt: Uint8Array) => Promise<Uint8Array | null> {
-  return async (salt: Uint8Array) => {
-    try {
-      const assertion = await passkeys().get({
-        challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
-        rpId: getRelyingPartyId(),
-        allowCredentials: [{ id: credentialId, type: 'public-key' }],
-        userVerification: 'required',
-        timeout: 60_000,
-        extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
-      });
-      return parsePrfOutput(assertion);
-    } catch {
-      return null;
-    }
-  };
+/**
+ * Evaluate PRF for `salt` on one credential, and say why when there is no
+ * output: an unsupported password manager, a closed prompt, or an error.
+ */
+export async function evaluatePrf(credentialId: string, salt: Uint8Array): Promise<PrfEvaluation> {
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      allowCredentials: [{ id: credentialId, type: 'public-key' }],
+      userVerification: 'required',
+      timeout: 60_000,
+      extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
+    });
+    return prfFromAssertion(!!assertion, assertion ? parsePrfOutput(assertion) : null);
+  } catch (error: unknown) {
+    return prfFromError(error);
+  }
 }
+
+export function nativePrfEvaluator(credentialId: string): (salt: Uint8Array) => Promise<Uint8Array | null> {
+  return async (salt: Uint8Array) => (await evaluatePrf(credentialId, salt)).output;
+}
+
+/**
+ * A discovered assertion: one pic-and-tap passkey gesture, plus the pieces of
+ * the resulting WebAuthn assertion that let a caller verify the credential's
+ * public key against a candidate set (the assertion itself never reveals it)
+ * and the PRF output for the requested salt, which is null when the credential
+ * or its manager has no PRF.
+ */
+export type DiscoveredPasskey = {
+  /** The picked credential's id (base64url). */
+  credentialId: string;
+  /** Raw P-256 ECDSA signature (64 bytes, r‖s, low-S). */
+  signature: Uint8Array;
+  /** The authenticator's signed statement (RP hash at bytes 0..31). */
+  authData: Uint8Array;
+  /** The caller's challenge, origin and type, as the authenticator saw them. */
+  clientDataJSON: Uint8Array;
+  /** PRF output for the requested salt, or null when unavailable. */
+  prf: Uint8Array | null;
+};
 
 /**
  * Discoverable assertion + PRF in ONE user gesture: no allowCredentials, so the
  * platform sheet lists every passkey for the relying party and the user picks.
- * Returns the chosen credential id and the PRF output for `salt` — the two
- * facts "sign in with passkey" needs to re-derive the wallet on a fresh device.
+ * Returns the chosen credential id, the assertion pieces (signature / authData /
+ * clientDataJSON), and the PRF output for `salt` — the facts "sign in with
+ * passkey" needs to re-derive the wallet on a fresh device. PRF stays optional:
+ * a manager without it returns `prf: null`, it never makes the gesture fail.
  */
 export async function discoverWithPrf(
   salt: Uint8Array,
-): Promise<{ credentialId: string; prf: Uint8Array | null } | null> {
+): Promise<DiscoveredPasskey | null> {
   try {
     const assertion = await passkeys().get({
       challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
@@ -207,7 +268,13 @@ export async function discoverWithPrf(
     const credentialId = (assertion as { id?: string; rawId?: string }).id
       ?? (assertion as { id?: string; rawId?: string }).rawId;
     if (!credentialId) return null;
-    return { credentialId, prf: parsePrfOutput(assertion) };
+    return {
+      credentialId,
+      signature: derToRawSignature(base64UrlToUint8Array(assertion.response.signature)),
+      authData: base64UrlToUint8Array(assertion.response.authenticatorData),
+      clientDataJSON: base64UrlToUint8Array(assertion.response.clientDataJSON),
+      prf: parsePrfOutput(assertion),
+    };
   } catch (error: unknown) {
     if (isUserRejection(error)) return null;
     throw error;

@@ -13,7 +13,8 @@
  * no signing infra ported yet, so screens pass a stub today.
  */
 
-import { Networks, Transaction, TransactionBuilder, type Keypair } from '@stellar/stellar-sdk';
+import { Transaction, TransactionBuilder, type Keypair } from '@stellar/stellar-sdk';
+import { getNetwork } from './network';
 
 // ── Anchor config ────────────────────────────────────────────────────────────
 
@@ -47,7 +48,10 @@ export async function discoverAnchorInfo(anchorDomain: string): Promise<AnchorIn
   }
 
   const networkMatch = text.match(/NETWORK_PASSPHRASE\s*=\s*"([^"]+)"/);
-  const networkPassphrase = networkMatch ? networkMatch[1] : Networks.TESTNET;
+  const networkPassphrase = networkMatch ? networkMatch[1] : getNetwork().networkPassphrase;
+  if (!networkPassphrase) {
+    throw new Error(`No network passphrase is configured for ${getNetwork().displayName}.`);
+  }
 
   return {
     transferServerUrl: transferMatch[1].replace(/\/$/, ''),

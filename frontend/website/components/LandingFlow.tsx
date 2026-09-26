@@ -1,4 +1,5 @@
 import type { Messages } from '@/lib/i18n'
+import { useRegionalCurrency, type RegionalAmounts } from '@/lib/regionalCurrency'
 
 /**
  * "Everything money, in one place" — three cards on a ruled field.
@@ -33,20 +34,26 @@ function Card({ children }: { children: React.ReactNode }) {
 }
 
 /** 1 — a balance that quietly earns. */
-function BalanceCard() {
+function BalanceCard({ amounts }: { amounts: RegionalAmounts }) {
   // Heights are fixed, not random: a chart that reshuffles on every render
   // reads as decoration, and this one is standing in for real yield accrual.
   const bars = [34, 46, 40, 58, 82, 52, 66]
+
+  const balanceDot = amounts.balance.lastIndexOf('.')
+  const balanceMain = balanceDot >= 0 ? amounts.balance.slice(0, balanceDot) : amounts.balance
+  const balanceDec = balanceDot >= 0 ? amounts.balance.slice(balanceDot) : null
+
   return (
     <Card>
       <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-near-black/45">
         Total balance
       </div>
       <div className="font-lora italic font-normal text-near-black text-[32px] sm:text-[40px] leading-none mt-2">
-        ₦642,384<span className="text-[24px] text-near-black/45">.10</span>
+        {balanceMain}
+        {balanceDec && <span className="text-[24px] text-near-black/45">{balanceDec}</span>}
       </div>
       <div className="inline-flex items-center mt-3 rounded-pill bg-teal/12 border border-teal/25 px-3 py-[5px]">
-        <span className="font-mono text-[11px] text-teal">+₦109.32 today · earning</span>
+        <span className="font-mono text-[11px] text-teal">+{amounts.dailyYield} today · earning</span>
       </div>
       <div className="flex items-end gap-[7px] h-[62px] mt-6">
         {bars.map((h, i) => (
@@ -62,7 +69,7 @@ function BalanceCard() {
 }
 
 /** 2 — the passkey moment. */
-function SendCard() {
+function SendCard({ amounts }: { amounts: RegionalAmounts }) {
   return (
     <Card>
       <div className="flex items-center justify-between gap-3 bg-near-black/[0.04] border border-near-black/[0.07] rounded-[14px] p-[14px]">
@@ -76,7 +83,7 @@ function SendCard() {
           </span>
         </span>
         <span className="font-inter font-semibold text-near-black text-[16px] whitespace-nowrap">
-          ₦25,000
+          {amounts.transfer}
         </span>
       </div>
 
@@ -130,7 +137,12 @@ function SwapCard() {
 
 export function FlowShowcase({ t }: { t: Messages }) {
   const copy = t.flow
-  const cards = [BalanceCard, SendCard, SwapCard]
+  const amounts = useRegionalCurrency()
+  const cards = [
+    () => <BalanceCard amounts={amounts} />,
+    () => <SendCard amounts={amounts} />,
+    SwapCard,
+  ]
 
   return (
     <section id="how-sending-works" className="relative overflow-hidden bg-warm-grey py-16 sm:py-20 lg:py-24">
