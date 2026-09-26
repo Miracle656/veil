@@ -9,6 +9,8 @@ import { QRCodeCanvas } from 'qrcode.react'
 import { buildSep7PayUri } from '@/lib/sep7'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
+import { getUsdcIssuer } from '@/lib/network'
+
 // ── Shared address card
 
 interface AddressCardProps {
@@ -16,15 +18,28 @@ interface AddressCardProps {
   description: string
   address: string
   isPrimary?: boolean
+  assetCode?: string
+  assetIssuer?: string
+  amount?: string
 }
 
-function AddressCard({ label, description, address, isPrimary }: AddressCardProps) {
+function AddressCard({ label, description, address, isPrimary, assetCode, assetIssuer, amount }: AddressCardProps) {
   const [copied, setCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const qrRef = useRef<HTMLDivElement>(null)
 
+  const isNative = !assetCode || assetCode.toUpperCase() === 'XLM'
+  const payUri = buildSep7PayUri({
+    destination: address,
+    amount: amount || undefined,
+    assetCode: !isNative ? assetCode : undefined,
+    assetIssuer: !isNative ? assetIssuer : undefined,
+  })
+
+  const shareText = (amount || assetCode) ? payUri : address
+
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(address)
+    await navigator.clipboard.writeText(shareText)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -54,11 +69,11 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
   const handleShare = async () => {
     if (navigator.share) {
       try {
-        await navigator.share({ title: 'My Veil Wallet Address', text: address })
+        await navigator.share({ title: 'My Veil Payment Request', text: shareText })
       } catch { /* user dismissed */ }
       return
     }
-    await navigator.clipboard.writeText(address)
+    await navigator.clipboard.writeText(shareText)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -99,7 +114,7 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
           }}
         >
           <QRCodeCanvas
-            value={buildSep7PayUri({ destination: address })}
+            value={payUri}
             size={isPrimary ? 200 : 160}
 
             bgColor="#ffffff"
@@ -110,7 +125,7 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
         </div>
       </div>
 
-      {/* Address text */}
+      {/* Address / Payment Request text */}
       <div className="card" style={{ marginBottom: '1rem', textAlign: 'center', padding: '0.875rem 1rem' }}>
         <p style={{
           fontFamily: 'Inconsolata, monospace',
@@ -119,8 +134,13 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
           wordBreak: 'break-all',
           lineHeight: 1.6,
         }}>
-          {address}
+          {shareText}
         </p>
+        {assetCode && assetIssuer && (
+          <p style={{ fontSize: '0.75rem', color: 'var(--gold)', marginTop: '0.375rem', fontFamily: 'Inconsolata, monospace' }}>
+            Asset: {assetCode} · Issuer: {assetIssuer.slice(0, 6)}...{assetIssuer.slice(-6)}
+          </p>
+        )}
       </div>
 
       {/* Action buttons */}
@@ -143,7 +163,7 @@ function AddressCard({ label, description, address, isPrimary }: AddressCardProp
                 <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="2"/>
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" strokeWidth="2"/>
               </svg>
-              Copy
+              Copy Link
             </>
           )}
         </button>
@@ -190,6 +210,16 @@ export default function ReceivePage() {
   const router = useRouter()
   const [contractAddress, setContractAddress] = useState<string | null>(null)
   const [feePayerAddress, setFeePayerAddress] = useState<string | null>(null)
+  const [selectedAssetCode, setSelectedAssetCode] = useState<string>('XLM')
+  const [requestedAmount, setRequestedAmount] = useState<string>('')
+
+  // Genuine USDT0 issuer & network USDC issuer
+  const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
+  const getSelectedIssuer = (code: string) => {
+    if (code === 'USDT0') return USDT0_ISSUER
+    if (code === 'USDC') return getUsdcIssuer()
+    return undefined
+  }
 
   // Real incoming transfers, newest first — the same feed the dashboard shows.
   const deposits = useActivityFeed().filter((t) => t.type === 'received').slice(0, 4)
@@ -244,6 +274,35 @@ export default function ReceivePage() {
           </p>
         </div>
 
+        {/* Asset Request Controls */}
+        <div className="card" style={{ marginBottom: '2rem' }}>
+          <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+            REQUEST ASSET &amp; AMOUNT (OPTIONAL)
+          </label>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <select
+              value={selectedAssetCode}
+              onChange={e => setSelectedAssetCode(e.target.value)}
+              className="input-field"
+              style={{ flex: 1, minWidth: 140, fontFamily: 'Inconsolata, monospace', color: 'var(--off-white)', background: 'var(--surface)' }}
+            >
+              <option value="XLM">XLM (Native)</option>
+              <option value="USDC">USDC</option>
+              <option value="USDT0">USDT0</option>
+            </select>
+            <input
+              type="number"
+              placeholder="Amount (optional)"
+              value={requestedAmount}
+              onChange={e => setRequestedAmount(e.target.value)}
+              className="input-field mono"
+              style={{ flex: 1, minWidth: 140 }}
+              min="0"
+              step="any"
+            />
+          </div>
+        </div>
+
         {!ready ? (
           <div className="spinner spinner-light" style={{ width: '2rem', height: '2rem', margin: '4rem auto' }} />
         ) : (
@@ -256,6 +315,9 @@ export default function ReceivePage() {
                 description="Use this address to receive XLM from exchanges, classic wallets, and most apps. Works with Coinbase, Lobstr, and any Stellar wallet."
                 address={feePayerAddress}
                 isPrimary
+                assetCode={selectedAssetCode}
+                assetIssuer={getSelectedIssuer(selectedAssetCode)}
+                amount={requestedAmount}
               />
             ) : (
               <div style={{
@@ -278,6 +340,9 @@ export default function ReceivePage() {
                   label="CONTRACT ADDRESS (C…) — SOROBAN / VEIL WALLETS ONLY"
                   description="Use this address only when sending from another Veil wallet or a Soroban-compatible app. Classic wallets cannot send to C… addresses."
                   address={contractAddress}
+                  assetCode={selectedAssetCode}
+                  assetIssuer={getSelectedIssuer(selectedAssetCode)}
+                  amount={requestedAmount}
                 />
               )}
 

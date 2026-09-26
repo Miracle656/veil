@@ -21,7 +21,9 @@ import {
 } from '../paymentRequest'
 
 const DEST = 'GCSWM5I2FRYFIDSVJDGLWDH4TMQZY6IVT4JDF2SCFW6PPJ56TSBH23NO'
-const ISSUER = 'GD2VUFNSFXBAVZEZIU6VRPFU2KMSU4VQKP65SCE4TR5C2MJPLJ6VEAIM'
+const ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+const USDT0_GENUINE_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
+const USDT0_IMPOSTOR_ISSUER = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
 
 describe('createPaymentRequest', () => {
   it('produces a SEP-7 URI and a matching QR payload', () => {
@@ -62,6 +64,19 @@ describe('QR round-trip → pre-filled send', () => {
     })
   })
 
+  it('round-trips a USDT0 payment request with genuine issuer carried end to end', () => {
+    const { qrValue } = createPaymentRequest({
+      destination: DEST,
+      amount: '250',
+      assetCode: 'USDT0',
+      assetIssuer: USDT0_GENUINE_ISSUER,
+    })
+
+    const prefilled = parseScannedValue(qrValue)
+    expect(prefilled.assetCode).toBe('USDT0')
+    expect(prefilled.assetIssuer).toBe(USDT0_GENUINE_ISSUER)
+  })
+
   it('round-trips a native XLM request with no asset fields', () => {
     const { uri } = createPaymentRequest({ destination: DEST, amount: '1' })
     const prefilled = parsePaymentLink(uri)
@@ -76,7 +91,7 @@ describe('QR round-trip → pre-filled send', () => {
   })
 })
 
-describe('hostile / malformed inputs are rejected safely', () => {
+describe('hostile / malformed / unregistered asset inputs are rejected safely (#791)', () => {
   it.each([
     ['wrong scheme', 'https://evil.example/pay?destination=' + DEST],
     ['javascript callback', `web+stellar:pay?destination=${DEST}&callback=url%3Ajavascript%3Aalert(1)`],
@@ -87,8 +102,20 @@ describe('hostile / malformed inputs are rejected safely', () => {
     expect(() => parsePaymentLink(input)).toThrow(Sep7Error)
   })
 
-  it('tryParsePaymentLink returns null instead of throwing on bad input', () => {
+  it('refuses a link with asset=USDT0 and no issuer', () => {
+    const link = `web+stellar:pay?destination=${DEST}&asset_code=USDT0`
+    expect(() => parsePaymentLink(link)).toThrow(/asset_issuer is required for a non-native asset/)
+  })
+
+  it('refuses a link with an unregistered issuer and names it', () => {
+    const link = `web+stellar:pay?destination=${DEST}&asset_code=USDT0&asset_issuer=${USDT0_IMPOSTOR_ISSUER}`
+    expect(() => parsePaymentLink(link)).toThrow(`Unregistered asset issuer: "${USDT0_IMPOSTOR_ISSUER}"`)
+  })
+
+  it('tryParsePaymentLink returns null instead of throwing on bad or unregistered input', () => {
     expect(tryParsePaymentLink('not a link')).toBeNull()
+    expect(tryParsePaymentLink(`web+stellar:pay?destination=${DEST}&asset_code=USDT0`)).toBeNull()
+    expect(tryParsePaymentLink(`web+stellar:pay?destination=${DEST}&asset_code=USDT0&asset_issuer=${USDT0_IMPOSTOR_ISSUER}`)).toBeNull()
     expect(tryParsePaymentLink(`web+stellar:pay?destination=${DEST}`)).toEqual({ destination: DEST })
   })
 })

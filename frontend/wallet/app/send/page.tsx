@@ -21,6 +21,8 @@ import { parseQrValue } from '@/lib/sep7'
 import { getNativeAssetContractId, getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 
+import { isRegisteredIssuer } from '@/lib/sep7'
+
 const network = getNetwork()
 
 type Step = 'form' | 'confirm' | 'signing' | 'done' | 'error'
@@ -103,18 +105,12 @@ export default function SendPage() {
   }, [router])
 
   // ── QR image upload ─────────────────────────────────────────────────────────
-  // Reads an image file, draws it to an offscreen canvas, and passes the
-  // ImageData to BarcodeDetector. Falls back to a clear error if the browser
-  // doesn't support BarcodeDetector or no QR is found in the image.
   const handleImageFile = async (file: File) => {
     setImgError(null)
     setImgDecoding(true)
 
     try {
-      // Decode image into a bitmap
       const bitmap = await createImageBitmap(file)
-
-      // Draw onto an offscreen canvas so BarcodeDetector can read it
       const canvas = document.createElement('canvas')
       canvas.width  = bitmap.width
       canvas.height = bitmap.height
@@ -140,19 +136,55 @@ export default function SendPage() {
       }
 
       const value = codes[0].rawValue.trim()
-      const isAddress = (value.startsWith('G') || value.startsWith('C')) && value.length === 56
-      if (!isAddress) {
-        setImgError(`QR decoded "${value.slice(0, 20)}…" — doesn't look like a Stellar address.`)
+      const parsed = parseQrValue(value)
+      if (!parsed) {
+        setImgError('Invalid QR payload or payment request URI.')
         return
       }
 
-      setRecipient(value)
+      let assetCode: string | undefined
+      let assetIssuer: string | undefined
+
+      if ('destination' in parsed && Object.keys(parsed).length === 1) {
+        setRecipient(parsed.destination)
+      } else {
+        const sep7 = parsed as import('@/lib/sep7').Sep7Parsed
+        if (sep7.destination) setRecipient(sep7.destination)
+        if (sep7.amount) setAmount(sep7.amount)
+        if (sep7.memo) setMemo(sep7.memo)
+        assetCode = sep7.assetCode
+        assetIssuer = sep7.assetIssuer
+      }
+
+      if (assetCode && assetCode.toUpperCase() !== 'XLM') {
+        if (!assetIssuer) {
+          setImgError(`Asset ${assetCode} payment request is missing asset_issuer`)
+          return
+        }
+        if (!isRegisteredIssuer(assetCode, assetIssuer)) {
+          setImgError(`Unregistered asset issuer: "${assetIssuer}"`)
+          return
+        }
+        const matching = assets.find(a => a.code === assetCode && a.issuer === assetIssuer)
+        if (matching) {
+          setSelectedAsset(matching)
+        } else {
+          const newAsset: WalletAsset = {
+            code: assetCode,
+            issuer: assetIssuer,
+            contractId: new Asset(assetCode, assetIssuer).contractId(network.networkPassphrase),
+            balance: '0',
+          }
+          setAssets(prev => [...prev, newAsset])
+          setSelectedAsset(newAsset)
+        }
+      }
+
       setImgError(null)
     } catch {
       setImgError('Could not read the image. Please try a different file.')
     } finally {
       setImgDecoding(false)
-      // Reset file input so the same file can be re-selected if needed
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -201,13 +233,16 @@ export default function SendPage() {
 
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
+        const sendAsset = selectedAsset?.issuer
+          ? new Asset(selectedAsset.code, selectedAsset.issuer)
+          : Asset.native()
         const tx = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
           .addOperation(Operation.payment({
             destination: recipient,
-            asset: Asset.native(),
+            asset: sendAsset,
             amount,
           }))
           .setTimeout(30)
@@ -218,7 +253,8 @@ export default function SendPage() {
       } else {
         const rpcServer     = new SorobanRpc.Server(network.rpcUrl)
         const feePayerAcct  = await rpcServer.getAccount(feePayerKp.publicKey())
-        const sacContract   = new Contract(getNativeAssetContractId())
+        const sacContractId = selectedAsset?.contractId || getNativeAssetContractId()
+        const sacContract   = new Contract(sacContractId)
         const amountStroops = BigInt(Math.round(parseFloat(amount) * 10_000_000))
 
         const tx = new TransactionBuilder(feePayerAcct, {
@@ -303,16 +339,24 @@ export default function SendPage() {
                   ASSET
                 </label>
                 <select
-                  value={selectedAsset?.code ?? ''}
-                  onChange={e => setSelectedAsset(assets.find(a => a.code === e.target.value) ?? null)}
+                  value={selectedAsset ? (selectedAsset.issuer ? `${selectedAsset.code}:${selectedAsset.issuer}` : selectedAsset.code) : ''}
+                  onChange={e => {
+                    const val = e.target.value
+                    const found = assets.find(a => (a.issuer ? `${a.code}:${a.issuer}` : a.code) === val)
+                    setSelectedAsset(found ?? null)
+                  }}
                   className="input-field"
                   style={{ fontFamily: 'Inconsolata, monospace', color: 'var(--off-white)', background: 'var(--surface)' }}
                 >
-                  {assets.map(a => (
-                    <option key={`${a.code}-${a.issuer ?? 'native'}`} value={a.code}>
-                      {a.code}
-                    </option>
-                  ))}
+                  {assets.map(a => {
+                    const key = a.issuer ? `${a.code}:${a.issuer}` : a.code
+                    const label = a.issuer ? `${a.code} (${a.issuer.slice(0, 6)}...${a.issuer.slice(-6)})` : `${a.code} (Native)`
+                    return (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    )
+                  })}
                 </select>
               </div>
             )}
@@ -428,10 +472,6 @@ export default function SendPage() {
                   <span className="vw-amountbal">
                     {selectedAsset ? `Balance ${parseFloat(selectedAsset.balance).toFixed(2)} ${selectedAsset.code}` : ''}
                   </span>
-                  {/* Percentage chips rather than the design's fixed naira amounts:
-                      the balances here are crypto, so a "₦5,000" chip would be
-                      meaningless. 100% is deliberately omitted for XLM — the base
-                      reserve means the whole balance is never actually sendable. */}
                   <span className="vw-chips">
                     {[0.25, 0.5, 0.75].map((f) => (
                       <button
@@ -492,8 +532,6 @@ export default function SendPage() {
                 </div>
                 <div className="vw-sumrow">
                   <span>Network fee</span>
-                  {/* Truthful: the fee leaves the G… fee-payer, not the amount
-                      being sent, so the recipient gets the full amount. */}
                   <strong style={{ color: 'var(--teal)' }}>Paid by fee-payer</strong>
                 </div>
                 <div className="vw-sumrow vw-sumrow--last">
@@ -537,6 +575,9 @@ export default function SendPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <Row label="To"      value={`${recipient.slice(0, 8)}...${recipient.slice(-8)}`} mono />
                 <Row label="Amount"  value={`${amount} ${selectedAsset?.code ?? 'XLM'}`} />
+                {selectedAsset?.issuer && (
+                  <Row label="Issuer" value={selectedAsset.issuer} mono />
+                )}
                 {memo && <Row label="Memo" value={memo} />}
                 <Row label="Network" value="Stellar Testnet" />
                 <Row label="Auth"    value="Passkey (WebAuthn)" />
@@ -619,19 +660,43 @@ export default function SendPage() {
             const parsed = parseQrValue(value)
             if (!parsed) return
 
-            if ('destination' in parsed) {
-              if (parsed.destination) setRecipient(parsed.destination)
-              if ('amount' in parsed && parsed.amount) setAmount(parsed.amount)
-            } else {
-              // Sep7Parsed
-              if (parsed.destination) setRecipient(parsed.destination)
-              if (parsed.amount) setAmount(parsed.amount)
+            let assetCode: string | undefined
+            let assetIssuer: string | undefined
 
-              // If asset info is present, we could later auto-select asset.
+            if ('destination' in parsed && Object.keys(parsed).length === 1) {
+              if (parsed.destination) setRecipient(parsed.destination)
+            } else {
+              const sep7 = parsed as import('@/lib/sep7').Sep7Parsed
+              if (sep7.destination) setRecipient(sep7.destination)
+              if (sep7.amount) setAmount(sep7.amount)
+              if (sep7.memo) setMemo(sep7.memo)
+              assetCode = sep7.assetCode
+              assetIssuer = sep7.assetIssuer
             }
 
-            // If SEP-7 URI provided a memo, we can also fill it.
-            if (typeof parsed !== 'string' && 'memo' in parsed && parsed.memo) setMemo(parsed.memo)
+            if (assetCode && assetCode.toUpperCase() !== 'XLM') {
+              if (!assetIssuer) {
+                setImgError(`Asset ${assetCode} payment request is missing asset_issuer`)
+                return
+              }
+              if (!isRegisteredIssuer(assetCode, assetIssuer)) {
+                setImgError(`Unregistered asset issuer: "${assetIssuer}"`)
+                return
+              }
+              const matching = assets.find(a => a.code === assetCode && a.issuer === assetIssuer)
+              if (matching) {
+                setSelectedAsset(matching)
+              } else {
+                const newAsset: WalletAsset = {
+                  code: assetCode,
+                  issuer: assetIssuer,
+                  contractId: new Asset(assetCode, assetIssuer).contractId(network.networkPassphrase),
+                  balance: '0',
+                }
+                setAssets(prev => [...prev, newAsset])
+                setSelectedAsset(newAsset)
+              }
+            }
 
             setShowScanner(false)
           }}
