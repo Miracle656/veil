@@ -5,10 +5,10 @@ import { FRIENDBOT_URL, STORAGE } from './network'
  * Minimal Veil "invisible wallet" helpers for the example.
  *
  * The passkey is the user-facing identity: every payment is gated behind a
- * WebAuthn assertion (`navigator.credentials.get`). The actual Stellar payment
- * is signed by a fee-payer keypair that Veil keeps for the user — the same
- * pattern the other example apps use (`veil_fee_payer_secret`). This keeps the
- * x402 payment flow invisible: one biometric tap, no seed phrases.
+ * WebAuthn assertion (`navigator.credentials.get`). The assertion challenge is
+ * derived from the exact x402 payment requirements, so a confirmation for one
+ * amount or recipient cannot be replayed for another. The actual Stellar
+ * payment is signed by a fee-payer keypair that Veil keeps for the user.
  */
 
 const RP_NAME = 'Veil x402 Demo'
@@ -68,17 +68,36 @@ export async function createWallet(): Promise<VeilWallet> {
  * Prompts for a passkey assertion — the "confirm with Veil" step shown to the
  * user before money moves. Throws if the user cancels.
  */
-export async function confirmWithPasskey(keyId: string): Promise<void> {
+export async function confirmWithPasskey(keyId: string, paymentBinding: string): Promise<string> {
   const credId = base64UrlDecode(keyId)
+  const challenge = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(paymentBinding)),
+  )
   const assertion = await navigator.credentials.get({
     publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      challenge,
       allowCredentials: [{ id: credId as BufferSource, type: 'public-key' }],
       userVerification: 'required',
       timeout: 60_000,
     },
   })
   if (!assertion) throw new Error('Passkey verification was cancelled.')
+
+  const credential = assertion as PublicKeyCredential
+  const response = credential.response as AuthenticatorAssertionResponse
+  return JSON.stringify({
+    id: credential.id,
+    rawId: base64UrlEncode(new Uint8Array(credential.rawId)),
+    type: credential.type,
+    response: {
+      authenticatorData: base64UrlEncode(new Uint8Array(response.authenticatorData)),
+      clientDataJSON: base64UrlEncode(new Uint8Array(response.clientDataJSON)),
+      signature: base64UrlEncode(new Uint8Array(response.signature)),
+      userHandle: response.userHandle
+        ? base64UrlEncode(new Uint8Array(response.userHandle))
+        : null,
+    },
+  })
 }
 
 async function fundWithFriendbot(address: string): Promise<void> {

@@ -26,6 +26,10 @@ pub struct SessionKeyAcl {
     pub target_contract: Address,
     /// The only function selector this key may invoke.
     pub selector: Symbol,
+    /// Optional recipient constraint. When set, the invocation must expose the
+    /// same recipient as its second argument (the Soroban token `transfer`
+    /// shape is `(from, to, amount)`).
+    pub payee: Option<Address>,
     /// Total token budget across the lifetime of this session key (raw units).
     ///
     /// Authorisation is rejected once `spent + amount > amount_cap`.
@@ -101,6 +105,7 @@ pub fn revoke(env: &Env, key_id: &BytesN<32>) {
 ///   - the key exists and has not expired,
 ///   - `target` matches `acl.target_contract`,
 ///   - `selector` matches `acl.selector`, and
+///   - when configured, `payee` matches the ACL recipient constraint, and
 ///   - `acl.spent + amount <= acl.amount_cap` (cumulative budget not exceeded).
 ///
 /// On success the updated ACL (with incremented `spent`) is written back to
@@ -111,6 +116,7 @@ pub fn enforce(
     key_id: &BytesN<32>,
     target: &Address,
     selector: &Symbol,
+    payee: Option<&Address>,
     amount: i128,
 ) -> Result<(), WalletError> {
     let mut acl = get_acl(env, key_id).ok_or(WalletError::SignerNotAuthorized)?;
@@ -129,6 +135,12 @@ pub fn enforce(
 
     if *selector != acl.selector {
         return Err(WalletError::SessionKeyAclViolation);
+    }
+
+    if let Some(expected_payee) = &acl.payee {
+        if payee != Some(expected_payee) {
+            return Err(WalletError::SessionKeyAclViolation);
+        }
     }
 
     // Cumulative budget check: reject if this call would push total spend over cap.
@@ -175,6 +187,7 @@ mod tests {
             pubkey: mock_pubkey(env, 0xAA),
             target_contract: target,
             selector: sel,
+            payee: None,
             amount_cap: 1_000_000,
             spent: 0,
             expiry: env.ledger().timestamp() + 10_000,
@@ -194,10 +207,10 @@ mod tests {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
             assert_eq!(
-                enforce(&env, &key_id, &other, &sel, 100),
+                enforce(&env, &key_id, &other, &sel, None, 100),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, None, 100).is_ok());
         });
     }
 
@@ -214,10 +227,41 @@ mod tests {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &other_sel, 100),
+                enforce(&env, &key_id, &target, &other_sel, None, 100),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, None, 100).is_ok());
+        });
+    }
+
+    #[test]
+    fn acl_payee_is_optional_but_strict_when_configured() {
+        let (env, contract_id, target) = setup();
+        let key_id = mock_key_id(&env, 0x09);
+        let sel = symbol_short!("transfer");
+        let allowed = Address::generate(&env);
+        let other = Address::generate(&env);
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), SessionKeyAcl {
+                pubkey: mock_pubkey(&env, 0xAB),
+                target_contract: target.clone(),
+                selector: sel.clone(),
+                payee: Some(allowed.clone()),
+                amount_cap: 1_000,
+                spent: 0,
+                expiry: env.ledger().timestamp() + 10_000,
+            });
+
+            assert!(enforce(&env, &key_id, &target, &sel, Some(&allowed), 100).is_ok());
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, Some(&other), 100),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, None, 100),
+                Err(WalletError::SessionKeyAclViolation)
+            );
         });
     }
 
@@ -234,16 +278,17 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xBB),
                 target_contract: target.clone(),
                 selector: sel.clone(),
+                payee: None,
                 amount_cap: 500,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
             });
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 501),
+                enforce(&env, &key_id, &target, &sel, None, 501),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, 500).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, None, 500).is_ok());
         });
     }
 
@@ -260,28 +305,29 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xCC),
                 target_contract: target.clone(),
                 selector: sel.clone(),
+                payee: None,
                 amount_cap: 1_000,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
             });
 
             // First call: spend 600
-            assert!(enforce(&env, &key_id, &target, &sel, 600).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, None, 600).is_ok());
             // spent is now 600; cap is 1_000 → 400 remaining
 
             // Second call: 401 exceeds remaining budget even though 401 < cap
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 401),
+                enforce(&env, &key_id, &target, &sel, None, 401),
                 Err(WalletError::SessionKeyAclViolation)
             );
 
             // Second call: exactly 400 is still allowed
-            assert!(enforce(&env, &key_id, &target, &sel, 400).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, None, 400).is_ok());
             // spent is now 1_000 = cap
 
             // Third call: budget exhausted, even amount=1 is rejected
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 1),
+                enforce(&env, &key_id, &target, &sel, None, 1),
                 Err(WalletError::SessionKeyAclViolation)
             );
         });
@@ -298,20 +344,21 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xDD),
                 target_contract: target.clone(),
                 selector: sel.clone(),
+                payee: None,
                 amount_cap: 300,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
             });
 
-            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 100
-            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 200
-            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 300
+            enforce(&env, &key_id, &target, &sel, None, 100).unwrap(); // spent = 100
+            enforce(&env, &key_id, &target, &sel, None, 100).unwrap(); // spent = 200
+            enforce(&env, &key_id, &target, &sel, None, 100).unwrap(); // spent = 300
 
             // Now fully exhausted
             let acl = get_acl(&env, &key_id).unwrap();
             assert_eq!(acl.spent, 300);
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 1),
+                enforce(&env, &key_id, &target, &sel, None, 1),
                 Err(WalletError::SessionKeyAclViolation)
             );
         });
@@ -330,6 +377,7 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xEE),
                 target_contract: target.clone(),
                 selector: sel.clone(),
+                payee: None,
                 amount_cap: 1_000_000,
                 spent: 0,
                 expiry: 1_000,
@@ -340,7 +388,7 @@ mod tests {
             env.ledger().set(info);
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 100),
+                enforce(&env, &key_id, &target, &sel, None, 100),
                 Err(WalletError::SessionKeyExpired)
             );
         });
@@ -362,6 +410,7 @@ mod tests {
                 pubkey: mock_pubkey(env, 0xAB),
                 target_contract: target.clone(),
                 selector: sel.clone(),
+                payee: None,
                 amount_cap: 1_000_000,
                 spent: 0,
                 expiry,
@@ -369,7 +418,7 @@ mod tests {
             let mut info = env.ledger().get();
             info.timestamp = now;
             env.ledger().set(info);
-            enforce(env, &key_id, target, &sel, 1)
+            enforce(env, &key_id, target, &sel, None, 1)
         })
     }
 
@@ -411,7 +460,7 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 100),
+                enforce(&env, &key_id, &target, &sel, None, 100),
                 Err(WalletError::SignerNotAuthorized)
             );
         });
@@ -427,12 +476,12 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
-            assert!(enforce(&env, &key_id, &target, &sel, 1).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, None, 1).is_ok());
 
             revoke(&env, &key_id);
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 1),
+                enforce(&env, &key_id, &target, &sel, None, 1),
                 Err(WalletError::SignerNotAuthorized)
             );
         });

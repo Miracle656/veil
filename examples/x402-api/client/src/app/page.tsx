@@ -35,10 +35,13 @@ export default function Home() {
     setQuote(null)
     setBusy(true)
     try {
-      // 1. Veil confirmation — one biometric tap authorises the spend.
-      await confirmWithPasskey(wallet.keyId)
-      // 2. First call returns 402; the helper pays 0.01 XLM and retries → 200.
-      const result = await payForResource<Quote>(`${API_URL}/paid/quote`, wallet.feePayerSecret)
+      // The helper reads the 402 first, then derives the WebAuthn challenge
+      // from its exact payment requirements before signing and retrying.
+      const result = await payForResource<Quote>(
+        `${API_URL}/paid/quote`,
+        wallet.feePayerSecret,
+        (paymentBinding) => confirmWithPasskey(wallet.keyId, paymentBinding),
+      )
       setQuote(result)
     } catch (err) {
       setError(message(err))

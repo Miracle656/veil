@@ -19,6 +19,7 @@ import { X402_NETWORK } from './network'
 export async function payForResource<T = unknown>(
   url: string,
   feePayerSecret: string,
+  authorize?: (paymentBinding: string) => Promise<string>,
 ): Promise<T> {
   const first = await fetch(url)
   if (first.status !== 402) {
@@ -43,12 +44,31 @@ export async function payForResource<T = unknown>(
     (name: string) => first.headers.get(name),
     body,
   )
+  const paymentBinding = JSON.stringify({
+    url,
+    paymentRequired,
+  })
+  const passkeyAssertion = authorize ? await authorize(paymentBinding) : undefined
   const paymentPayload = await http.createPaymentPayload(paymentRequired)
   const paymentHeaders = http.encodePaymentSignatureHeader(paymentPayload)
 
-  const paid = await fetch(url, { headers: { ...paymentHeaders } })
+  const paid = await fetch(url, {
+    headers: {
+      ...paymentHeaders,
+      ...(passkeyAssertion
+        ? { 'X-Veil-Passkey-Assertion': base64UrlEncode(passkeyAssertion) }
+        : {}),
+    },
+  })
   if (!paid.ok) {
     throw new Error(`Payment accepted but request failed ${paid.status}: ${await paid.text()}`)
   }
   return (await paid.json()) as T
+}
+
+function base64UrlEncode(value: string): string {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }

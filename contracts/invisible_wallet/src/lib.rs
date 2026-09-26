@@ -321,7 +321,12 @@ impl InvisibleWallet {
                         return Err(WalletError::NonceMismatch);
                     }
 
-                    // Step 4 — ACL enforcement (expiry, target, selector, cumulative budget).
+                    // Step 4 — ACL enforcement (expiry, target, selector, payee,
+                    // cumulative budget). For token transfers, the second
+                    // argument is the recipient in the SAC `(from, to, amount)`
+                    // shape. A configured payee makes that recipient part of
+                    // the session-key authorization instead of leaving the key
+                    // as a bearer credential for any destination.
                     for context in _auth_contexts.iter() {
                         let Context::Contract(c) = context else {
                             return Err(WalletError::SignerNotAuthorized);
@@ -332,7 +337,19 @@ impl InvisibleWallet {
                         } else {
                             0
                         };
-                        session_key::enforce(&env, &key_id, &c.contract, &c.fn_name, amount)?;
+                        let payee = if c.args.len() >= 2 {
+                            Address::try_from_val(&env, &c.args.get(1).unwrap()).ok()
+                        } else {
+                            None
+                        };
+                        session_key::enforce(
+                            &env,
+                            &key_id,
+                            &c.contract,
+                            &c.fn_name,
+                            payee.as_ref(),
+                            amount,
+                        )?;
                     }
 
                     // Step 5 — Advance the contract nonce (must happen after all checks).
@@ -617,12 +634,15 @@ impl InvisibleWallet {
     /// `signature_payload` produced by the corresponding private key.
     ///
     /// Requires wallet owner authorization (existing signer via `__check_auth`).
+    /// `payee`, when set, restricts the key to calls whose second argument is
+    /// that exact recipient (the standard token transfer argument shape).
     pub fn register_session_key(
         env: Env,
         pubkey: BytesN<32>,
         key_id: BytesN<32>,
         target_contract: Address,
         selector: Symbol,
+        payee: Option<Address>,
         amount_cap: i128,
         expiry: u64,
     ) {
@@ -631,6 +651,7 @@ impl InvisibleWallet {
             pubkey,
             target_contract,
             selector,
+            payee,
             amount_cap,
             spent: 0,
             expiry,

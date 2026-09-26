@@ -24,10 +24,11 @@ Next.js client                         Express x402 server
 GET /paid/quote ───────────────────▶   no X-PAYMENT header
                 ◀───────────────────   402 Payment Required + requirements (0.01 XLM)
 
-(passkey tap → sign 0.01 XLM payment with the exact Stellar scheme)
+(read the 402 requirements → hash them into the WebAuthn challenge → passkey tap)
 
 GET /paid/quote                        verify payment
   PAYMENT-SIGNATURE: <payload> ────▶   settle on Stellar (facilitator sponsors the fee)
+  X-Veil-Passkey-Assertion: <assertion> ─▶ bind the approval to those requirements
                 ◀───────────────────   200 OK + data + PAYMENT-RESPONSE receipt
 ```
 
@@ -78,8 +79,10 @@ Veil**. After the biometric tap the client pays and the quote appears with a
 ## Acceptance criteria
 
 - **API returns 402 when unpaid** — `curl` above, or the client's first request.
-- **Client pays via Veil, returns 200** — the "Get quote" button signs the 0.01
-  XLM payment with the Veil wallet and renders the unlocked `200` response.
+- **Client pays via Veil, returns 200** — the "Get quote" button first derives a
+  WebAuthn challenge from the exact 402 URL and payment requirements, then sends
+  that assertion alongside the x402 payment and renders the unlocked `200`
+  response.
 
 ## Notes
 
@@ -87,7 +90,10 @@ Veil**. After the biometric tap the client pays and the quote appears with a
   (native asset SAC + stroops) as the price, rather than a `"$0.01"` money
   string, which the scheme would otherwise resolve to USDC.
 - The fee-payer key is generated and funded client-side purely to keep the
-  example self-contained; the passkey is what gates every spend. Production
-  integrations should hold the spending key in the Veil wallet contract.
+  example self-contained. The passkey assertion is payment-bound and forwarded
+  in `X-Veil-Passkey-Assertion`; a production resource server must verify that
+  assertion against the Veil wallet policy before treating it as authorization.
+  Production integrations should hold the spending key in the Veil wallet
+  contract.
 - This is testnet-only sample code and has not been audited. Do not reuse the
   key-handling shortcuts on mainnet.
