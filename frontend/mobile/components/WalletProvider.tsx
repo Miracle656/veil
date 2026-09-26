@@ -15,12 +15,15 @@ import { useInvisibleWallet, type StorageAdapter } from "@veil/sdk";
 
 import { getNetwork, getNetworkName, subscribeToNetwork } from "../lib/network";
 import { getRelyingPartyId, getWebAuthnOrigin } from "../lib/relyingParty";
-import { getWalletAddress, getSignerSecret } from "../lib/walletStore";
+import {
+  getWalletAddress,
+  getSignerSecret,
+  WALLET_SESSION_ADDRESS_KEY as SESSION_ADDRESS_KEY,
+  WALLET_SESSION_SIGNER_SECRET_KEY as SESSION_SIGNER_SECRET_KEY,
+} from "../lib/walletStore";
 
 // ── Persisted session keys (expo-secure-store) ───────────────────────────────
-
-const SESSION_ADDRESS_KEY = "veil_wallet_session_address";
-const SESSION_SIGNER_SECRET_KEY = "veil_wallet_session_signer_secret";
+// Defined in lib/walletStore.ts so a reset clears them from one place.
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
