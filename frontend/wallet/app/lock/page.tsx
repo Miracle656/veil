@@ -4,12 +4,14 @@ import { NetworkSwitcher } from '@/components/NetworkSwitcher'
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { LockKeyhole, Fingerprint, AlertCircle } from 'lucide-react'
-import { computeWalletAddress, useInvisibleWallet } from '@veil/sdk'
-import { ensureFeePayer } from '@/lib/feePayer'
+import { computeWalletAddress, useInvisibleWallet, matchWebAuthnSigner, decryptBackup, deserializeBackup, type WalletBackupMetadata } from '@veil/sdk'
+import { establishFreshFeePayer, ensureFeePayer } from '@/lib/feePayer'
 import { FEE_PAYER_PRF_SALT, type PrfEvaluator } from '@veil/prf'
 import { getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { adoptPasskeyFromOtherNetwork, walletLocal, walletSession } from '@/lib/walletStorage'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { persistRestoredState } from '@/lib/backup'
+import { Account, BASE_FEE, Contract, Keypair, rpc as SorobanRpc, TransactionBuilder } from '@stellar/stellar-sdk'
 
 /**
  * The active network's wallet address for a stored passkey public key, or null.
@@ -42,6 +44,46 @@ function deriveAddressForActiveNetwork(stored: string | null): string | null {
   }
 }
 
+async function readWalletSignerKeys(address: string): Promise<Uint8Array[]> {
+  const network = getNetwork()
+  const source = new Account(Keypair.random().publicKey(), '0')
+  const tx = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase: network.networkPassphrase,
+  })
+    .addOperation(new Contract(address).call('get_signers'))
+    .setTimeout(30)
+    .build()
+  const simulation = await new SorobanRpc.Server(network.rpcUrl).simulateTransaction(tx)
+  if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error('Could not read this wallet on the selected network.')
+  const retval = simulation.result?.retval
+  if (!retval) throw new Error('This address is not a deployed Veil wallet.')
+  try {
+    return retval.map()?.map((entry) => new Uint8Array(entry.val().bytes())) ?? []
+  } catch {
+    throw new Error('This address is not a deployed Veil wallet.')
+  }
+}
+
+async function authenticateAgainstSigners(signers: Uint8Array[]): Promise<{ credentialId: string; publicKey: string }> {
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      allowCredentials: [],
+      userVerification: 'required',
+    },
+  }) as PublicKeyCredential | null
+  if (!assertion) throw new Error('Passkey prompt was cancelled.')
+  const response = assertion.response as AuthenticatorAssertionResponse
+  const matched = await matchWebAuthnSigner(signers, {
+    authenticatorData: response.authenticatorData,
+    clientDataJSON: response.clientDataJSON,
+    signature: response.signature,
+  })
+  if (!matched) throw new Error('This passkey is not a registered signer on that wallet.')
+  return { credentialId: assertion.id, publicKey: matched }
+}
+
 // ── Lock screen ───────────────────────────────────────────────────────────────
 export default function LockPage() {
   const router = useRouter()
@@ -50,6 +92,61 @@ export default function LockPage() {
 
   const [error, setError]           = useState<string | null>(null)
   const [isUnlocking, setIsUnlocking] = useState(false)
+  const [recoveryMode, setRecoveryMode] = useState<'address' | 'backup' | null>(null)
+  const [recoveryAddress, setRecoveryAddress] = useState('')
+  const [backupPassphrase, setBackupPassphrase] = useState('')
+  const [backupFile, setBackupFile] = useState<File | null>(null)
+
+  const finishAddressRecovery = useCallback(async (metadata: WalletBackupMetadata, credentialId: string, publicKey: string) => {
+    walletLocal.setItem('invisible_wallet_address', metadata.address)
+    walletLocal.setItem('invisible_wallet_key_id', credentialId)
+    walletLocal.setItem('invisible_wallet_public_key', publicKey)
+    walletSession.setItem('invisible_wallet_address', metadata.address)
+    establishFreshFeePayer()
+    router.replace('/dashboard')
+  }, [router])
+
+  const handleAddressRecovery = useCallback(async () => {
+    const address = recoveryAddress.trim()
+    if (!/^C[A-Z2-7]{55}$/.test(address)) {
+      setError('Enter a valid 56-character C... wallet address.')
+      return
+    }
+    setError(null)
+    setIsUnlocking(true)
+    try {
+      const signers = await readWalletSignerKeys(address)
+      if (signers.length === 0) throw new Error('This wallet has no registered signers.')
+      const identity = await authenticateAgainstSigners(signers)
+      await finishAddressRecovery({ version: 1, address, signers: signers.map((publicKey, index) => ({ index, publicKey: Array.from(publicKey, (byte) => byte.toString(16).padStart(2, '0')).join('') })), createdAt: Date.now() }, identity.credentialId, identity.publicKey)
+    } catch (err: unknown) {
+      setError(passkeyErrorMessage(err))
+    } finally {
+      setIsUnlocking(false)
+    }
+  }, [finishAddressRecovery, recoveryAddress])
+
+  const handleBackupRecovery = useCallback(async () => {
+    if (!backupFile || !backupPassphrase) {
+      setError('Choose a backup file and enter its passphrase.')
+      return
+    }
+    setError(null)
+    setIsUnlocking(true)
+    try {
+      const metadata = JSON.parse(await backupFile.text())
+      const restored = await decryptBackup(deserializeBackup(metadata), backupPassphrase)
+      const signers = await readWalletSignerKeys(restored.address)
+      const identity = await authenticateAgainstSigners(signers)
+      await persistRestoredState(restored)
+      await finishAddressRecovery(restored, identity.credentialId, identity.publicKey)
+      setBackupPassphrase('')
+    } catch (err: unknown) {
+      setError(passkeyErrorMessage(err))
+    } finally {
+      setIsUnlocking(false)
+    }
+  }, [backupFile, backupPassphrase, finishAddressRecovery])
 
   const handleUnlock = useCallback(async () => {
     setError(null)
@@ -236,6 +333,48 @@ export default function LockPage() {
             <Fingerprint size={20} strokeWidth={1.5} />
             {isUnlocking || wallet.isPending ? 'Verifying…' : 'Unlock with passkey'}
           </button>
+
+          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <button type="button" className="btn-secondary" onClick={() => { setRecoveryMode(recoveryMode === 'address' ? null : 'address'); setError(null) }}>
+              Sign in with wallet address
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => { setRecoveryMode(recoveryMode === 'backup' ? null : 'backup'); setError(null) }}>
+              Restore from backup file
+            </button>
+
+            {recoveryMode === 'address' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                <input
+                  value={recoveryAddress}
+                  onChange={(event) => setRecoveryAddress(event.target.value.toUpperCase())}
+                  placeholder="C... wallet address"
+                  autoCapitalize="characters"
+                  spellCheck={false}
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: 8, border: '1px solid var(--border-dim)', background: 'var(--surface-md)', color: 'var(--off-white)' }}
+                />
+                <button type="button" className="btn-gold" onClick={handleAddressRecovery} disabled={isUnlocking}>
+                  Verify address
+                </button>
+              </div>
+            )}
+
+            {recoveryMode === 'backup' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                <input type="file" accept=".json,.veilbackup.json,application/json" onChange={(event) => setBackupFile(event.target.files?.[0] ?? null)} />
+                <input
+                  type="password"
+                  value={backupPassphrase}
+                  onChange={(event) => setBackupPassphrase(event.target.value)}
+                  placeholder="Backup passphrase"
+                  autoComplete="current-password"
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: 8, border: '1px solid var(--border-dim)', background: 'var(--surface-md)', color: 'var(--off-white)' }}
+                />
+                <button type="button" className="btn-gold" onClick={handleBackupRecovery} disabled={isUnlocking}>
+                  Verify and restore
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Subtle hint */}
           <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', textAlign: 'center' }}>

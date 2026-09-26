@@ -289,6 +289,28 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
   return chosen.kp
 }
 
+/** Establish a fresh fee-payer for address/backup recovery when no PRF is needed. */
+export function establishFreshFeePayer(): Keypair {
+  const keypair = Keypair.random()
+  cached = keypair
+  cachedDiagnostics = {
+    at: new Date().toISOString(),
+    prfAttempted: false,
+    prfOutcome: null,
+    probed: false,
+    candidates: [{ mode: 'legacy', publicKey: keypair.publicKey(), status: 'not-probed' }],
+    chosenMode: 'legacy',
+    chosenPublicKey: keypair.publicKey(),
+  }
+  localStorage.setItem(MODE, 'legacy')
+  walletSession.setItem(SECRET, keypair.secret())
+  walletSession.setItem(PUBKEY, keypair.publicKey())
+  walletLocal.setItem(SECRET, keypair.secret())
+  walletLocal.setItem(PUBKEY, keypair.publicKey())
+  setDiagnostics(cachedDiagnostics)
+  return keypair
+}
+
 /** Cache + persist a diagnostics record (sessionStorage — metadata only, no secret). */
 function setDiagnostics(diagnostics: FeePayerDiagnostics): void {
   cachedDiagnostics = diagnostics
