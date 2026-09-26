@@ -23,12 +23,15 @@
 #
 # Exit status: 0 on success / match, non-zero on build failure or hash drift.
 
-set -euo pipefail
+set -Eeuo pipefail
+
+trap 'echo "::error::reproducible-build.sh failed at line ${LINENO}: ${BASH_COMMAND}" >&2' ERR
 
 # Pinned build image. Matches contracts/rust-toolchain.toml (channel 1.85.0).
 # Pinned to an immutable multi-arch digest for byte-for-byte reproducibility.
 BUILD_IMAGE="${VEIL_BUILD_IMAGE:-rust:1.85.0-bookworm@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e}"
 TARGET="wasm32-unknown-unknown"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 MODE="check"
 USE_DOCKER=1
@@ -89,7 +92,7 @@ COMPUTED="$(
   fi
   for f in "${files[@]}"; do
     printf '%s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$f"
-  done | sort -k2 | python3 -c '
+  done | sort -k2 | "$PYTHON_BIN" -c '
 import sys, json
 out = {}
 for line in sys.stdin:
@@ -102,14 +105,14 @@ print(json.dumps(out, indent=2, sort_keys=True))
 echo "$COMPUTED"
 
 if [ "$MODE" = "update" ]; then
-  python3 - "$HASHES_FILE" <<PY
+  "$PYTHON_BIN" - "$HASHES_FILE" "$COMPUTED" "$BUILD_IMAGE" "$TARGET" <<'PY'
 import json, sys
-artifacts = json.loads('''$COMPUTED''')
+artifacts = json.loads(sys.argv[2])
 doc = {
     "_comment": "SHA-256 of release wasm artifacts. Regenerate with scripts/reproducible-build.sh --update.",
     "toolchain": "1.85.0",
-    "image": "$BUILD_IMAGE",
-    "target": "$TARGET",
+    "image": sys.argv[3],
+    "target": sys.argv[4],
     "artifacts": artifacts,
 }
 with open(sys.argv[1], "w") as fh:
@@ -125,9 +128,9 @@ if [ ! -f "$HASHES_FILE" ]; then
   exit 1
 fi
 
-python3 - "$HASHES_FILE" <<PY
+"$PYTHON_BIN" - "$HASHES_FILE" "$COMPUTED" <<'PY'
 import json, sys
-computed = json.loads('''$COMPUTED''')
+computed = json.loads(sys.argv[2])
 with open(sys.argv[1]) as fh:
     expected = json.load(fh).get("artifacts", {})
 
@@ -150,3 +153,6 @@ if not ok:
     sys.exit(1)
 print("\n==> All wasm hashes match the committed expected-hashes.json")
 PY
+
+echo "==> Reproducible build checks passed."
+exit 0
