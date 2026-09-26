@@ -1,3 +1,4 @@
+export type * from './types';
 export * from './useInvisibleWallet';
 export * from './utils';
 export * from './outbox';

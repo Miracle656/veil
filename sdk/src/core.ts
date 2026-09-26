@@ -18,6 +18,8 @@ import {
     Asset,
     Contract,
     Keypair,
+    Memo,
+    type Transaction,
     rpc as SorobanRpc,
     Horizon,
     TransactionBuilder,
@@ -554,7 +556,7 @@ function resolveSponsorKeypair(config: WalletConfig): Keypair | null {
 }
 
 function signForSubmission(
-    tx: any,
+    tx: Transaction,
     signerKeypair: Keypair,
     config: WalletConfig,
     extraInnerSigners: Keypair[] = []
@@ -1893,7 +1895,7 @@ export class InvisibleWalletCore {
                 ));
 
             if (memo !== undefined) {
-                txBuilder.addMemo({ type: 'text', value: String(memo) } as any);
+                txBuilder.addMemo(Memo.text(String(memo)));
             }
 
             const tx = txBuilder.setTimeout(30).build();

@@ -139,3 +139,11 @@ export async function enableUsdy(): Promise<string | null> {
   return enableTrustline('USDY');
 }
 
+/**
+ * Add the Tether USDT0 trustline to the wallet's classic account (verified issuer: GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q).
+ */
+export async function enableUsdt0(): Promise<string | null> {
+  return enableTrustline('USDT0');
+}
+
+

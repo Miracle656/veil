@@ -105,3 +105,57 @@ describe('resolveAnchorAssets', () => {
     expect(called).toBe(false)
   })
 })
+
+describe('Hold USDT0: trustline, balance and price (Issue #790)', () => {
+  const REAL_USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
+  const FAKE_USDT0_ISSUER = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
+
+  const BALANCES_WITH_REAL_AND_FAKE_USDT0: HorizonBalanceLike[] = [
+    { asset_type: 'native', balance: '50.0000000' },
+    {
+      asset_type: 'credit_alphanum12',
+      asset_code: 'USDT0',
+      asset_issuer: REAL_USDT0_ISSUER,
+      balance: '1234.5678901',
+      limit: '922337203685.4775807',
+    },
+    {
+      asset_type: 'credit_alphanum12',
+      asset_code: 'USDT0',
+      asset_issuer: FAKE_USDT0_ISSUER,
+      balance: '9999999.1234567',
+      limit: '922337203685.4775807',
+    },
+  ]
+
+  it('correctly parses wallet holding both real and fake USDT0 preserving 7 decimal places', () => {
+    const lines = parseTrustlines(BALANCES_WITH_REAL_AND_FAKE_USDT0)
+    expect(lines).toHaveLength(2)
+
+    const realLine = lines.find((l) => l.issuer === REAL_USDT0_ISSUER)
+    const fakeLine = lines.find((l) => l.issuer === FAKE_USDT0_ISSUER)
+
+    expect(realLine).toBeDefined()
+    expect(realLine?.code).toBe('USDT0')
+    expect(realLine?.balance).toBe('1234.5678901')
+
+    expect(fakeLine).toBeDefined()
+    expect(fakeLine?.code).toBe('USDT0')
+    expect(fakeLine?.balance).toBe('9999999.1234567')
+  })
+
+  it('builds changeTrust transaction for USDT0 with 0.5 XLM reserve', () => {
+    const account = new Account(Keypair.random().publicKey(), '1')
+    const tx = buildChangeTrustTx({
+      account,
+      networkPassphrase: Networks.PUBLIC,
+      code: 'USDT0',
+      issuer: REAL_USDT0_ISSUER,
+    })
+    const op = tx.operations[0] as Operation.ChangeTrust
+    expect(op.type).toBe('changeTrust')
+    expect((op.line as { code: string }).code).toBe('USDT0')
+    expect((op.line as { issuer: string }).issuer).toBe(REAL_USDT0_ISSUER)
+  })
+})
+

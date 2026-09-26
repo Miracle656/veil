@@ -47,6 +47,11 @@ const LINKABLE_ROUTES: Record<string, readonly string[]> = {
   '/send': ['to', 'amount', 'asset', 'memo'],
   '/receive': ['amount', 'asset'],
   '/create-wallet': [],
+  // Read-only destinations for launcher shortcuts (`lib/voice/actions.ts`).
+  // Exact paths with no parameters: a link can open these screens but cannot
+  // choose what they show.
+  '/dashboard': [],
+  '/token/XLM': [],
 };
 
 /** Aliases for paths that read naturally in a shared link but are not routes. */
@@ -55,6 +60,8 @@ const PATH_ALIASES: Record<string, string> = {
   '/': '/',
   '/request': '/receive',
   '/payment-request': '/pay',
+  // Paths are lowercased before lookup, but asset codes are case-sensitive.
+  '/token/xlm': '/token/XLM',
 };
 
 /**

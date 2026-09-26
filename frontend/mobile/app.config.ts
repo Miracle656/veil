@@ -34,6 +34,15 @@ const BUNDLE_IDENTIFIER = 'xyz.veil.wallet';
  */
 const LINKED_PATHS = ['pay', 'send', 'receive', 'create-wallet'];
 
+/**
+ * Launcher shortcuts. Mirrors `READ_ONLY_ACTIONS` in `lib/voice/actions.ts`,
+ * which explains what they are and what they must never do.
+ */
+const ANDROID_SHORTCUTS = [
+  { id: 'balance', shortLabel: 'Balance', longLabel: 'Show my balance', url: `${DEEP_LINK_SCHEME}://dashboard` },
+  { id: 'price', shortLabel: 'XLM price', longLabel: 'Show the XLM price', url: `${DEEP_LINK_SCHEME}://token/XLM` },
+];
+
 const config: ExpoConfig = {
   name: 'Veil',
   slug: 'veil-mobile',
@@ -111,6 +120,8 @@ const config: ExpoConfig = {
     // react-native-passkeys contains native code, so Expo Go cannot load it.
     // The dev client is what makes passkey registration testable on a device.
     'expo-dev-client',
+    // Local plugin: static App Shortcuts for the read-only actions.
+    ['./plugins/withAndroidShortcuts', { shortcuts: ANDROID_SHORTCUTS }],
     [
       'expo-splash-screen',
       {

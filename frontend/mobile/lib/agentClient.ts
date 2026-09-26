@@ -31,8 +31,12 @@ export function resolveAgentUrl(configured: string | undefined): string {
   if (!url) return PRODUCTION_AGENT_URL;
   try {
     const parsed = new URL(url);
+    // Private ranges must match a literal IPv4 address, not a prefix. `/^10\./`
+    // also matched the hostname `10.evil.com`, which let a remote host be
+    // reached over plaintext HTTP purely by choosing its name.
+    const privateIpv4 = /^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2})$/;
     const local = ['localhost', '127.0.0.1', '10.0.2.2'].includes(parsed.hostname) ||
-      /^(192\.168|10)\./.test(parsed.hostname);
+      privateIpv4.test(parsed.hostname);
     if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && local)) return url;
   } catch {
     // fall through

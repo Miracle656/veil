@@ -61,6 +61,17 @@ const nextConfig = {
         source: '/:path*',
         headers: securityHeaders,
       },
+      // Issuer logos (possibly SVG) served from the wallet origin must never
+      // run script if opened directly, so this replaces the page CSP above.
+      {
+        source: '/api/issuer-logo',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox",
+          },
+        ],
+      },
       {
         source: '/.well-known/apple-app-site-association',
         headers: [{ key: 'Content-Type', value: 'application/json' }],

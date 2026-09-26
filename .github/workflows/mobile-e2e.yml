@@ -57,7 +57,18 @@ jobs:
 
       - name: Install Maestro
         run: |
-          curl -Ls "https://get.maestro.mobile.dev" | bash
+          maestro_version='2.10.0'
+          maestro_archive='maestro.zip'
+          maestro_url="https://github.com/mobile-dev-inc/maestro/releases/download/cli-${maestro_version}/${maestro_archive}"
+          maestro_sha256='29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991'
+          maestro_tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$maestro_tmp_dir"' EXIT
+          curl -fsSL "$maestro_url" -o "$maestro_tmp_dir/$maestro_archive"
+          echo "$maestro_sha256  $maestro_tmp_dir/$maestro_archive" | sha256sum --check --status
+          mkdir -p "$HOME/.maestro"
+          unzip -q "$maestro_tmp_dir/$maestro_archive" -d "$maestro_tmp_dir"
+          cp -R "$maestro_tmp_dir/maestro/." "$HOME/.maestro/"
+          chmod +x "$HOME/.maestro/bin/maestro"
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
 
       - name: Enable KVM

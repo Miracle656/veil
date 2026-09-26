@@ -34,6 +34,27 @@ describe('resolveDeepLink — veil:// custom scheme', () => {
   });
 });
 
+describe('resolveDeepLink — read-only launcher destinations', () => {
+  it('opens the dashboard', () => {
+    expect(resolveDeepLink('veil://dashboard')).toBe('/dashboard');
+  });
+
+  it('opens the XLM token page, keeping the asset code upper-case', () => {
+    // Paths are lowercased before lookup; the token screen's id is not.
+    expect(resolveDeepLink('veil://token/XLM')).toBe('/token/XLM');
+    expect(resolveDeepLink('veil://token/xlm')).toBe('/token/XLM');
+  });
+
+  it('exposes no other token page', () => {
+    expect(resolveDeepLink('veil://token/USDC')).toBe(FALLBACK_ROUTE);
+  });
+
+  it('forwards no parameters to either', () => {
+    expect(resolveDeepLink(`veil://dashboard?to=${DESTINATION}&amount=10`)).toBe('/dashboard');
+    expect(resolveDeepLink('veil://token/XLM?asset=USDC')).toBe('/token/XLM');
+  });
+});
+
 describe('resolveDeepLink — universal / app links', () => {
   it('routes an associated-domain link', () => {
     expect(resolveDeepLink(`https://app.useveilapp.xyz/pay?to=${DESTINATION}`)).toBe(

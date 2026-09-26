@@ -36,6 +36,18 @@ describe('NotEnoughXlm & MissingTrustline Error Classes', () => {
     expect(err.message).toBe(
       'You need to enable USDY to hold it. Adding a trustline requires 0.5 XLM of refundable reserve.',
     );
+
+    const usdtErr = new MissingTrustline('USDT0');
+    expect(usdtErr.message).toBe(
+      'You need to enable USDT0 to hold it. Adding a trustline requires 0.5 XLM of refundable reserve.',
+    );
+  });
+
+  it('formats NotEnoughXlm error stating required reserve for USDT0', () => {
+    const err = new NotEnoughXlm(0.2, 'USDT0');
+    expect(err.message).toBe(
+      `This account holds 0.2 XLM. Adding a USDT0 trustline needs about ${MIN_XLM_FOR_TRUSTLINE} XLM of refundable reserve.`,
+    );
   });
 
   it('formats AccountNotFunded error with plain sentence', () => {
@@ -46,3 +58,4 @@ describe('NotEnoughXlm & MissingTrustline Error Classes', () => {
     );
   });
 });
+
