@@ -26,6 +26,8 @@ interface Message {
   review?: ProposalReview | null
   /** A swap the agent handed to the Swap screen, which quotes and confirms it. */
   swapIntent?: { from: string; to: string; amount?: string }
+  /** An invest purchase the agent handed to the Invest screen. */
+  investIntent?: { code: string; issuer: string; amount?: string; quoteCurrency?: string }
 }
 
 /** Link into the Swap screen, pre-filled. The Swap page validates it again. */
@@ -33,6 +35,14 @@ function swapHref(intent: { from: string; to: string; amount?: string }): string
   const q = new URLSearchParams({ from: intent.from, to: intent.to })
   if (intent.amount) q.set('amount', intent.amount)
   return `/swap?${q}`
+}
+
+/** Link into the Earn/Invest screen, pre-filled. */
+function investHref(intent: { code: string; issuer: string; amount?: string; quoteCurrency?: string }): string {
+  const q = new URLSearchParams({ code: intent.code, issuer: intent.issuer })
+  if (intent.amount) q.set('amount', intent.amount)
+  if (intent.quoteCurrency) q.set('quoteCurrency', intent.quoteCurrency)
+  return `/earn?${q}`
 }
 
 /** Earlier turns for the agent, as plain text. The server keeps no history. */
@@ -289,6 +299,9 @@ export default function AgentPage() {
       const msg: Message = { role: 'agent', content: data.response ?? '' }
       if (data.swapIntent && typeof data.swapIntent.from === 'string' && typeof data.swapIntent.to === 'string') {
         msg.swapIntent = data.swapIntent
+      }
+      if (data.investIntent && typeof data.investIntent.code === 'string' && typeof data.investIntent.issuer === 'string') {
+        msg.investIntent = data.investIntent
       }
       if (data.pendingTxXdr) {
         msg.pendingTxXdr = data.pendingTxXdr
@@ -663,6 +676,25 @@ export default function AgentPage() {
                     className="agent-tx-card__btn"
                   >
                     Open Swap
+                  </button>
+                </div>
+              )}
+
+              {/* Invest hand-off — open Invest/Earn screen */}
+              {msg.investIntent && (
+                <div className="agent-tx-card">
+                  <div className="agent-tx-card__header">
+                    <span className="agent-tx-card__label">Invest ready</span>
+                  </div>
+                  <div className="agent-tx-card__summary">
+                    Buy {msg.investIntent.amount ? `${msg.investIntent.amount} ` : ''}
+                    {msg.investIntent.code} ({msg.investIntent.quoteCurrency ?? 'USDC'})
+                  </div>
+                  <button
+                    onClick={() => router.push(investHref(msg.investIntent!))}
+                    className="agent-tx-card__btn"
+                  >
+                    Open Invest
                   </button>
                 </div>
               )}
