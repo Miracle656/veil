@@ -5,6 +5,7 @@ Cargo.lock
 
 # Node / SDK
 node_modules/
+*.tsbuildinfo
 sdk/node_modules/
 sdk/dist/
 sdk/react/storybook-static/
