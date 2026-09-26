@@ -9,6 +9,7 @@ import { Asset, Horizon, Keypair, Operation, TransactionBuilder } from '@stellar
 
 import { inclusionFee } from './fees';
 import { getNetwork, getNetworkName } from './network';
+import { assertFeePayerCanCoverFee } from './feePayerCheck';
 
 const SOROSWAP_API_KEY = process.env['EXPO_PUBLIC_SOROSWAP_API_KEY']?.trim() || '';
 
@@ -128,6 +129,8 @@ export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string> 
       ],
       slippageBps: params.slippageBps,
     });
+
+    await assertFeePayerCanCoverFee(params.feePayerAddress);
 
     const build = await client.build({
       quote,

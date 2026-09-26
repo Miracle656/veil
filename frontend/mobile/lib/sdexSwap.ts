@@ -12,6 +12,7 @@ import { Asset, BASE_FEE, Horizon, Keypair, Operation, TransactionBuilder } from
 
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
+import { assertFeePayerCanCoverFee } from './feePayerCheck';
 
 /**
  * Well-known issuers per network for the assets we route classically.
@@ -101,6 +102,8 @@ export async function sdexSwap(params: {
   const network = getNetwork();
   const server = new Horizon.Server(network.horizonUrl);
   const kp = Keypair.fromSecret(params.signerSecret);
+
+  await assertFeePayerCanCoverFee(kp.publicKey());
 
   const paths = await server.strictSendPaths(src, params.amountIn, [dst]).call();
   const best = (paths.records as unknown as Array<{ destination_amount: string; path: PathHop[] }>)[0];
