@@ -57,14 +57,47 @@ jobs:
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> \$GITHUB_OUTPUT
+          " >> "$GITHUB_OUTPUT"
+
+      # ── Sanity-check the keypair outputs ──────────────────────────────────
+      # The nightly run failed for months with `curl` exit 22 because the
+      # keypair steps wrote to an escaped `\$GITHUB_OUTPUT`, so the public key
+      # arrived empty and Friendbot answered 400 to `?addr=`. Fail here with a
+      # readable message instead of a bare curl exit code.
+      - name: Assert the burner keypair was captured
+        run: |
+          set -euo pipefail
+          pub='${{ steps.keygen.outputs.public }}'
+          if [ -z "$pub" ]; then
+            echo "::error::the burner public key output is empty — GITHUB_OUTPUT was not written"
+            exit 1
+          fi
+          echo "burner public key: $pub"
 
       # ── Fund with Friendbot ───────────────────────────────────────────────
       - name: Fund burner account via Friendbot
         run: |
-          curl -sf "https://friendbot.stellar.org?addr=${{ steps.keygen.outputs.public }}" \
-            -o friendbot_response.json
-          cat friendbot_response.json
+          set -euo pipefail
+          url="https://friendbot.stellar.org?addr=${{ steps.keygen.outputs.public }}"
+          # Friendbot is a public service: retry the transient answers (429/5xx)
+          # instead of failing the nightly on a hiccup, and print the body on a
+          # real failure so the reason is visible in the log.
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o friendbot_response.json -w '%{http_code}' --max-time 60 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "funded on attempt $attempt (HTTP $code)"
+              cat friendbot_response.json
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            cat friendbot_response.json 2>/dev/null || true
+            case "$code" in
+              429|500|502|503|504|000) sleep $((attempt * 5)) ;;
+              *) echo "::error::Friendbot rejected the request with HTTP $code"; exit 1 ;;
+            esac
+          done
+          echo "::error::Friendbot did not fund the account after 5 attempts"
+          exit 1
 
       # ── Create a second burner account (recipient) ────────────────────────
       - name: Generate recipient keypair
@@ -75,12 +108,25 @@ jobs:
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> \$GITHUB_OUTPUT
+          " >> "$GITHUB_OUTPUT"
 
       - name: Fund recipient via Friendbot
         run: |
-          curl -sf "https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}" \
-            -o friendbot_recipient.json
+          set -euo pipefail
+          url="https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o friendbot_recipient.json -w '%{http_code}' --max-time 60 "$url" || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "recipient funded on attempt $attempt"
+              exit 0
+            fi
+            case "$code" in
+              429|500|502|503|504|000) echo "attempt $attempt: HTTP $code"; sleep $((attempt * 5)) ;;
+              *) echo "::error::Friendbot rejected the recipient with HTTP $code"; cat friendbot_recipient.json || true; exit 1 ;;
+            esac
+          done
+          echo "::error::Friendbot did not fund the recipient after 5 attempts"
+          exit 1
 
       # ── Send a 1 XLM payment and verify it landed on Horizon ─────────────
       - name: Send payment and verify via Horizon
