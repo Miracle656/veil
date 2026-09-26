@@ -8,7 +8,6 @@ import { getNetworkName } from './network';
 import { discoverWithPrf, nativePrfEvaluator, type DiscoveredPasskey } from './passkey';
 import { readSigners, WalletContractNotFoundError, type WalletSigner } from './signers';
 import { readBreadcrumbs, writeBreadcrumbs } from './walletBreadcrumbs';
-<<<<<<< HEAD
 import {
   getSignerSecret,
   getWalletAddress,
@@ -36,7 +35,6 @@ export type LoginResult = {
   source: 'local' | 'recovered';
 };
 
-<<<<<<< HEAD
 export type PasskeyLoginOptions = {
   /** Known C-address supplied by a backup or another trusted device. */
   walletAddress?: string;
