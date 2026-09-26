@@ -16,13 +16,14 @@ import {
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
 import { getNetworkName } from '../lib/network';
+import { BASE_RESERVE_XLM, fetchAccountReserve, type AccountReserve } from '../lib/accountReserve';
 import { enableUsdc, enableUsdy, enableUsdt0, AccountNotFunded, NotEnoughXlm } from '../lib/enableUsdc';
 
 type State =
   | { kind: 'loading' }
   | { kind: 'no-wallet' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; assets: HeldAsset[]; prices: Record<string, number | null> };
+  | { kind: 'ready'; assets: HeldAsset[]; prices: Record<string, number | null>; reserve: AccountReserve };
 
 export default function AssetsScreen() {
   const { colors } = useTheme();
@@ -41,7 +42,10 @@ export default function AssetsScreen() {
         setState({ kind: 'no-wallet' });
         return;
       }
-      const assets = await fetchHeldAssets(address);
+      const [assets, reserve] = await Promise.all([
+        fetchHeldAssets(address),
+        fetchAccountReserve(address),
+      ]);
 
       // Fetch USD prices for all held assets
       const prices: Record<string, number | null> = {};
@@ -52,7 +56,7 @@ export default function AssetsScreen() {
         }),
       );
 
-      setState({ kind: 'ready', assets, prices });
+      setState({ kind: 'ready', assets, prices, reserve });
     } catch (err) {
       setState({ kind: 'error', message: errorMessage(err) });
     }
@@ -155,7 +159,10 @@ export default function AssetsScreen() {
               {usdt0Registered?.name ?? "Tether's USD stablecoin bridged to Stellar."}
             </Text>
             <Text style={styles.reserveNotice}>
-              Reserve cost: 0.5 XLM refundable reserve required upfront.
+              This trustline adds {BASE_RESERVE_XLM.toFixed(1)} XLM to the network reserve.
+              Your account currently has {state.reserve.subentries} subentries and{' '}
+              {state.reserve.reservedXlm.toFixed(1)} XLM reserved. The amount is locked, not spent,
+              and is refundable when the trustline is removed.
             </Text>
             <Text style={styles.disclosureText}>
               Note: The issuer can freeze this balance or take it back.
@@ -190,7 +197,10 @@ export default function AssetsScreen() {
               {usdyRegistered?.name ?? "Ondo's US Treasuries-backed, yield-bearing token."}
             </Text>
             <Text style={styles.reserveNotice}>
-              Reserve cost: 0.5 XLM refundable reserve required upfront.
+              This trustline adds {BASE_RESERVE_XLM.toFixed(1)} XLM to the network reserve.
+              Your account currently has {state.reserve.subentries} subentries and{' '}
+              {state.reserve.reservedXlm.toFixed(1)} XLM reserved. The amount is locked, not spent,
+              and is refundable when the trustline is removed.
             </Text>
           </View>
           <Pressable

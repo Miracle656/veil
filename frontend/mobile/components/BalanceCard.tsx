@@ -1,35 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Horizon } from '@stellar/stellar-sdk';
-
 import { useTheme } from '../hooks/useTheme';
 import { useCurrency } from '../hooks/useCurrency';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { CURRENCY_CODES } from '../lib/currency';
-import { getNetwork } from '../lib/network';
+import { fetchAccountReserve } from '../lib/accountReserve';
 import { getWalletAddress } from '../lib/walletStore';
 import { fetchPrice, usdValue } from '../lib/fetchPrice';
 import { ChevronDownIcon, EyeIcon, EyeOffIcon } from './icons';
-
-/** A 404 from Horizon means the account exists in-wallet but isn't funded yet. */
-function isAccountNotFound(err: unknown): boolean {
-  const e = err as { name?: string; response?: { status?: number } };
-  return e?.name === 'NotFoundError' || e?.response?.status === 404;
-}
-
-async function fetchNativeBalance(publicKey: string): Promise<string> {
-  const server = new Horizon.Server(getNetwork().horizonUrl);
-  try {
-    const account = await server.loadAccount(publicKey);
-    const native = account.balances.find((b) => b.asset_type === 'native');
-    return native ? native.balance : '0';
-  } catch (err) {
-    if (isAccountNotFound(err)) return '0'; // unfunded → zero, not an error
-    throw err;
-  }
-}
 
 /** Trim a raw balance string to at most 2 decimals for the sub-line. */
 function trimAmount(raw: string): string {
@@ -42,7 +22,7 @@ type State =
   | { status: 'loading' }
   | { status: 'no-wallet' }
   | { status: 'error' }
-  | { status: 'ready'; balance: string; usd: number | null };
+  | { status: 'ready'; balance: string; usd: number | null; reservedXlm: number; subentries: number };
 
 export type BalanceCardProps = {
   /** If provided, overrides the internal balance loading logic. */
@@ -88,11 +68,17 @@ export function BalanceCard({ balance: propBalance, usd: propUsd, loading: propL
         return;
       }
       // Balance is load-bearing; price is best-effort and settles independently.
-      const [balance, price] = await Promise.all([
-        fetchNativeBalance(address),
+      const [account, price] = await Promise.all([
+        fetchAccountReserve(address),
         fetchPrice('XLM', null),
       ]);
-      setState({ status: 'ready', balance, usd: usdValue(balance, price) });
+      setState({
+        status: 'ready',
+        balance: account.balance,
+        usd: usdValue(account.balance, price),
+        reservedXlm: account.reservedXlm,
+        subentries: account.subentries,
+      });
     } catch {
       setState({ status: 'error' });
     }
@@ -163,6 +149,12 @@ export function BalanceCard({ balance: propBalance, usd: propUsd, loading: propL
           </Text>
           {hasFiat && (
             <Text style={styles.sub}>{hidden ? mask('') : `${trimAmount(showBalance)} XLM`}</Text>
+          )}
+          {!hidden && state.status === 'ready' && (
+            <Text style={styles.reserve}>
+              {trimAmount(String(state.reservedXlm))} XLM reserved by the network ({state.subentries}{' '}
+              {state.subentries === 1 ? 'subentry' : 'subentries'}). Refundable when removed.
+            </Text>
           )}
         </>
       )}
@@ -238,6 +230,12 @@ const createStyles = (colors: ThemeColors) =>
       fontFamily: fontFamily.address,
       fontSize: 14,
       marginTop: 10,
+    },
+    reserve: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      marginTop: 6,
     },
     muted: {
       color: colors.textSecondary,
