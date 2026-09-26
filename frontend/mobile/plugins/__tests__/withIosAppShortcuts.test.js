@@ -7,9 +7,9 @@ describe('withIosAppShortcuts', () => {
     expect(SHORTCUTS).toHaveLength(2);
     expect(swift).toContain('struct VeilAppShortcuts: AppShortcutsProvider');
     expect(swift).toContain('struct ShowBalanceIntent: AppIntent');
-    expect(swift).toContain('What is my balance? in \\\\(.applicationName)');
-    expect(swift).toContain('How much I get? in \\\\(.applicationName)');
-    expect(swift).toContain('Wetin be my balance? in \\\\(.applicationName)');
+    expect(swift).toContain('What is my balance? in \\(.applicationName)');
+    expect(swift).toContain('How much I get? in \\(.applicationName)');
+    expect(swift).toContain('Wetin be my balance? in \\(.applicationName)');
     expect(swift).toContain('struct ShowXlmPriceIntent: AppIntent');
   });
 

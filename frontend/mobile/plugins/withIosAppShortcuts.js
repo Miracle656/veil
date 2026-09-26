@@ -40,11 +40,12 @@ function swiftString(value) {
   return JSON.stringify(value);
 }
 
+function swiftPhrase(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
 function renderIntent(shortcut) {
   const intentName = shortcut.type === 'balance' ? 'ShowBalanceIntent' : 'ShowXlmPriceIntent';
-  const phraseLines = shortcut.phrases
-    .map((phrase) => `        ${swiftString(`${phrase} in \\(.applicationName)` )},`)
-    .join('\n');
 
   return `
 @available(iOS 16.0, *)
@@ -66,7 +67,7 @@ function renderSwift(shortcuts = SHORTCUTS) {
     .map((shortcut) => {
       const intentName = shortcut.type === 'balance' ? 'ShowBalanceIntent' : 'ShowXlmPriceIntent';
       const phrases = shortcut.phrases
-        .map((phrase) => `            ${swiftString(`${phrase} in \\(.applicationName)` )},`)
+        .map((phrase) => `            ${swiftPhrase(`${phrase} in \\(.applicationName)`)},`)
         .join('\n');
       return `        AppShortcut(
             intent: ${intentName}(),
