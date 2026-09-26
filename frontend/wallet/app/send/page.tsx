@@ -57,15 +57,6 @@ export default function SendPage() {
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
 
-  /**
-   * Prefill from the query string, so another screen can hand off a payment it
-   * already knows the details of. Cash out uses this to send the deposit: the
-   * address and amount come from the order, and retyping either is a way to
-   * lose money to a typo.
-   *
-   * Read once on mount rather than watched. These are an opening position, not
-   * a binding: whatever the user does to the fields afterwards stands.
-   */
   useEffect(() => {
     if (typeof window === 'undefined') return
     const q = new URLSearchParams(window.location.search)
@@ -76,13 +67,11 @@ export default function SendPage() {
     if (amt) setAmount(amt)
     if (m) setMemo(m)
   }, [])
+
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
   const [showPicker, setShowPicker]   = useState(false)
 
-  // Who this wallet has actually paid, newest first. Derived from the activity
-  // feed rather than the contact book: a contact you have never paid is not a
-  // "recent recipient", and this needs no extra storage.
   const transactions = useActivityFeed()
   const recentRecipients = Array.from(
     new Set(transactions.filter((t) => t.type === 'sent').map((t) => t.counterparty)),
@@ -516,7 +505,7 @@ export default function SendPage() {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
                     <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="1.75"/>
-                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
+                    <path d="M23 21v-2a4 4 0 01-2-3.87M16 3.13a4 4 0 010 7.75" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
                   </svg>
                 </button>
                 <button
@@ -595,10 +584,6 @@ export default function SendPage() {
                 <div className="vw-sumrow">
                   <span>Debited</span>
                   <strong className="font-mono">{amount ? `${amount} ${selectedAsset?.code ?? ''}` : '—'}</strong>
-                </div>
-                <div className="vw-sumrow">
-                  <span>Network fee</span>
-                  <strong style={{ color: 'var(--teal)' }}>Paid by fee-payer</strong>
                 </div>
                 <div className="vw-sumrow vw-sumrow--last">
                   <span>Remaining</span>
@@ -781,7 +766,6 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
       <span style={{
         fontSize: '0.875rem',
         fontFamily: mono ? 'Inconsolata, monospace' : 'Inter, sans-serif',
-        fontVariantNumeric: 'tabular-nums',
         textAlign: 'right',
         wordBreak: 'break-all',
       }}>

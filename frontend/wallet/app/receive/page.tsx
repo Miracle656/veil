@@ -1,6 +1,6 @@
 'use client'
 
-import { Nav, PageHeader } from '@/components/ui/primitives'
+import { PageHeader } from '@/components/ui/primitives'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
@@ -106,7 +106,14 @@ function Tile({
   )
 }
 
-function SpendingCard({ address, assetCode, assetIssuer, amount }: { address: string; assetCode?: string; assetIssuer?: string; amount?: string }) {
+interface SpendingCardProps {
+  address: string
+  assetCode?: string
+  assetIssuer?: string
+  amount?: string
+}
+
+function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardProps) {
   const [copied, setCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [xlmUsd, setXlmUsd] = useState<number | null>(null)
@@ -121,20 +128,22 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: { address: st
     void fetchPrice('XLM', null).then(setXlmUsd)
   }, [])
 
+  const isNative = !assetCode || assetCode.toUpperCase() === 'XLM'
   const xlmAmount =
-    requestFiat != null && xlmUsd != null && xlmUsd > 0 && rate > 0
+    isNative && requestFiat != null && xlmUsd != null && xlmUsd > 0 && rate > 0
       ? (requestFiat / rate / xlmUsd).toFixed(7).replace(/\.?0+$/, '')
       : undefined
 
-  const isNative = !assetCode || assetCode.toUpperCase() === 'XLM'
+  const finalAmount = isNative ? (amount || xlmAmount) : amount
+
   const payUri = buildSep7PayUri({
     destination: address,
-    amount: xlmAmount || amount || undefined,
+    amount: finalAmount,
     assetCode: !isNative ? assetCode : undefined,
     assetIssuer: !isNative ? assetIssuer : undefined,
   })
 
-  const shareText = (xlmAmount || amount || assetCode) ? payUri : address
+  const shareText = (finalAmount || !isNative) ? payUri : address
 
   const handleCopy = async () => {
     if (!(await copyText(shareText))) return
@@ -173,18 +182,20 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: { address: st
       <p className="vw-spendcard__label">Spending address</p>
       <p className="vw-spendcard__sub">Use this for most senders &amp; exchanges</p>
 
-      <div className="vw-more" style={{ marginTop: 14, justifyContent: 'center' }}>
-        {chips.map((chipAmt) => (
-          <button
-            key={chipAmt}
-            type="button"
-            className={requestFiat === chipAmt ? 'vw-chip vw-chip--active' : 'vw-chip'}
-            onClick={() => setRequestFiat((current) => current === chipAmt ? null : chipAmt)}
-          >
-            {symbol}{chipAmt.toLocaleString('en-US')}
-          </button>
-        ))}
-      </div>
+      {isNative && (
+        <div className="vw-more" style={{ marginTop: 14, justifyContent: 'center' }}>
+          {chips.map((amt) => (
+            <button
+              key={amt}
+              type="button"
+              className={requestFiat === amt ? 'vw-chip vw-chip--active' : 'vw-chip'}
+              onClick={() => setRequestFiat((current) => current === amt ? null : amt)}
+            >
+              {symbol}{amt.toLocaleString('en-US')}
+            </button>
+          ))}
+        </div>
+      )}
       {xlmAmount && (
         <p className="vw-spendcard__sub" style={{ marginTop: 8 }}>
           QR asks for {xlmAmount} XLM
@@ -287,9 +298,26 @@ export default function ReceivePage() {
 
   return (
     <div className="wallet-shell">
-      <Nav activeRoute="/receive" />
+      <header className="wallet-nav">
+        <button
+          onClick={() => router.back()}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--off-white)', display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.875rem' }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+            <path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          Back
+        </button>
+        <span style={{
+          fontFamily: 'Anton, Impact, sans-serif',
+          fontSize: '1.25rem', letterSpacing: '0.08em',
+          color: 'var(--gold)', userSelect: 'none',
+        }}>
+          VEIL
+        </span>
+      </header>
 
-      <main className="wallet-main">
+      <main className="wallet-main" style={{ paddingTop: '3rem', paddingBottom: '3rem' }}>
         <div style={{ marginBottom: '2rem' }}>
           <PageHeader eyebrow="Deposit" title="Receive" />
           <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.5)', marginTop: '0.5rem' }}>
@@ -350,6 +378,9 @@ export default function ReceivePage() {
             <div className="vw-recv-side">
               {contractAddress && <ContractRow address={contractAddress} />}
 
+              {/* A pointer, not a promise. This used to say incoming funds start
+                  earning immediately, but nothing deposits on its own — idle USDC
+                  earns only once it is supplied from Earn. */}
               <div className="vw-recv-auto">
                 <p className="vw-label" style={{ color: 'var(--teal)' }}>Earn</p>
                 <p className="vw-recv-auto__head">Put idle USDC to work.</p>
