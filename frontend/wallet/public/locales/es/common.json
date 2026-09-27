@@ -1,0 +1,66 @@
+{
+  "common": {
+    "send": "Enviar",
+    "receive": "Recibir",
+    "swap": "Intercambiar",
+    "buy": "Comprar",
+    "settings": "Ajustes",
+    "activity": "Actividad",
+    "dashboard": "Panel principal",
+    "copy": "Copiar",
+    "copied": "¡Copiado!",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "back": "Volver",
+    "loading": "Cargando...",
+    "error": "Error",
+    "success": "Éxito",
+    "balance": "Saldo",
+    "total_balance": "Saldo Total",
+    "connected": "Conectado",
+    "disconnected": "Desconectado"
+  },
+  "dashboard": {
+    "title": "Panel de Billetera",
+    "recent_activity": "Actividad Reciente",
+    "quick_actions": "Acciones Rápidas",
+    "assets": "Activos",
+    "no_transactions": "Sin transacciones recientes",
+    "portfolio": "Resumen del Portafolio",
+    "private_balance": "Saldo Privado"
+  },
+  "send": {
+    "title": "Enviar Activos",
+    "recipient": "Dirección del Destinatario",
+    "recipient_placeholder": "G... o dirección federada",
+    "amount": "Cantidad",
+    "memo": "Memo (Opcional)",
+    "memo_placeholder": "Añadir un memo",
+    "fee": "Comisión de Red Estimada",
+    "insufficient_balance": "Saldo insuficiente",
+    "send_now": "Enviar Pago",
+    "confirming": "Confirmando transacción..."
+  },
+  "receive": {
+    "title": "Recibir Activos",
+    "scan_qr": "Escanear Código QR",
+    "your_address": "Tu Dirección Stellar",
+    "copy_address": "Copiar Dirección",
+    "share": "Compartir Dirección"
+  },
+  "settings": {
+    "title": "Ajustes",
+    "language": "Idioma",
+    "select_language": "Seleccionar Idioma",
+    "security": "Seguridad y Recuperación",
+    "network": "Red",
+    "preferences": "Preferencias",
+    "theme": "Tema"
+  },
+  "errors": {
+    "network_error": "Error de conexión de red. Por favor intente de nuevo.",
+    "invalid_address": "Dirección de destino Stellar no válida.",
+    "tx_failed": "Error al enviar la transacción.",
+    "try_again": "Intentar de nuevo"
+  }
+}

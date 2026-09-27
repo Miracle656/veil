@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { ensureWalletDeployed, getDeploymentState } from '@/lib/walletDeployment'
 import { walletConfig } from '@/lib/network'
@@ -380,7 +381,10 @@ export default function SettingsPage() {
           {section === 'overview' ? 'Dashboard' : 'Settings'}
         </button>
         <VeilMark size={22} />
-        <ThemeToggle />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <LanguageSwitcher showIcon={false} />
+          <ThemeToggle />
+        </div>
       </nav>
 
       <main className="wallet-main">
@@ -403,6 +407,20 @@ export default function SettingsPage() {
                 <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.875rem', wordBreak: 'break-all', color: 'var(--gold)' }}>
                   {shortAddr}
                 </p>
+              </div>
+
+              {/* Language Switcher card */}
+              <div
+                className="card"
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div>
+                  <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Language</p>
+                  <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    Select your preferred interface language
+                  </p>
+                </div>
+                <LanguageSwitcher />
               </div>
 
               {/* Passkeys card */}

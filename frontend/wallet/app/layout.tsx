@@ -20,6 +20,7 @@ const anton = Anton({ weight: '400', subsets: ['latin'], display: 'swap', variab
 const fontVars = [lora.variable, inter.variable, inconsolata.variable, anton.variable].join(' ')
 import { InstallBanner } from './InstallBanner'
 import { SentryInit } from './SentryInit'
+import { I18nProvider } from '../components/I18nProvider'
 
 export const metadata: Metadata = {
   // Absolute URLs for og:image and friends. Never derived from the deployment:
@@ -65,9 +66,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
-        {children}
-        <InstallBanner />
-        <SentryInit />
+        <I18nProvider>
+          {children}
+          <InstallBanner />
+          <SentryInit />
+        </I18nProvider>
       </body>
     </html>
   )
