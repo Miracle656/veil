@@ -165,6 +165,9 @@ export default function SettingsScreen() {
     },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
     { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
+    // Plain path, no params: the name lives in AsyncStorage, and a route
+    // parameter would carry it in a URL other apps can read.
+    { key: 'profile', title: 'Profile & AI', subtitle: 'Name, language, and agent personality', onPress: () => router.push('/settings/profile') },
     { key: 'about', title: 'About', subtitle: 'Version, updates, licences and support', onPress: () => router.push('/settings/about') },
   ];
   // NoticeModal rather than Alert.alert: these report an outcome, and the
