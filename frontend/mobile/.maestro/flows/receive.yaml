@@ -21,7 +21,10 @@ tags:
 - assertVisible: "Use this for most senders & exchanges"
 
 # Copy writes to the clipboard and reports it. The clipboard itself is not
-# readable from a flow, so the confirmation is the observable part.
+# readable from a flow, so the confirmation is the observable part. It is also
+# transient — the window in app/receive.tsx has to outlast the gap between two
+# Maestro commands on a loaded emulator, or this asserts against text that has
+# already reverted to "Copy".
 - tapOn:
     id: "receive-copy"
 - assertVisible: "Copied"

@@ -482,7 +482,7 @@ export default function SendScreen() {
           </View>
         </View>
         {showError && (
-          <Text style={styles.errorText}>Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
+          <Text style={styles.errorText} testID="send-recipient-error">Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
         )}
 
         {/* Memo */}
