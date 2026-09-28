@@ -16,9 +16,15 @@ import { getFeePayerAddress } from '../lib/activity';
 import { buildSep7PayUri } from '../lib/sep7';
 import { checkReceiveReadiness, readinessMessage, type ReceiveReadiness } from '../lib/receiveReadiness';
 import { enableUsdc } from '../lib/enableUsdc';
+import { getAssetIssuer } from '../lib/assets';
+import { getNetworkName } from '../lib/network';
 import { CopyIcon, DownloadIcon, HexagonIcon, ShareIcon } from '../components/icons';
 
-const FALLBACK = 'GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ';
+/** Issued assets a request can ask for, when live on the active network. */
+const REQUESTABLE_CODES = ['USDC', 'USDT0'] as const;
+type RequestCode = 'XLM' | (typeof REQUESTABLE_CODES)[number];
+
+const FALLBACK ='GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ';
 
 function shorten(a: string, head = 12, tail = 12): string {
   return a.length > head + tail + 1 ? `${a.slice(0, head)}…${a.slice(-tail)}` : a;
@@ -96,7 +102,24 @@ export default function ReceiveScreen() {
   // to lead with the C and call it "use this for most senders", which was
   // exactly backwards.
   const payable = isContract && feePayer ? feePayer : address;
-  const payUri = buildSep7PayUri({ destination: payable });
+
+  // Which asset the QR asks for. An issued asset is requested by code AND
+  // issuer, the issuer taken from the verified registry for this network —
+  // never typed — so a payer's wallet cannot resolve "USDT0" to one of its
+  // seven impostors (#791, #792). Only assets live on this network are offered.
+  const networkName = getNetworkName();
+  const requestable = REQUESTABLE_CODES.filter((c) => getAssetIssuer(c, networkName));
+  const [requestCode, setRequestCode] = useState<RequestCode>('XLM');
+  const requestIssuer =
+    requestCode === 'XLM' ? null : getAssetIssuer(requestCode, networkName);
+  const payUri = buildSep7PayUri(
+    requestIssuer
+      ? { destination: payable, assetCode: requestCode, assetIssuer: requestIssuer }
+      : { destination: payable },
+  );
+  // A request for an issued asset only means something with its issuer, so it
+  // is copied and shared as the full link rather than the bare address.
+  const shareText = requestIssuer ? payUri : payable;
 
   /**
    * Copy the CONTRACT address, which is what the row showing it says it does.
@@ -114,12 +137,16 @@ export default function ReceiveScreen() {
   }
 
   async function handleCopy() {
-    await Clipboard.setStringAsync(payable);
+    await Clipboard.setStringAsync(shareText);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   }
 
   async function handleShare() {
+    if (requestIssuer) {
+      await Share.share({ message: shareText, title: `Pay me ${requestCode}` });
+      return;
+    }
     await Share.share({ message: address, title: 'My Veil wallet address' });
   }
 
@@ -160,6 +187,26 @@ export default function ReceiveScreen() {
               : 'Use this for most senders & exchanges'}
           </Text>
 
+          {requestable.length > 0 && (
+            <View style={styles.chips} accessibilityRole="radiogroup" accessibilityLabel="Asset to request">
+              {(['XLM', ...requestable] as RequestCode[]).map((c) => {
+                const active = c === requestCode;
+                return (
+                  <Pressable
+                    key={c}
+                    testID={`receive-asset-${c}`}
+                    onPress={() => setRequestCode(c)}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: active }}
+                    style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && styles.pressed]}
+                  >
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{c}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+
           <View style={styles.qrFrame}>
             <QRCode
               value={payUri}
@@ -171,6 +218,11 @@ export default function ReceiveScreen() {
           </View>
 
           <Text testID="receive-address" style={styles.addr}>{shorten(payable)}</Text>
+          {requestIssuer && (
+            <Text testID="receive-asset-issuer" style={styles.issuerLine}>
+              Asks for {requestCode} issued by {shorten(requestIssuer, 6, 6)}
+            </Text>
+          )}
 
           {/* Whether a payment sent here will actually land. Three distinct
               answers, because "we could not check" must never render as "this
@@ -309,6 +361,24 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 12,
       textAlign: 'center',
       marginTop: 4,
+    },
+    chips: { flexDirection: 'row', gap: 6, marginTop: 14, justifyContent: 'center' },
+    chip: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 100,
+      paddingHorizontal: 12,
+      paddingVertical: 5,
+    },
+    chipActive: { borderColor: 'rgba(253,218,36,0.4)', backgroundColor: 'rgba(253,218,36,0.08)' },
+    chipText: { color: colors.textMuted, fontFamily: fontFamily.bodySemiBold, fontSize: 11 },
+    chipTextActive: { color: colors.accent },
+    issuerLine: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.address,
+      fontSize: 11,
+      textAlign: 'center',
+      marginTop: 6,
     },
     qrFrame: {
       alignSelf: 'center',

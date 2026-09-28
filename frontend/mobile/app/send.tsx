@@ -602,7 +602,10 @@ export default function SendScreen() {
                   <TokenIcon code={h.code} size={34} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.assetCode}>{h.code}</Text>
-                    <Text style={styles.assetSub}>{h.name}</Text>
+                    {/* The issuer tells apart two holdings that share a code. */}
+                    <Text style={styles.assetSub}>
+                      {h.issuer ? `${h.name} · ${truncateAddress(h.issuer)}` : h.name}
+                    </Text>
                   </View>
                   <Text style={[styles.sheetBal, isSel && { color: colors.accent }]}>{mask(fmtAmount(h.balance))}</Text>
                 </Pressable>
