@@ -1,33 +1,58 @@
-const path = require('path')
+// frontend/wallet/next.config.js
+const CopyWebpackPlugin = require('copy-webpack-plugin');
+const path = require('path');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  experimental: {
-    // Allow imports from outside the Next.js project root (e.g. ../../sdk/src)
-    externalDir: true,
-  },
-  webpack: (config) => {
-    // When webpack compiles SDK source files from ../../sdk/src/, it resolves
-    // node_modules going up from that directory and misses the wallet's
-    // node_modules. Prepend wallet's node_modules so imports like
-    // @stellar/stellar-sdk resolve correctly regardless of the importer's path.
-    config.resolve.modules = [
-      path.resolve(__dirname, 'node_modules'),
-      ...config.resolve.modules,
-    ]
-    return config
-  },
-}
+  webpack: (config, { isServer }) => {
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true,
+    };
 
-const withPWA = require('next-pwa')({
-  dest: 'public',
-  disable: process.env.NODE_ENV === 'development',
-  register: true,
-  skipWaiting: true,
-  fallbacks: {
-    document: '/offline',
-  },
-})
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'asset/resource',
+      generator: {
+        filename: 'static/chunks/[path][name][ext]',
+      },
+    });
 
-module.exports = withPWA(nextConfig)
+    if (!isServer) {
+      config.plugins.push(
+        new CopyWebpackPlugin({
+          patterns: [
+            {
+              from: path.resolve(__dirname, '../../deployments/legal/dist'),
+              to: path.resolve(__dirname, 'public/legal'),
+              noErrorOnMissing: true,
+            },
+          ],
+        })
+      );
+    }
+
+    return config;
+  },
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Cross-Origin-Opener-Policy',
+            value: 'same-origin',
+          },
+          {
+            key: 'Cross-Origin-Embedder-Policy',
+            value: 'require-corp',
+          },
+        ],
+      },
+    ];
+  },
+};
+
+module.exports = nextConfig;
