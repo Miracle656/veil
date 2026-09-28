@@ -37,43 +37,6 @@ const MAX_MEMO_ID = 18_446_744_073_709_551_615n;
 
 export type Sep7MemoType = 'text' | 'id' | 'hash' | 'return';
 
-/**
- * Registry of official / recognized Stellar asset issuers.
- * USDT0 genuine issuer: GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q
- */
-export const REGISTERED_ISSUERS: Record<string, string[]> = {
-    USDT0: ['GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'],
-    USDC: [
-        'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-        'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
-    ],
-};
-
-/** True if the given issuer is registered for the given asset code. */
-export function isRegisteredIssuer(assetCode: string, issuer: string): boolean {
-    const registered = REGISTERED_ISSUERS[assetCode.toUpperCase()];
-    if (!registered) return true;
-    return registered.includes(issuer);
-}
-
-/** Validate that non-native assets specify a valid, registered asset issuer. */
-export function validateAssetIssuer(assetCode: string, assetIssuer?: string): void {
-    const isNative = assetCode.toUpperCase() === 'XLM' && assetIssuer === undefined;
-    if (isNative) return;
-
-    if (!assetIssuer) {
-        throw new Sep7Error(`asset_issuer is required for a non-native asset (${assetCode})`);
-    }
-    if (!StrKey.isValidEd25519PublicKey(assetIssuer)) {
-        throw new Sep7Error(`Invalid asset_issuer: "${assetIssuer}"`);
-    }
-    const upperCode = assetCode.toUpperCase();
-    const registered = REGISTERED_ISSUERS[upperCode];
-    if (registered && !registered.includes(assetIssuer)) {
-        throw new Sep7Error(`Unregistered asset issuer: "${assetIssuer}"`);
-    }
-}
-
 /** The validated, normalised fields of a SEP-7 `pay` request. */
 export type Sep7PayRequest = {
     /** Stellar account (`G…`), muxed account (`M…`), or contract (`C…`) to pay. */
@@ -245,7 +208,10 @@ export function parseSep7PayUri(input: string): Sep7PayRequest {
         if (!ASSET_CODE_RE.test(assetCode)) throw new Sep7Error(`Invalid asset_code: "${assetCode}"`);
         const isNative = assetCode.toUpperCase() === 'XLM' && assetIssuer === undefined;
         if (!isNative) {
-            validateAssetIssuer(assetCode, assetIssuer);
+            if (assetIssuer === undefined) throw new Sep7Error('asset_issuer is required for a non-native asset');
+            if (!StrKey.isValidEd25519PublicKey(assetIssuer)) {
+                throw new Sep7Error(`Invalid asset_issuer: "${assetIssuer}"`);
+            }
             result.assetCode = assetCode;
             result.assetIssuer = assetIssuer;
         }
@@ -344,9 +310,11 @@ export function buildSep7PayUri(params: Sep7PayParams): string {
         if (!ASSET_CODE_RE.test(params.assetCode)) throw new Sep7Error(`Invalid asset_code: "${params.assetCode}"`);
         const isNative = params.assetCode.toUpperCase() === 'XLM' && !params.assetIssuer;
         if (!isNative) {
-            validateAssetIssuer(params.assetCode, params.assetIssuer);
+            if (!params.assetIssuer || !StrKey.isValidEd25519PublicKey(params.assetIssuer)) {
+                throw new Sep7Error('A valid asset_issuer is required for a non-native asset');
+            }
             pairs.push(['asset_code', params.assetCode]);
-            pairs.push(['asset_issuer', params.assetIssuer!]);
+            pairs.push(['asset_issuer', params.assetIssuer]);
         }
     } else if (params.assetIssuer !== undefined) {
         throw new Sep7Error('asset_issuer provided without asset_code');

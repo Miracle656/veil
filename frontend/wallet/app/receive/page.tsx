@@ -5,12 +5,16 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { QRCodeCanvas } from 'qrcode.react'
-import { buildSep7PayUri } from '@/lib/sep7'
+import { createPaymentRequest, Sep7Error } from '@/lib/paymentRequest'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { CURRENCIES, hydrateCurrency, useCurrency, type CurrencyCode } from '@/lib/currency'
 import { fetchPrice } from '@/lib/fetchPrice'
 import { downloadBrandedQr } from '@/lib/downloadBrandedQr'
-import { getUsdcIssuer } from '@/lib/network'
+import { getNetworkName } from '@/lib/network'
+import { getAssetIssuer } from '@/lib/assets'
+
+/** Issued assets a payment request can ask for, when live on the active network. */
+const REQUESTABLE_CODES = ['USDC', 'USDT0'] as const
 
 const REQUEST_CHIPS: Record<CurrencyCode, number[]> = {
   USD: [5, 10, 25, 50],
@@ -134,15 +138,24 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardP
       ? (requestFiat / rate / xlmUsd).toFixed(7).replace(/\.?0+$/, '')
       : undefined
 
-  const finalAmount = isNative ? (amount || xlmAmount) : amount
+  const finalAmount = (isNative ? (amount || xlmAmount) : amount) || undefined
 
-  const payUri = buildSep7PayUri({
-    destination: address,
-    amount: finalAmount,
-    assetCode: !isNative ? assetCode : undefined,
-    assetIssuer: !isNative ? assetIssuer : undefined,
-  })
+  // Built by the SDK, which validates every field: an issued asset cannot be
+  // requested without its issuer, so the QR always names it (#791). An amount
+  // the user is still typing (e.g. "1.") is dropped rather than encoded.
+  let payUri: string
+  let amountError: string | null = null
+  const assetFields = isNative ? {} : { assetCode, assetIssuer }
+  try {
+    payUri = createPaymentRequest({ destination: address, amount: finalAmount, ...assetFields }).qrValue
+  } catch (err) {
+    if (!(err instanceof Sep7Error)) throw err
+    amountError = finalAmount ? 'Enter a valid amount' : err.message
+    payUri = createPaymentRequest({ destination: address, ...assetFields }).qrValue
+  }
 
+  // A request for an issued asset is only meaningful with its issuer, so it is
+  // shared as the full link; a bare address would let the payer pick any USDT0.
   const shareText = (finalAmount || !isNative) ? payUri : address
 
   const handleCopy = async () => {
@@ -212,10 +225,15 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardP
         />
       </div>
 
-      <p className="vw-spendcard__addr">{shareText}</p>
-      {assetCode && assetIssuer && (
-        <p style={{ fontSize: '0.75rem', color: 'var(--gold)', marginTop: '0.375rem', fontFamily: 'Inconsolata, monospace' }}>
-          Asset: {assetCode} · Issuer: {assetIssuer.slice(0, 6)}...{assetIssuer.slice(-6)}
+      <p className="vw-spendcard__addr">{address}</p>
+      {!isNative && assetIssuer && (
+        <p className="vw-spendcard__sub" style={{ marginTop: 6, wordBreak: 'break-all' }}>
+          QR asks for {finalAmount && !amountError ? `${finalAmount} ` : ''}{assetCode} issued by {assetIssuer}
+        </p>
+      )}
+      {amountError && (
+        <p className="vw-spendcard__sub" role="alert" style={{ marginTop: 6, color: 'var(--teal)' }}>
+          {amountError}
         </p>
       )}
 
@@ -269,13 +287,12 @@ export default function ReceivePage() {
   const [selectedAssetCode, setSelectedAssetCode] = useState<string>('XLM')
   const [requestedAmount, setRequestedAmount] = useState<string>('')
 
-  // Genuine USDT0 issuer & network USDC issuer
-  const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
-  const getSelectedIssuer = (code: string) => {
-    if (code === 'USDT0') return USDT0_ISSUER
-    if (code === 'USDC') return getUsdcIssuer()
-    return undefined
-  }
+  // Only assets that exist on this network can be requested, and each one's
+  // issuer comes from the verified registry — never typed, never inferred.
+  const networkName = getNetworkName()
+  const requestable = REQUESTABLE_CODES.filter((c) => getAssetIssuer(c, networkName))
+  const selectedIssuer =
+    selectedAssetCode === 'XLM' ? undefined : getAssetIssuer(selectedAssetCode, networkName) ?? undefined
 
   useEffect(() => {
     const stored = walletSession.getItem('invisible_wallet_address')
@@ -338,8 +355,7 @@ export default function ReceivePage() {
               style={{ flex: 1, minWidth: 140, fontFamily: 'Inconsolata, monospace', color: 'var(--off-white)', background: 'var(--surface)' }}
             >
               <option value="XLM">XLM (Native)</option>
-              <option value="USDC">USDC</option>
-              <option value="USDT0">USDT0</option>
+              {requestable.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             <input
               type="number"
@@ -357,13 +373,17 @@ export default function ReceivePage() {
         {!ready ? (
           <div className="spinner spinner-light" style={{ width: '2rem', height: '2rem', margin: '4rem auto' }} />
         ) : (
+          // Two columns, as the design draws it: the address people scan on the
+          // left, and everything that is about the address, rather than the
+          // address itself, on the right. Stacked, the contract row sat far
+          // enough below the QR to read as a second, competing address.
           <div className="vw-recv-row">
             <div className="vw-recv-main">
               {feePayerAddress ? (
                 <SpendingCard
                   address={feePayerAddress}
                   assetCode={selectedAssetCode}
-                  assetIssuer={getSelectedIssuer(selectedAssetCode)}
+                  assetIssuer={selectedIssuer}
                   amount={requestedAmount}
                 />
               ) : (

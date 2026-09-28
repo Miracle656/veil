@@ -19,11 +19,7 @@ import {
 
 // Real keys with valid StrKey checksums.
 const DEST = 'GCSWM5I2FRYFIDSVJDGLWDH4TMQZY6IVT4JDF2SCFW6PPJ56TSBH23NO'
-const ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
-
-const USDT0_GENUINE_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
-const USDT0_IMPOSTOR_ISSUER = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
-const USDT0_SAC_CONTRACT = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
+const ISSUER = 'GD2VUFNSFXBAVZEZIU6VRPFU2KMSU4VQKP65SCE4TR5C2MJPLJ6VEAIM'
 
 describe('buildSep7PayUri', () => {
   it('builds a minimal pay URI', () => {
@@ -138,39 +134,12 @@ describe('parseSep7PayUri', () => {
   })
 })
 
-describe('USDT0 and registered asset issuer validation (#791)', () => {
-  it('refuses a link with asset=USDT0 and no issuer', () => {
-    const uri = `${SEP7_SCHEME}pay?destination=${DEST}&asset_code=USDT0`
-    expect(() => parseSep7PayUri(uri)).toThrow(/asset_issuer is required for a non-native asset/)
-  })
-
-  it('refuses a link with an unregistered issuer and names it', () => {
-    const uri = `${SEP7_SCHEME}pay?destination=${DEST}&asset_code=USDT0&asset_issuer=${USDT0_IMPOSTOR_ISSUER}`
-    expect(() => parseSep7PayUri(uri)).toThrow(`Unregistered asset issuer: "${USDT0_IMPOSTOR_ISSUER}"`)
-  })
-
-  it('preserves genuine USDT0 issuer on round trip and matches SAC contract', () => {
-    const uri = buildSep7PayUri({
-      destination: DEST,
-      amount: '100',
-      assetCode: 'USDT0',
-      assetIssuer: USDT0_GENUINE_ISSUER,
-    })
-    const parsed = parseSep7PayUri(uri)
-    expect(parsed.assetCode).toBe('USDT0')
-    expect(parsed.assetIssuer).toBe(USDT0_GENUINE_ISSUER)
-
-    const asset = new Asset('USDT0', USDT0_GENUINE_ISSUER)
-    expect(asset.contractId(Networks.PUBLIC)).toBe(USDT0_SAC_CONTRACT)
-  })
-})
-
 describe('round-trip', () => {
   it('build → parse preserves every field', () => {
     const params = {
       destination: DEST,
       amount: '999.9999999',
-      assetCode: 'USDC',
+      assetCode: 'EURC',
       assetIssuer: ISSUER,
       memo: 'order #7',
       callback: 'https://shop.example/sep7/callback',
@@ -183,6 +152,29 @@ describe('round-trip', () => {
     expect(parsed.assetIssuer).toBe(params.assetIssuer)
     expect(parsed.memo).toBe(params.memo)
     expect(parsed.callback).toBe(params.callback)
+  })
+})
+
+describe('USDT0: the issuer is carried end to end (#791)', () => {
+  const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
+
+  it('refuses a request for USDT0 that names no issuer', () => {
+    expect(() => parseSep7PayUri(`${SEP7_SCHEME}pay?destination=${DEST}&asset_code=USDT0`))
+      .toThrow(/asset_issuer is required/)
+    expect(() => buildSep7PayUri({ destination: DEST, assetCode: 'USDT0' })).toThrow(Sep7Error)
+  })
+
+  it('keeps the issuer through build → QR → parse', () => {
+    const uri = buildSep7PayUri({ destination: DEST, amount: '25', assetCode: 'USDT0', assetIssuer: USDT0_ISSUER })
+    expect(uri).toContain(`asset_issuer=${USDT0_ISSUER}`)
+    const parsed = parseSep7QrValue(uri)
+    expect(parsed).toMatchObject({ assetCode: 'USDT0', assetIssuer: USDT0_ISSUER, amount: '25' })
+  })
+
+  it('derives the SAC from code:issuer rather than trusting a pasted one', () => {
+    // Derived, then compared against the value checked on mainnet Horizon.
+    expect(new Asset('USDT0', USDT0_ISSUER).contractId(Networks.PUBLIC))
+      .toBe('CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF')
   })
 })
 

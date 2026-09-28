@@ -97,6 +97,16 @@ describe('resolveDeepLink — SEP-7 payment requests', () => {
     expect(query.get('uri')).toBe(uri);
   });
 
+  it('carries asset_issuer alongside asset_code (#791)', () => {
+    const issuer = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
+    const target = resolveDeepLink(
+      `web+stellar:pay?destination=${DESTINATION}&asset_code=USDT0&asset_issuer=${issuer}`,
+    );
+    const query = new URLSearchParams(target.slice(target.indexOf('?') + 1));
+    expect(query.get('asset')).toBe('USDT0');
+    expect(query.get('issuer')).toBe(issuer);
+  });
+
   it('forwards the raw URI even when no fields map', () => {
     expect(resolveDeepLink('web+stellar:pay')).toBe(
       `/pay?uri=${encodeURIComponent('web+stellar:pay')}`,

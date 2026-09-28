@@ -15,15 +15,14 @@ const Server = Horizon.Server
 import { ContactPicker } from '@/components/ContactPicker'
 import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { parseQrValue } from '@/lib/sep7'
+import { readPaymentRequest, resolveRequestedAsset, type IssuedAsset } from '@/lib/requestedAsset'
+import { getRegisteredAsset } from '@/lib/assets'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
 
-import { getNativeAssetContractId, getNetwork } from '@/lib/network'
+import { getNativeAssetContractId, getNetwork, getNetworkName } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { fetchPrices } from '@/lib/fetchPrice'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
-
-import { isRegisteredIssuer } from '@/lib/sep7'
 
 const network = getNetwork()
 
@@ -49,6 +48,16 @@ function maxSendable(asset: WalletAsset): number {
   return Math.max(0, bal)
 }
 
+/** An issuer as the review screen names it: who, when registered, then the full account. */
+function issuerLabel(code: string, issuer: string): string {
+  const registered = getRegisteredAsset(code)
+  return registered && registered.issuer === issuer ? `${registered.issuerName} · ${issuer}` : issuer
+}
+
+function shortIssuer(issuer: string): string {
+  return `${issuer.slice(0, 4)}…${issuer.slice(-4)}`
+}
+
 export default function SendPage() {
   const router = useRouter()
   useInactivityLock()
@@ -56,10 +65,38 @@ export default function SendPage() {
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
+  /**
+   * The exact asset a payment request asked for, held until the account's
+   * balances load so it can be selected by `code:issuer` rather than lost when
+   * the list arrives. `null` means the request named none (or native XLM).
+   */
+  const [requestedAsset, setRequestedAsset] = useState<IssuedAsset | null>(null)
+  /** Why the last payment request was refused, in words (#791). */
+  const [requestError, setRequestError]     = useState<string | null>(null)
 
+  /**
+   * Prefill from the query string, so another screen can hand off a payment it
+   * already knows the details of. Cash out uses this to send the deposit: the
+   * address and amount come from the order, and retyping either is a way to
+   * lose money to a typo.
+   *
+   * An asset is carried as `asset` plus `issuer`. A code without its issuer, or
+   * with an issuer Veil does not recognise, refuses the whole handoff — a
+   * half-applied request is how the wrong USDT0 gets paid.
+   *
+   * Read once on mount rather than watched. These are an opening position, not
+   * a binding: whatever the user does to the fields afterwards stands.
+   */
   useEffect(() => {
     if (typeof window === 'undefined') return
     const q = new URLSearchParams(window.location.search)
+    const code = q.get('asset') ?? undefined
+    const issuer = q.get('issuer') ?? undefined
+    if (code || issuer) {
+      const resolved = resolveRequestedAsset(code, issuer, getNetworkName())
+      if (!resolved.ok) { setRequestError(resolved.reason); return }
+      setRequestedAsset(resolved.asset)
+    }
     const to = q.get('to')
     const amt = q.get('amount')
     const m = q.get('memo')
@@ -67,11 +104,13 @@ export default function SendPage() {
     if (amt) setAmount(amt)
     if (m) setMemo(m)
   }, [])
-
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
   const [showPicker, setShowPicker]   = useState(false)
 
+  // Who this wallet has actually paid, newest first. Derived from the activity
+  // feed rather than the contact book: a contact you have never paid is not a
+  // "recent recipient", and this needs no extra storage.
   const transactions = useActivityFeed()
   const recentRecipients = Array.from(
     new Set(transactions.filter((t) => t.type === 'sent').map((t) => t.counterparty)),
@@ -136,13 +175,63 @@ export default function SendPage() {
     void fetchPrices(assets).then(setPrices)
   }, [assets])
 
+  // Select the requested asset by code AND issuer once balances are in. An
+  // asset the wallet does not hold yet is still shown — at a zero balance, so
+  // the form says plainly that it cannot be paid rather than switching the
+  // payment to some other asset that shares the code.
+  useEffect(() => {
+    if (!requestedAsset || assets.length === 0) return
+    const match = assets.find(a => a.code === requestedAsset.code && a.issuer === requestedAsset.issuer)
+    if (match) { setSelectedAsset(match); return }
+    const unheld: WalletAsset = {
+      code: requestedAsset.code,
+      issuer: requestedAsset.issuer,
+      contractId: new Asset(requestedAsset.code, requestedAsset.issuer).contractId(network.networkPassphrase),
+      balance: '0',
+    }
+    setAssets(prev => [...prev, unheld])
+  }, [assets, requestedAsset])
+
+  /**
+   * Apply a scanned or uploaded QR value: a bare address, or a SEP-7 request
+   * whose asset must resolve to an exact `code:issuer`. A refused request fills
+   * in nothing — not even the address — and says why.
+   */
+  function applyPaymentRequest(value: string): boolean {
+    const read = readPaymentRequest(value, getNetworkName(), assets)
+    if (!read.ok) {
+      setRequestError(read.reason)
+      return false
+    }
+    setRequestError(null)
+    const { prefill } = read
+    setRecipient(prefill.destination)
+    if (prefill.amount) setAmount(prefill.amount)
+    if (prefill.memo) setMemo(prefill.memo)
+    if (read.asset) {
+      setRequestedAsset(read.asset)
+    } else if (prefill.assetCode === undefined && value.trim().toLowerCase().startsWith('web+stellar:')) {
+      // A SEP-7 request that names no asset is asking for native XLM.
+      setRequestedAsset(null)
+      const xlm = assets.find(a => a.code === 'XLM' && !a.issuer)
+      if (xlm) setSelectedAsset(xlm)
+    }
+    return true
+  }
+
   // ── QR image upload ─────────────────────────────────────────────────────────
+  // Reads an image file, draws it to an offscreen canvas, and passes the
+  // ImageData to BarcodeDetector. Falls back to a clear error if the browser
+  // doesn't support BarcodeDetector or no QR is found in the image.
   const handleImageFile = async (file: File) => {
     setImgError(null)
     setImgDecoding(true)
 
     try {
+      // Decode image into a bitmap
       const bitmap = await createImageBitmap(file)
+
+      // Draw onto an offscreen canvas so BarcodeDetector can read it
       const canvas = document.createElement('canvas')
       canvas.width  = bitmap.width
       canvas.height = bitmap.height
@@ -167,56 +256,12 @@ export default function SendPage() {
         return
       }
 
-      const value = codes[0].rawValue.trim()
-      const parsed = parseQrValue(value)
-      if (!parsed) {
-        setImgError('Invalid QR payload or payment request URI.')
-        return
-      }
-
-      let assetCode: string | undefined
-      let assetIssuer: string | undefined
-
-      if ('destination' in parsed && Object.keys(parsed).length === 1) {
-        setRecipient(parsed.destination)
-      } else {
-        const sep7 = parsed as import('@/lib/sep7').Sep7Parsed
-        if (sep7.destination) setRecipient(sep7.destination)
-        if (sep7.amount) setAmount(sep7.amount)
-        if (sep7.memo) setMemo(sep7.memo)
-        assetCode = sep7.assetCode
-        assetIssuer = sep7.assetIssuer
-      }
-
-      if (assetCode && assetCode.toUpperCase() !== 'XLM') {
-        if (!assetIssuer) {
-          setImgError(`Asset ${assetCode} payment request is missing asset_issuer`)
-          return
-        }
-        if (!isRegisteredIssuer(assetCode, assetIssuer)) {
-          setImgError(`Unregistered asset issuer: "${assetIssuer}"`)
-          return
-        }
-        const matching = assets.find(a => a.code === assetCode && a.issuer === assetIssuer)
-        if (matching) {
-          setSelectedAsset(matching)
-        } else {
-          const newAsset: WalletAsset = {
-            code: assetCode,
-            issuer: assetIssuer,
-            contractId: new Asset(assetCode, assetIssuer).contractId(network.networkPassphrase),
-            balance: '0',
-          }
-          setAssets(prev => [...prev, newAsset])
-          setSelectedAsset(newAsset)
-        }
-      }
-
-      setImgError(null)
+      if (applyPaymentRequest(codes[0].rawValue.trim())) setImgError(null)
     } catch {
       setImgError('Could not read the image. Please try a different file.')
     } finally {
       setImgDecoding(false)
+      // Reset file input so the same file can be re-selected if needed
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -265,16 +310,17 @@ export default function SendPage() {
 
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
-        const sendAsset = selectedAsset?.issuer
-          ? new Asset(selectedAsset.code, selectedAsset.issuer)
-          : Asset.native()
         const tx = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
           .addOperation(Operation.payment({
             destination: recipient,
-            asset: sendAsset,
+            // The asset exactly as selected — code and issuer — never re-derived
+            // from the code alone.
+            asset: selectedAsset?.issuer
+              ? new Asset(selectedAsset.code, selectedAsset.issuer)
+              : Asset.native(),
             amount,
           }))
           .setTimeout(30)
@@ -285,8 +331,7 @@ export default function SendPage() {
       } else {
         const rpcServer     = new SorobanRpc.Server(network.rpcUrl)
         const feePayerAcct  = await rpcServer.getAccount(feePayerKp.publicKey())
-        const sacContractId = selectedAsset?.contractId || getNativeAssetContractId()
-        const sacContract   = new Contract(sacContractId)
+        const sacContract   = new Contract(selectedAsset?.contractId ?? getNativeAssetContractId())
         const amountStroops = BigInt(Math.round(parseFloat(amount) * 10_000_000))
 
         const tx = new TransactionBuilder(feePayerAcct, {
@@ -356,6 +401,12 @@ export default function SendPage() {
           <div className="vw-send-stage vw-row vw-row--first" style={{ alignItems: 'flex-start' }}>
             <div className="vw-sendcol">
 
+            {requestError && (
+              <p role="alert" style={{ fontSize: '0.8125rem', color: 'var(--teal)', lineHeight: 1.5 }}>
+                Payment request refused. {requestError}
+              </p>
+            )}
+
             <div>
               <div className="vw-fieldlabel">Asset</div>
               <button
@@ -369,12 +420,10 @@ export default function SendPage() {
                   <span className="vw-send-swap" key={selectedAsset ? assetKey(selectedAsset) : 'none'}>
                     <span className="vw-avatar">{selectedAsset?.code.slice(0, 1) ?? '?'}</span>
                     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                      <span style={{ fontSize: 15, fontWeight: 600 }}>
-                        {selectedAsset ? (selectedAsset.issuer ? `${selectedAsset.code} (${selectedAsset.issuer.slice(0, 4)}…${selectedAsset.issuer.slice(-4)})` : selectedAsset.code) : '—'}
-                      </span>
+                      <span style={{ fontSize: 15, fontWeight: 600 }}>{selectedAsset?.code ?? '—'}</span>
                       <span className="vw-meta">
                         {selectedAsset
-                          ? `${parseFloat(selectedAsset.balance).toFixed(4)} available`
+                          ? `${parseFloat(selectedAsset.balance).toFixed(4)} available${selectedAsset.issuer ? ` · ${shortIssuer(selectedAsset.issuer)}` : ''}`
                           : 'Loading…'}
                       </span>
                     </span>
@@ -399,10 +448,10 @@ export default function SendPage() {
                       <span className="vw-assetcard__left">
                         <span className="vw-avatar">{a.code.slice(0, 1)}</span>
                         <span>
-                          <span style={{ display: 'block', fontSize: 15, fontWeight: 600 }}>
-                            {a.issuer ? `${a.code} (${a.issuer.slice(0, 6)}…${a.issuer.slice(-6)})` : a.code}
+                          <span style={{ display: 'block', fontSize: 15, fontWeight: 600 }}>{a.code}</span>
+                          <span className="vw-meta">
+                            {parseFloat(a.balance).toFixed(4)}{a.issuer ? ` · ${shortIssuer(a.issuer)}` : ''}
                           </span>
-                          <span className="vw-meta">{parseFloat(a.balance).toFixed(4)}</span>
                         </span>
                       </span>
                     </button>
@@ -471,7 +520,7 @@ export default function SendPage() {
                   type="text"
                   placeholder="G… or C…"
                   value={recipient}
-                  onChange={e => { setRecipient(e.target.value.trim()); setImgError(null) }}
+                  onChange={e => { setRecipient(e.target.value.trim()); setImgError(null); setRequestError(null) }}
                   autoComplete="off"
                   spellCheck={false}
                   style={{ flex: 1 }}
@@ -505,7 +554,7 @@ export default function SendPage() {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
                     <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="1.75"/>
-                    <path d="M23 21v-2a4 4 0 01-2-3.87M16 3.13a4 4 0 010 7.75" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
+                    <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/>
                   </svg>
                 </button>
                 <button
@@ -627,7 +676,11 @@ export default function SendPage() {
                 <Row label="To"      value={`${recipient.slice(0, 8)}...${recipient.slice(-8)}`} mono />
                 <Row label="Amount"  value={`${amount} ${selectedAsset?.code ?? 'XLM'}`} mono />
                 {selectedAsset?.issuer && (
-                  <Row label="Issuer" value={selectedAsset.issuer} mono />
+                  <Row
+                    label="Issuer"
+                    value={issuerLabel(selectedAsset.code, selectedAsset.issuer)}
+                    mono
+                  />
                 )}
                 {memo && <Row label="Memo" value={memo} />}
                 <Row label="Network" value={network.displayName} />
@@ -708,47 +761,9 @@ export default function SendPage() {
       {showScanner && (
         <QrScanner
           onScan={value => {
-            const parsed = parseQrValue(value)
-            if (!parsed) return
-
-            let assetCode: string | undefined
-            let assetIssuer: string | undefined
-
-            if ('destination' in parsed && Object.keys(parsed).length === 1) {
-              if (parsed.destination) setRecipient(parsed.destination)
-            } else {
-              const sep7 = parsed as import('@/lib/sep7').Sep7Parsed
-              if (sep7.destination) setRecipient(sep7.destination)
-              if (sep7.amount) setAmount(sep7.amount)
-              if (sep7.memo) setMemo(sep7.memo)
-              assetCode = sep7.assetCode
-              assetIssuer = sep7.assetIssuer
-            }
-
-            if (assetCode && assetCode.toUpperCase() !== 'XLM') {
-              if (!assetIssuer) {
-                setImgError(`Asset ${assetCode} payment request is missing asset_issuer`)
-                return
-              }
-              if (!isRegisteredIssuer(assetCode, assetIssuer)) {
-                setImgError(`Unregistered asset issuer: "${assetIssuer}"`)
-                return
-              }
-              const matching = assets.find(a => a.code === assetCode && a.issuer === assetIssuer)
-              if (matching) {
-                setSelectedAsset(matching)
-              } else {
-                const newAsset: WalletAsset = {
-                  code: assetCode,
-                  issuer: assetIssuer,
-                  contractId: new Asset(assetCode, assetIssuer).contractId(network.networkPassphrase),
-                  balance: '0',
-                }
-                setAssets(prev => [...prev, newAsset])
-                setSelectedAsset(newAsset)
-              }
-            }
-
+            // Close on refusal too: the reason is shown on the form, and a
+            // scanner left open would keep re-reading the same bad code.
+            applyPaymentRequest(value)
             setShowScanner(false)
           }}
           onClose={() => setShowScanner(false)}
@@ -766,6 +781,7 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
       <span style={{
         fontSize: '0.875rem',
         fontFamily: mono ? 'Inconsolata, monospace' : 'Inter, sans-serif',
+        fontVariantNumeric: 'tabular-nums',
         textAlign: 'right',
         wordBreak: 'break-all',
       }}>
