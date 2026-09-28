@@ -13,8 +13,18 @@ import { SlideToConfirm } from '../components/SlideToConfirm';
 import { SwapVerticalIcon } from '../components/icons';
 import { TokenIcon } from '../components/TokenIcon';
 import { SuccessAnimation } from '../components/SuccessAnimation';
-import { getSoroswapQuote, buildSoroswapSwapXdr, ensureSwapOutTrustline, resolveTokenAddress, type SwapQuote } from '../lib/soroswap';
-import { getSdexQuote, sdexSwap, sdexSupported } from '../lib/sdexSwap';
+import { getSoroswapQuote, buildSoroswapSwapXdr, ensureSwapOutTrustline, type SwapQuote } from '../lib/soroswap';
+import { getSdexQuote, sdexSwap } from '../lib/sdexSwap';
+import {
+  noRouteMessage,
+  swapAssetKey,
+  swapAssetLabel,
+  swapDestinations,
+  swapRouteInput,
+  type NetworkName,
+  type SwapAsset,
+} from '../lib/swapAssets';
+import { getRegisteredAsset } from '../lib/assets';
 import { fetchContractAssetBalance, getFeePayerAddress } from '../lib/activity';
 import { getFeePayerXlm, sendAssetFromContract, type FeePayerXlm } from '../lib/contractSpend';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
@@ -26,15 +36,23 @@ import { requirePasskey } from '../lib/passkey';
 import { getWalletAddress, getSignerSecret } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 
-type Token = { code: string; name: string };
+/** A swappable asset: a registry-checked code:issuer (issuer null = XLM). */
+type Token = SwapAsset & { name: string };
 type Step = 'form' | 'signing' | 'submitting' | 'done' | 'error';
 
-const TOKENS: Token[] = [
-  { code: 'XLM', name: 'Stellar Lumens' },
-  { code: 'USDC', name: 'USD Coin' },
-  { code: 'EURC', name: 'Euro Coin' },
-  { code: 'AQUA', name: 'Aquarius' },
-];
+/**
+ * The tokens on offer, built from the verified registry for the network — XLM
+ * plus each registered asset live there, issuer included (#793). The list used
+ * to be bare codes (XLM, USDC, EURC, AQUA) resolved to contracts by symbol from
+ * Soroswap's token list; EURC and AQUA are not in the registry, so they cannot
+ * be addressed by issuer and are no longer offered.
+ */
+function tokensFor(network: NetworkName): Token[] {
+  return swapDestinations(network).map((a) => ({
+    ...a,
+    name: a.issuer ? (getRegisteredAsset(a.code)?.name ?? a.code) : 'Stellar Lumens',
+  }));
+}
 
 const SLIPPAGE_BPS = 50; // 0.5 %
 const DEBOUNCE_MS = 600;
@@ -48,25 +66,39 @@ export default function SwapScreen() {
   // chain's liquidity if the network changes while this screen is alive.
   const { networkName } = useNetwork();
   const onTestnet = networkName === 'testnet';
+  const TOKENS = useMemo(() => tokensFor(networkName), [networkName]);
 
   // A swap handed over by the agent: /swap?from=XLM&to=USDC&amount=10. Only
   // codes this screen lists and a plain positive amount are taken; anything else
   // leaves the ordinary defaults, so a bad link opens an ordinary form.
   const prefill = useLocalSearchParams<{ from?: string; to?: string; amount?: string }>();
+  // A code from the agent resolves to the one registered asset with that code.
   const prefillToken = (code: string | string[] | undefined): Token | undefined =>
     typeof code === 'string' ? TOKENS.find((t) => t.code === code.toUpperCase()) : undefined;
   const prefillIn = prefillToken(prefill.from);
   const prefillOut = prefillToken(prefill.to);
-  const samePair = !!prefillIn && prefillIn.code === prefillOut?.code;
+  const samePair = !!prefillIn && !!prefillOut && swapAssetKey(prefillIn) === swapAssetKey(prefillOut);
   const [tokenIn, setTokenIn] = useState<Token>(prefillIn ?? TOKENS[0]!);
   const [tokenOut, setTokenOut] = useState<Token>(
-    (!samePair && prefillOut) || (prefillIn?.code === TOKENS[1]!.code ? TOKENS[0]! : TOKENS[1]!),
+    (!samePair && prefillOut) ||
+      (prefillIn && swapAssetKey(prefillIn) === swapAssetKey(TOKENS[1]!) ? TOKENS[0]! : TOKENS[1]!),
   );
   const [amountIn, setAmountIn] = useState(
     typeof prefill.amount === 'string' && /^\d+(\.\d{1,7})?$/.test(prefill.amount) && Number(prefill.amount) > 0
       ? prefill.amount
       : '',
   );
+  // A network switch changes which assets exist: USDT0 is mainnet-only, and
+  // USDC has a different issuer on each chain. Start over from that network's
+  // list rather than carry an asset the new network does not have.
+  const pairNetwork = useRef(networkName);
+  useEffect(() => {
+    if (pairNetwork.current === networkName) return;
+    pairNetwork.current = networkName;
+    setTokenIn(TOKENS[0]!);
+    setTokenOut(TOKENS[1]!);
+    setQuote(null);
+  }, [networkName, TOKENS]);
   const [picker, setPicker] = useState<null | 'in' | 'out'>(null);
   const [holdings, setHoldings] = useState<Holding[]>([]);
 
@@ -114,8 +146,11 @@ export default function SwapScreen() {
     return () => { alive = false; };
   }, []);
 
-  const balanceOf = (code: string): number | null => {
-    const h = holdings.find((x) => x.code.toUpperCase() === code.toUpperCase());
+  // By code AND issuer: a held impostor sharing a code is not a balance of it.
+  const balanceOf = (token: SwapAsset): number | null => {
+    const h = holdings.find(
+      (x) => swapAssetKey({ code: x.code, issuer: x.issuer }) === swapAssetKey(token),
+    );
     return h ? Number(h.balance) : null;
   };
   const fmtBal = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
@@ -150,16 +185,19 @@ export default function SwapScreen() {
           return;
         }
 
+        // One pair, addressed by what it is: the SACs derived from each
+        // code:issuer for Soroswap, the classic assets for the DEX (#793).
+        const route = swapRouteInput(tokenIn, tokenOut, networkName, getNetwork().networkPassphrase);
+        if (!route.ok) {
+          setQuoteError(route.reason);
+          setQuote(null);
+          return;
+        }
+
         if (onTestnet) {
-          if (!sdexSupported(tokenIn.code) || !sdexSupported(tokenOut.code)) {
-            const missing = !sdexSupported(tokenIn.code) ? tokenIn.code : tokenOut.code;
-            setQuoteError(`${missing} isn't available for testnet swaps (XLM ↔ USDC).`);
-            setQuote(null);
-            return;
-          }
-          const sdex = await getSdexQuote(tokenIn.code, parsed.toString(), tokenOut.code);
+          const sdex = await getSdexQuote(tokenIn, parsed.toString(), tokenOut);
           if (!sdex) {
-            setQuoteError('No DEX path for this pair — no testnet liquidity bridges it.');
+            setQuoteError(noRouteMessage(tokenIn, tokenOut, networkName));
             setQuote(null);
             return;
           }
@@ -168,7 +206,7 @@ export default function SwapScreen() {
             priceImpact: 0,
             path: sdex.path.map((a) => (a.isNative() ? 'native' : `${a.getCode()}:${a.getIssuer()}`)),
             protocols: ['SDEX'],
-            rawQuote: sdex,
+            rawQuote: null,
             ttl: Date.now() + 30_000,
           });
           return;
@@ -177,30 +215,28 @@ export default function SwapScreen() {
         // The swap moves funds on the SPENDING (fee-payer G) account — its
         // source-account signature authorizes the token transfers. A smart
         // wallet's C-address can't be the transaction source at all.
-        const [tokenInAddr, tokenOutAddr, feePayer] = await Promise.all([
-          resolveTokenAddress(tokenIn.code),
-          resolveTokenAddress(tokenOut.code),
-          getFeePayerAddress(),
-        ]);
-        if (!tokenInAddr || !tokenOutAddr) {
-          setQuoteError('Token not found in Soroswap list.');
-          setQuote(null);
-          return;
-        }
+        const feePayer = await getFeePayerAddress();
         if (!feePayer) {
           setQuoteError('No spending account on this device yet.');
           setQuote(null);
           return;
         }
         const result = await getSoroswapQuote({
-          tokenIn: tokenInAddr,
-          tokenOut: tokenOutAddr,
+          tokenIn: route.tokenIn,
+          tokenOut: route.tokenOut,
           amountIn: Math.round(parsed * 1e7).toString(),
           slippageBps: SLIPPAGE_BPS,
           feePayerAddress: feePayer,
         });
-        setQuote(result);
-        if (!result) setQuoteError('No liquidity found for this pair.');
+        if (result.ok) {
+          setQuote(result.quote);
+        } else {
+          setQuote(null);
+          // No route stays no route: nothing here substitutes another asset.
+          setQuoteError(
+            result.kind === 'no-route' ? noRouteMessage(tokenIn, tokenOut, networkName) : result.reason,
+          );
+        }
       } catch {
         setQuoteError('Quote failed. Check your connection.');
         setQuote(null);
@@ -211,7 +247,7 @@ export default function SwapScreen() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [amountIn, tokenIn.code, tokenOut.code, onTestnet]);
+  }, [amountIn, tokenIn, tokenOut, networkName, onTestnet]);
 
   /**
    * Make sure the spending account can cover an XLM swap, moving the shortfall
@@ -227,7 +263,7 @@ export default function SwapScreen() {
     const walletAddr = await getWalletAddress().catch(() => null);
     if (!walletAddr?.startsWith('C')) return;
 
-    const opensTrustline = tokenOut.code.toUpperCase() !== 'XLM' && balanceOf(tokenOut.code) === null;
+    const opensTrustline = !!tokenOut.issuer && balanceOf(tokenOut) === null;
     const needed = amount + (opensTrustline ? 0.5 : 0) + 0.05;
     const before = await getFeePayerXlm();
     const shortfall = needed - before.spendable;
@@ -275,18 +311,22 @@ export default function SwapScreen() {
       // account is short, move the difference from the smart wallet first,
       // using the same passkey-authorised contract transfer as a send. This is
       // what lets a wallet whose XLM mostly sits in the contract swap at all.
-      if (tokenIn.code.toUpperCase() === 'XLM') {
+      if (!tokenIn.issuer) {
         await topUpSpendingFromSmartWallet(parsed, signerSecret);
       }
+
+      // Re-checked at submit rather than trusted from when it was quoted.
+      const route = swapRouteInput(tokenIn, tokenOut, networkName, getNetwork().networkPassphrase);
+      if (!route.ok) throw new Error(route.reason);
 
       // Testnet → classic DEX path payment (adds the destination trustline
       // when missing). Mainnet → Soroswap.
       if (onTestnet) {
         const hash = await sdexSwap({
           signerSecret,
-          sourceCode: tokenIn.code,
+          from: tokenIn,
           amountIn: parsed.toString(),
-          destCode: tokenOut.code,
+          to: tokenOut,
           slippageBps: SLIPPAGE_BPS,
         });
         setTxHash(hash);
@@ -294,14 +334,6 @@ export default function SwapScreen() {
         return;
       }
 
-      const [tokenInAddr, tokenOutAddr] = await Promise.all([
-        resolveTokenAddress(tokenIn.code),
-        resolveTokenAddress(tokenOut.code),
-      ]);
-      if (!tokenInAddr || !tokenOutAddr) {
-        const missing = !tokenInAddr ? tokenIn.code : tokenOut.code;
-        throw new Error(`${missing} isn't listed on Soroswap for this network — swaps use Soroswap liquidity (mainnet).`);
-      }
       // Everything from here runs on the fee-payer G-account, which is NOT the
       // account whose balance this screen shows — the screen sums the smart
       // wallet and the spending account, and swaps only ever touch the latter.
@@ -314,8 +346,7 @@ export default function SwapScreen() {
       // nothing spendable at all.
       const spendable = (await getFeePayerXlm()).spendable;
       const TRUSTLINE_RESERVE_XLM = 0.5;
-      const needsTrustline =
-        tokenOut.code.toUpperCase() !== 'XLM' && balanceOf(tokenOut.code) === null;
+      const needsTrustline = !!tokenOut.issuer && balanceOf(tokenOut) === null;
 
       if (needsTrustline && spendable < TRUSTLINE_RESERVE_XLM) {
         throw new Error(
@@ -325,11 +356,11 @@ export default function SwapScreen() {
 
       // The router refuses to pay out to an account without the destination
       // trustline — open it first when missing (locks 0.5 XLM base reserve).
-      await ensureSwapOutTrustline(signerSecret, tokenOut.code);
+      await ensureSwapOutTrustline(signerSecret, tokenOut);
 
       // Paying in XLM comes out of that same account, so measure it against
       // what is spendable there rather than the balance on screen.
-      if (tokenIn.code.toUpperCase() === 'XLM') {
+      if (!tokenIn.issuer) {
         const left = needsTrustline ? spendable - TRUSTLINE_RESERVE_XLM : spendable;
         if (parsed > left) {
           throw new Error(
@@ -343,7 +374,7 @@ export default function SwapScreen() {
       // and the router's own error does not say so — it just refuses. Telling
       // the user here means they learn what is wrong instead of watching a
       // spinner end in a generic failure.
-      const available = balanceOf(tokenIn.code);
+      const available = balanceOf(tokenIn);
       if (available !== null && available <= 0) {
         throw new Error(
           `You have no ${tokenIn.code} to swap. Receive or buy some first, then try again.`,
@@ -357,13 +388,23 @@ export default function SwapScreen() {
 
       // Build against the spending account — the same key that signs below.
       const feePayer = Keypair.fromSecret(signerSecret).publicKey();
-      const unsignedXdr = await buildSoroswapSwapXdr({
-        tokenIn: tokenInAddr,
-        tokenOut: tokenOutAddr,
-        amountIn: Math.round(parsed * 1e7).toString(),
-        slippageBps: SLIPPAGE_BPS,
-        feePayerAddress: feePayer,
-      });
+      // Build from a quote for exactly this pair: the one on screen while it
+      // is fresh, otherwise a new one for the same two contracts, checked the
+      // same way. If there is none, stop; do not route something else.
+      let live = quote?.rawQuote && Date.now() <= quote.ttl ? quote.rawQuote : null;
+      if (!live) {
+        const fresh = await getSoroswapQuote({
+          tokenIn: route.tokenIn,
+          tokenOut: route.tokenOut,
+          amountIn: Math.round(parsed * 1e7).toString(),
+          slippageBps: SLIPPAGE_BPS,
+          feePayerAddress: feePayer,
+        });
+        if (!fresh.ok) throw new Error(`The quote expired and could not be refreshed: ${fresh.reason}`);
+        live = fresh.quote.rawQuote;
+      }
+      if (!live) throw new Error('No quote to build this swap from. Please retry.');
+      const unsignedXdr = await buildSoroswapSwapXdr(live, feePayer);
 
       const network = getNetwork();
       // Testnet keypair mode: simulate → assemble → sign with the wallet key →
@@ -397,10 +438,10 @@ export default function SwapScreen() {
 
   function handleSelect(token: Token) {
     if (picker === 'in') {
-      if (token.code === tokenOut.code) setTokenOut(tokenIn);
+      if (swapAssetKey(token) === swapAssetKey(tokenOut)) setTokenOut(tokenIn);
       setTokenIn(token);
     } else if (picker === 'out') {
-      if (token.code === tokenIn.code) setTokenIn(tokenOut);
+      if (swapAssetKey(token) === swapAssetKey(tokenIn)) setTokenIn(tokenOut);
       setTokenOut(token);
     }
     setPicker(null);
@@ -428,14 +469,14 @@ export default function SwapScreen() {
   // for this and was wrong whenever the account held anything extra: every
   // trustline and data entry locks a further 0.5, and the recovery breadcrumbs
   // alone are three entries.
-  const isXlmIn = tokenIn.code.toUpperCase() === 'XLM';
+  const isXlmIn = !tokenIn.issuer;
   // Paying in XLM can draw on the smart wallet too: anything the spending
   // account is short of is moved across before the swap runs.
   const payableIn = isXlmIn
     ? feePayerXlm
       ? feePayerXlm.spendable + (contractXlm ?? 0)
       : null
-    : balanceOf(tokenIn.code);
+    : balanceOf(tokenIn);
   // Measured against the fee payer's OWN balance. Comparing it to the wallet
   // total — which sums the smart wallet as well — reported more locked than the
   // account even holds.
@@ -484,7 +525,7 @@ export default function SwapScreen() {
                 </Pressable>
               )}
             </View>
-            {lockedXlm !== null && lockedXlm > 0.01 && tokenIn.code.toUpperCase() === 'XLM' && (
+            {lockedXlm !== null && lockedXlm > 0.01 && isXlmIn && (
               <Text style={styles.legHint}>
                 {fmtBal(lockedXlm)} of the spending account&rsquo;s {fmtBal(feePayerXlm?.balance ?? 0)} XLM
                 is held as network reserve ({feePayerXlm?.subentries ?? 0}{' '}
@@ -509,8 +550,8 @@ export default function SwapScreen() {
           <View style={[styles.leg, styles.legBottom]}>
             <View style={styles.legHead}>
               <Text style={styles.legLabel}>You receive</Text>
-              {balanceOf(tokenOut.code) !== null && (
-                <Text style={styles.legBalance}>Balance {fmtBal(balanceOf(tokenOut.code)!)}</Text>
+              {balanceOf(tokenOut) !== null && (
+                <Text style={styles.legBalance}>Balance {fmtBal(balanceOf(tokenOut)!)}</Text>
               )}
             </View>
             <View style={styles.legRow}>
@@ -535,6 +576,24 @@ export default function SwapScreen() {
               <Text style={styles.rateLabel}>Rate</Text>
               <Text style={styles.rateValue}>
                 {rate ? `1 ${tokenIn.code} = ${rate} ${tokenOut.code}` : '—'}
+              </Text>
+            </View>
+          )}
+          {/* Which asset each side is, issuer included, so the user can see
+              which USDT0 of eight they are trading (#793). */}
+          <View style={styles.rateRow}>
+            <Text style={styles.rateLabel}>Pay</Text>
+            <Text style={styles.rateValue} testID="swap-pay-asset">{swapAssetLabel(tokenIn, networkName)}</Text>
+          </View>
+          <View style={styles.rateRow}>
+            <Text style={styles.rateLabel}>Receive</Text>
+            <Text style={styles.rateValue} testID="swap-receive-asset">{swapAssetLabel(tokenOut, networkName)}</Text>
+          </View>
+          {quote && (
+            <View style={styles.rateRow}>
+              <Text style={styles.rateLabel}>Route · slippage</Text>
+              <Text style={styles.rateValue}>
+                {quote.protocols.join(' · ') || 'SDEX'} · {SLIPPAGE_BPS / 100}%
               </Text>
             </View>
           )}
@@ -568,9 +627,11 @@ export default function SwapScreen() {
           <Pressable style={[styles.sheet, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }]} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.sheetTitle}>Select token</Text>
             {TOKENS.map((t) => (
-              <Pressable key={t.code} style={styles.sheetRow} onPress={() => handleSelect(t)}>
+              <Pressable key={swapAssetKey(t)} style={styles.sheetRow} onPress={() => handleSelect(t)}>
                 <TokenChip token={t} colors={colors} static />
-                <Text style={styles.sheetName}>{t.name}</Text>
+                <Text style={styles.sheetName}>
+                  {t.issuer ? `${t.name} · ${swapAssetLabel(t, networkName)}` : t.name}
+                </Text>
               </Pressable>
             ))}
           </Pressable>
