@@ -68,14 +68,10 @@ export default function RecoverySettingsScreen() {
           <View style={styles.copy}>
             <Text style={styles.label}>{mechanism.label}</Text>
             <Text style={styles.detail}>
-              {mechanism.ready
-                ? 'Ready'
-                : mechanism.needsCheck
-                  ? 'Not checked yet'
-                  : 'Not configured'}
+              {mechanism.detail ?? (mechanism.ready ? 'Ready' : 'Not configured')}
             </Text>
           </View>
-          {mechanism.key === 'prf' && !mechanism.ready ? (
+          {mechanism.key === 'prf' && mechanism.needsCheck ? (
             <Pressable onPress={checkPrf} disabled={checking} style={styles.button}>
               {checking ? (
                 <ActivityIndicator color={colors.onAccent} />
@@ -86,7 +82,7 @@ export default function RecoverySettingsScreen() {
           ) : !mechanism.ready ? (
             <Pressable
               onPress={() =>
-                router.push(mechanism.key === 'backup' ? '/settings/backup' : '/recover')
+                router.push(mechanism.key === 'servers' ? '/recover' : '/settings/backup')
               }
               style={styles.button}
             >

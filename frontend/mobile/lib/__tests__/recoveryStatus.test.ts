@@ -12,6 +12,36 @@ describe('deriveRecoveryStatus', () => {
     });
     expect(status.overall).toBe('none');
     expect(status.mechanisms[0]).toMatchObject({ ready: false, needsCheck: true });
+    expect(status.mechanisms[0].action).toBe('Check passkey');
+  });
+  it('keeps cancelled and failed checks retryable', () => {
+    for (const prf of ['cancelled', 'failed'] as const) {
+      const status = deriveRecoveryStatus({
+        ...wallet,
+        prf,
+        backupLastExportedAt: null,
+        recoveryServerCount: 0,
+      });
+      expect(status.mechanisms[0]).toMatchObject({
+        ready: false,
+        needsCheck: true,
+        action: 'Check passkey',
+      });
+    }
+  });
+  it('does not retry an unsupported passkey and offers the backup repair path', () => {
+    const status = deriveRecoveryStatus({
+      ...wallet,
+      prf: 'unsupported',
+      backupLastExportedAt: null,
+      recoveryServerCount: 0,
+    });
+    expect(status.mechanisms[0]).toMatchObject({
+      ready: false,
+      needsCheck: false,
+      action: 'Create an encrypted backup',
+    });
+    expect(status.mechanisms[0].detail).toContain('does not support PRF');
   });
   it('reports partial cover when only a backup exists', () => {
     const status = deriveRecoveryStatus({
