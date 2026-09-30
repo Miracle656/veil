@@ -216,7 +216,8 @@ Claude-powered AI agent embedded in the Veil wallet. Connects via WebSocket. Too
 | Tool                    | Description                                                       |
 | ----------------------- | ----------------------------------------------------------------- |
 | `get_price`             | Fetches live SDEX/AMM price via Lens (x402 auto-paid)             |
-| `get_wallet_balance`    | Fetches XLM + token balances via Horizon                          |
+| `get_wallet_balance`    | Fetches XLM + token balances via Horizon; issued assets are classified verified / unverified / unlisted by issuer |
+| `get_asset_info`        | Verified issuer (and clawback/freeze properties) for USDT0 / USDC |
 | `get_transfer_history`  | Fetches transfer history via Wraith + Horizon payments            |
 | `build_swap`            | Builds unsigned path payment XDR (auto-adds trustline if missing) |
 | `build_payment`         | Builds unsigned payment XDR                                       |
