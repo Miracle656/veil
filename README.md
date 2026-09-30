@@ -146,7 +146,7 @@ veil/
 │   └── factory/                   # Factory contract — deploys wallet instances
 │       ├── src/
 │       │   ├── lib.rs             # init(wasm_hash) + deploy(pubkey, rp_id, origin)
-│       │   ├── storage.rs         # WasmHash + Deployed(salt) keys
+│       │   ├── storage.rs         # WasmHash/Admin (instance) + Deployed(salt) markers (persistent)
 │       │   └── validation.rs      # P-256 public key validation
 │       └── Cargo.toml
 ├── sdk/
