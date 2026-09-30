@@ -53,7 +53,38 @@ function toHex(bytes: Uint8Array): string {
  * signing path (passkey __check_auth), not the keypair path used in testnet
  * mode — that's a separate milestone.
  */
-export async function createPasskeyWallet(wallet: Registerable): Promise<CreatedWallet> {
+export type PasskeyWalletResult =
+  | {
+      status: 'created';
+      wallet: CreatedWallet;
+    }
+  | {
+      status: 'unsupported';
+      walletAddress: string;
+      publicKeyBytes?: Uint8Array;
+      keyId: string | null;
+      issue: Exclude<PrfOutcome, 'ok'>;
+      commit: () => Promise<CreatedWallet>;
+    };
+
+/**
+ * Create a passkey smart wallet (dev build only — needs the native passkey
+ * module + a domain-associated RP):
+ *
+ *   1. `register()` creates a WebAuthn P-256 credential and computes the
+ *      deterministic C-address wallet (via the factory).
+ *   2. Evaluate PRF to determine whether the platform's manager returns a PRF
+ *      output.
+ *   3. If PRF is supported, derive fee-payer G-account, fund, write breadcrumbs,
+ *      save to storage, and return `{ status: 'created', wallet }`.
+ *   4. If PRF is NOT supported, do not commit to storage yet. Return
+ *      `{ status: 'unsupported', walletAddress, publicKeyBytes, keyId, issue, commit }`
+ *      so the caller can surface the trade-off before committing.
+ */
+export async function createPasskeyWallet(
+  wallet: Registerable,
+  options?: { forceCommit?: boolean }
+): Promise<PasskeyWalletResult> {
   const { walletAddress, publicKeyBytes } = await wallet.register('Veil wallet');
 
   const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
@@ -73,39 +104,42 @@ export async function createPasskeyWallet(wallet: Registerable): Promise<Created
       }
     }
   }
-  // Random fallback = the fee-payer CANNOT be re-derived from the passkey on
-  // another device. Never do this silently: the caller surfaces `recoverable`.
-  const recoverable = feePayer !== null;
-  if (!feePayer) feePayer = Keypair.random();
 
-  // Friendbot only exists on testnet; on mainnet this returns false at once.
-  const funded = await fundWithFriendbot(feePayer.publicKey());
+  const doCommit = async (fp: Keypair | null): Promise<CreatedWallet> => {
+    const recoverable = fp !== null;
+    const finalFeePayer = fp ?? Keypair.random();
 
-  // On-chain breadcrumbs (best-effort): make "sign in with passkey" work on a
-  // fresh device by recording the C-address + passkey public key as data
-  // entries on the (deterministic) fee-payer account.
-  //
-  // Deliberately NOT gated on the Friendbot result. That gate asked "did a
-  // faucet just fund this?", and the answer on mainnet is always no, so every
-  // mainnet wallet was created with no on-chain record of itself and no way to
-  // be found again from a fresh device. The write needs a funded account, not a
-  // faucet, and it already fails harmlessly when there is none — the account
-  // simply does not load. `ensureBreadcrumbs` retries on dashboard load, which
-  // is what covers the mainnet order of events: the account is funded after the
-  // wallet is created, not before.
-  void writeBreadcrumbs(feePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
+    // Friendbot only exists on testnet; on mainnet this returns false at once.
+    const funded = await fundWithFriendbot(finalFeePayer.publicKey());
 
-  await Promise.all([
-    setWalletAddress(walletAddress),
-    setSignerSecret(feePayer.secret()),
-    keyId && publicKeyBytes
-      ? setPasskeyCredential(keyId, toHex(publicKeyBytes))
-      : keyId
-        ? setPasskeyId(keyId)
-        : Promise.resolve(),
-  ]);
+    void writeBreadcrumbs(finalFeePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
 
-  return { address: walletAddress, funded, recoverable, ...(recoverable ? {} : { recoveryIssue: issue }) };
+    await Promise.all([
+      setWalletAddress(walletAddress),
+      setSignerSecret(finalFeePayer.secret()),
+      keyId && publicKeyBytes
+        ? setPasskeyCredential(keyId, toHex(publicKeyBytes))
+        : keyId
+          ? setPasskeyId(keyId)
+          : Promise.resolve(),
+    ]);
+
+    return { address: walletAddress, funded, recoverable, ...(recoverable ? {} : { recoveryIssue: issue }) };
+  };
+
+  if (feePayer || options?.forceCommit) {
+    const wallet = await doCommit(feePayer);
+    return { status: 'created', wallet };
+  }
+
+  return {
+    status: 'unsupported',
+    walletAddress,
+    publicKeyBytes: publicKeyBytes ?? undefined,
+    keyId,
+    issue,
+    commit: () => doCommit(null),
+  };
 }
 
 async function accountExists(address: string): Promise<boolean> {
@@ -125,7 +159,7 @@ export type RecoveryRetry =
   | { bound: true }
   | { bound: false; issue: Exclude<PrfOutcome, 'ok'> | 'funded' };
 
-export type Recreation = { ok: true; wallet: CreatedWallet } | { ok: false; reason: 'funded' };
+export type Recreation = { ok: true; result: PasskeyWalletResult } | { ok: false; reason: 'funded' };
 
 /**
  * Build the wallet again from a fresh passkey.
@@ -144,7 +178,10 @@ export type Recreation = { ok: true; wallet: CreatedWallet } | { ok: false; reas
  * the creation screen and nowhere else, and why an on-chain spending account
  * refuses instead.
  */
-export async function recreatePasskeyWallet(wallet: Registerable): Promise<Recreation> {
+export async function recreatePasskeyWallet(
+  wallet: Registerable,
+  options?: { forceCommit?: boolean }
+): Promise<Recreation> {
   const previous = await getSignerSecret();
   // Friendbot funds every wallet moments after it is made, so "the account
   // exists" says nothing on testnet about whether it holds anything worth
@@ -152,7 +189,7 @@ export async function recreatePasskeyWallet(wallet: Registerable): Promise<Recre
   if (previous && !getNetwork().friendbotUrl) {
     if (await accountExists(Keypair.fromSecret(previous).publicKey())) return { ok: false, reason: 'funded' };
   }
-  return { ok: true, wallet: await createPasskeyWallet(wallet) };
+  return { ok: true, result: await createPasskeyWallet(wallet, options) };
 }
 
 /**
