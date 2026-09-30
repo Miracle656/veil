@@ -32,6 +32,7 @@ import {
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
 import { horizonErrorMessage } from './horizonError';
+import { memoError } from './memo';
 
 // All endpoints follow the ACTIVE network — module-level env consts froze
 // these to testnet and sent mainnet payments at testnet Horizon.
@@ -147,6 +148,11 @@ export async function sendPayment(
   if (errors.recipient) throw new Error(errors.recipient);
   if (errors.amount) throw new Error(errors.amount);
 
+  // Untrusted (deep link / QR): refuse an over-long memo up front with a real
+  // validation message rather than silently dropping it after the user confirmed.
+  const memoProblem = memoError(memo);
+  if (memoProblem) throw new Error(memoProblem);
+
   const to = recipient.trim();
   const memoText = memo?.trim();
 
@@ -189,8 +195,8 @@ export async function sendPayment(
           : Operation.createAccount({ destination: to, startingBalance: amount.trim() }),
       )
       .setTimeout(30);
-    // Classic memos: only attach for text that fits the 28-byte limit.
-    if (memoText && new TextEncoder().encode(memoText).length <= 28) {
+    // Length was validated above, so this never throws.
+    if (memoText) {
       builder.addMemo(Memo.text(memoText));
     }
     const tx = builder.build();

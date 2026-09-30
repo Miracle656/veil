@@ -28,6 +28,7 @@ import { ChevronDownIcon, ScanIcon, UsersIcon } from '../components/icons';
 import { TokenIcon } from '../components/TokenIcon';
 import { SuccessAnimation } from '../components/SuccessAnimation';
 import { SlideToConfirm } from '../components/SlideToConfirm';
+import { memoError } from '../lib/memo';
 
 /** expo-router yields `string | string[]` for a repeated query key. */
 function firstValue(value: string | string[] | undefined): string {
@@ -196,7 +197,9 @@ export default function SendScreen() {
         : classicHeld
       : null;
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
-  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient;
+  // The memo may come from a deep link; its byte length is checked before anything is signed.
+  const memoProblem = memoError(memo);
+  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient && !memoProblem;
 
   const up = selected ? unitPrice(selected) : null;
   const fiatOfAmount = up !== null && isFinite(amtNum) && amtNum > 0 ? format(amtNum * up) : null;
@@ -498,6 +501,11 @@ export default function SendScreen() {
             editable={editable}
           />
         </View>
+        {memoProblem && (
+          <Text style={styles.errorText} testID="send-memo-error">
+            {memoProblem}
+          </Text>
+        )}
 
         {/* Fee */}
         <View style={styles.feeRow}>
@@ -524,7 +532,7 @@ export default function SendScreen() {
         ) : (
           <View style={[styles.cta, styles.disabled]} testID="send-submit">
             <Text style={styles.ctaText}>
-              {insufficient ? 'Not enough balance' : step === 'error' ? 'Try again' : 'Enter details to send'}
+              {insufficient ? 'Not enough balance' : memoProblem ? 'Memo too long' : step === 'error' ? 'Try again' : 'Enter details to send'}
             </Text>
           </View>
         )}
