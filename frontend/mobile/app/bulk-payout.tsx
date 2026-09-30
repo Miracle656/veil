@@ -15,10 +15,12 @@ import { ThemeToggle } from '../components/ThemeToggle';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import {
-  executeBulkPayout,
+  BATCH_SIGNING_AVAILABLE,
+  BATCH_SIGNING_UNAVAILABLE_MESSAGE,
   isRowValid,
+  runBulkPayout,
+  submitBatchUnavailable,
   validateRow,
-  type BatchSubmitResult,
   type PayoutRow,
 } from '../lib/bulkPayout';
 
@@ -59,19 +61,16 @@ export default function BulkPayoutScreen() {
     if (rows.length === 0) return;
     setStep('submitting');
     try {
-      // Single authorization covers the entire batch — one signature, one submission.
-      const submitBatch = async (batch: PayoutRow[]): Promise<BatchSubmitResult> => {
-        return {
-          txHash: `pending-${Date.now().toString(36)}`,
-          rowIndices: batch.map((_, i) => i),
-        };
-      };
-
-      const result = await executeBulkPayout(rows, submitBatch);
-      if (result.failedRows.length > 0) {
-        throw new Error('Batch submission failed');
+      // The "done" screen is reachable only through a submitted transaction
+      // with a real hash. Until a batch signer exists, `submitBatchUnavailable`
+      // refuses, and the outcome is a failure that says so.
+      const outcome = await runBulkPayout(rows, submitBatchUnavailable);
+      if (outcome.status !== 'submitted') {
+        Alert.alert('Payout not sent', outcome.message);
+        setStep('form');
+        return;
       }
-      setTxHash(result.txHash);
+      setTxHash(outcome.txHash);
       setStep('done');
     } catch (e: unknown) {
       const msg = errorMessage(e);
@@ -86,14 +85,14 @@ export default function BulkPayoutScreen() {
     setStep('form');
   };
 
-  if (step === 'done') {
+  if (step === 'done' && txHash) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Payout submitted</Text>
+        <Text style={styles.title}>Batch submitted</Text>
         <Text style={styles.subtitle}>
-          {rows.length} recipient{rows.length === 1 ? '' : 's'} paid in one signed batch.
+          {rows.length} payment{rows.length === 1 ? '' : 's'} submitted in one transaction.
         </Text>
-        {txHash ? <Text style={styles.hash}>{txHash}</Text> : null}
+        <Text style={styles.hash}>{txHash}</Text>
         <Pressable style={[styles.btn, styles.btnPrimary]} onPress={reset}>
           <Text style={styles.btnText}>Start new batch</Text>
         </Pressable>
@@ -107,7 +106,16 @@ export default function BulkPayoutScreen() {
         <Text style={styles.title}>Bulk payout</Text>
         <ThemeToggle />
       </View>
-      <Text style={styles.subtitle}>Add recipients, then sign once for the whole batch.</Text>
+      <Text style={styles.subtitle}>
+        {BATCH_SIGNING_AVAILABLE
+          ? 'Add recipients, then sign once for the whole batch.'
+          : 'Prepare a list of recipients. Sending is not available yet.'}
+      </Text>
+      {!BATCH_SIGNING_AVAILABLE && (
+        <View style={styles.notice} accessibilityRole="alert">
+          <Text style={styles.noticeText}>{BATCH_SIGNING_UNAVAILABLE_MESSAGE}</Text>
+        </View>
+      )}
 
       <View style={styles.form}>
         <TextInput
@@ -173,14 +181,21 @@ export default function BulkPayoutScreen() {
       )}
 
       <Pressable
-        style={[styles.btn, styles.btnPrimary, rows.length === 0 && styles.btnDisabled]}
+        style={[
+          styles.btn,
+          styles.btnPrimary,
+          (rows.length === 0 || !BATCH_SIGNING_AVAILABLE) && styles.btnDisabled,
+        ]}
         onPress={handleSignAndSubmit}
-        disabled={rows.length === 0 || step === 'submitting'}
+        disabled={rows.length === 0 || !BATCH_SIGNING_AVAILABLE || step === 'submitting'}
+        accessibilityState={{ disabled: rows.length === 0 || !BATCH_SIGNING_AVAILABLE }}
       >
         {step === 'submitting' ? (
           <ActivityIndicator color={colors.onAccent} />
         ) : (
-          <Text style={styles.btnText}>Sign once & submit batch</Text>
+          <Text style={styles.btnText}>
+            {BATCH_SIGNING_AVAILABLE ? 'Sign once & submit batch' : 'Batch signing not available yet'}
+          </Text>
         )}
       </Pressable>
     </ScrollView>
@@ -299,6 +314,17 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.accentText,
       fontSize: 13,
       fontWeight: '600',
+    },
+    notice: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 12,
+    },
+    noticeText: {
+      color: colors.textSecondary,
+      fontSize: 13,
     },
     hash: {
       color: colors.textMuted,
