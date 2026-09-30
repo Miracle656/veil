@@ -228,6 +228,18 @@ export default function SettingsScreen() {
     router.replace('/welcome');
   };
 
+  const [clearBrowsingOpen, setClearBrowsingOpen] = useState(false);
+  const confirmClearBrowsing = async () => {
+    setClearBrowsingOpen(false);
+    try {
+      const { clearBrowsingData } = require('../../lib/browserData');
+      await clearBrowsingData();
+      setNotice({ title: 'Data cleared', message: 'Browsing data and sessions have been cleared.', tone: 'success' });
+    } catch (err) {
+      setNotice({ title: 'Clear failed', message: 'Could not clear browsing data.', tone: 'error' });
+    }
+  };
+
   const developer: Row[] = [
     // Endpoints, factory contract and per-network config warnings. Diagnostic
     // rather than everyday: the Mainnet switch above is how you actually change
@@ -241,6 +253,12 @@ export default function SettingsScreen() {
         : 'Unavailable on mainnet — Friendbot is testnet only',
       value: 'Testnet',
       onPress: fundTestXlm,
+    },
+    {
+      key: 'clear-browsing',
+      title: 'Clear browsing data',
+      subtitle: 'Clear cookies, cache, and disconnect all sessions',
+      onPress: () => setClearBrowsingOpen(true),
     },
     {
       key: 'reset',
@@ -411,6 +429,17 @@ export default function SettingsScreen() {
         cancelLabel="Cancel"
         onConfirm={confirmReset}
         onCancel={() => setResetOpen(false)}
+      />
+
+      <ConfirmModal
+        isOpen={clearBrowsingOpen}
+        destructive
+        title="Clear browsing data?"
+        message="This will clear WebView cookies, local storage, cache, revoke every origin grant, and end all WalletConnect sessions."
+        confirmLabel="Clear data"
+        cancelLabel="Cancel"
+        onConfirm={confirmClearBrowsing}
+        onCancel={() => setClearBrowsingOpen(false)}
       />
 
       <ConfirmModal

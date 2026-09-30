@@ -4,6 +4,7 @@ export type Sep7Parsed = {
   assetCode?: string
   assetIssuer?: string
   memo?: string
+  memoType?: string
 }
 
 function decodeComponentSafe(v: string): string {
@@ -50,6 +51,16 @@ export function parseSep7Uri(input: string): Sep7Parsed | null {
   const destination = toMaybeString(params.get('destination'))
   const amount = toMaybeString(params.get('amount'))
   const memo = toMaybeString(params.get('memo'))
+  
+  const rawMemoType = params.get('memo_type')
+  const memoType = toMaybeString(rawMemoType)
+
+  if (memoType) {
+    const validTypes = ['MEMO_TEXT', 'MEMO_ID', 'MEMO_HASH', 'MEMO_RETURN']
+    if (!validTypes.includes(memoType.toUpperCase())) {
+      throw new Error(`Unknown memo_type: ${rawMemoType}`)
+    }
+  }
 
   const assetCode = toMaybeString(params.get('asset_code'))
   const assetIssuer = toMaybeString(params.get('asset_issuer'))
@@ -61,6 +72,7 @@ export function parseSep7Uri(input: string): Sep7Parsed | null {
     assetCode,
     assetIssuer,
     memo,
+    memoType: memoType ? memoType.toUpperCase() : undefined,
   }
 }
 
@@ -87,6 +99,7 @@ export function buildSep7PayUri(opts: {
   assetCode?: string
   assetIssuer?: string
   memo?: string
+  memoType?: string
 }): string {
   const params = new URLSearchParams()
   params.set('destination', opts.destination)
@@ -94,6 +107,7 @@ export function buildSep7PayUri(opts: {
   if (opts.assetCode) params.set('asset_code', opts.assetCode)
   if (opts.assetIssuer) params.set('asset_issuer', opts.assetIssuer)
   if (opts.memo) params.set('memo', opts.memo)
+  if (opts.memoType) params.set('memo_type', opts.memoType)
 
   return `web+stellar:pay?${params.toString()}`
 }
