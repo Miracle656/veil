@@ -57,14 +57,36 @@ jobs:
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> \$GITHUB_OUTPUT
+          " >> "$GITHUB_OUTPUT"
 
-      # ── Fund with Friendbot ───────────────────────────────────────────────
+      # ── Assert the key was actually written before we use it ──────────────
+      - name: Assert burner public key is non-empty
+        run: |
+          if [ -z "${{ steps.keygen.outputs.public }}" ]; then
+            echo "ERROR: keygen step did not produce a public key — GITHUB_OUTPUT write failed." >&2
+            exit 1
+          fi
+
+      # ── Fund with Friendbot (retry on 429/5xx/timeout) ───────────────────
       - name: Fund burner account via Friendbot
         run: |
-          curl -sf "https://friendbot.stellar.org?addr=${{ steps.keygen.outputs.public }}" \
-            -o friendbot_response.json
-          cat friendbot_response.json
+          for attempt in 1 2 3; do
+            http_code=$(curl -s -o friendbot_response.json -w "%{http_code}" \
+              --max-time 30 \
+              "https://friendbot.stellar.org?addr=${{ steps.keygen.outputs.public }}")
+            if [ "$http_code" = "200" ]; then
+              echo "Friendbot funded burner (attempt $attempt):"
+              cat friendbot_response.json
+              break
+            fi
+            echo "Friendbot returned HTTP $http_code on attempt $attempt:" >&2
+            cat friendbot_response.json >&2
+            if [ "$attempt" = "3" ]; then
+              echo "ERROR: Friendbot rejected burner funding after 3 attempts (HTTP $http_code)." >&2
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
 
       # ── Create a second burner account (recipient) ────────────────────────
       - name: Generate recipient keypair
@@ -75,12 +97,34 @@ jobs:
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> \$GITHUB_OUTPUT
+          " >> "$GITHUB_OUTPUT"
+
+      # ── Assert the recipient key was written ─────────────────────────────
+      - name: Assert recipient public key is non-empty
+        run: |
+          if [ -z "${{ steps.recipient.outputs.public }}" ]; then
+            echo "ERROR: recipient step did not produce a public key — GITHUB_OUTPUT write failed." >&2
+            exit 1
+          fi
 
       - name: Fund recipient via Friendbot
         run: |
-          curl -sf "https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}" \
-            -o friendbot_recipient.json
+          for attempt in 1 2 3; do
+            http_code=$(curl -s -o friendbot_recipient.json -w "%{http_code}" \
+              --max-time 30 \
+              "https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}")
+            if [ "$http_code" = "200" ]; then
+              echo "Friendbot funded recipient (attempt $attempt)."
+              break
+            fi
+            echo "Friendbot returned HTTP $http_code on attempt $attempt:" >&2
+            cat friendbot_recipient.json >&2
+            if [ "$attempt" = "3" ]; then
+              echo "ERROR: Friendbot rejected recipient funding after 3 attempts (HTTP $http_code)." >&2
+              exit 1
+            fi
+            sleep $((attempt * 5))
+          done
 
       # ── Send a 1 XLM payment and verify it landed on Horizon ─────────────
       - name: Send payment and verify via Horizon
