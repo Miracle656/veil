@@ -431,9 +431,9 @@ const wallet = createWalletStore({
 
 // $wallet reactively reflects { address, isDeployed, isPending, error }
 await wallet.register('alice');
-await wallet.deploy(feePayerSecret);
+await wallet.deploy(feePayerSigner); // a TransactionSigner, see sdk/README.md
 const sig = await wallet.signAuthEntry(signaturePayload);
-await wallet.sendPayment(feePayerSecret, to, amountInStroops);
+await wallet.sendPayment(feePayerSigner, to, amountInStroops);
 ```
 
 The store binds the same `InvisibleWalletCore` the React hook and the Vue
@@ -541,7 +541,7 @@ const wallet = createInvisibleWallet({
 
 // Register a passkey and deploy a wallet contract
 const { walletAddress } = await wallet.register('alice');
-await wallet.deploy(feePayerKeypair);
+await wallet.deploy(feePayerSigner); // a TransactionSigner, see sdk/README.md
 
 // Sign a Soroban authorization entry
 const sig = await wallet.signAuthEntry(signaturePayload);

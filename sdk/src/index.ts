@@ -41,6 +41,7 @@ export * from './crypto/prf';
 export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';
+export type { TransactionSigner, SignTransactionContext, SignerInput } from './signer';
 export * from './claimableBalance';
 export * from './network';
 export * from './fees';
