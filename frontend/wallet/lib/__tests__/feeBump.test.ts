@@ -1,3 +1,6 @@
+import { TextEncoder, TextDecoder } from 'util'
+Object.assign(globalThis, { TextEncoder, TextDecoder })
+
 import { buildSponsoredFeeBumpTransaction } from '../feeBump'
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
 
@@ -30,6 +33,7 @@ jest.mock('@stellar/stellar-sdk', () => {
     TransactionBuilder: {
       buildFeeBumpTransaction: jest.fn(() => feeBump),
     },
+    Horizon: { Server: jest.fn() },
     xdr: {},
   }
 })
