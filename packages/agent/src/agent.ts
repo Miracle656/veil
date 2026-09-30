@@ -112,7 +112,9 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'get_wallet_balance',
-    description: 'Get current XLM and token balances for a wallet address. Free.',
+    description:
+      'Get current XLM and token balances for a wallet address. Free. Token holdings are checked by code AND issuer: ' +
+      'each has verified, issuer and a note to relay. An unverified holding is not the registered asset of that code.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -243,7 +245,8 @@ RULES:
 5. Format amounts clearly: "500 XLM", "47.3 USDC".
 6. If you need a recipient address and the user hasn't provided one, ask before building.
 7. Keep responses concise. Use bullet points for multi-step flows.
-8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.`
+8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.
+9. Report token balances from get_wallet_balance's holdings, relaying each holding's note. Always name the issuer. A holding with verified: false is UNVERIFIED — say so, show its issuer, and never call it by a registered asset's name just because the code matches.`
 }
 
 /**

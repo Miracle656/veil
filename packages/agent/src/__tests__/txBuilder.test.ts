@@ -80,8 +80,12 @@ jest.unstable_mockModule('@stellar/stellar-sdk', () => {
   }
 })
 
+// The registry is per network; pin the one these tests assert against.
+process.env.STELLAR_NETWORK = 'mainnet'
+
 // Dynamic import AFTER mock registration so txBuilder receives the mock
-const { buildPayment, buildSwap } = await import('../txBuilder.js')
+const { buildPayment, buildSwap, getBalances } = await import('../txBuilder.js')
+const { USDT0_MAINNET_ISSUER } = await import('../assetRegistry.js')
 import type { PaymentInput, SwapInput } from '../txBuilder.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -243,5 +247,54 @@ describe('buildSwap', () => {
     mockLoadAccount.mockRejectedValueOnce(new Error('Account not found'))
     const input: SwapInput = { from_asset: 'XLM', to_asset: 'XLM', amount: 1, wallet_address: 'GINVALID' }
     await expect(buildSwap(input)).rejects.toThrow('Account not found')
+  })
+})
+
+// ── getBalances (#821) ────────────────────────────────────────────────────────
+
+describe('getBalances — assets are matched by issuer, never by code', () => {
+  /** A well-formed G… that is not the registered USDT0 issuer: an impostor. */
+  const FAKE_ISSUER = 'GAQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCB5Q'
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    mockLoadAccount.mockResolvedValue(
+      makeAccount([
+        { asset_type: 'native', balance: '10.0000000' },
+        { asset_type: 'credit_alphanum12', asset_code: 'USDT0', asset_issuer: USDT0_MAINNET_ISSUER, balance: '25.0000000' },
+        { asset_type: 'credit_alphanum12', asset_code: 'USDT0', asset_issuer: FAKE_ISSUER, balance: '5000.0000000' },
+        { asset_type: 'liquidity_pool_shares', balance: '1.0000000' },
+      ]),
+    )
+  })
+
+  it('never aliases either trustline under the bare registry code', async () => {
+    const { balances } = await getBalances('GFEEPAYER')
+    expect(balances).not.toHaveProperty('USDT0')
+    expect(balances[`USDT0:${USDT0_MAINNET_ISSUER}`]).toBe('25.0000000')
+    expect(balances[`USDT0:${FAKE_ISSUER}`]).toBe('5000.0000000')
+  })
+
+  it('reports the real holding as verified, naming its issuer', async () => {
+    const { holdings } = await getBalances('GFEEPAYER')
+    const real = holdings.find((h) => h.issuer === USDT0_MAINNET_ISSUER)
+    expect(real).toMatchObject({ code: 'USDT0', balance: '25.0000000', verified: true, issuerName: 'Tether' })
+    expect(real?.note).toContain(USDT0_MAINNET_ISSUER)
+  })
+
+  it('reports the counterfeit as unverified, with its issuer, and not under the registry label', async () => {
+    const { holdings } = await getBalances('GFEEPAYER')
+    const fake = holdings.find((h) => h.issuer === FAKE_ISSUER)
+    expect(fake).toMatchObject({ code: 'USDT0', balance: '5000.0000000', verified: false })
+    expect(fake?.name).toBeUndefined()
+    expect(fake?.issuerName).toBeUndefined()
+    expect(fake?.note).toMatch(/^UNVERIFIED/)
+    expect(fake?.note).toContain(FAKE_ISSUER)
+  })
+
+  it('skips liquidity-pool shares, which are not holdings of an asset', async () => {
+    const { balances, holdings } = await getBalances('GFEEPAYER')
+    expect(holdings).toHaveLength(2)
+    expect(Object.keys(balances).some((k) => k.includes('undefined'))).toBe(false)
   })
 })

@@ -12,6 +12,7 @@ import {
   scValToNative,
 } from '@stellar/stellar-sdk'
 import { HORIZON_URL, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
+import { classifyHolding, type Holding } from './assetRegistry.js'
 
 // Network and endpoints come from one place (network.ts). Deciding them here
 // separately is how mainnet signing ended up paired with testnet Horizon.
@@ -145,13 +146,24 @@ export async function buildPayment(input: PaymentInput): Promise<string> {
  *   XLM_contract   — native XLM held in the smart wallet contract
  *   XLM_feepayer   — native XLM in the fee-payer classic account
  *   XLM            — combined total
- *   plus any token balances (e.g. USDC:ISSUER)
+ *   plus any token balances, keyed CODE:ISSUER — never by bare code
+ *
+ * and `holdings`: every trustline checked against the asset registry by code
+ * AND issuer (#821). A trustline whose code matches a registered asset but
+ * whose issuer does not is an impostor; it is reported as unverified, with its
+ * issuer, and never under the registry's label.
  */
+export interface WalletBalances {
+  balances: Record<string, string>
+  holdings: Holding[]
+}
+
 export async function getBalances(
   feePayerAddress: string,
   contractAddress?: string,
-): Promise<Record<string, string>> {
+): Promise<WalletBalances> {
   const result: Record<string, string> = {}
+  const holdings: Holding[] = []
 
   // ── 1. Fee-payer G... account via Horizon ────────────────────────────────
   const account = await horizon.loadAccount(feePayerAddress)
@@ -161,8 +173,12 @@ export async function getBalances(
       feePayerXlm = parseFloat(balance.balance)
       result['XLM_feepayer'] = balance.balance
     } else {
-      const key = `${(balance as any).asset_code}:${(balance as any).asset_issuer}`
-      result[key] = balance.balance
+      const code: unknown = (balance as any).asset_code
+      const issuer: unknown = (balance as any).asset_issuer
+      // Liquidity-pool shares carry neither; they are not holdings of an asset.
+      if (typeof code !== 'string' || typeof issuer !== 'string') continue
+      result[`${code}:${issuer}`] = balance.balance
+      holdings.push(classifyHolding(code, issuer, balance.balance))
     }
   }
 
@@ -192,5 +208,5 @@ export async function getBalances(
   // ── 3. Combined XLM total ─────────────────────────────────────────────────
   result['XLM'] = (feePayerXlm + contractXlm).toFixed(7)
 
-  return result
+  return { balances: result, holdings }
 }
