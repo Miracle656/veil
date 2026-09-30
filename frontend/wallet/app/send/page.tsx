@@ -17,6 +17,7 @@ import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { parseQrValue } from '@/lib/sep7'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { memoError } from '@/lib/memo'
 
 import { getNativeAssetContractId, getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
@@ -205,10 +206,19 @@ export default function SendPage() {
     if (!validAddress) return false
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return false
     if (!selectedAsset) return false
+    if (memoError(memo)) return false
     return true
   }
 
   async function handleSend() {
+    // The memo can arrive from a deep link or QR: refuse an over-long one as a
+    // validation problem, before the passkey prompt and before building anything.
+    const memoProblem = memoError(memo)
+    if (memoProblem) {
+      setErrorMsg(memoProblem)
+      setStep('error')
+      return
+    }
     beginTx()
     setStep('signing')
     setErrorMsg(null)
@@ -526,7 +536,14 @@ export default function SendPage() {
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
                 maxLength={28}
+                aria-invalid={memoError(memo) ? true : undefined}
+                aria-describedby={memoError(memo) ? 'send-memo-error' : undefined}
               />
+              {memoError(memo) && (
+                <p id="send-memo-error" role="alert" style={{ fontSize: '0.75rem', color: 'var(--danger, #e5484d)', marginTop: '0.375rem', lineHeight: 1.4 }}>
+                  {memoError(memo)}
+                </p>
+              )}
             </div>
 
             <div className="vw-feerow">
