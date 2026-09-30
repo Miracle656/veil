@@ -1,6 +1,7 @@
 import { Asset } from '@stellar/stellar-sdk'
 import { SoroswapSDK, SupportedNetworks, SupportedProtocols, TradeType } from '@soroswap/sdk'
 import { HORIZON_URL, NETWORK, NETWORK_PASSPHRASE, USDC_ISSUER } from './network.js'
+import { getRegisteredAsset } from './assets.js'
 
 /**
  * Asset prices, from the same place the Swap screen gets them.
@@ -24,15 +25,24 @@ export interface ResolvedAsset {
 }
 
 /**
- * Accepts "XLM", "native", "USDC" (resolved to the network's USDC issuer) or
- * "CODE:ISSUER". Anything else is refused: a bare code like "EURC" names no
- * particular asset on Stellar, where anyone can issue one with that code.
+ * Accepts "XLM", "native", "USDC" (resolved to the network's USDC issuer),
+ * registered assets in ASSET_REGISTRY (like "USDY"), or "CODE:ISSUER".
+ * Anything else is refused: a bare unrecognized code names no particular
+ * asset on Stellar, where anyone can issue one with that code.
  */
 export function resolveAsset(input: string): ResolvedAsset {
   const value = input.trim()
   const upper = value.toUpperCase()
   if (upper === 'XLM' || upper === 'NATIVE') return { horizon: 'native', label: 'XLM' }
   if (upper === 'USDC') return { horizon: `USDC:${USDC_ISSUER}`, label: 'USDC' }
+
+  const registered = getRegisteredAsset(value)
+  if (registered) {
+    if (registered.network !== 'all' && registered.network !== NETWORK) {
+      throw new Error(`Asset "${registered.code}" is only supported on ${registered.network}.`)
+    }
+    return { horizon: `${registered.code}:${registered.issuer}`, label: registered.code }
+  }
 
   const [code, issuer] = value.split(':')
   if (code && issuer && /^G[A-Z2-7]{55}$/.test(issuer)) {

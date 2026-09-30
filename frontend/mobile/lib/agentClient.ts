@@ -9,7 +9,7 @@
  * user can resend; there is no socket to lose when the app is backgrounded.
  */
 
-import type { AgentMessage, SwapIntent } from './agentMessages';
+import type { AgentMessage, SwapIntent, InvestIntent } from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -58,7 +58,13 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
   const turns: AgentTurn[] = [];
   for (const message of messages) {
     if (message.kind === 'user') turns.push({ role: 'user', content: message.text });
-    else if ((message.kind === 'agent' || message.kind === 'proposal' || message.kind === 'swap') && message.text.trim()) {
+    else if (
+      (message.kind === 'agent' ||
+        message.kind === 'proposal' ||
+        message.kind === 'swap' ||
+        message.kind === 'invest') &&
+      message.text.trim()
+    ) {
       turns.push({ role: 'assistant', content: message.text });
     }
   }
@@ -70,6 +76,7 @@ export type AgentReply = {
   pendingTxXdr?: string;
   pendingTxSummary?: string;
   swapIntent?: SwapIntent;
+  investIntent?: InvestIntent;
 };
 
 /**
@@ -90,6 +97,26 @@ export function parseSwapIntent(value: unknown): SwapIntent | undefined {
       ? v.amount
       : undefined;
   return { from, to, ...(amount ? { amount } : {}) };
+}
+
+/**
+ * An invest hand-off from the server, or undefined when it is not valid.
+ */
+export function parseInvestIntent(value: unknown): InvestIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const code = typeof v.code === 'string' && /^[A-Z0-9]{1,12}$/.test(v.code) ? v.code : undefined;
+  const issuer = typeof v.issuer === 'string' && /^G[A-Z2-7]{55}$/.test(v.issuer) ? v.issuer : undefined;
+  if (!code || !issuer) return undefined;
+  const amount =
+    typeof v.amount === 'string' && /^\d+(\.\d{1,7})?$/.test(v.amount) && Number(v.amount) > 0
+      ? v.amount
+      : undefined;
+  const quoteCurrency =
+    typeof v.quoteCurrency === 'string' && /^[A-Z0-9]{1,12}$/.test(v.quoteCurrency)
+      ? v.quoteCurrency
+      : undefined;
+  return { code, issuer, ...(amount ? { amount } : {}), ...(quoteCurrency ? { quoteCurrency } : {}) };
 }
 
 export type AgentRequest = {
@@ -128,6 +155,7 @@ export async function sendAgentMessage(
       pendingTxXdr: typeof data.pendingTxXdr === 'string' ? data.pendingTxXdr : undefined,
       pendingTxSummary: typeof data.pendingTxSummary === 'string' ? data.pendingTxSummary : undefined,
       swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
+      investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
     };
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {
