@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { recordFeePayerSource } from './feePayerSource';
 import { getNetwork } from './network';
 import { evaluatePrf } from './passkey';
 import type { PrfOutcome } from './prfOutcome';
@@ -103,6 +104,7 @@ export async function createPasskeyWallet(wallet: Registerable): Promise<Created
       : keyId
         ? setPasskeyId(keyId)
         : Promise.resolve(),
+    recordFeePayerSource(feePayer.publicKey(), recoverable ? 'prf' : 'random'),
   ]);
 
   return { address: walletAddress, funded, recoverable, ...(recoverable ? {} : { recoveryIssue: issue }) };
@@ -124,6 +126,36 @@ async function accountExists(address: string): Promise<boolean> {
 export type RecoveryRetry =
   | { bound: true }
   | { bound: false; issue: Exclude<PrfOutcome, 'ok'> | 'funded' };
+
+export type Recreation = { ok: true; wallet: CreatedWallet } | { ok: false; reason: 'funded' };
+
+/**
+ * Build the wallet again from a fresh passkey.
+ *
+ * Some password managers never implement the WebAuthn PRF extension, and no
+ * amount of retrying one of *their* passkeys will produce a PRF output —
+ * {@link retryRecoveryBinding} asks the same authenticator the same question
+ * and gets the same answer. The only thing that changes the answer is a passkey
+ * held somewhere else, and the platform asks where to save each new one. So
+ * re-registering is the fix, and it keeps the user inside the app instead of
+ * sending them into device settings to delete a credential by hand.
+ *
+ * This replaces the wallet rather than repairing it: the address is derived
+ * from the passkey's public key, so a different passkey is a different wallet.
+ * That is only safe while the old one is empty, which is why this is offered on
+ * the creation screen and nowhere else, and why an on-chain spending account
+ * refuses instead.
+ */
+export async function recreatePasskeyWallet(wallet: Registerable): Promise<Recreation> {
+  const previous = await getSignerSecret();
+  // Friendbot funds every wallet moments after it is made, so "the account
+  // exists" says nothing on testnet about whether it holds anything worth
+  // keeping. On a network with no faucet, it does.
+  if (previous && !getNetwork().friendbotUrl) {
+    if (await accountExists(Keypair.fromSecret(previous).publicKey())) return { ok: false, reason: 'funded' };
+  }
+  return { ok: true, wallet: await createPasskeyWallet(wallet) };
+}
 
 /**
  * Try again to bind the recovery secret to a freshly created wallet.
@@ -155,7 +187,7 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
     }
   }
 
-  await setSignerSecret(derived.secret());
+  await Promise.all([setSignerSecret(derived.secret()), recordFeePayerSource(derived.publicKey(), 'prf')]);
   const pubHex = await getPasskeyPublicKey().catch(() => null);
   const pub = pubHex && /^[0-9a-fA-F]{130}$/.test(pubHex) ? new Uint8Array(Buffer.from(pubHex, 'hex')) : null;
   void writeBreadcrumbs(derived.secret(), walletAddress, pub).catch(() => undefined);

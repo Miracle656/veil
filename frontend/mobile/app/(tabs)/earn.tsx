@@ -36,6 +36,7 @@ import { useWallet } from '../../components/WalletProvider';
 import { requirePasskey } from '../../lib/passkey';
 import { signAndSubmitSorobanXdr } from '../../lib/sorobanTx';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
+import { openExternalUrl } from '../../lib/about';
 
 /**
  * Earn — lend idle USDC or XLM to Blend lending pools and redeem it.
@@ -296,6 +297,23 @@ export default function EarnRoute() {
 
           {step === 'pools' ? (
             <>
+              <Card style={styles.disclosureCard}>
+                <View style={styles.rowBetween}>
+                  <Text style={[typography.accent, styles.disclosureLabel]}>Disclosures</Text>
+                  <Pressable
+                    accessibilityRole="link"
+                    accessibilityLabel="Learn how Veil invest works and disclosures"
+                    hitSlop={8}
+                    onPress={() => void openExternalUrl('https://docs.useveilapp.xyz/invest')}
+                  >
+                    <Text style={styles.disclosureLink}>How it works &amp; risks →</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.disclosureText}>
+                  Veil is a self-custody wallet, not a broker. Veil never takes custody, never performs KYC, and never gives advice.
+                </Text>
+              </Card>
+
               {!loadingPools && bestApy > 0 ? (
                 <Card variant="md" style={styles.hero}>
                   <Text style={[typography.accent, styles.heroLabel]}>Best rate today</Text>
@@ -504,6 +522,10 @@ const createStyles = (colors: ThemeColors) =>
     heroRate: { fontFamily: fontFamily.heading, fontSize: 40, lineHeight: 48, color: colors.accentText },
     section: { gap: 12 },
     sectionLabel: { color: colors.textMuted, fontSize: 11 },
+    disclosureCard: { padding: 14, gap: 6 },
+    disclosureLabel: { color: colors.accent, fontSize: 11 },
+    disclosureLink: { fontFamily: fontFamily.bodySemiBold, fontSize: 12, color: colors.accentText },
+    disclosureText: { fontFamily: fontFamily.body, fontSize: 12, lineHeight: 17, color: colors.textMuted },
     card: { padding: 18, gap: 12 },
     cardCentered: { padding: 18, gap: 12, alignItems: 'center' },
     cardTitle: { color: colors.textStrong, fontSize: 20, lineHeight: 26 },

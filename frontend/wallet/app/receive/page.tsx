@@ -5,11 +5,16 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { QRCodeCanvas } from 'qrcode.react'
-import { buildSep7PayUri } from '@/lib/sep7'
+import { createPaymentRequest, Sep7Error } from '@/lib/paymentRequest'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { CURRENCIES, hydrateCurrency, useCurrency, type CurrencyCode } from '@/lib/currency'
 import { fetchPrice } from '@/lib/fetchPrice'
 import { downloadBrandedQr } from '@/lib/downloadBrandedQr'
+import { getNetworkName } from '@/lib/network'
+import { getAssetIssuer } from '@/lib/assets'
+
+/** Issued assets a payment request can ask for, when live on the active network. */
+const REQUESTABLE_CODES = ['USDC', 'USDT0'] as const
 
 const REQUEST_CHIPS: Record<CurrencyCode, number[]> = {
   USD: [5, 10, 25, 50],
@@ -105,7 +110,14 @@ function Tile({
   )
 }
 
-function SpendingCard({ address }: { address: string }) {
+interface SpendingCardProps {
+  address: string
+  assetCode?: string
+  assetIssuer?: string
+  amount?: string
+}
+
+function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardProps) {
   const [copied, setCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [xlmUsd, setXlmUsd] = useState<number | null>(null)
@@ -120,14 +132,34 @@ function SpendingCard({ address }: { address: string }) {
     void fetchPrice('XLM', null).then(setXlmUsd)
   }, [])
 
+  const isNative = !assetCode || assetCode.toUpperCase() === 'XLM'
   const xlmAmount =
-    requestFiat != null && xlmUsd != null && xlmUsd > 0 && rate > 0
+    isNative && requestFiat != null && xlmUsd != null && xlmUsd > 0 && rate > 0
       ? (requestFiat / rate / xlmUsd).toFixed(7).replace(/\.?0+$/, '')
       : undefined
-  const payUri = buildSep7PayUri({ destination: address, amount: xlmAmount })
+
+  const finalAmount = (isNative ? (amount || xlmAmount) : amount) || undefined
+
+  // Built by the SDK, which validates every field: an issued asset cannot be
+  // requested without its issuer, so the QR always names it (#791). An amount
+  // the user is still typing (e.g. "1.") is dropped rather than encoded.
+  let payUri: string
+  let amountError: string | null = null
+  const assetFields = isNative ? {} : { assetCode, assetIssuer }
+  try {
+    payUri = createPaymentRequest({ destination: address, amount: finalAmount, ...assetFields }).qrValue
+  } catch (err) {
+    if (!(err instanceof Sep7Error)) throw err
+    amountError = finalAmount ? 'Enter a valid amount' : err.message
+    payUri = createPaymentRequest({ destination: address, ...assetFields }).qrValue
+  }
+
+  // A request for an issued asset is only meaningful with its issuer, so it is
+  // shared as the full link; a bare address would let the payer pick any USDT0.
+  const shareText = (finalAmount || !isNative) ? payUri : address
 
   const handleCopy = async () => {
-    if (!(await copyText(address))) return
+    if (!(await copyText(shareText))) return
     setCopied(true)
     window.setTimeout(() => setCopied(false), 2000)
   }
@@ -149,10 +181,9 @@ function SpendingCard({ address }: { address: string }) {
   }
 
   const handleShare = async () => {
-    const payload = xlmAmount ? payUri : address
     if (typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title: 'My Veil Wallet Address', text: payload })
+        await navigator.share({ title: 'My Veil Payment Request', text: shareText })
       } catch { /* user dismissed */ }
       return
     }
@@ -164,18 +195,20 @@ function SpendingCard({ address }: { address: string }) {
       <p className="vw-spendcard__label">Spending address</p>
       <p className="vw-spendcard__sub">Use this for most senders &amp; exchanges</p>
 
-      <div className="vw-more" style={{ marginTop: 14, justifyContent: 'center' }}>
-        {chips.map((amount) => (
-          <button
-            key={amount}
-            type="button"
-            className={requestFiat === amount ? 'vw-chip vw-chip--active' : 'vw-chip'}
-            onClick={() => setRequestFiat((current) => current === amount ? null : amount)}
-          >
-            {symbol}{amount.toLocaleString('en-US')}
-          </button>
-        ))}
-      </div>
+      {isNative && (
+        <div className="vw-more" style={{ marginTop: 14, justifyContent: 'center' }}>
+          {chips.map((amt) => (
+            <button
+              key={amt}
+              type="button"
+              className={requestFiat === amt ? 'vw-chip vw-chip--active' : 'vw-chip'}
+              onClick={() => setRequestFiat((current) => current === amt ? null : amt)}
+            >
+              {symbol}{amt.toLocaleString('en-US')}
+            </button>
+          ))}
+        </div>
+      )}
       {xlmAmount && (
         <p className="vw-spendcard__sub" style={{ marginTop: 8 }}>
           QR asks for {xlmAmount} XLM
@@ -193,6 +226,16 @@ function SpendingCard({ address }: { address: string }) {
       </div>
 
       <p className="vw-spendcard__addr">{address}</p>
+      {!isNative && assetIssuer && (
+        <p className="vw-spendcard__sub" style={{ marginTop: 6, wordBreak: 'break-all' }}>
+          QR asks for {finalAmount && !amountError ? `${finalAmount} ` : ''}{assetCode} issued by {assetIssuer}
+        </p>
+      )}
+      {amountError && (
+        <p className="vw-spendcard__sub" role="alert" style={{ marginTop: 6, color: 'var(--teal)' }}>
+          {amountError}
+        </p>
+      )}
 
       <div className="vw-recv-tiles">
         <Tile primary label={copied ? 'Copied' : 'Copy'} onClick={handleCopy} icon={copied ? <CheckIcon /> : <CopyIcon />} />
@@ -241,6 +284,15 @@ export default function ReceivePage() {
   const router = useRouter()
   const [contractAddress, setContractAddress] = useState<string | null>(null)
   const [feePayerAddress, setFeePayerAddress] = useState<string | null>(null)
+  const [selectedAssetCode, setSelectedAssetCode] = useState<string>('XLM')
+  const [requestedAmount, setRequestedAmount] = useState<string>('')
+
+  // Only assets that exist on this network can be requested, and each one's
+  // issuer comes from the verified registry — never typed, never inferred.
+  const networkName = getNetworkName()
+  const requestable = REQUESTABLE_CODES.filter((c) => getAssetIssuer(c, networkName))
+  const selectedIssuer =
+    selectedAssetCode === 'XLM' ? undefined : getAssetIssuer(selectedAssetCode, networkName) ?? undefined
 
   useEffect(() => {
     const stored = walletSession.getItem('invisible_wallet_address')
@@ -290,6 +342,34 @@ export default function ReceivePage() {
           </p>
         </div>
 
+        {/* Asset Request Controls */}
+        <div className="card" style={{ marginBottom: '2rem' }}>
+          <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+            REQUEST ASSET &amp; AMOUNT (OPTIONAL)
+          </label>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <select
+              value={selectedAssetCode}
+              onChange={e => setSelectedAssetCode(e.target.value)}
+              className="input-field"
+              style={{ flex: 1, minWidth: 140, fontFamily: 'Inconsolata, monospace', color: 'var(--off-white)', background: 'var(--surface)' }}
+            >
+              <option value="XLM">XLM (Native)</option>
+              {requestable.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input
+              type="number"
+              placeholder="Amount (optional)"
+              value={requestedAmount}
+              onChange={e => setRequestedAmount(e.target.value)}
+              className="input-field mono"
+              style={{ flex: 1, minWidth: 140 }}
+              min="0"
+              step="any"
+            />
+          </div>
+        </div>
+
         {!ready ? (
           <div className="spinner spinner-light" style={{ width: '2rem', height: '2rem', margin: '4rem auto' }} />
         ) : (
@@ -300,7 +380,12 @@ export default function ReceivePage() {
           <div className="vw-recv-row">
             <div className="vw-recv-main">
               {feePayerAddress ? (
-                <SpendingCard address={feePayerAddress} />
+                <SpendingCard
+                  address={feePayerAddress}
+                  assetCode={selectedAssetCode}
+                  assetIssuer={selectedIssuer}
+                  amount={requestedAmount}
+                />
               ) : (
                 <div className="vw-spendcard" style={{ alignItems: 'flex-start' }}>
                   <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', lineHeight: 1.5 }}>

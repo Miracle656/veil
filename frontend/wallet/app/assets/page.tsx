@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import { Horizon, Keypair } from '@stellar/stellar-sdk'
 
@@ -18,6 +18,22 @@ import {
   type Trustline,
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { TRUSTLINE_RESERVE_COST_XLM, TRUSTLINE_RESERVE_EXPLANATION } from '@/lib/reserves'
+
+import {
+  USDY_MAINNET_ISSUER,
+  USDT0_MAINNET_ISSUER,
+  getRegisteredAsset,
+  isRegisteredIssuer,
+  fetchAssetDisclosure,
+} from '@/lib/assets'
+import { fetchPrice } from '@/lib/fetchPrice'
+import {
+  ISSUER_TOML_TTL_MS,
+  letterAvatar,
+  loadRegisteredIssuerMetadata,
+  type IssuerTomlMetadata,
+} from '@/lib/issuerToml'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -41,6 +57,13 @@ export default function AssetsPage() {
   const [balances, setBalances] = useState<HorizonBalanceLike[]>([])
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
+  const [prices, setPrices] = useState<Record<string, number | null>>({})
+  const [issuerMeta, setIssuerMeta] = useState<Record<string, IssuerTomlMetadata>>({})
+  const [issuerDisclosures, setIssuerDisclosures] = useState<Record<string, string | null>>({})
+  const [usdt0Disclosure, setUsdt0Disclosure] = useState<string | null>(null)
+  const [anchorDisclosures, setAnchorDisclosures] = useState<Record<string, string | null>>({})
+  const [manualDisclosure, setManualDisclosure] = useState<string | null>(null)
+  const disclosureCacheRef = useRef<Map<string, string | null>>(new Map())
 
   // Add-asset form
   const [domain, setDomain] = useState('')
@@ -50,6 +73,40 @@ export default function AssetsPage() {
   const [manualIssuer, setManualIssuer] = useState('')
 
   const trustlines: Trustline[] = useMemo(() => parseTrustlines(balances), [balances])
+
+  const metadataTargets = useMemo(() => {
+    const targets = new Map<string, { code: string; issuer: string }>()
+    for (const line of trustlines) {
+      if (!isRegisteredIssuer(line.code, line.issuer)) continue
+      targets.set(`${line.code}:${line.issuer}`, { code: line.code, issuer: line.issuer })
+    }
+    if (network.name === 'mainnet') {
+      targets.set(`USDY:${USDY_MAINNET_ISSUER}`, { code: 'USDY', issuer: USDY_MAINNET_ISSUER })
+      targets.set(`USDT0:${USDT0_MAINNET_ISSUER}`, { code: 'USDT0', issuer: USDT0_MAINNET_ISSUER })
+    }
+    return [...targets.values()]
+  }, [trustlines])
+
+  useEffect(() => {
+    let cancelled = false
+    const timers = new Map<string, ReturnType<typeof setTimeout>>()
+    for (const target of metadataTargets) {
+      const key = `${target.code}:${target.issuer}`
+      const refresh = async () => {
+        const meta = await loadRegisteredIssuerMetadata(target.code, target.issuer)
+        if (cancelled || !meta) return
+        setIssuerMeta((current) => ({ ...current, [key]: meta }))
+        // Retry stale/offline results in a minute; fresh data refreshes at expiry.
+        const delay = Math.max(60_000, (meta.fetchedAt ?? 0) + ISSUER_TOML_TTL_MS - Date.now())
+        timers.set(key, setTimeout(() => void refresh(), delay))
+      }
+      void refresh()
+    }
+    return () => {
+      cancelled = true
+      timers.forEach(clearTimeout)
+    }
+  }, [metadataTargets])
 
   const loadAccount = useCallback(async () => {
     setLoading(true)
@@ -63,7 +120,39 @@ export default function AssetsPage() {
       const pubKey = Keypair.fromSecret(secret).publicKey()
       setSignerAddress(pubKey)
       const account = await server.loadAccount(pubKey)
-      setBalances(account.balances as unknown as HorizonBalanceLike[])
+      const rawBalances = account.balances as unknown as HorizonBalanceLike[]
+      setBalances(rawBalances)
+
+      const parsedLines = parseTrustlines(rawBalances)
+      const priceMap: Record<string, number | null> = {}
+      const disclosureMap: Record<string, string | null> = {}
+
+      await Promise.all([
+        ...parsedLines.map(async (line) => {
+          priceMap[`${line.code}:${line.issuer}`] = await fetchPrice(line.code, line.issuer)
+          if (disclosureCacheRef.current.has(line.issuer)) {
+            const cached = disclosureCacheRef.current.get(line.issuer)
+            if (cached) disclosureMap[line.issuer] = cached
+          } else {
+            const disc = await fetchAssetDisclosure(server, line.issuer)
+            disclosureCacheRef.current.set(line.issuer, disc)
+            if (disc) disclosureMap[line.issuer] = disc
+          }
+        }),
+        (async () => {
+          if (network.name === 'mainnet') {
+            if (disclosureCacheRef.current.has(USDT0_MAINNET_ISSUER)) {
+              setUsdt0Disclosure(disclosureCacheRef.current.get(USDT0_MAINNET_ISSUER) ?? null)
+            } else {
+              const disc = await fetchAssetDisclosure(server, USDT0_MAINNET_ISSUER)
+              disclosureCacheRef.current.set(USDT0_MAINNET_ISSUER, disc)
+              setUsdt0Disclosure(disc)
+            }
+          }
+        })(),
+      ])
+      setPrices(priceMap)
+      setIssuerDisclosures(disclosureMap)
     } catch (err) {
       setStatus({ kind: 'error', message: errorMessage(err) })
     } finally {
@@ -74,6 +163,28 @@ export default function AssetsPage() {
   useEffect(() => {
     void loadAccount()
   }, [loadAccount])
+
+  useEffect(() => {
+    let cancelled = false
+    const trimmed = manualIssuer.trim()
+    if (/^G[A-Z2-7]{55}$/.test(trimmed)) {
+      if (disclosureCacheRef.current.has(trimmed)) {
+        setManualDisclosure(disclosureCacheRef.current.get(trimmed) ?? null)
+      } else {
+        void fetchAssetDisclosure(server, trimmed).then((disc) => {
+          if (!cancelled) {
+            disclosureCacheRef.current.set(trimmed, disc)
+            setManualDisclosure(disc)
+          }
+        })
+      }
+    } else {
+      setManualDisclosure(null)
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [manualIssuer, server])
 
   const submitChangeTrust = useCallback(
     async (code: string, issuer: string, remove: boolean) => {
@@ -110,19 +221,35 @@ export default function AssetsPage() {
   const handleSearch = useCallback(async () => {
     setSearching(true)
     setAnchorAssets([])
+    setAnchorDisclosures({})
     setStatus({ kind: 'idle' })
     try {
       const assets = await resolveAnchorAssets(domain)
       setAnchorAssets(assets)
       if (assets.length === 0) {
         setStatus({ kind: 'error', message: `No assets found in ${domain || 'that domain'}'s stellar.toml.` })
+      } else {
+        const discMap: Record<string, string | null> = {}
+        await Promise.all(
+          assets.map(async (asset) => {
+            if (disclosureCacheRef.current.has(asset.issuer)) {
+              const cached = disclosureCacheRef.current.get(asset.issuer)
+              if (cached) discMap[asset.issuer] = cached
+            } else {
+              const disc = await fetchAssetDisclosure(server, asset.issuer)
+              disclosureCacheRef.current.set(asset.issuer, disc)
+              if (disc) discMap[asset.issuer] = disc
+            }
+          }),
+        )
+        setAnchorDisclosures(discMap)
       }
     } catch (err) {
       setStatus({ kind: 'error', message: `Could not read stellar.toml: ${errorMessage(err)}` })
     } finally {
       setSearching(false)
     }
-  }, [domain])
+  }, [domain, server])
 
   const handleManualAdd = useCallback(() => {
     const code = manualCode.trim()
@@ -135,6 +262,8 @@ export default function AssetsPage() {
   }, [manualCode, manualIssuer, submitChangeTrust])
 
   const busy = status.kind === 'busy'
+  const hasUsdy = hasTrustline(balances, 'USDY', USDY_MAINNET_ISSUER)
+  const hasUsdt0 = hasTrustline(balances, 'USDT0', USDT0_MAINNET_ISSUER)
 
   return (
     <div className="wallet-shell">
@@ -175,6 +304,67 @@ export default function AssetsPage() {
           </div>
         )}
 
+        {/* Featured USDT0 enable card. Mainnet only — USDT0's issuer does not
+            exist on testnet, where changeTrust would fail with op_no_issuer. */}
+        {!hasUsdt0 && !loading && network.name === 'mainnet' && (
+          <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(38,161,123,0.3)', background: 'rgba(38,161,123,0.05)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <RegisteredAssetMark code="USDT0" meta={issuerMeta[`USDT0:${USDT0_MAINNET_ISSUER}`]} />
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ ...sectionHeadingStyle, color: '#26A17B' }}>Featured Asset: USDT0 (Tether USD)</h2>
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  Tether&apos;s USD stablecoin bridged to Stellar. Adding a USDT0 trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
+                </p>
+                {usdt0Disclosure && (
+                  <p style={disclosureAlertStyle}>
+                    {usdt0Disclosure}
+                  </p>
+                )}
+                {issuerMeta[`USDT0:${USDT0_MAINNET_ISSUER}`]?.description ? (
+                  <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                    {issuerMeta[`USDT0:${USDT0_MAINNET_ISSUER}`].description}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <button
+              onClick={() => void submitChangeTrust('USDT0', USDT0_MAINNET_ISSUER, false)}
+              disabled={busy}
+              style={primaryButtonStyle(busy)}
+            >
+              {busy ? 'Enabling USDT0…' : 'Enable USDT0 (0.5 XLM reserve)'}
+            </button>
+          </section>
+        )}
+
+        {/* Featured USDY enable card. Mainnet only — USDY's issuer does not
+            exist on testnet, where changeTrust would fail with op_no_issuer. */}
+        {!hasUsdy && !loading && network.name === 'mainnet' && (
+          <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(212,175,55,0.3)', background: 'rgba(212,175,55,0.05)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <RegisteredAssetMark code="USDY" meta={issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]} />
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
+                </p>
+                {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]?.description ? (
+                  <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                    {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`].description}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <button
+              onClick={() => void submitChangeTrust('USDY', USDY_MAINNET_ISSUER, false)}
+              disabled={busy}
+              style={primaryButtonStyle(busy)}
+            >
+              {busy ? 'Enabling USDY…' : 'Enable USDY (0.5 XLM reserve)'}
+            </button>
+          </section>
+        )}
+
         {/* Existing trustlines */}
         <section style={{ marginBottom: '2rem' }}>
           <h2 style={sectionHeadingStyle}>Your trustlines</h2>
@@ -183,25 +373,59 @@ export default function AssetsPage() {
           ) : trustlines.length === 0 ? (
             <p style={mutedTextStyle}>No trustlines yet. Add one below.</p>
           ) : (
-            trustlines.map((line) => (
-              <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
-                <div style={{ minWidth: 0 }}>
-                  <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{line.code}</p>
-                  <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
-                    {line.issuer}
-                  </p>
-                  <p style={mutedTextStyle}>Balance: {line.balance}</p>
+            trustlines.map((line) => {
+              const price = prices[`${line.code}:${line.issuer}`]
+              const usdVal = price != null ? Number(line.balance) * price : null
+              const rowDisclosure = issuerDisclosures[line.issuer]
+              const meta = issuerMeta[`${line.code}:${line.issuer}`]
+              const registered = isRegisteredIssuer(line.code, line.issuer) && getRegisteredAsset(line.code)?.code === line.code
+                ? getRegisteredAsset(line.code)
+                : null
+              return (
+                <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
+                  <div style={{ display: 'flex', gap: '0.75rem', minWidth: 0, alignItems: 'center' }}>
+                    {registered ? <RegisteredAssetMark code={line.code} meta={meta} /> : null}
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>
+                        {line.code}
+                        {meta && meta.name !== line.code ? (
+                          <span style={{ fontWeight: 400, color: 'var(--warm-grey)' }}> · {meta.name}</span>
+                        ) : null}
+                      </p>
+                      {registered ? (
+                        <p style={mutedTextStyle}>Issuer: {registered.issuerName}</p>
+                      ) : (
+                        <span style={{ fontSize: '0.75rem', color: 'rgba(229,72,77,0.9)', background: 'rgba(229,72,77,0.1)', padding: '2px 6px', borderRadius: 4, display: 'inline-block', marginTop: 2, marginBottom: 2 }}>
+                          Unverified asset
+                        </span>
+                      )}
+                      {meta?.description ? (
+                        <p style={clampedNoteStyle}>{meta.description}</p>
+                      ) : null}
+                      <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
+                        {line.issuer}
+                      </p>
+                      <p style={mutedTextStyle}>
+                        Balance: {line.balance} {usdVal != null ? `(~$${usdVal.toFixed(2)} USD)` : ''}
+                      </p>
+                      {rowDisclosure && (
+                        <p style={{ ...mutedTextStyle, fontSize: '0.75rem', marginTop: '0.25rem', color: 'rgba(246,247,248,0.6)' }}>
+                          {rowDisclosure}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
+                    disabled={busy || !canRemoveTrustline(line)}
+                    title={canRemoveTrustline(line) ? 'Remove trustline' : 'Balance must be zero to remove'}
+                    style={removeButtonStyle(busy || !canRemoveTrustline(line))}
+                  >
+                    Remove
+                  </button>
                 </div>
-                <button
-                  onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
-                  disabled={busy || !canRemoveTrustline(line)}
-                  title={canRemoveTrustline(line) ? 'Remove trustline' : 'Balance must be zero to remove'}
-                  style={removeButtonStyle(busy || !canRemoveTrustline(line))}
-                >
-                  Remove
-                </button>
-              </div>
-            ))
+              )
+            })
           )}
         </section>
 
@@ -222,6 +446,7 @@ export default function AssetsPage() {
           </div>
           {anchorAssets.map((asset) => {
             const already = hasTrustline(balances, asset.code, asset.issuer)
+            const disc = anchorDisclosures[asset.issuer] || issuerDisclosures[asset.issuer]
             return (
               <div key={`${asset.code}-${asset.issuer}`} className="card" style={trustlineRowStyle}>
                 <div style={{ minWidth: 0 }}>
@@ -229,13 +454,21 @@ export default function AssetsPage() {
                   <p style={{ ...mutedTextStyle, fontFamily: 'monospace', fontSize: '0.7rem', wordBreak: 'break-all' }}>
                     {asset.issuer}
                   </p>
+                  <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.5)', marginTop: '2px' }}>
+                    Reserve cost: 0.5 XLM (locked, not spent — released if removed)
+                  </p>
+                  {disc && (
+                    <p style={disclosureAlertStyle}>
+                      {disc}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => void submitChangeTrust(asset.code, asset.issuer, false)}
                   disabled={busy || already}
                   style={primaryButtonStyle(busy || already)}
                 >
-                  {already ? 'Added' : 'Add'}
+                  {already ? 'Added' : 'Add trustline'}
                 </button>
               </div>
             )
@@ -245,6 +478,9 @@ export default function AssetsPage() {
         {/* Add manually */}
         <section>
           <h2 style={sectionHeadingStyle}>Add by issuer</h2>
+          <p style={{ ...mutedTextStyle, fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+            {TRUSTLINE_RESERVE_EXPLANATION}
+          </p>
           <input
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
@@ -259,10 +495,16 @@ export default function AssetsPage() {
             style={{ ...inputStyle, marginBottom: '0.75rem' }}
             aria-label="Issuer address"
           />
+          {manualDisclosure && (
+            <p style={disclosureAlertStyle}>
+              {manualDisclosure}
+            </p>
+          )}
           <button onClick={handleManualAdd} disabled={busy} style={primaryButtonStyle(busy)}>
-            Add trustline
+            Add trustline (0.5 XLM reserve)
           </button>
         </section>
+
       </main>
     </div>
   )
@@ -270,6 +512,27 @@ export default function AssetsPage() {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function RegisteredAssetMark({ code, meta }: { code: string; meta?: IssuerTomlMetadata }) {
+  const [brokenUrl, setBrokenUrl] = useState<string | null>(null)
+  if (meta?.imageUrl && meta.imageUrl !== brokenUrl) {
+    return (
+      <img
+        src={meta.imageUrl}
+        alt=""
+        width={36}
+        height={36}
+        onError={() => setBrokenUrl(meta.imageUrl)}
+        style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+      />
+    )
+  }
+  return (
+    <span aria-hidden="true" style={letterMarkStyle}>
+      {letterAvatar(code)}
+    </span>
+  )
 }
 
 const backButtonStyle: CSSProperties = {
@@ -319,6 +582,28 @@ const mutedTextStyle: CSSProperties = {
   fontSize: '0.8125rem',
 }
 
+const clampedNoteStyle: CSSProperties = {
+  ...mutedTextStyle,
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+}
+
+const letterMarkStyle: CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 8,
+  flexShrink: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  background: 'rgba(246,247,248,0.08)',
+  color: 'var(--off-white)',
+  fontWeight: 700,
+  fontSize: '0.95rem',
+}
+
 const trustlineRowStyle: CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
@@ -364,3 +649,15 @@ function removeButtonStyle(disabled: boolean): CSSProperties {
     whiteSpace: 'nowrap',
   }
 }
+
+const disclosureAlertStyle: CSSProperties = {
+  fontSize: '0.8125rem',
+  color: 'rgba(246,247,248,0.75)',
+  background: 'rgba(253,218,36,0.06)',
+  borderLeft: '3px solid var(--gold)',
+  padding: '0.5rem 0.75rem',
+  borderRadius: '0 0.25rem 0.25rem 0',
+  marginBottom: '0.75rem',
+  lineHeight: 1.4,
+}
+

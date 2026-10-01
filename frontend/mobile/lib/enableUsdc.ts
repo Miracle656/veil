@@ -27,51 +27,72 @@ import {
 import { getNetwork, getNetworkName } from './network';
 import { getSignerSecret } from './walletStore';
 import { usdcIssuerFor } from './receiveReadiness';
+import { getAssetIssuer } from './assets';
 
 /** Reserve for one trustline (0.5 XLM) plus room for the fee. */
 export const MIN_XLM_FOR_TRUSTLINE = 0.6;
 
 export class NotEnoughXlm extends Error {
-  constructor(readonly have: number) {
+  constructor(readonly have: number, readonly address: string, readonly assetCode: string = 'USDC') {
     super(
-      `This account holds ${have} XLM. Adding a USDC trustline needs about ${MIN_XLM_FOR_TRUSTLINE} XLM of refundable reserve.`,
+      `This account holds ${have} XLM. Adding a ${assetCode} trustline needs about ${MIN_XLM_FOR_TRUSTLINE} XLM of refundable reserve. Send XLM to ${address} to continue.`,
     );
     this.name = 'NotEnoughXlm';
   }
 }
 
 export class AccountNotFunded extends Error {
-  constructor() {
-    super('This account does not exist on the network yet, so it cannot add a trustline.');
+  constructor(readonly address: string) {
+    super(`This account does not exist on the network yet. Send XLM to ${address} to activate it.`);
     this.name = 'AccountNotFunded';
   }
 }
 
+export class MissingTrustline extends Error {
+  constructor(readonly assetCode: string = 'USDY') {
+    super(
+      `You need to enable ${assetCode} to hold it. Adding a trustline requires 0.5 XLM of refundable reserve.`,
+    );
+    this.name = 'MissingTrustline';
+  }
+}
+
 /**
- * Add the canonical USDC trustline to the wallet's classic account.
+ * Add a trustline for the specified asset (USDC, USDY, etc.) to the wallet's classic account.
+ * Issuer is verified against the asset registry (V176).
  *
  * Resolves with the transaction hash, or with `null` when the trustline is
- * already there — an existing trustline is success, not an error, and the
- * caller should not have to tell those apart.
+ * already there — an existing trustline is success, not an error.
  */
-export async function enableUsdc(): Promise<string | null> {
+export async function enableTrustline(assetCode: string): Promise<string | null> {
   const secret = await getSignerSecret();
   if (!secret) throw new Error('This device has no signing key for the classic account.');
 
+  const upperCode = assetCode.toUpperCase();
+  const networkName = getNetworkName();
+  
+  let issuer: string | null = null;
+  if (upperCode === 'USDC') {
+    issuer = usdcIssuerFor(networkName);
+  } else {
+    issuer = getAssetIssuer(upperCode, networkName);
+  }
+
+  if (!issuer) {
+    throw new Error(`Unregistered asset code "${assetCode}". Cannot verify issuer against registry.`);
+  }
+
   const network = getNetwork();
   const kp = Keypair.fromSecret(secret);
-  const usdc = new Asset('USDC', usdcIssuerFor(getNetworkName()));
+  const asset = new Asset(upperCode, issuer);
   const server = new Horizon.Server(network.horizonUrl);
 
   let account: Awaited<ReturnType<typeof server.loadAccount>>;
   try {
     account = await server.loadAccount(kp.publicKey());
   } catch (err) {
-    // Horizon 404s an account that has never been funded. That is a distinct
-    // problem with a distinct fix (somebody has to create it), so it gets its
-    // own error rather than a generic failure.
     const status = (err as { response?: { status?: number } })?.response?.status;
-    if (status === 404) throw new AccountNotFunded();
+    if (status === 404) throw new AccountNotFunded(kp.publicKey());
     throw err;
   }
 
@@ -83,19 +104,19 @@ export async function enableUsdc(): Promise<string | null> {
   }>;
 
   const already = balances.some(
-    (b) => b.asset_code === 'USDC' && b.asset_issuer === usdc.issuer,
+    (b) => b.asset_code === upperCode && b.asset_issuer === asset.issuer,
   );
   if (already) return null;
 
   const native = balances.find((b) => b.asset_type === 'native');
   const xlm = Number(native?.balance ?? '0');
-  if (!(xlm >= MIN_XLM_FOR_TRUSTLINE)) throw new NotEnoughXlm(xlm);
+  if (!(xlm >= MIN_XLM_FOR_TRUSTLINE)) throw new NotEnoughXlm(xlm, kp.publicKey(), upperCode);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: network.networkPassphrase,
   })
-    .addOperation(Operation.changeTrust({ asset: usdc }))
+    .addOperation(Operation.changeTrust({ asset }))
     .setTimeout(60)
     .build();
 
@@ -103,3 +124,26 @@ export async function enableUsdc(): Promise<string | null> {
   const res = await server.submitTransaction(tx);
   return res.hash;
 }
+
+/**
+ * Add the canonical USDC trustline to the wallet's classic account.
+ */
+export async function enableUsdc(): Promise<string | null> {
+  return enableTrustline('USDC');
+}
+
+/**
+ * Add the Ondo USDY trustline to the wallet's classic account (verified issuer: GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6).
+ */
+export async function enableUsdy(): Promise<string | null> {
+  return enableTrustline('USDY');
+}
+
+/**
+ * Add the Tether USDT0 trustline to the wallet's classic account (verified issuer: GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q).
+ */
+export async function enableUsdt0(): Promise<string | null> {
+  return enableTrustline('USDT0');
+}
+
+

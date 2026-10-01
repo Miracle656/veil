@@ -34,6 +34,27 @@ describe('resolveDeepLink — veil:// custom scheme', () => {
   });
 });
 
+describe('resolveDeepLink — read-only launcher destinations', () => {
+  it('opens the dashboard', () => {
+    expect(resolveDeepLink('veil://dashboard')).toBe('/dashboard');
+  });
+
+  it('opens the XLM token page, keeping the asset code upper-case', () => {
+    // Paths are lowercased before lookup; the token screen's id is not.
+    expect(resolveDeepLink('veil://token/XLM')).toBe('/token/XLM');
+    expect(resolveDeepLink('veil://token/xlm')).toBe('/token/XLM');
+  });
+
+  it('exposes no other token page', () => {
+    expect(resolveDeepLink('veil://token/USDC')).toBe(FALLBACK_ROUTE);
+  });
+
+  it('forwards no parameters to either', () => {
+    expect(resolveDeepLink(`veil://dashboard?to=${DESTINATION}&amount=10`)).toBe('/dashboard');
+    expect(resolveDeepLink('veil://token/XLM?asset=USDC')).toBe('/token/XLM');
+  });
+});
+
 describe('resolveDeepLink — universal / app links', () => {
   it('routes an associated-domain link', () => {
     expect(resolveDeepLink(`https://app.useveilapp.xyz/pay?to=${DESTINATION}`)).toBe(
@@ -74,6 +95,16 @@ describe('resolveDeepLink — SEP-7 payment requests', () => {
     expect(query.get('amount')).toBe('12.5');
     expect(query.get('asset')).toBe('USDC');
     expect(query.get('uri')).toBe(uri);
+  });
+
+  it('carries asset_issuer alongside asset_code (#791)', () => {
+    const issuer = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
+    const target = resolveDeepLink(
+      `web+stellar:pay?destination=${DESTINATION}&asset_code=USDT0&asset_issuer=${issuer}`,
+    );
+    const query = new URLSearchParams(target.slice(target.indexOf('?') + 1));
+    expect(query.get('asset')).toBe('USDT0');
+    expect(query.get('issuer')).toBe(issuer);
   });
 
   it('forwards the raw URI even when no fields map', () => {

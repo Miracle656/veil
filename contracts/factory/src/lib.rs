@@ -94,6 +94,8 @@ fn sha2_hash(input: &[u8; 65]) -> [u8; 32] {
 
 #[cfg(test)]
 mod test {
+    extern crate std;
+    use soroban_sdk::testutils::{Ledger as _, storage::Persistent as _};
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, BytesN};
 
@@ -442,5 +444,152 @@ mod test {
             client.try_deploy(&pub_key, &rp_id, &origin),
             Err(Ok(FactoryError::AlreadyDeployed))
         );
+    }
+
+    // ── 7. Deployed-set scaling (persistent per-salt markers) ─────────────
+
+    /// Seed `n` distinct deployed markers straight through the storage layer.
+    /// Deploying this many real wallets is far too slow for a unit test, and
+    /// `mark_deployed` is exactly what `deploy` calls after a successful deploy.
+    fn seed_deployed(env: &Env, contract_id: &Address, n: u32) {
+        env.cost_estimate().budget().reset_unlimited();
+        env.as_contract(contract_id, || {
+            for i in 0..n {
+                let mut raw = [0u8; 32];
+                raw[..4].copy_from_slice(&i.to_be_bytes());
+                raw[31] = 0xAA; // never collides with a SHA-256 of a real key in practice
+                storage::mark_deployed(env, &BytesN::from_array(env, &raw));
+            }
+        });
+    }
+
+    /// Ledger bytes read + written by one deploy() call.
+    fn deploy_io_bytes(env: &Env, client: &FactoryClient, key: &BytesN<65>) -> (u32, u32, u64) {
+        env.cost_estimate().budget().reset_unlimited();
+        let _ = client.deploy(key, &make_rp_id(env), &make_origin(env));
+        let r = env.cost_estimate().resources();
+        let cpu = env.cost_estimate().budget().cpu_instruction_cost();
+        (r.read_bytes, r.write_bytes, cpu)
+    }
+
+    #[test]
+    fn test_deploy_cost_does_not_grow_with_existing_wallets() {
+        // Baseline: a deploy into an empty factory.
+        let env_a = make_env();
+        env_a.mock_all_auths();
+        let id_a = register_factory(&env_a);
+        let client_a = FactoryClient::new(&env_a, &id_a);
+        client_a.init(&install_mock_wallet(&env_a));
+        let (read_a, write_a, cpu_a) = deploy_io_bytes(&env_a, &client_a, &valid_pub_key(&env_a));
+
+        // Same deploy into a factory that already tracks 500 wallets. With the
+        // old instance-storage set this is well past the point where the
+        // instance entry dominates every call.
+        let env_b = make_env();
+        env_b.mock_all_auths();
+        let id_b = register_factory(&env_b);
+        let client_b = FactoryClient::new(&env_b, &id_b);
+        client_b.init(&install_mock_wallet(&env_b));
+        seed_deployed(&env_b, &id_b, 500);
+        let (read_b, write_b, cpu_b) = deploy_io_bytes(&env_b, &client_b, &valid_pub_key(&env_b));
+
+        std::println!(
+            "deploy cost, 0 existing: read={read_a}B write={write_a}B cpu={cpu_a}; \
+             500 existing: read={read_b}B write={write_b}B cpu={cpu_b}"
+        );
+
+        // Allow a small constant slack, but the metered ledger I/O must not scale with the number of existing wallets.
+        assert!(read_b <= read_a + 512, "read bytes grew: {read_a} -> {read_b}");
+        assert!(write_b <= write_a + 512, "write bytes grew: {write_a} -> {write_b}");
+        // CPU is printed but deliberately not asserted: the soroban test host's
+        // own bookkeeping over the (test-only) ledger snapshot makes it grow with
+        // the number of entries even when the on-chain footprint is constant.
+    }
+
+    #[test]
+    fn test_deploy_still_works_past_old_instance_limit() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&install_mock_wallet(&env));
+
+        // 500 markers is ~37 KB in the old instance entry — enough to show the
+        // growth the persistent markers remove.
+        seed_deployed(&env, &contract_id, 500);
+        env.cost_estimate().budget().reset_unlimited();
+
+        let pub_key = valid_pub_key(&env);
+        let wallet = client.deploy(&pub_key, &make_rp_id(&env), &make_origin(&env));
+        assert_ne!(wallet, contract_id);
+        assert_eq!(
+            client.try_deploy(&pub_key, &make_rp_id(&env), &make_origin(&env)),
+            Err(Ok(FactoryError::AlreadyDeployed))
+        );
+    }
+
+    #[test]
+    fn test_is_deployed_answers_for_early_wallet_after_many_deploys() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&install_mock_wallet(&env));
+
+        let pub_key = valid_pub_key(&env);
+        let _ = client.deploy(&pub_key, &make_rp_id(&env), &make_origin(&env));
+        let first_salt = BytesN::from_array(&env, &sha2_hash(&pub_key.to_array()));
+
+        seed_deployed(&env, &contract_id, 500);
+
+        env.as_contract(&contract_id, || {
+            assert!(storage::is_deployed(&env, &first_salt));
+            assert!(!storage::is_deployed(&env, &BytesN::from_array(&env, &[7u8; 32])));
+        });
+    }
+
+    #[test]
+    fn test_deployed_marker_is_persistent_and_has_long_ttl() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&install_mock_wallet(&env));
+        let pub_key = valid_pub_key(&env);
+        let _ = client.deploy(&pub_key, &make_rp_id(&env), &make_origin(&env));
+        let salt = BytesN::from_array(&env, &sha2_hash(&pub_key.to_array()));
+
+        env.as_contract(&contract_id, || {
+            let key = storage::DataKey::Deployed(salt.clone());
+            // Lives in persistent storage, not in the instance entry.
+            assert!(env.storage().persistent().has(&key));
+            assert!(!env.storage().instance().has(&key));
+            assert_eq!(
+                env.storage().persistent().get_ttl(&key),
+                storage::DEPLOYED_TTL_EXTEND_TO
+            );
+        });
+
+        // The instance entry (admin, wasm hash) has its own TTL that this change
+        // does not touch; keep it alive so the test isolates the marker's TTL.
+        env.ledger().with_mut(|l| {
+            l.max_entry_ttl = storage::DEPLOYED_TTL_EXTEND_TO * 3;
+        });
+        env.as_contract(&contract_id, || {
+            let ttl = storage::DEPLOYED_TTL_EXTEND_TO * 2;
+            env.storage().instance().extend_ttl(ttl, ttl);
+        });
+        // Advance past the bump threshold; a lookup re-extends the marker.
+        env.ledger().with_mut(|l| {
+            l.sequence_number += storage::DEPLOYED_TTL_EXTEND_TO - 100;
+        });
+        env.as_contract(&contract_id, || {
+            assert!(storage::is_deployed(&env, &salt));
+            let key = storage::DataKey::Deployed(salt.clone());
+            assert_eq!(
+                env.storage().persistent().get_ttl(&key),
+                storage::DEPLOYED_TTL_EXTEND_TO
+            );
+        });
     }
 }

@@ -254,8 +254,10 @@ export default function RecoverPage() {
 
   return (
     <div className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
-      <div style={{ maxWidth: 400, width: '100%' }}>
+      <main style={{ maxWidth: 400, width: '100%' }}>
 
+        {/* Inside the landmark (axe "region" rule): the switcher used to sit
+            above main on the lock screen's twin, which failed the audit. */}
         <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
           <NetworkSwitcher />
         </div>
@@ -396,7 +398,7 @@ export default function RecoverPage() {
             <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.375rem' }}>Redirecting to dashboard...</p>
           </div>
         )}
-      </div>
+      </main>
     </div>
   )
 }

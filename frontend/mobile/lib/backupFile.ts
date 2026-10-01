@@ -27,13 +27,13 @@ import {
   type EncryptedBackup,
   type WalletBackupMetadata,
 } from './backup';
+import { getNetwork } from './network';
 
 // Wallet credential keys written by the SDK (`useInvisibleWallet`).
 const ADDRESS_KEY = 'invisible_wallet_address';
 const PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
 const SETTINGS_KEY = 'veil_wallet_settings';
-
-const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
+export const BACKUP_LAST_EXPORTED_KEY = 'veil_backup_last_exported_at';
 
 /** Sub-directory of the cache dir that exported envelopes are staged in. */
 const EXPORT_DIR_NAME = 'veil-backups';
@@ -72,6 +72,21 @@ export async function collectWalletMetadata(
   const publicKey = await AsyncStorage.getItem(PUBLIC_KEY_KEY);
   const signers = overrides.signers ?? (publicKey ? [{ index: 0, publicKey }] : []);
 
+  // The passphrase stamps which network the wallet lives on, so it must be the
+  // ACTIVE network's, never a hard-coded testnet value — a mainnet backup
+  // labelled with the testnet passphrase would restore into the wrong network
+  // context. Testnet resolves to `Networks.TESTNET` exactly as before; env and
+  // explicit overrides still win for deployments that need a custom value.
+  const networkPassphrase =
+    overrides.networkPassphrase
+    || process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim()
+    || getNetwork().networkPassphrase;
+  if (!networkPassphrase) {
+    throw new BackupError(
+      `No network passphrase is configured for ${getNetwork().displayName}.`
+    );
+  }
+
   return {
     version: 1,
     address,
@@ -79,10 +94,7 @@ export async function collectWalletMetadata(
     settings: overrides.settings ?? (await readSettings()),
     factoryAddress:
       overrides.factoryAddress || process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID']?.trim() || undefined,
-    networkPassphrase:
-      overrides.networkPassphrase
-      || process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim()
-      || TESTNET_PASSPHRASE,
+    networkPassphrase,
     rpId: overrides.rpId || process.env['EXPO_PUBLIC_RP_ID']?.trim() || undefined,
     createdAt: overrides.createdAt ?? Date.now(),
   };
@@ -189,7 +201,15 @@ export async function exportBackupToFile(
   const file = backend.files.get(id);
   if (!file) throw new BackupError('Backup was encrypted but no file was written');
 
+  await AsyncStorage.setItem(BACKUP_LAST_EXPORTED_KEY, String(Date.now()));
+
   return { id, encrypted, uri: file.uri, filename: file.name };
+}
+
+export async function getLastBackupExportedAt(): Promise<number | null> {
+  const raw = await AsyncStorage.getItem(BACKUP_LAST_EXPORTED_KEY);
+  const timestamp = raw ? Number(raw) : NaN;
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
 }
 
 /**

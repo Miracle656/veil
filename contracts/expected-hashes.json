@@ -1,13 +1,13 @@
 {
   "_comment": "SHA-256 of release wasm artifacts. Regenerate with scripts/reproducible-build.sh --update.",
   "artifacts": {
-    "factory.wasm": "3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853",
-    "invisible_wallet.wasm": "b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5",
+    "factory.wasm": "bc18ce53d6bfa6ac115a93dddd479341aa24ddf95dd5b1c1f99036ab206155d4",
+    "invisible_wallet.wasm": "fa434cbbe50f5484406e4b8d4c7c77051548f6fbe297bd03f061a5fdacddf152",
     "mock_wallet.wasm": "c86f7ccbdcc54674c0d428eed7bce81699d946fe3af21e78ca4d22e88ed73f1a",
     "multisig_wallet.wasm": "8d8a46da7219530a977c56a5fe1301461428d4c317fd9ccc6b2fd8dff2e144b9",
     "vault.wasm": "bddded7ee3b0700c82232f145a783cc45ac3d68dfb621b3d72266f132b80e9d7"
   },
-  "image": "rust:1.85.0-bookworm",
+  "image": "rust:1.85.0-bookworm@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e",
   "target": "wasm32-unknown-unknown",
   "toolchain": "1.85.0"
 }

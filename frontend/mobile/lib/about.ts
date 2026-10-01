@@ -2,6 +2,7 @@ import Constants from 'expo-constants';
 import * as WebBrowser from 'expo-web-browser';
 import { Linking } from 'react-native';
 
+import { nativeApplicationVersion, nativeBuildVersion } from './nativeVersion';
 import { getNetwork, type VeilNetwork, type VeilNetworkName } from './network';
 
 /**
@@ -30,12 +31,9 @@ const UNKNOWN_VERSION = 'unknown';
  * Go and on web, where the app.json value is the closest thing available.
  */
 export function getAppVersion(): AppVersion {
-  const version =
-    Constants.nativeApplicationVersion?.trim()
-    || Constants.expoConfig?.version?.trim()
-    || UNKNOWN_VERSION;
+  const version = nativeApplicationVersion() || Constants.expoConfig?.version?.trim() || UNKNOWN_VERSION;
 
-  const build = Constants.nativeBuildVersion?.trim() || null;
+  const build = nativeBuildVersion();
 
   return { version, build };
 }
@@ -128,6 +126,12 @@ export const EXTERNAL_LINKS: readonly ExternalLink[] = [
     label: 'Documentation',
     description: 'Guides, architecture, and the SDK reference',
     url: 'https://docs.useveilapp.xyz',
+  },
+  {
+    key: 'invest-docs',
+    label: 'Invest rail disclosures',
+    description: 'What tokenized assets are, issuer risks, and what Veil is not',
+    url: 'https://docs.useveilapp.xyz/invest',
   },
   {
     key: 'source',

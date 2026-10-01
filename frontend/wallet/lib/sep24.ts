@@ -13,12 +13,12 @@
 import {
   TransactionBuilder,
   Transaction,
-  Networks,
   Keypair,
   Operation,
 } from '@stellar/stellar-sdk'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { getNetwork } from '@/lib/network'
 
 // ── Anchor config ─────────────────────────────────────────────────────────────
 
@@ -51,7 +51,10 @@ export async function discoverAnchorInfo(anchorDomain: string): Promise<AnchorIn
   }
 
   const networkMatch = text.match(/NETWORK_PASSPHRASE\s*=\s*"([^"]+)"/)
-  const networkPassphrase = networkMatch ? networkMatch[1] : Networks.TESTNET
+  const networkPassphrase = networkMatch ? networkMatch[1] : getNetwork().networkPassphrase
+  if (!networkPassphrase) {
+    throw new Error(`No network passphrase is configured for ${getNetwork().displayName}.`)
+  }
 
   return {
     transferServerUrl: transferMatch[1].replace(/\/$/, ''),

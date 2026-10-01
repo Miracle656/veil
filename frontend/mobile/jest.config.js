@@ -18,4 +18,23 @@ module.exports = {
   transformIgnorePatterns: expoPreset.transformIgnorePatterns.map((pattern) =>
     pattern.startsWith('/node_modules/(?!(') ? pattern.replace('(?!(', '(?!(@noble|') : pattern
   ),
+  moduleNameMapper: {
+    ...(expoPreset.moduleNameMapper ?? {}),
+    // `registryParity.test.ts` imports `../wallet/lib/assets.ts` to compare the
+    // two asset registries, which is the point of the test — a registry that
+    // agrees with itself proves nothing.
+    //
+    // Babel rewrites that file's imports into `@babel/runtime/helpers/...`
+    // requires, and Node resolves those relative to the file doing the
+    // requiring. From `frontend/wallet/lib/` that means walking up through
+    // `frontend/wallet/node_modules` and the repo root — neither of which the
+    // CI mobile job installs, since it runs `npm ci` with
+    // `working-directory: frontend/mobile`. So the suite fails to run on CI
+    // while passing on any machine that happens to have the other workspaces
+    // installed, which is exactly how it reached main green and then went red.
+    //
+    // Pinning the helpers to this package's own copy makes the resolution
+    // independent of which workspace the importing file lives in.
+    '^@babel/runtime/(.*)$': '<rootDir>/node_modules/@babel/runtime/$1',
+  },
 };

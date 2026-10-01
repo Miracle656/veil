@@ -24,6 +24,19 @@ describe('resolveAgentUrl', () => {
     expect(resolveAgentUrl('http://agent.example.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
     expect(resolveAgentUrl('not a url')).toBe(PRODUCTION_AGENT_URL);
   });
+
+  it('treats a private range as an address, not as a name prefix', () => {
+    // `/^10\./` matched the hostname `10.evil.com`, so any remote host whose
+    // name began "10." could be reached over plaintext http.
+    expect(resolveAgentUrl('http://10.evil.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
+    expect(resolveAgentUrl('http://192.168.evil.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
+    expect(resolveAgentUrl('http://10.0.0.1.evil.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
+
+    // Real private addresses still work, so local development is unaffected.
+    expect(resolveAgentUrl('http://192.168.1.5:3000/api/agent')).toBe('http://192.168.1.5:3000/api/agent');
+    expect(resolveAgentUrl('http://10.1.2.3:3000/api/agent')).toBe('http://10.1.2.3:3000/api/agent');
+    expect(resolveAgentUrl('http://localhost:3000/api/agent')).toBe('http://localhost:3000/api/agent');
+  });
 });
 
 describe('historyFromMessages', () => {

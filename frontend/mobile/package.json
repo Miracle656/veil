@@ -25,6 +25,7 @@
     "@expo-google-fonts/lora": "^0.4.2",
     "@gorhom/bottom-sheet": "^5.2.14",
     "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^1.9.7",
     "@noble/hashes": "^2.2.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "11.4.1",
@@ -37,6 +38,7 @@
     "buffer": "^6.0.3",
     "expo": "~54.0.0",
     "expo-application": "~7.0.8",
+    "expo-asset": "~12.0.13",
     "expo-background-task": "~1.0.10",
     "expo-camera": "~17.0.10",
     "expo-clipboard": "~8.0.8",
@@ -74,6 +76,7 @@
     "react-native-svg": "15.12.1",
     "react-native-url-polyfill": "^4.0.0",
     "react-native-web": "~0.21.0",
+    "react-native-webview": "~13.15.0",
     "react-native-worklets": "0.5.1"
   },
   "devDependencies": {

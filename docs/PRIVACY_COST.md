@@ -15,7 +15,7 @@
 | Proofs | Groth16 over BN254, Circom circuits, proved on the device | Noir, UltraHonk |
 | Compliance | Association Set Providers (allow-list / block-list per pool), freeze, selective disclosure, global view keys | Auditor view key, selective disclosure, freeze, policy engine |
 | Status | **Developer preview, unaudited, testnet only**, "not yet approved for mainnet" | **Developer preview, testnet**; audits underway; mainnet was targeted for late summer 2026 (not confirmed yet) |
-| Assets on testnet | XLM and EURC pools | any SEP-41 token (USDC via the SAC) |
+| Assets on testnet | **Two XLM pools** (verified in upstream `deployments/testnet/deployments.json` 2026-09-24: both `asset.kind: native`, same `tokenContractId`; the second adds `gvkMode: traceable`). There is **no EURC pool** — an earlier version of this row said there was | any SEP-41 token (USDC via the SAC) |
 | Code | `NethermindEth/stellar-private-payments` — Apache-2.0, circuit compiler GPLv3; npm `stellar-private-payments` 0.1.0 (alpha), Rust SDK | `OpenZeppelin/stellar-contracts` |
 
 Both rest on protocol upgrades already live on mainnet: X-Ray (Protocol 25, BN254 + Poseidon, Jan 22 2026) and Yardstick (Protocol 26, more BN254 host functions, May 6 2026).
@@ -70,6 +70,31 @@ Deposits would come from the spending account, as Earn's do; the pool pulls toke
 1. **Now, free:** join the SPP developer preview on testnet. Prototype passkey-derived keys and one private send in the web wallet, which proves the integration before any mobile spend.
 2. **SCF application:** replace "fork-and-harden `soroban-privacy-pools`, trusted setup" with **"integrate Stellar Private Payments"**: passkey-derived privacy keys, mobile prover, bootnode, private-balance UX. That is less risk and sits on the ecosystem's own standard, and it is still the Tranche 2 testnet deliverable. Budget the ~9–15 weeks plus bootnode hosting; audit through Audit Bank.
 3. **Mainnet:** only after SPP is audited and SDF approves it, using the canonical pool, after a legal review.
+
+---
+
+## 6. Association-Set Policy Decision (V132 · 2026-09-24)
+
+### Policy Choice: `blocklist` (Non-Membership)
+Veil configures its Stellar Private Payments (SPP) integration to default to the **`blocklist`** association-set policy, using the `asp_non_membership` contract.
+
+### Rationale: Why `blocklist` over `allowlist`?
+1. **Preserving Anonymity Set Size**: An `allowlist` (`asp_membership`) requires every depositing address to undergo prior verification/KYC and be explicitly included in the ASP Merkle tree before deposits can participate. This drastically constrains and fragments the anonymity set to only pre-screened users. Conversely, a `blocklist` (`asp_non_membership`) allows all pool deposits to form the shared anonymity set by default, excluding only illicit/sanctioned addresses.
+2. **Alignment with Upstream Pools**: Upstream SPP testnet deployment pools (`CBEDPYMA...` and `CADS665G...`) are deployed with `policyFlags: ["blocklist"]`.
+
+### Exclusions & Maintenance
+- **What is Excluded**: Sanctioned addresses (e.g. OFAC lists), identified exploiters/hackers, and flagged illicit funds.
+- **Maintainer**: On testnet, the Association Set Provider (ASP) root is maintained by Nethermind / SDF. On mainnet, this will be maintained by designated compliance providers.
+
+### Consequence of Exclusion
+If a user's deposit address or note is added to the ASP blocklist Merkle tree:
+- The user's client will fail when generating a non-membership zero-knowledge proof because a valid non-membership path against the active ASP root cannot be produced (`POLICY_REJECTED`).
+- The user is prevented from spending or unshielding those funds privately within that pool while the note remains excluded.
+
+### Honest Anonymity Set Definition
+The client surfaces the policy and anonymity bounds honestly: the anonymity set is **not** "all Stellar accounts" or "the entire blockchain" — it is strictly **all active, non-excluded depositors in that specific pool sharing the same policy (`blocklist`)**.
+
+---
 
 ## Sources
 

@@ -43,10 +43,15 @@ export const MAX_DEEP_LINK_LENGTH = 7168;
  * crafted link cannot smuggle state into a screen that never expected it.
  */
 const LINKABLE_ROUTES: Record<string, readonly string[]> = {
-  '/pay': ['to', 'amount', 'asset', 'memo', 'msg', 'uri'],
-  '/send': ['to', 'amount', 'asset', 'memo'],
+  '/pay': ['to', 'amount', 'asset', 'issuer', 'memo', 'msg', 'uri'],
+  '/send': ['to', 'amount', 'asset', 'issuer', 'memo'],
   '/receive': ['amount', 'asset'],
   '/create-wallet': [],
+  // Read-only destinations for launcher shortcuts (`lib/voice/actions.ts`).
+  // Exact paths with no parameters: a link can open these screens but cannot
+  // choose what they show.
+  '/dashboard': [],
+  '/token/XLM': [],
 };
 
 /** Aliases for paths that read naturally in a shared link but are not routes. */
@@ -55,6 +60,8 @@ const PATH_ALIASES: Record<string, string> = {
   '/': '/',
   '/request': '/receive',
   '/payment-request': '/pay',
+  // Paths are lowercased before lookup, but asset codes are case-sensitive.
+  '/token/xlm': '/token/XLM',
 };
 
 /**
@@ -68,6 +75,8 @@ const SEP7_PARAM_MAP: Record<string, string> = {
   destination: 'to',
   amount: 'amount',
   asset_code: 'asset',
+  // The issuer travels with the code: without it the code names no one asset.
+  asset_issuer: 'issuer',
   memo: 'memo',
   msg: 'msg',
 };

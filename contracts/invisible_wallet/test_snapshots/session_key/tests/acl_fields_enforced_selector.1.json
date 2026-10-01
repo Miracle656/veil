@@ -75,6 +75,20 @@
                     },
                     {
                       "key": {
+                        "symbol": "payees"
+                      },
+                      "val": {
+                        "vec": []
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "per_call_max"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
                         "symbol": "pubkey"
                       },
                       "val": {
