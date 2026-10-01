@@ -7,13 +7,24 @@ import { PageHeader, Card, SectionLabel, Pill } from '@/components/ui/primitives
 import { recordPurchase } from '@/lib/costBasisTracker'
 import { fetchPrices } from '@/lib/fetchPrice'
 import {
-  DEST_CODES,
-  makeDestAsset,
+  assetKey,
   parseSwapPrefill,
   resolveFlip,
+  toDestAsset,
   type StellarAsset,
   type SwapPrefill,
 } from './direction'
+import {
+  checkSwapAsset,
+  classicAsset,
+  noRouteMessage,
+  pathPaysOut,
+  swapAssetLabel,
+  swapDestinations,
+  swapRouteInput,
+  type SwapAsset,
+} from '@/lib/swapAssets'
+import { getAssetIssuer } from '@/lib/assets'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -37,7 +48,6 @@ import { signAndSubmitSorobanXdr } from '@/lib/sorobanTx'
 import {
   getSoroswapQuote,
   buildSoroswapSwapXdr,
-  resolveTokenAddress,
   type SwapQuote,
 } from '@/lib/soroswap'
 
@@ -48,6 +58,12 @@ const DEBOUNCE_MS = 600
 // Resolved per network — see getUsdcIssuer(). Previously pinned to the
 // testnet issuer, which made mainnet swaps default to the wrong asset.
 const DEFAULT_USDC = { code: 'USDC', issuer: getUsdcIssuer() }
+/** What the receive side offers: XLM and each registered asset on this network, issuer included. */
+const DESTINATIONS = swapDestinations(network.name)
+
+function toSwapAsset(a: StellarAsset): SwapAsset {
+  return { code: a.code, issuer: a.issuer ?? null }
+}
 
 const SLIPPAGE_OPTIONS = [
   { label: '0.1%', bps: 10 },
@@ -86,6 +102,10 @@ export default function SwapPage() {
 
   // Classic SDEX fallback
   const [path, setPath] = useState<Asset[]>([])
+  /** Why the quote came from the classic DEX rather than Soroswap, when it did. */
+  const [venueNote, setVenueNote] = useState<string | null>(null)
+  /** Guards against a slow quote for an earlier pair landing after the pair changed. */
+  const quoteSeq = useRef(0)
 
   // Slippage
   const [slippageBps, setSlippageBps] = useState(50)
@@ -103,9 +123,12 @@ export default function SwapPage() {
   useEffect(() => {
     const prefill = parseSwapPrefill(window.location.search)
     prefillRef.current = prefill
-    if (prefill.to && (DEST_CODES as readonly string[]).includes(prefill.to) && prefill.to !== prefill.from) {
-      setDestAsset(makeDestAsset(prefill.to, DEFAULT_USDC.issuer))
-    }
+    // A code from the agent is resolved to the one registered asset with that
+    // code on this network — never matched against whatever else shares it.
+    const wantedDest = prefill.to && prefill.to !== prefill.from
+      ? DESTINATIONS.find((d) => d.code === prefill.to)
+      : undefined
+    if (wantedDest) setDestAsset(toDestAsset(wantedDest))
     if (prefill.amount) setSourceAmount(prefill.amount)
   }, [])
 
@@ -137,12 +160,16 @@ export default function SwapPage() {
         }))
         setSpendableXlm(spendableNativeXlm(data))
         setSourceBalances(assets)
-        // The asset the agent named, if the account holds it; otherwise XLM.
+        // The asset the agent named, if the account holds the REGISTERED one;
+        // otherwise XLM. A held impostor sharing the code is never picked.
         const wanted = prefillRef.current?.from
+        const wantedIssuer = wanted && wanted !== 'XLM' ? getAssetIssuer(wanted, network.name) : null
+        const wantedKey = wanted === 'XLM' ? 'native' : wantedIssuer ? `${wanted}:${wantedIssuer}` : null
         setSourceAsset(
-          (wanted && assets.find((a) => a.code === wanted)) ||
-            assets.find((a) => a.code === 'XLM') ||
-            assets[0],
+          (wantedKey && assets.find((a) => assetKey(a) === wantedKey)) ||
+            assets.find((a) => assetKey(a) === 'native') ||
+            assets.find((a) => checkSwapAsset(toSwapAsset(a), network.name).ok) ||
+            null,
         )
       }
     } catch (err) {
@@ -151,7 +178,19 @@ export default function SwapPage() {
   }
 
   // ── Quote fetching (Soroswap first, SDEX fallback) ──
+  //
+  // Both venues are asked about exactly one pair: the SAC derived from each
+  // asset's code:issuer for Soroswap, `new Asset(code, issuer)` for the classic
+  // DEX (#793). The DEX is tried only when Soroswap is unavailable or has no
+  // route — never after Soroswap answered about a different asset — and a pair
+  // neither venue can route is reported as such, not quoted as something else.
   useEffect(() => {
+    // A new pair or amount invalidates whatever was quoted before it.
+    const seq = ++quoteSeq.current
+    setQuote(null)
+    setPath([])
+    setUsingSoroswap(false)
+    setVenueNote(null)
     if (
       !sourceAsset ||
       !destAsset ||
@@ -160,74 +199,64 @@ export default function SwapPage() {
       parseFloat(sourceAmount) <= 0
     ) {
       setDestAmount('')
-      setQuote(null)
-      setPath([])
+      return
+    }
+
+    const route = swapRouteInput(
+      toSwapAsset(sourceAsset),
+      toSwapAsset(destAsset),
+      network.name,
+      network.networkPassphrase,
+    )
+    if (!route.ok) {
+      setDestAmount('')
+      setErrorMsg(route.reason)
       return
     }
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
     debounceRef.current = setTimeout(async () => {
+      const stale = () => seq !== quoteSeq.current
       setIsFetchingQuote(true)
       setErrorMsg(null)
-      setUsingSoroswap(false)
+      setDestAmount('')
 
       // --- Try Soroswap aggregator first ---
-      try {
-        const [tokenInAddress, tokenOutAddress] = await Promise.all([
-          sourceAsset.code === 'XLM'
-            ? Asset.native().contractId(network.networkPassphrase)
-            : resolveTokenAddress(sourceAsset.code),
-          destAsset.code === 'XLM'
-            ? Asset.native().contractId(network.networkPassphrase)
-            : resolveTokenAddress(destAsset.code),
-        ])
+      const signerSecret =
+        walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
+      const soroswap = await getSoroswapQuote({
+        tokenIn: route.tokenIn,
+        tokenOut: route.tokenOut,
+        amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
+        slippageBps,
+        feePayerAddress: signerSecret ? Keypair.fromSecret(signerSecret).publicKey() : '',
+      })
+      if (stale()) return
 
-        if (tokenInAddress && tokenOutAddress) {
-          const amountInStroops = Math.round(
-            parseFloat(sourceAmount) * 1e7
-          ).toString()
-          const signerPub =
-            Keypair.fromSecret(
-              walletSession.getItem('veil_signer_secret') ||
-                walletLocal.getItem('veil_signer_secret') ||
-                ''
-            ).publicKey() || ''
-
-          const q = await getSoroswapQuote({
-            tokenIn: tokenInAddress,
-            tokenOut: tokenOutAddress,
-            amountIn: amountInStroops,
-            slippageBps,
-            feePayerAddress: signerPub,
-          })
-
-          if (q) {
-            setQuote(q)
-            setUsingSoroswap(true)
-            // Convert stroops back to display units
-            setDestAmount((Number(q.amountOut) / 1e7).toFixed(7))
-            setIsFetchingQuote(false)
-            return
-          }
-        }
-      } catch (soroErr) {
-        console.warn('Soroswap quote failed, falling back to SDEX:', soroErr)
+      if (soroswap.ok) {
+        setQuote(soroswap.quote)
+        setUsingSoroswap(true)
+        // Convert stroops back to display units
+        setDestAmount((Number(soroswap.quote.amountOut) / 1e7).toFixed(7))
+        setIsFetchingQuote(false)
+        return
+      }
+      if (soroswap.kind === 'mismatch') {
+        setErrorMsg(soroswap.reason)
+        setIsFetchingQuote(false)
+        return
       }
 
-      // --- SDEX Fallback ---
+      // --- SDEX Fallback, for the same pair ---
       try {
-        const source =
-          sourceAsset.code === 'XLM' || !sourceAsset.issuer
-            ? Asset.native()
-            : new Asset(sourceAsset.code, sourceAsset.issuer!)
-        const dest =
-          destAsset.code === 'XLM' || !destAsset.issuer
-            ? Asset.native()
-            : new Asset(destAsset.code, destAsset.issuer!)
+        const source = classicAsset(route.from)
+        const dest = classicAsset(route.to)
         const pathsResult = await server.strictSendPaths(source, sourceAmount, [dest]).call()
-        if (pathsResult.records.length > 0) {
-          const bestPath = pathsResult.records[0]
+        if (stale()) return
+        // Only a path that pays out the asset asked for is a quote for it.
+        const bestPath = pathsResult.records.find((r) => pathPaysOut(r, route.to))
+        if (bestPath) {
           setDestAmount(bestPath.destination_amount)
           setPath(
             bestPath.path.map((p: any) =>
@@ -236,17 +265,16 @@ export default function SwapPage() {
                 : new Asset(p.asset_code, p.asset_issuer)
             )
           )
-          setUsingSoroswap(false)
-          setQuote(null)
+          setVenueNote(soroswap.reason)
         } else {
-          setErrorMsg('No path found. Try a different amount or asset.')
-          setDestAmount('')
+          setErrorMsg(noRouteMessage(route.from, route.to, network.name))
         }
       } catch (err) {
+        if (stale()) return
         console.error('SDEX pathfind error', err)
-        setErrorMsg('Error finding swap path. Check your connection.')
+        setErrorMsg('Could not get a quote for this pair. Check your connection and try again.')
       } finally {
-        setIsFetchingQuote(false)
+        if (!stale()) setIsFetchingQuote(false)
       }
     }, DEBOUNCE_MS)
 
@@ -274,53 +302,45 @@ export default function SwapPage() {
       const signerKeypair = Keypair.fromSecret(signerSecret)
       const signerPubKey = signerKeypair.publicKey()
 
+      // The pair is re-checked at submit, not trusted from when it was quoted.
+      const route = swapRouteInput(
+        toSwapAsset(sourceAsset!),
+        toSwapAsset(destAsset),
+        network.name,
+        network.networkPassphrase,
+      )
+      if (!route.ok) {
+        setErrorMsg(route.reason)
+        setStep('error')
+        return
+      }
+
       // ── Soroswap path ──
       if (usingSoroswap && quote) {
-        // Re-fetch quote if it has expired
-        const liveQuote =
-          Date.now() > quote.ttl
-            ? await (async () => {
-                const tokenIn = await (sourceAsset!.code === 'XLM'
-                  ? Asset.native().contractId(network.networkPassphrase)
-                  : resolveTokenAddress(sourceAsset!.code))
-                const tokenOut = await (destAsset.code === 'XLM'
-                  ? Asset.native().contractId(network.networkPassphrase)
-                  : resolveTokenAddress(destAsset.code))
-                return tokenIn && tokenOut
-                  ? getSoroswapQuote({
-                      tokenIn,
-                      tokenOut,
-                      amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
-                      slippageBps,
-                      feePayerAddress: signerPubKey,
-                    })
-                  : null
-              })()
-            : quote
-
-        if (!liveQuote) {
-          setErrorMsg('Quote expired and could not be refreshed. Please retry.')
-          setStep('error')
-          return
+        // Re-fetch an expired quote — for the same two contracts only. If the
+        // router no longer routes them, say so; do not switch venue or asset
+        // behind a quote the user has already reviewed.
+        let liveQuote: SwapQuote = quote
+        if (Date.now() > quote.ttl) {
+          const fresh = await getSoroswapQuote({
+            tokenIn: route.tokenIn,
+            tokenOut: route.tokenOut,
+            amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
+            slippageBps,
+            feePayerAddress: signerPubKey,
+          })
+          if (!fresh.ok) {
+            setErrorMsg(`The quote expired and could not be refreshed: ${fresh.reason} Please retry.`)
+            setStep('error')
+            return
+          }
+          liveQuote = fresh.quote
         }
 
-        const tokenIn = await (sourceAsset!.code === 'XLM'
-          ? Asset.native().contractId(network.networkPassphrase)
-          : resolveTokenAddress(sourceAsset!.code))
-        const tokenOut = await (destAsset.code === 'XLM'
-          ? Asset.native().contractId(network.networkPassphrase)
-          : resolveTokenAddress(destAsset.code))
-
-        const xdr = await buildSoroswapSwapXdr({
-          tokenIn: tokenIn!,
-          tokenOut: tokenOut!,
-          amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
-          slippageBps,
-          feePayerAddress: signerPubKey,
-        })
+        const xdr = await buildSoroswapSwapXdr(liveQuote, signerPubKey)
 
         if (!xdr) {
-          throw new Error('Failed to build Soroswap transaction. Falling back to SDEX is required.')
+          throw new Error('Soroswap could not build this swap. Nothing was sent — please retry.')
         }
 
         const hash = await signAndSubmitSorobanXdr({
@@ -363,14 +383,8 @@ export default function SwapPage() {
 
       // ── Classic SDEX fallback ──
       const account = await server.loadAccount(signerPubKey)
-      const source =
-        sourceAsset!.code === 'XLM' || !sourceAsset!.issuer
-          ? Asset.native()
-          : new Asset(sourceAsset!.code, sourceAsset!.issuer!)
-      const dest =
-        destAsset.code === 'XLM' || !destAsset.issuer
-          ? Asset.native()
-          : new Asset(destAsset.code, destAsset.issuer!)
+      const source = classicAsset(route.from)
+      const dest = classicAsset(route.to)
 
       const destMin = (parseFloat(destAmount) * (1 - slippageBps / 10000)).toFixed(7)
 
@@ -461,7 +475,11 @@ export default function SwapPage() {
   /** Same derivation the send screen uses, so the two quote the fee alike. */
   const feeXlm = (Number(inclusionFee()) / 10_000_000).toFixed(7)
 
-  const flip = resolveFlip(sourceAsset?.code, destAsset.code, sourceBalances, DEFAULT_USDC.issuer)
+  const flip = resolveFlip(sourceAsset, destAsset, sourceBalances, DESTINATIONS)
+  // Every place the swap names an asset names its issuer too, so the user can
+  // see which USDT0 (of eight) they are trading (#793).
+  const payLabel = sourceAsset ? swapAssetLabel(toSwapAsset(sourceAsset), network.name) : '—'
+  const receiveLabel = swapAssetLabel(toSwapAsset(destAsset), network.name)
 
   return (
     <div className="wallet-shell">
@@ -559,16 +577,23 @@ export default function SwapPage() {
               <div className="flex gap-4 items-center">
                 <select
                   className="bg-surface-md border-0 text-off-white py-2 px-3 rounded-xl cursor-pointer text-[15px] font-semibold"
-                  value={sourceAsset?.code || ''}
+                  value={sourceAsset ? assetKey(sourceAsset) : ''}
                   onChange={(e) =>
-                    setSourceAsset(sourceBalances.find((b) => b.code === e.target.value) || null)
+                    setSourceAsset(sourceBalances.find((b) => assetKey(b) === e.target.value) || null)
                   }
                 >
-                  {sourceBalances.map((b) => (
-                    <option key={b.code} value={b.code}>
-                      {b.code}
-                    </option>
-                  ))}
+                  {/* Keyed by code:issuer, so two holdings that share a code stay
+                      two options. One that shares a REGISTERED code without its
+                      issuer is listed but cannot be picked. */}
+                  {sourceBalances.map((b) => {
+                    const tradeable = checkSwapAsset(toSwapAsset(b), network.name).ok
+                    return (
+                      <option key={assetKey(b)} value={assetKey(b)} disabled={!tradeable}>
+                        {b.issuer ? `${b.code} (${b.issuer.slice(0, 4)}…${b.issuer.slice(-4)})` : b.code}
+                        {tradeable ? '' : ' — unregistered issuer, cannot swap'}
+                      </option>
+                    )
+                  })}
                 </select>
                 <input
                   className="input-field"
@@ -638,12 +663,15 @@ export default function SwapPage() {
               <div className="flex gap-4 items-center">
                 <select
                   className="bg-surface-md border-0 text-off-white py-2 px-3 rounded-xl cursor-pointer text-[15px] font-semibold"
-                  value={destAsset.code}
-                  onChange={(e) => setDestAsset(makeDestAsset(e.target.value, DEFAULT_USDC.issuer))}
+                  value={assetKey(destAsset)}
+                  onChange={(e) => {
+                    const next = DESTINATIONS.find((d) => assetKey(d) === e.target.value)
+                    if (next) setDestAsset(toDestAsset(next))
+                  }}
                 >
-                  {DEST_CODES.map((code) => (
-                    <option key={code} value={code}>
-                      {code}
+                  {DESTINATIONS.map((d) => (
+                    <option key={assetKey(d)} value={assetKey(d)}>
+                      {d.code}
                     </option>
                   ))}
                 </select>
@@ -688,6 +716,8 @@ export default function SwapPage() {
               <Card>
                 <SectionLabel tone="dim" className="mb-3">Route</SectionLabel>
                 <div className="flex flex-col gap-2">
+                  <Row label="Pay" value={payLabel} />
+                  <Row label="Receive" value={receiveLabel} />
                   <Row
                     label="Rate"
                     value={rate ? `1 ${sourceAsset?.code} ≈ ${rate} ${destAsset.code}` : '—'}
@@ -696,6 +726,7 @@ export default function SwapPage() {
                     label="Venue"
                     value={rate ? (usingSoroswap && quote ? quote.protocols.join(' · ') : 'SDEX') : '—'}
                   />
+                  {rate && venueNote && <Row label="Why SDEX" value={venueNote} />}
                   <Row
                     label="Price impact"
                     value={
@@ -715,7 +746,7 @@ export default function SwapPage() {
                     label="Min. received"
                     value={
                       rate && destAmount
-                        ? `${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${destAsset.code}`
+                        ? `${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${receiveLabel}`
                         : '—'
                     }
                   />
@@ -730,11 +761,11 @@ export default function SwapPage() {
             <Card>
               <SectionLabel tone="dim" className="mb-4">Confirm swap</SectionLabel>
               <div className="flex flex-col gap-3">
-                <Row label="Pay" value={`${sourceAmount} ${sourceAsset?.code}`} />
-                <Row label="Receive (est.)" value={`${destAmount} ${destAsset.code}`} />
+                <Row label="Pay" value={`${sourceAmount} ${payLabel}`} />
+                <Row label="Receive (est.)" value={`${destAmount} ${receiveLabel}`} />
                 <Row
                   label="Min. received"
-                  value={`${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${destAsset.code}`}
+                  value={`${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${receiveLabel}`}
                 />
                 <Row label="Slippage tolerance" value={`${slippageBps / 100}%`} />
                 {usingSoroswap && quote && (
@@ -750,7 +781,7 @@ export default function SwapPage() {
                     <Row label="Route" value={quote.protocols.join(' · ')} />
                   </>
                 )}
-                {!usingSoroswap && <Row label="Route" value="SDEX" />}
+                {!usingSoroswap && <Row label="Route" value={venueNote ? `SDEX — ${venueNote}` : 'SDEX'} />}
                 <Row label="Network fee" value="0.00001 XLM" />
               </div>
             </Card>

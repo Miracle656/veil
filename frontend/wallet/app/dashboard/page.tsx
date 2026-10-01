@@ -17,8 +17,10 @@ import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { usePrivacyRecoveryNotice } from '@/hooks/usePrivacyRecoveryNotice'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
+import { calculateAccountReserve, type AccountReserveBreakdown } from '@/lib/reserves'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
 import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { isMultisigAvailable } from '@/lib/multisigConfig'
@@ -138,6 +140,7 @@ function DashboardPageContent() {
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
+  const [reserveInfo, setReserveInfo]     = useState<AccountReserveBreakdown | null>(null)
   const transactions                      = useActivityFeed()
   const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
@@ -162,6 +165,9 @@ function DashboardPageContent() {
   // PRF downgrade: surfaced as a dismissible banner (issue #629).
   const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
   const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
+  // #711: true when this wallet's privacy keys cannot be re-derived from a
+  // passkey elsewhere — the private-balance card warns before anything shields.
+  const privacyRecoveryUnsupported = usePrivacyRecoveryNotice()
 
   // Shoulder-surfing guard. Persisted, but read after mount so the server and
   // client render the same first paint.
@@ -316,6 +322,8 @@ function DashboardPageContent() {
         const account = await horizonServer.loadAccount(signerPublicKey)
         const native  = account.balances.find((b: any) => b.asset_type === 'native')
         feePayerXlm   = native ? parseFloat(native.balance) : 0
+        const rInfo   = calculateAccountReserve(account as any)
+        setReserveInfo(rInfo)
 
         // All non-XLM balances (e.g. USDC from swaps)
         otherAssets = (account.balances as any[])
@@ -864,6 +872,11 @@ function DashboardPageContent() {
               <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', gap: '12px' }}>
                 <div className="vw-silver__sub">{hideAmounts ? '••••' : (balanceLine || 'No assets yet')}</div>
               </div>
+              {reserveInfo && !hideAmounts && (
+                <div style={{ position: 'relative', marginTop: '10px', fontSize: '11px', color: '#0F0F0F', opacity: 0.8, lineHeight: 1.4 }}>
+                  Reserved: <strong>{reserveInfo.totalReserve.toFixed(1)} XLM</strong> ({reserveInfo.reason})
+                </div>
+              )}
             </div>
 
             <div className="vw-panel" style={{ flex: 1, minWidth: 0, padding: '26px 28px' }}>
@@ -884,7 +897,12 @@ function DashboardPageContent() {
 
         {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
             scan stub below stands in for the V134 client until it lands. */}
-        <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
+        <PrivateBalanceCard
+          balances={[]}
+          syncState="syncing"
+          hideAmounts={hideAmounts}
+          recoveryWarning={privacyRecoveryUnsupported}
+        />
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.

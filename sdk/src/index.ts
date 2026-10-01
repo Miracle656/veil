@@ -1,3 +1,4 @@
+export type * from './types';
 export * from './useInvisibleWallet';
 export * from './utils';
 export * from './outbox';
@@ -56,6 +57,7 @@ export * from './crypto/prf';
 export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';
+export type { TransactionSigner, SignTransactionContext, SignerInput } from './signer';
 export * from './claimableBalance';
 export * from './network';
 export * from './fees';

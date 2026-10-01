@@ -136,7 +136,7 @@ export default function TokenDetailScreen() {
   };
 
   const actions: Array<{ key: string; label: string; Icon: (p: IconProps) => React.JSX.Element; onPress: () => void }> = [
-    { key: 'send', label: 'Send', Icon: PaperPlaneIcon, onPress: () => router.push(`/send?asset=${asset.code}`) },
+    { key: 'send', label: 'Send', Icon: PaperPlaneIcon, onPress: () => router.push(asset.issuer ? `/send?asset=${encodeURIComponent(asset.code)}&issuer=${asset.issuer}` : `/send?asset=${encodeURIComponent(asset.code)}`) },
     { key: 'receive', label: 'Receive', Icon: ReceiveIcon, onPress: () => router.push('/receive') },
     { key: 'swap', label: 'Swap', Icon: SwapIcon, onPress: () => router.push('/swap') },
   ];

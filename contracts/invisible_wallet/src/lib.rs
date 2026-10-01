@@ -326,13 +326,18 @@ impl InvisibleWallet {
                         let Context::Contract(c) = context else {
                             return Err(WalletError::SignerNotAuthorized);
                         };
-                        let amount = if c.args.len() >= 3 {
-                            i128::try_from_val(&env, &c.args.get(2).unwrap())
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        session_key::enforce(&env, &key_id, &c.contract, &c.fn_name, amount)?;
+                        // Arguments are read per selector (unknown selectors and
+                        // malformed args are refused, never guessed at).
+                        let effect =
+                            session_key::extract_call_effect(&env, &c.fn_name, &c.args)?;
+                        session_key::enforce(
+                            &env,
+                            &key_id,
+                            &c.contract,
+                            &c.fn_name,
+                            effect.amount,
+                            effect.payee.as_ref(),
+                        )?;
                     }
 
                     // Step 5 — Advance the contract nonce (must happen after all checks).
@@ -634,6 +639,44 @@ impl InvisibleWallet {
             amount_cap,
             spent: 0,
             expiry,
+            payees: Vec::new(&env),
+            per_call_max: None,
+        });
+    }
+
+    /// Register a session key that also constrains who may be paid and how
+    /// much a single call may spend.
+    ///
+    /// - `payees`: allowed recipients (`to` of `transfer`/`transfer_from`,
+    ///   `spender` of `approve`). Non-empty means any other recipient, and any
+    ///   call with no recipient, is rejected. Empty means unconstrained, exactly
+    ///   like [`register_session_key`].
+    /// - `per_call_max`: optional ceiling for one call, on top of `amount_cap`.
+    ///
+    /// Requires wallet owner authorization. Like `register_session_key`, this
+    /// exists only in deployments of this contract version; the deployed
+    /// (non-upgradeable) wallets are unaffected.
+    pub fn register_session_key_scoped(
+        env: Env,
+        pubkey: BytesN<32>,
+        key_id: BytesN<32>,
+        target_contract: Address,
+        selector: Symbol,
+        amount_cap: i128,
+        expiry: u64,
+        payees: Vec<Address>,
+        per_call_max: Option<i128>,
+    ) {
+        env.current_contract_address().require_auth();
+        session_key::register(&env, key_id, session_key::SessionKeyAcl {
+            pubkey,
+            target_contract,
+            selector,
+            amount_cap,
+            spent: 0,
+            expiry,
+            payees,
+            per_call_max,
         });
     }
 
