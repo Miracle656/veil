@@ -15,6 +15,9 @@ import type { BlendPosition } from '@/lib/blend'
 
 const USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
 const USDY_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6'
+// Derived SAC for Circle's mainnet USDC — the key a USDC Blend position prices through.
+const USDC_MAINNET_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
+const FAKE_ISSUER = 'GCOUNTERFEITISSUERADDRESS0000000000000000000000000000000000000'
 
 const NOW = 1_800_000_000_000
 
@@ -41,10 +44,12 @@ describe('PortfolioSummary', () => {
 
   // ── Missing price ──────────────────────────────────────────────────────────
 
-  it('shows an em dash for unpriced assets, not zero', () => {
+  it('shows a warning and an em dash for unpriced assets, not zero', () => {
     const xlm: WalletAsset = { code: 'XLM', issuer: null, balance: '100' }
     const portfolio = buildPortfolio([xlm], [], {}, NOW)
     const html = render(portfolio)
+    // Warning indicator present for the unpriced line
+    expect(html).toMatch(/Price unavailable/)
     // Em dash present for the unpriced line
     expect(html).toMatch(/—/)
     // No confident zero shown
@@ -52,7 +57,7 @@ describe('PortfolioSummary', () => {
     expect(html).not.toMatch(/\$0/)
   })
 
-  it('marks an unpriced line without contributing it to the total', () => {
+  it('marks an unpriced line without contributing it to the total, and says so in the footer', () => {
     const xlm:  WalletAsset = { code: 'XLM',  issuer: null,        balance: '100' }
     const usdc: WalletAsset = { code: 'USDC', issuer: USDC_ISSUER, balance: '50'  }
     const prices = { ['USDC:' + USDC_ISSUER]: 1.0 }
@@ -60,8 +65,16 @@ describe('PortfolioSummary', () => {
     const html = render(portfolio)
     // Total reflects USDC only ($50.00), not XLM
     expect(html).toMatch(/\$50\.00/)
-    // XLM line shows an em dash
+    // XLM line shows an em dash, and the footer admits the total is partial
     expect(html).toMatch(/—/)
+    expect(html).toMatch(/1 asset could not be priced/)
+  })
+
+  it('hides the priced-at stamp when nothing is priced', () => {
+    const xlm: WalletAsset = { code: 'XLM', issuer: null, balance: '100' }
+    const portfolio = buildPortfolio([xlm], [], {}, NOW)
+    const html = render(portfolio)
+    expect(html).not.toMatch(/Priced at/)
   })
 
   // ── All assets priced: totals displayed ───────────────────────────────────
@@ -79,18 +92,29 @@ describe('PortfolioSummary', () => {
     expect(html).toMatch(/Invest/)
     // Total ≈ $75.05
     expect(html).toMatch(/\$75\.05/)
+    // Everything priced → no partial-total warning
+    expect(html).not.toMatch(/could not be priced/)
   })
 
-  it('renders a lending bucket when Blend positions are present', () => {
+  it('renders a lending bucket priced through the verified SAC key', () => {
     const blendPos: BlendPosition = {
-      poolId: 'CPOOL', asset: USDC_ISSUER,
+      poolId: 'CPOOL', asset: USDC_MAINNET_SAC,
       deposited: '100000000', bTokenBalance: '100000000', accruedInterest: '0',
     }
-    const prices = { [USDC_ISSUER]: 1.0 }
-    const portfolio = buildPortfolio([], [blendPos], prices, NOW)
+    const prices = { ['USDC:' + USDC_ISSUER]: 1.0 }
+    const portfolio = buildPortfolio([], [blendPos], prices, NOW, { network: 'mainnet' })
     const html = render(portfolio)
     expect(html).toMatch(/Lending/)
+    expect(html).toMatch(/USDC/)
     expect(html).toMatch(/\$10\.00/)
+  })
+
+  it('labels an unverified asset as Unverified', () => {
+    const counterfeit: WalletAsset = { code: 'USDC', issuer: FAKE_ISSUER, balance: '10' }
+    const portfolio = buildPortfolio([counterfeit], [], {}, NOW, { network: 'mainnet' })
+    const html = render(portfolio)
+    expect(html).toMatch(/Unverified/)
+    expect(html).not.toMatch(/Cash/)
   })
 
   // ── Hide amounts ──────────────────────────────────────────────────────────
@@ -122,7 +146,7 @@ describe('PortfolioSummary', () => {
 
   // ── Priced-at timestamp ───────────────────────────────────────────────────
 
-  it('shows a "Priced at" label in the footer', () => {
+  it('shows a "Priced at" label in the footer when something is priced', () => {
     const usdc: WalletAsset = { code: 'USDC', issuer: USDC_ISSUER, balance: '1' }
     const prices = { ['USDC:' + USDC_ISSUER]: 1.0 }
     const portfolio = buildPortfolio([usdc], [], prices, NOW)

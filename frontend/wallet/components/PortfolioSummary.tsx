@@ -5,14 +5,17 @@
  *
  * Displays the wallet's holdings across cash, lending, and invest assets.
  * Each line shows the asset, its value in the user's chosen currency, and its
- * share of the total as a bar and percentage. The "priced at" timestamp and
- * unavailable-price handling follow the same design rules as the rest of the
- * wallet: an em dash for unpriced lines, never a false zero.
+ * share of the total as a bar and percentage. Unverified assets (including
+ * counterfeit code collisions) are labelled, unpriced lines show a warning
+ * with an em dash rather than a zero, and the footer notes when the total
+ * excludes unpriced assets. Stale quotes are not yet distinguished from
+ * failed ones — both render as "price unavailable".
  */
 
 import type { PortfolioSummary as Summary, PortfolioLine } from '@/lib/portfolio'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, type CurrencyCode } from '@/lib/currency'
+import { AlertTriangle } from 'lucide-react'
 
 // ── Section header ────────────────────────────────────────────────────────────
 
@@ -103,17 +106,47 @@ function AssetLine({
     ? `${(line.share * 100).toFixed(1)}%`
     : null
 
+  const warningLabel =
+    line.status === 'unavailable'
+      ? 'Price unavailable'
+      : line.status === 'unresolved'
+        ? 'Unrecognized'
+        : null
+
   return (
     <div style={{ paddingBottom: last ? 0 : undefined }}>
       <Row last={last} className="vw-listrow">
         <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
           <TokenIcon code={line.code} size={36} />
           <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-            <span style={{ fontSize: '15px', fontWeight: 600 }}>{line.code}</span>
+            <span style={{ fontSize: '15px', fontWeight: 600 }}>
+              {line.code}
+              {line.verification === 'unverified' && (
+                <span
+                  title="Not in the verified asset registry — its issuer could not be confirmed"
+                  style={{
+                    fontSize: '10px',
+                    fontWeight: 700,
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    color: 'rgba(212,175,55,0.75)',
+                    border: '1px solid rgba(212,175,55,0.3)',
+                    borderRadius: '4px',
+                    padding: '1px 5px',
+                    marginLeft: '8px',
+                    verticalAlign: '2px',
+                  }}
+                >
+                  Unverified
+                </span>
+              )}
+            </span>
             <span className="vw-meta">
               {hideAmounts
                 ? '••••'
-                : `${parseFloat(line.amount).toFixed(4)} ${line.code}`}
+                : line.status === 'unresolved'
+                  ? 'Unknown contract'
+                  : `${parseFloat(line.amount).toFixed(4)} ${line.code}`}
             </span>
           </span>
         </span>
@@ -121,6 +154,21 @@ function AssetLine({
           <Amount className="text-[15px] font-semibold">
             {hideAmounts ? '••••' : fiatLabel}
           </Amount>
+          {!hideAmounts && warningLabel && (
+            <span
+              role="status"
+              aria-label={warningLabel}
+              title={
+                line.status === 'unresolved'
+                  ? 'This lending position\'s token could not be matched to a verified asset, so it has no value here'
+                  : 'The price quote failed or is stale — the line is excluded from the total'
+              }
+              style={{ fontSize: '11px', color: 'rgba(212,175,55,0.8)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+            >
+              <AlertTriangle size={11} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+              {warningLabel}
+            </span>
+          )}
           {!hideAmounts && shareLabel && (
             <span style={{ fontSize: '11px', color: 'rgba(246,247,248,0.4)' }}>
               {shareLabel}
@@ -190,12 +238,15 @@ export interface PortfolioSummaryProps {
 /**
  * Portfolio summary card.
  *
- * Renders a bucketed view of what the user holds: cash (XLM, USDC, stables),
- * lending (Blend supply positions), and invest (yield-bearing tokens). Each
- * line shows its share of the portfolio total via an inline bar.
+ * Renders a bucketed view of what the user holds: cash (verified dollar pegs
+ * + XLM), lending (Blend supply positions), and invest (yield-bearing tokens
+ * and everything unverified — those lines are labelled). Each line shows its
+ * share of the portfolio total via an inline bar.
  *
- * Unpriced lines show an em dash rather than zero, so a Lens outage reads as
- * "price unavailable" rather than "you have nothing here".
+ * Unpriced lines show a warning and an em dash rather than zero, so a Lens
+ * outage reads as "price unavailable", and the footer says the total excludes
+ * them. There is no staleness detection yet: a stale quote looks the same as
+ * a failed one.
  */
 export function PortfolioSummary({
   portfolio,
@@ -204,6 +255,7 @@ export function PortfolioSummary({
   hideAmounts = false,
 }: PortfolioSummaryProps) {
   const { lines, totalUsd, cashUsd, lendingUsd, investUsd, pricedAt } = portfolio
+  const unpricedCount = lines.filter((l) => l.valueUsd === null).length
 
   if (lines.length === 0) {
     return (
@@ -279,17 +331,39 @@ export function PortfolioSummary({
         fxRate={fxRate}
       />
 
-      {/* "Priced at HH:MM" footer */}
+      {/* Footer: priced-at timestamp + partial-pricing warning. "Priced at"
+          only shows when at least one line is priced — a card full of em
+          dashes has no quote time to show. */}
       <div style={{
         paddingTop: '14px',
         display: 'flex',
-        justifyContent: 'flex-end',
-        alignItems: 'center',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
         gap: '4px',
       }}>
-        <span style={{ fontSize: '11px', color: 'rgba(246,247,248,0.3)' }}>
-          Priced at {pricedAtLabel}
-        </span>
+        {totalUsd !== null && (
+          <span style={{ fontSize: '11px', color: 'rgba(246,247,248,0.3)' }}>
+            Priced at {new Date(pricedAt).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+        )}
+        {unpricedCount > 0 && (
+          <span
+            role="status"
+            style={{
+              fontSize: '11px',
+              color: 'rgba(212,175,55,0.75)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '3px',
+            }}
+          >
+            <AlertTriangle size={11} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+            {unpricedCount} {unpricedCount === 1 ? 'asset' : 'assets'} could not be priced — excluded from the total.
+          </span>
+        )}
       </div>
     </div>
   )

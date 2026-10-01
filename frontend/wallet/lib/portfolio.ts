@@ -7,42 +7,78 @@
  * timestamp.
  *
  * Design rules:
- *  - A stale or failed quote is represented as `null` — never coerced to zero.
- *    An unpriced line shows `valueUsd: null` and is excluded from all totals.
+ *  - A failed quote is represented as `null` — never coerced to zero. An
+ *    unpriced line shows `valueUsd: null`, `status: 'unavailable'`, and is
+ *    excluded from all totals. Stale quotes are NOT yet distinguished from
+ *    failed ones: there is no staleness logic yet, so a Lens outage and a
+ *    stale quote both surface as 'unavailable'. `priceAvailable` is kept for
+ *    one release as a deprecated alias of `status !== 'unavailable'`.
  *  - Totals are the arithmetic sum of the included lines, to the same floating-
  *    point precision, so they always reconcile with the displayed figures.
+ *  - A lending position whose underlying contract cannot be resolved to a
+ *    code/issuer pair is reported with `status: 'unresolved'` — still visible,
+ *    never valued, so the total cannot silently drop it.
+ *  - Classification is issuer-checked. A code alone is not an asset: mainnet
+ *    has eight assets called USDT0 and seven are impostors. Unverified assets
+ *    land in `invest` — labelled in the UI as unverified — rather than being
+ *    presented as cash.
  *  - The `pricedAt` timestamp records when the caller collected the prices.
- *    Callers must pass `Date.now()` at the moment prices are collected, not
- *    the time the component renders.
+ *    Callers must pass the moment prices were collected (cached prices must
+ *    carry the time they were fetched), not the time the component renders.
  */
 
 import type { WalletAsset } from '@/lib/walletTypes'
 import type { BlendPosition } from '@/lib/blend'
+import { getAssetIssuer, KNOWN_SAC_CONTRACT_IDS, verifiedAsset } from './assets'
+import { getNetworkName } from './network'
 
 // ── Asset kind classification ─────────────────────────────────────────────────
 
 /**
  * The three portfolio buckets shown in the summary card.
  *
- * - `cash`    — USDC, XLM, stablecoins, and native assets held on the fee-payer
+ * - `cash`    — verified dollar pegs and native XLM held on the fee-payer
  * - `lending` — tokens deposited into a lending/yield pool (Blend supply positions)
- * - `invest`  — yield-bearing tokens held directly (USDY, funds, equities)
+ * - `invest`  — yield-bearing or treasury tokens, and every asset that is not
+ *               a verified dollar peg
  */
 export type AssetKind = 'cash' | 'lending' | 'invest'
 
 /**
- * Returns the portfolio kind for a wallet asset.
- * XLM and USDC are cash; known yield/treasury tokens are invest; unknown assets
- * default to cash (the conservative assumption).
+ * Portfolio kind for a wallet asset, judged by ISSUER, not code.
+ *
+ * A verified stablecoin/treasury entry gets its registry kind; a counterfeit
+ * "USDC" from any other issuer is not cash — it defaults to `invest` so it is
+ * never presented to the user as a dollar. XLM (no issuer) is native cash.
+ * Mirrors `verifiedAsset`: the registry is the source of truth for what is a
+ * dollar, and it keys on the exact issuer address.
  */
-export function classifyAsset(code: string, _issuer: string | null): AssetKind {
-  const c = code.toUpperCase()
-  // Stablecoins and native
-  if (c === 'XLM' || c === 'USDC' || c === 'EURC' || c === 'NGNC') return 'cash'
-  // Yield-bearing tokens held in the wallet
-  if (c === 'USDY' || c === 'USDM' || c === 'BRLX') return 'invest'
-  // Everything else is treated as cash so the total is never understated
-  return 'cash'
+export function classifyAsset(
+  code: string,
+  issuer: string | null | undefined,
+  network: 'mainnet' | 'testnet' = 'mainnet',
+): AssetKind {
+  if (!issuer) {
+    // Native XLM is the only issuerless asset the wallet tracks.
+    return code.toUpperCase() === 'XLM' ? 'cash' : 'invest'
+  }
+  const registered = verifiedAsset(code, issuer, network)
+  if (registered) {
+    switch (registered.kind) {
+      case 'stablecoin':
+        return 'cash'
+      case 'treasury':
+      case 'fund':
+      case 'equity':
+        return 'invest'
+      default:
+        return 'invest'
+    }
+  }
+  // Not in the verified registry: an unknown or counterfeit asset. It is not a
+  // dollar, so it never lands in cash — `invest` with an "unverified" label in
+  // the UI keeps the total honest without pretending to know what it is.
+  return 'invest'
 }
 
 // ── Core types ────────────────────────────────────────────────────────────────
@@ -51,10 +87,19 @@ export function classifyAsset(code: string, _issuer: string | null): AssetKind {
 export interface PortfolioLine {
   /** Display code of the underlying asset. */
   code: string
-  /** Stellar issuer, or null for XLM. */
+  /**
+   * Stellar issuer, or null for XLM. For lending positions: the underlying
+   * Soroban contract ID (unresolved positions) or its issuer (resolved ones).
+   */
   issuer: string | null
   /** Human-readable category. */
   kind: AssetKind
+  /**
+   * How the display label relates to a verified asset: `native` (XLM),
+   * `verified` (code + issuer in the registry), or `unverified` (everything
+   * else — the UI must say so).
+   */
+  verification: 'native' | 'verified' | 'unverified'
   /** Token amount held (or deposited, for lending positions). */
   amount: string
   /** USD value at the provided price; null when the price was unavailable. */
@@ -65,10 +110,17 @@ export interface PortfolioLine {
    */
   share: number | null
   /**
-   * True when the price came from the live Lens feed (or was the USDC
-   * hardcoded value of 1.0). False is not currently set — the field exists so
-   * a future stale-price signal from the oracle can be surfaced without a
-   * breaking API change.
+   * Quote status for this line.
+   * - `priced`       — a live quote came back
+   * - `unavailable`  — no quote (Lens outage, unknown pair). Staleness is NOT
+   *                    detected yet; a stale quote also lands here.
+   * - `unresolved`   — the asset could not be mapped to a priceable key
+   */
+  status: 'priced' | 'unavailable' | 'unresolved'
+  /**
+   * @deprecated Superseded by `status`. True unless the quote is unavailable;
+   * `false` never distinguished staleness — there is no staleness logic yet.
+   * Kept so existing callers keep compiling; remove in the next minor.
    */
   priceAvailable: boolean
 }
@@ -89,11 +141,66 @@ export interface PortfolioSummary {
   pricedAt: number
 }
 
-// ── Builder ───────────────────────────────────────────────────────────────────
+// ── Pricing-key resolution ────────────────────────────────────────────────────
 
 function assetKey(code: string, issuer: string | null): string {
   return issuer ? `${code}:${issuer}` : code
 }
+
+/** Shape of the optional fourth argument to `buildPortfolio`. */
+export interface PortfolioOptions {
+  /** Network the registry is judged against. Defaults to the wallet's active network. */
+  network?: 'mainnet' | 'testnet'
+  /**
+   * Map from Soroban contract ID → price map key ("CODE:ISSUER") for lending
+   * positions. Callers that loaded Blend reserves can resolve their reserve
+   * asset IDs exactly; anything missing falls back to the verified SAC map
+   * (`KNOWN_SAC_CONTRACT_IDS`).
+   */
+  contractKeys?: Record<string, string>
+}
+
+/**
+ * Resolve a Blend position's underlying contract ID to the price-map key
+ * ("XLM" or "CODE:ISSUER") and a display label, or null when it cannot be
+ * resolved. Only verified assets are ever resolved — the caller's
+ * `contractKeys` is trusted for the pool's own reserves; the fallback map is
+ * keyed by registered code by construction.
+ */
+function resolveLendingPriceKey(
+  contractId: string,
+  opts: { network: 'mainnet' | 'testnet'; contractKeys: Record<string, string> },
+): { key: string; code: string; issuer: string | null } | null {
+  const mapped = opts.contractKeys[contractId]
+  if (mapped) {
+    // "CODE:ISSUER" or "XLM"
+    const sep = mapped.indexOf(':')
+    if (sep === -1) {
+      if (mapped.toUpperCase() === 'XLM') return { key: 'XLM', code: 'XLM', issuer: null }
+    } else {
+      const code = mapped.slice(0, sep)
+      const issuer = mapped.slice(sep + 1)
+      if (verifiedAsset(code, issuer, opts.network)) {
+        return { key: mapped, code, issuer }
+      }
+      // A caller-supplied mapping that is not issuer-verified is ignored:
+      // trusting it would let a pool rename its reserve into a dollar.
+      return null
+    }
+    return null
+  }
+  for (const [code, sac] of Object.entries(KNOWN_SAC_CONTRACT_IDS[opts.network])) {
+    if (sac === contractId) {
+      const issuer = getAssetIssuer(code, opts.network)
+      if (issuer && verifiedAsset(code, issuer, opts.network)) {
+        return { key: assetKey(code, issuer), code, issuer }
+      }
+    }
+  }
+  return null
+}
+
+// ── Builder ───────────────────────────────────────────────────────────────────
 
 /**
  * Build a `PortfolioSummary` from raw wallet data.
@@ -102,64 +209,89 @@ function assetKey(code: string, issuer: string | null): string {
  * @param positions     Active Blend supply positions (lending bucket).
  * @param prices        Map from asset key → USD price (or null = unavailable).
  *                      Key format: `"XLM"` for native, `"CODE:ISSUER"` for others.
- * @param pricedAt      Epoch ms when `prices` was collected.
+ * @param pricedAt      Epoch ms when `prices` was collected. A cached map must
+ *                      carry the time it was fetched, not the render time.
+ * @param opts          Network for registry lookups and, optionally, explicit
+ *                      contract-ID → price-key mappings for Blend reserves.
  */
 export function buildPortfolio(
   walletAssets: WalletAsset[],
   positions: BlendPosition[],
   prices: Record<string, number | null>,
   pricedAt: number,
+  opts: PortfolioOptions = {},
 ): PortfolioSummary {
+  const network = opts.network ?? getNetworkName()
+  const contractKeys = opts.contractKeys ?? {}
   const lines: PortfolioLine[] = []
+
+  function pushLine(line: Omit<PortfolioLine, 'share' | 'priceAvailable'>) {
+    lines.push({
+      ...line,
+      share: null, // filled in below once we have the total
+      priceAvailable: line.status !== 'unavailable',
+    })
+  }
 
   // ── Cash + invest assets from the wallet ──────────────────────────────────
   for (const asset of walletAssets) {
     const amount = parseFloat(asset.balance)
     if (!isFinite(amount) || amount <= 0) continue
 
-    const kind = classifyAsset(asset.code, asset.issuer)
     const key = assetKey(asset.code, asset.issuer)
     const price = prices[key] ?? null
-    const valueUsd = price !== null ? amount * price : null
+    const native = asset.issuer === null && asset.code.toUpperCase() === 'XLM'
+    const verification: PortfolioLine['verification'] = native
+      ? 'native'
+      : verifiedAsset(asset.code, asset.issuer, network)
+        ? 'verified'
+        : 'unverified'
 
-    lines.push({
+    pushLine({
       code: asset.code,
       issuer: asset.issuer,
-      kind,
+      kind: classifyAsset(asset.code, asset.issuer, network),
+      verification,
       amount: asset.balance,
-      valueUsd,
-      share: null, // filled in below once we have the total
-      priceAvailable: price !== null,
+      valueUsd: price !== null ? amount * price : null,
+      status: price !== null ? 'priced' : 'unavailable',
     })
   }
 
   // ── Lending positions from Blend ──────────────────────────────────────────
-  // Blend stores amounts in stroops (7 decimal places).
+  // Blend stores amounts in stroops (7 decimal places). Positions are priced
+  // through the *underlying* reserve asset, which must resolve to a verified
+  // code:issuer pair — see resolveLendingPriceKey. Unresolvable positions stay
+  // visible with status 'unresolved' and never contribute to any total.
   for (const pos of positions) {
     const stroops = BigInt(pos.deposited)
     if (stroops <= 0n) continue
 
     const amount = Number(stroops) / 10_000_000
+    const resolved = resolveLendingPriceKey(pos.asset, { network, contractKeys })
 
-    // pos.asset is the Soroban contract ID of the underlying token. We cannot
-    // map every contract to a code/issuer pair here, so we store the raw
-    // contract as the issuer and leave the code as the short prefix for display.
-    const code = pos.asset.length > 10 ? pos.asset.slice(0, 6) + '…' : pos.asset
-    const key = pos.asset // Blend positions use the contract ID as the price key
-
-    // Try looking up by contract ID first, then fall back to a known short code.
-    const price = prices[key] ?? null
-    const valueUsd = price !== null ? amount * price : null
-
-    lines.push({
-      code,
-      issuer: pos.asset,
-      kind: 'lending' as AssetKind,
-      amount: amount.toFixed(7),
-      valueUsd,
-      share: null,
-      priceAvailable: price !== null,
-    })
+    if (resolved) {
+      const price = prices[resolved.key] ?? null
+      pushLine({
+        code: resolved.code,
+        issuer: resolved.issuer,
+        kind: 'lending',
+        verification: 'verified',
+        amount: amount.toFixed(7),
+        valueUsd: price !== null ? amount * price : null,
+        status: price !== null ? 'priced' : 'unavailable',
+      })
+    } else {
+      pushLine({
+        code: pos.asset.length > 12 ? pos.asset.slice(0, 6) + '…' + pos.asset.slice(-4) : pos.asset,
+        issuer: pos.asset,
+        kind: 'lending',
+        verification: 'unverified',
+        amount: amount.toFixed(7),
+        valueUsd: null,
+        status: 'unresolved',
+      })
+    }
   }
 
   // ── Compute totals ────────────────────────────────────────────────────────

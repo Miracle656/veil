@@ -1,3 +1,8 @@
+// @stellar/stellar-sdk is loaded (via ./network) at module import; jsdom omits
+// TextEncoder, which the SDK needs at load time.
+import { TextEncoder, TextDecoder } from 'util'
+Object.assign(globalThis, { TextEncoder, TextDecoder })
+
 import {
   buildPortfolio,
   classifyAsset,
@@ -9,16 +14,22 @@ import type { BlendPosition } from '@/lib/blend'
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+const USDC_TESTNET_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 const USDY_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6'
+const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
+// The registry constants these must match are pinned by registryParity.test.ts.
+const USDC_MAINNET_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
+const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
+const FAKE_ISSUER = 'GCOUNTERFEITISSUERADDRESS0000000000000000000000000000000000000'
 
 const xlm:  WalletAsset = { code: 'XLM',  issuer: null,        balance: '100' }
 const usdc: WalletAsset = { code: 'USDC', issuer: USDC_ISSUER, balance: '50'  }
 const usdy: WalletAsset = { code: 'USDY', issuer: USDY_ISSUER, balance: '25'  }
 
-/** A minimal Blend position representing 10 USDC deposited. */
+/** A minimal Blend position representing 10 USDC deposited, priced by SAC ID. */
 const blendPos: BlendPosition = {
   poolId:          'CPOOL',
-  asset:           USDC_ISSUER,
+  asset:           USDC_MAINNET_SAC,
   deposited:       '100000000', // 10 USDC in stroops
   bTokenBalance:   '100000000',
   accruedInterest: '0',
@@ -30,14 +41,24 @@ const NOW = 1_800_000_000_000
 
 describe('classifyAsset', () => {
   it.each([
-    ['XLM',  null,        'cash'   as AssetKind],
-    ['USDC', USDC_ISSUER, 'cash'   as AssetKind],
-    ['USDY', USDY_ISSUER, 'invest' as AssetKind],
-    ['EURC', null,        'cash'   as AssetKind],
-    ['NGNC', null,        'cash'   as AssetKind],
-    ['UNKN', null,        'cash'   as AssetKind], // unknown → conservative cash
-  ] as [string, string | null, AssetKind][])('%s → %s', (code, issuer, expected) => {
+    ['XLM',  null,              'cash'   as AssetKind],
+    ['USDC', USDC_ISSUER,       'cash'   as AssetKind],
+    ['USDY', USDY_ISSUER,       'invest' as AssetKind],
+    // A code is not an asset: same code, wrong issuer is NOT cash.
+    ['USDC', FAKE_ISSUER,       'invest' as AssetKind],
+    // Issuerless non-native codes are not verified dollars either.
+    ['EURC', null,              'invest' as AssetKind],
+    ['NGNC', null,              'invest' as AssetKind],
+    ['UNKN', null,              'invest' as AssetKind], // unknown → invest, labelled unverified
+    // Codes are case-sensitive: only the exact registered code verifies.
+    ['usdc', USDC_ISSUER,       'invest' as AssetKind],
+    ['USDC ', USDC_ISSUER,      'invest' as AssetKind],
+  ] as [string, string | null, AssetKind][])('%s + issuer → %s', (code, issuer, expected) => {
     expect(classifyAsset(code, issuer)).toBe(expected)
+  })
+
+  it('verifies the testnet USDC issuer on testnet', () => {
+    expect(classifyAsset('USDC', USDC_TESTNET_ISSUER, 'testnet')).toBe('cash')
   })
 })
 
@@ -62,11 +83,12 @@ describe('buildPortfolio — empty portfolio', () => {
 // ── buildPortfolio: missing / stale price ─────────────────────────────────────
 
 describe('buildPortfolio — missing price', () => {
-  it('marks the line priceAvailable=false and valueUsd=null when price is absent from the map', () => {
+  it('marks the line status=unavailable and valueUsd=null when price is absent from the map', () => {
     const summary = buildPortfolio([xlm], [], {}, NOW)
     const line = summary.lines[0]
     expect(line.valueUsd).toBeNull()
-    expect(line.priceAvailable).toBe(false)
+    expect(line.status).toBe('unavailable')
+    expect(line.priceAvailable).toBe(false) // deprecated alias
     expect(line.share).toBeNull()
   })
 
@@ -80,7 +102,7 @@ describe('buildPortfolio — missing price', () => {
     expect(xlmLine!.valueUsd).toBeNull()
   })
 
-  it('shows unavailable for all assets when every price is null', () => {
+  it('marks every line unavailable when all prices are null', () => {
     const prices: Record<string, number | null> = {
       XLM:                     null,
       ['USDC:' + USDC_ISSUER]: null,
@@ -89,7 +111,7 @@ describe('buildPortfolio — missing price', () => {
     expect(summary.totalUsd).toBeNull()
     for (const line of summary.lines) {
       expect(line.valueUsd).toBeNull()
-      expect(line.priceAvailable).toBe(false)
+      expect(line.status).toBe('unavailable')
     }
   })
 
@@ -97,6 +119,33 @@ describe('buildPortfolio — missing price', () => {
     const summary = buildPortfolio([xlm], [], {}, NOW)
     expect(summary.totalUsd).toBeNull()
     expect(summary.totalUsd).not.toBe(0)
+  })
+})
+
+// ── buildPortfolio: issuer-checked classification ────────────────────────────
+
+describe('buildPortfolio — verified vs counterfeit assets', () => {
+  it('buckets a verified USDC under cash and a counterfeit USDC under invest', () => {
+    const counterfeit: WalletAsset = { code: 'USDC', issuer: FAKE_ISSUER, balance: '10' }
+    const prices: Record<string, number | null> = {
+      ['USDC:' + USDC_ISSUER]: 1.0,
+      ['USDC:' + FAKE_ISSUER]: 1.0, // even at parity it is not a dollar
+    }
+    const summary = buildPortfolio([usdc, counterfeit], [], prices, NOW, { network: 'mainnet' })
+
+    expect(summary.lines.find((l) => l.issuer === USDC_ISSUER)!.kind).toBe('cash')
+    expect(summary.lines.find((l) => l.issuer === FAKE_ISSUER)!.kind).toBe('invest')
+    expect(summary.lines.find((l) => l.issuer === FAKE_ISSUER)!.verification).toBe('unverified')
+    // The counterfeit lands in invest, never in cash.
+    const cashSum = summary.lines.filter((l) => l.kind === 'cash').reduce((s, l) => s + (l.valueUsd ?? 0), 0)
+    expect(cashSum).toBeCloseTo(50, 10)
+  })
+
+  it('labels native XLM as native and registry assets as verified', () => {
+    const summary = buildPortfolio([xlm, usdc, usdy], [], {}, NOW, { network: 'mainnet' })
+    expect(summary.lines.find((l) => l.code === 'XLM')!.verification).toBe('native')
+    expect(summary.lines.find((l) => l.code === 'USDC')!.verification).toBe('verified')
+    expect(summary.lines.find((l) => l.code === 'USDY')!.verification).toBe('verified')
   })
 })
 
@@ -126,9 +175,8 @@ describe('buildPortfolio — totals match parts', () => {
       XLM:                     0.12,
       ['USDC:' + USDC_ISSUER]: 1.0,
       ['USDY:' + USDY_ISSUER]: 1.002,
-      [USDC_ISSUER]:           1.0, // Blend position priced by contract key
     }
-    const summary = buildPortfolio([xlm, usdc, usdy], [blendPos], prices, NOW)
+    const summary = buildPortfolio([xlm, usdc, usdy], [blendPos], prices, NOW, { network: 'mainnet' })
 
     const bucketSum = (summary.cashUsd ?? 0) + (summary.lendingUsd ?? 0) + (summary.investUsd ?? 0)
     expect(bucketSum).toBeCloseTo(summary.totalUsd as number, 10)
@@ -185,16 +233,55 @@ describe('buildPortfolio — lending positions', () => {
     expect(summary.lines[0].kind).toBe('lending')
   })
 
-  it('prices lending positions via the contract-id key', () => {
-    const prices = { [USDC_ISSUER]: 1.0 }
-    const summary = buildPortfolio([], [blendPos], prices, NOW)
+  it('prices a USDC position through the verified SAC fallback', () => {
+    const prices = { ['USDC:' + USDC_ISSUER]: 1.0 }
+    const summary = buildPortfolio([], [blendPos], prices, NOW, { network: 'mainnet' })
     const line = summary.lines[0]
+    expect(line.code).toBe('USDC')
+    expect(line.issuer).toBe(USDC_ISSUER)
     expect(line.valueUsd).toBeCloseTo(10, 6)
-    expect(line.priceAvailable).toBe(true)
+    expect(summary.lendingUsd).toBeCloseTo(10, 6)
+  })
+
+  it('prices a position through an explicit, verified contractKeys map', () => {
+    const usdt0Pos: BlendPosition = { ...blendPos, asset: USDT0_MAINNET_SAC }
+    const prices = { ['USDT0:' + USDT0_ISSUER]: 1.0 }
+    const summary = buildPortfolio([], [usdt0Pos], prices, NOW, {
+      network: 'mainnet',
+      contractKeys: { [USDT0_MAINNET_SAC]: 'USDT0:' + USDT0_ISSUER },
+    })
+    const line = summary.lines[0]
+    expect(line.code).toBe('USDT0')
+    expect(line.valueUsd).toBeCloseTo(10, 6)
+  })
+
+  it('ignores an unverified contractKeys mapping instead of trusting it', () => {
+    const usdt0Pos: BlendPosition = { ...blendPos, asset: USDT0_MAINNET_SAC }
+    // A lying map: the USDT0 contract renamed to a fake USDC issuer. The
+    // position must stay unvalued, not priced off the impostor key.
+    const prices = { ['USDC:' + FAKE_ISSUER]: 1.0 }
+    const summary = buildPortfolio([], [usdt0Pos], prices, NOW, {
+      network: 'mainnet',
+      contractKeys: { [USDT0_MAINNET_SAC]: 'USDC:' + FAKE_ISSUER },
+    })
+    expect(summary.lines[0].status).toBe('unresolved')
+    expect(summary.lines[0].valueUsd).toBeNull()
+    expect(summary.totalUsd).toBeNull()
+    expect(summary.lendingUsd).toBeNull()
+  })
+
+  it('reports an unresolvable position as unresolved — visible, never valued', () => {
+    const mystery: BlendPosition = { ...blendPos, asset: 'GNOTAREGISTEREDCONTRACT' }
+    const summary = buildPortfolio([], [mystery], {}, NOW, { network: 'mainnet' })
+    const line = summary.lines[0]
+    expect(line.status).toBe('unresolved')
+    expect(line.valueUsd).toBeNull()
+    expect(line.kind).toBe('lending')
+    expect(summary.lendingUsd).toBeNull()
   })
 
   it('sets lendingUsd to null when the position price is unavailable', () => {
-    const summary = buildPortfolio([], [blendPos], {}, NOW)
+    const summary = buildPortfolio([], [blendPos], {}, NOW, { network: 'mainnet' })
     expect(summary.lendingUsd).toBeNull()
   })
 })

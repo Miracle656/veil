@@ -1,7 +1,13 @@
 /**
  * Verified asset registry (V176) mapping short token keys to exact issuer addresses
  * and metadata.
+ *
+ * A code alone is not an asset: mainnet has eight assets called USDT0 and seven
+ * are impostors. Anything that names, badges, prices or classifies an asset
+ * must go through `verifiedAsset`, which checks the issuer, not just the code.
  */
+
+import { Asset, Networks } from '@stellar/stellar-sdk'
 
 export interface RegisteredAsset {
   code: string
@@ -77,6 +83,23 @@ export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'm
   return asset.issuer
 }
 
+/**
+ * The registry entry for an asset, but only when BOTH its code (exactly — codes
+ * are case-sensitive) and its issuer are the registered ones. A code match on
+ * its own is not an asset match; see the module docstring. Mirrors
+ * `frontend/mobile/lib/assets.ts` — edit both together.
+ */
+export function verifiedAsset(
+  code: string,
+  issuer: string | null | undefined,
+  network: 'mainnet' | 'testnet',
+): RegisteredAsset | null {
+  if (!issuer) return null
+  const registered = ASSET_REGISTRY[code.toUpperCase()]
+  if (!registered || registered.code !== code) return null
+  return isRegisteredIssuer(code, issuer, network) ? registered : null
+}
+
 export function isRegisteredIssuer(code: string, issuer: string, network: 'mainnet' | 'testnet' = 'mainnet'): boolean {
   // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
   // for testnet returns null and every branch below becomes unreachable.
@@ -128,6 +151,42 @@ export async function fetchIssuerFlags(
 }
 
 /**
+ * Soroban SAC contract IDs for registry assets, per network. Keyed by the
+ * *registered* code, so a contract ID resolved through this map always belongs
+ * to a verified issuer — the whole point of the map. Mainnet values are the
+ * canonical SACs (USDT0's also lives in the registry as `sacContractId`);
+ * testnet's is the SDF anchor's USDC.
+ */
+export const KNOWN_SAC_CONTRACT_IDS: Record<'mainnet' | 'testnet', Record<string, string>> = {
+  mainnet: {
+    USDC: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+    USDT0: USDT0_MAINNET_SAC,
+  },
+  testnet: {
+    USDC: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+  },
+}
+
+/**
+ * The Soroban SAC contract ID for a registered asset's issuer, or null when the
+ * code is not registered on that network. Prefers a pasted `sacContractId`;
+ * otherwise derives it from the issuer the way the network would. Mirrors
+ * `frontend/mobile/lib/assets.ts` — edit both together.
+ */
+export function sacContractIdForCode(code: string, network: 'mainnet' | 'testnet'): string | null {
+  const asset = getRegisteredAsset(code, network)
+  if (!asset) return null
+  if (asset.sacContractId && network === 'mainnet') return asset.sacContractId
+  try {
+    return new Asset(asset.code, asset.issuer).contractId(
+      network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET,
+    )
+  } catch {
+    return null
+  }
+}
+
+/**
  * Shown when the issuer's flags could not be read at all. `null` has to keep
  * meaning "the flags are clear", so an unreachable Horizon must not collapse
  * into it — otherwise a transient 429 on one of the parallel `loadAccount`
@@ -147,4 +206,3 @@ export async function fetchAssetDisclosure(
     return DISCLOSURE_UNAVAILABLE
   }
 }
-
