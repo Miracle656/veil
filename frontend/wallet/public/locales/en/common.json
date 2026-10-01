@@ -1,0 +1,66 @@
+{
+  "common": {
+    "send": "Send",
+    "receive": "Receive",
+    "swap": "Swap",
+    "buy": "Buy",
+    "settings": "Settings",
+    "activity": "Activity",
+    "dashboard": "Dashboard",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "back": "Back",
+    "loading": "Loading...",
+    "error": "Error",
+    "success": "Success",
+    "balance": "Balance",
+    "total_balance": "Total Balance",
+    "connected": "Connected",
+    "disconnected": "Disconnected"
+  },
+  "dashboard": {
+    "title": "Wallet Dashboard",
+    "recent_activity": "Recent Activity",
+    "quick_actions": "Quick Actions",
+    "assets": "Assets",
+    "no_transactions": "No recent transactions",
+    "portfolio": "Portfolio Overview",
+    "private_balance": "Private Balance"
+  },
+  "send": {
+    "title": "Send Assets",
+    "recipient": "Recipient Address",
+    "recipient_placeholder": "G... or federated address",
+    "amount": "Amount",
+    "memo": "Memo (Optional)",
+    "memo_placeholder": "Add a memo",
+    "fee": "Estimated Network Fee",
+    "insufficient_balance": "Insufficient balance",
+    "send_now": "Send Payment",
+    "confirming": "Confirming transaction..."
+  },
+  "receive": {
+    "title": "Receive Assets",
+    "scan_qr": "Scan QR Code",
+    "your_address": "Your Stellar Address",
+    "copy_address": "Copy Address",
+    "share": "Share Address"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "select_language": "Select Language",
+    "security": "Security & Recovery",
+    "network": "Network",
+    "preferences": "Preferences",
+    "theme": "Theme"
+  },
+  "errors": {
+    "network_error": "Network connection error. Please retry.",
+    "invalid_address": "Invalid Stellar destination address.",
+    "tx_failed": "Transaction failed to submit.",
+    "try_again": "Try Again"
+  }
+}
