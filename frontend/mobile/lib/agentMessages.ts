@@ -1,4 +1,4 @@
-import { Asset, Operation, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
+import { Asset, Operation, TransactionBuilder, type Memo, type OperationRecord, type Transaction } from '@stellar/stellar-sdk';
 
 /**
  * The agent conversation's data model: what the assistant can say, and what a
@@ -114,7 +114,7 @@ function describeAsset(asset: Asset): string {
 }
 
 /** One line per operation, in the terms the user cares about. */
-function describeOperation(operation: Operation): { text: string; known: boolean } {
+function describeOperation(operation: OperationRecord): { text: string; known: boolean } {
   switch (operation.type) {
     case 'payment':
       return {
@@ -171,10 +171,20 @@ export function reviewProposedTransaction(
   return {
     source: tx.source,
     fee: tx.fee,
-    memo: tx.memo?.value ? String(tx.memo.value) : null,
+    memo: memoToString(tx.memo),
     operations: described.map((operation) => operation.text),
     hasUnknownOperation: described.some((operation) => !operation.known),
   };
+}
+
+/**
+ * A text memo parsed out of XDR arrives as raw bytes; one built in this session
+ * keeps its original string. Both are shown as the text the sender meant.
+ */
+function memoToString(memo: Memo | undefined): string | null {
+  const value = memo?.value;
+  if (value === undefined || value === null) return null;
+  return typeof value === 'string' ? value : new TextDecoder().decode(value);
 }
 
 /**

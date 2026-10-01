@@ -20,7 +20,6 @@ import {
 import { Core } from '@walletconnect/core';
 import { getSdkError } from '@walletconnect/utils';
 import { Web3Wallet, type IWeb3Wallet } from '@walletconnect/web3wallet';
-import { Buffer } from 'buffer';
 import * as Crypto from 'expo-crypto';
 
 import { getNetwork } from './network';
@@ -181,8 +180,9 @@ function removePendingRequest(id: number, topic: string): void {
  * Hermes has no `crypto.subtle`, so hashing goes through `expo-crypto`, which
  * only accepts views backed by a plain `ArrayBuffer`.
  */
-async function sha256(data: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuffer>> {
-  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, data);
+async function sha256(data: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+  const bytes = new Uint8Array(data); // copy into a plain ArrayBuffer-backed view
+  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, bytes);
   return new Uint8Array(digest);
 }
 
@@ -309,27 +309,37 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   if (authEntries) {
     const networkIdBytes = await sha256(new TextEncoder().encode(network.networkPassphrase));
 
-    for (const parsed of authEntries) {
-      const credentials = parsed.credentials();
-      if (
-        credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
-      ) {
+    for (let i = 0; i < authEntries.length; i++) {
+      const parsed = authEntries[i];
+      const credentials = parsed.credentials;
+      const isV2 = credentials.type === 'sorobanCredentialsAddressV2';
+      if (!isV2 && credentials.type !== 'sorobanCredentialsAddress') {
         continue;
       }
 
-      const addressCredentials = credentials.address();
-      const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
+      const addressCredentials = isV2 ? credentials.addressV2 : credentials.address;
+      const contractAddress = Address.fromScAddress(addressCredentials.address).toString();
       const currentNonce = await getWalletNonce(rpc, contractAddress, network.networkPassphrase, feePayerKeypair.publicKey());
 
-      const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
-        new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addressCredentials.nonce(),
-          invocation: parsed.rootInvocation(),
-          signatureExpirationLedger: validUntilLedger,
-        })
-      );
-      const payloadHash = await sha256(new Uint8Array(preimage.toXDR()));
+      const shared = {
+        networkId: new xdr.Hash(networkIdBytes),
+        nonce: addressCredentials.nonce,
+        invocation: parsed.rootInvocation,
+        signatureExpirationLedger: validUntilLedger,
+      };
+      // CAP-71 (protocol 23) binds the authorising address into the payload, so
+      // an ADDRESS_V2 entry must be signed over the WithAddress preimage.
+      const preimage = isV2
+        ? xdr.HashIdPreimage.envelopeTypeSorobanAuthorizationWithAddress(
+            new xdr.HashIdPreimageSorobanAuthorizationWithAddress({
+              ...shared,
+              address: addressCredentials.address,
+            })
+          )
+        : xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+            new xdr.HashIdPreimageSorobanAuthorization(shared)
+          );
+      const payloadHash = await sha256(preimage.toXDR());
 
       const webAuthnSig = await signAuthEntry(payloadHash);
       if (!webAuthnSig) {
@@ -346,16 +356,19 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
         sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
       }
 
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
-          new xdr.SorobanAddressCredentials({
-            address: addressCredentials.address(),
-            nonce: addressCredentials.nonce(),
-            signatureExpirationLedger: validUntilLedger,
-            signature: xdr.ScVal.scvVec(sigElements),
-          })
-        )
-      );
+      const signedCredentials = new xdr.SorobanAddressCredentials({
+        address: addressCredentials.address,
+        nonce: addressCredentials.nonce,
+        signatureExpirationLedger: validUntilLedger,
+        signature: xdr.ScVal.scvVec(sigElements),
+      });
+
+      authEntries[i] = new xdr.SorobanAuthorizationEntry({
+        credentials: isV2
+          ? xdr.SorobanCredentials.sorobanCredentialsAddressV2(signedCredentials)
+          : xdr.SorobanCredentials.sorobanCredentialsAddress(signedCredentials),
+        rootInvocation: parsed.rootInvocation,
+      });
     }
   }
 

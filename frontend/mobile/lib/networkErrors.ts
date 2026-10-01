@@ -55,16 +55,16 @@ const HOST_FUNCTION_RESULTS: Record<string, string> = {
 export function rejectionFromResult(result: xdr.TransactionResult | undefined | null): string {
   if (!result) return FALLBACK;
   try {
-    const outcome = result.result();
-    const code = snake(outcome.switch().name);
+    const outcome = result.result;
+    const code = snake(outcome.type);
 
-    if (code === 'tx_failed') {
-      for (const op of outcome.results()) {
-        if (op.switch().name !== 'opInner') continue;
-        const tr = op.tr();
-        const armName = tr.switch().name; // e.g. 'invokeHostFunction', 'payment'
-        const inner = (tr as unknown as Record<string, () => { switch(): { name: string } }>)[`${armName}Result`]?.();
-        const innerName = inner?.switch().name;
+    if (outcome.type === 'txFailed') {
+      for (const op of outcome.results) {
+        if (op.type !== 'opInner') continue;
+        const tr = op.tr;
+        const armName = tr.type; // e.g. 'invokeHostFunction', 'payment'
+        const inner = (tr as unknown as Record<string, { type: string }>)[`${armName}Result`];
+        const innerName = inner?.type;
         if (!innerName || /Success$/.test(innerName)) continue;
         if (HOST_FUNCTION_RESULTS[innerName]) return HOST_FUNCTION_RESULTS[innerName];
         for (const [pattern, sentence] of OPERATION_SUFFIXES) {

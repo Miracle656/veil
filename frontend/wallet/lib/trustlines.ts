@@ -5,8 +5,8 @@ import {
   Operation,
   StellarToml,
   TransactionBuilder,
-  type Account,
   type Transaction,
+  type TransactionSource,
 } from '@stellar/stellar-sdk'
 
 /**
@@ -83,7 +83,7 @@ export function canRemoveTrustline(trustline: Trustline): boolean {
  * `limit`, when provided). The returned transaction still needs to be signed.
  */
 export function buildChangeTrustTx(params: {
-  account: Account
+  account: TransactionSource
   networkPassphrase: string
   code: string
   issuer: string

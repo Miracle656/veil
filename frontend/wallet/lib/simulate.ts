@@ -158,12 +158,12 @@ export function extractInvocation(
 
   try {
     const func = op.func
-    if (func.switch().name !== 'hostFunctionTypeInvokeContract') return null
-    const ic = func.invokeContract()
+    if (func.type !== 'hostFunctionTypeInvokeContract') return null
+    const ic = func.invokeContract
     return {
-      contractId: Address.fromScAddress(ic.contractAddress()).toString(),
-      functionName: ic.functionName().toString(),
-      args: ic.args(),
+      contractId: Address.fromScAddress(ic.contractAddress).toString(),
+      functionName: ic.functionName.toString(),
+      args: ic.args,
     }
   } catch {
     return null
@@ -175,16 +175,16 @@ export function decodeEvents(events: xdr.DiagnosticEvent[]): DecodedEvent[] {
   const decoded: DecodedEvent[] = []
   for (const diagnostic of events) {
     try {
-      const event = diagnostic.event()
-      const contractIdBuf = event.contractId()
-      const body = event.body().v0()
+      const event = diagnostic.event
+      const contractId = event.contractId
+      const body = event.body
+      if (body.type !== 'v0') continue
+      const v0 = body.v0
       decoded.push({
-        type: event.type().name,
-        contractId: contractIdBuf
-          ? StrKey.encodeContract(contractIdBuf as unknown as Buffer)
-          : null,
-        topics: body.topics().map(safeScValToNative),
-        data: safeScValToNative(body.data()),
+        type: event.type.name,
+        contractId: contractId ? StrKey.encodeContract(contractId.toBytes()) : null,
+        topics: v0.topics.map(safeScValToNative),
+        data: safeScValToNative(v0.data),
       })
     } catch {
       // Skip events we cannot decode rather than failing the whole preview.

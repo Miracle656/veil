@@ -69,10 +69,8 @@
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0"
-  },
   "peerDependencies": {
+    "@stellar/stellar-sdk": "^17.0.1",
     "@tanstack/react-query": "^5.0.0",
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0",
@@ -107,6 +105,8 @@
     }
   },
   "devDependencies": {
+    "@stellar/stellar-sdk": "^17.0.1",
+    "@babel/preset-env": "^7.26.0",
     "@playwright/test": "^1.61.1",
     "@size-limit/preset-small-lib": "^12.1.0",
     "@storybook/addon-essentials": "^8.6.0",
@@ -160,11 +160,29 @@
       "^@stellar/stellar-sdk$": "<rootDir>/node_modules/@stellar/stellar-sdk"
     },
     "transform": {
-      "^.+\\.[tj]sx?$": "ts-jest",
-      "^.+\\.mjs$": "<rootDir>/jest/angular-esm-transformer.js"
+      "^.+\\.tsx?$": "ts-jest",
+      "^.+\\.mjs$": "<rootDir>/jest/angular-esm-transformer.js",
+      "^.+\\.jsx?$": [
+        "babel-jest",
+        {
+          "configFile": false,
+          "babelrc": false,
+          "presets": [
+            [
+              "@babel/preset-env",
+              {
+                "targets": {
+                  "node": "current"
+                },
+                "modules": "commonjs"
+              }
+            ]
+          ]
+        }
+      ]
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!@angular/(core|compiler))"
+      "[\\\\/]node_modules[\\\\/](?!.*(@angular/(core|compiler)|@exodus|@noble|uint8array-extras|smol-toml)[\\\\/])"
     ],
     "globals": {
       "ts-jest": {

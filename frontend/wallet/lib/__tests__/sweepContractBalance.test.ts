@@ -78,7 +78,8 @@ function makeSimError(message = 'contract error') {
   return { error: message, latestLedger: 100 }
 }
 
-// Mock auth entry with the structure sweepContractBalance reads
+// Mock auth entry with the structure sweepContractBalance reads. v17 exposes
+// XDR union arms as readonly properties, not accessor methods.
 function makeMockAuthEntry() {
   const contractFn = new sdk.xdr.InvokeContractArgs({
     contractAddress: sdk.Address.fromString(CONTRACT_ADDRESS).toScAddress(),
@@ -91,24 +92,17 @@ function makeMockAuthEntry() {
     subInvocations: [],
   })
 
-  const entry = {
-    credentials: jest.fn(),
-    rootInvocation: jest.fn().mockReturnValue(invocation),
+  return {
+    credentials: {
+      type: 'sorobanCredentialsAddress',
+      address: {
+        address:                   sdk.Address.fromString(CONTRACT_ADDRESS).toScAddress(),
+        nonce:                     0n,
+        signatureExpirationLedger: 0,
+      },
+    },
+    rootInvocation: invocation,
   }
-  entry.credentials.mockImplementation((newCred?: unknown) => {
-    if (newCred === undefined) {
-      return {
-        switch:  () => ({ value: 1 }), // SOROBAN_CREDENTIALS_ADDRESS = 1
-        address: () => ({
-          address:                   () => ({}),
-          nonce:                     () => 0n,
-          signatureExpirationLedger: () => 0,
-        }),
-      }
-    }
-    // setter invocation — intentional no-op
-  })
-  return entry
 }
 
 const mockAssembled = { sign: jest.fn() }
@@ -147,13 +141,12 @@ describe('sweepContractBalance', () => {
     const mockSimulate = jest.fn().mockImplementation(async (tx: any, ...args: any[]) => {
       let isProbe = false
       try {
-        if (tx && tx.operations && tx.operations[0]) {
-          const op = tx.operations[0]
-          // Log details of the operation to see its structure
-          console.log('[mockSimulate] op type:', op.type, 'func:', op.func?.invokeContract?.()?.functionName?.()?.toString())
-          const fnName = op.func?.invokeContract?.()?.functionName?.()?.toString()
-          isProbe = (fnName === 'get_nonce')
-        }
+        // v17: the invoke-host-function operation carries a HostFunction union
+        // whose arm is read as a property, not called as an accessor.
+        const func = tx?.operations?.[0]?.func
+        isProbe =
+          func?.type === 'hostFunctionTypeInvokeContract' &&
+          func.invokeContract.functionName.toString() === 'get_nonce'
       } catch (err) {
         console.log('[mockSimulate] error parsing op:', err)
       }

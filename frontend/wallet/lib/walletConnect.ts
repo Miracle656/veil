@@ -255,14 +255,16 @@ async function signXdrPayload(
       await crypto.subtle.digest('SHA-256', new TextEncoder().encode(network.networkPassphrase)),
     )
 
-    for (const parsed of authEntries) {
-      const cred = parsed.credentials()
-      if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+    for (let i = 0; i < authEntries.length; i++) {
+      const parsed = authEntries[i]
+      const cred = parsed.credentials
+      const isV2 = cred.type === 'sorobanCredentialsAddressV2'
+      if (!isV2 && cred.type !== 'sorobanCredentialsAddress') {
         continue
       }
 
-      const addrCred = cred.address()
-      const contractAddr = Address.fromScAddress(addrCred.address()).toString()
+      const addrCred = isV2 ? cred.addressV2 : cred.address
+      const contractAddr = Address.fromScAddress(addrCred.address).toString()
 
       // A dApp can only be answered by a contract that exists: `__check_auth`
       // runs on chain. Wallets are deployed on first use now, so stop here with
@@ -276,16 +278,23 @@ async function signXdrPayload(
       }
       const currentNonce = await getWalletNonce(rpc, contractAddr, network.networkPassphrase)
 
-      const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
-        new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addrCred.nonce(),
-          invocation: parsed.rootInvocation(),
-          signatureExpirationLedger: validUntilLedger,
-        }),
-      )
+      const shared = {
+        networkId: new xdr.Hash(networkIdBytes),
+        nonce: addrCred.nonce,
+        invocation: parsed.rootInvocation,
+        signatureExpirationLedger: validUntilLedger,
+      }
+      // CAP-71 (protocol 23) binds the authorising address into the payload, so
+      // an ADDRESS_V2 entry must be signed over the WithAddress preimage.
+      const preimage = isV2
+        ? xdr.HashIdPreimage.envelopeTypeSorobanAuthorizationWithAddress(
+            new xdr.HashIdPreimageSorobanAuthorizationWithAddress({ ...shared, address: addrCred.address }),
+          )
+        : xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+            new xdr.HashIdPreimageSorobanAuthorization(shared),
+          )
       const payloadHash = new Uint8Array(
-        await crypto.subtle.digest('SHA-256', new Uint8Array(preimage.toXDR())),
+        await crypto.subtle.digest('SHA-256', preimage.toXDR().buffer as ArrayBuffer),
       )
 
       const webAuthnSig = await signAuthEntry(payloadHash)
@@ -304,16 +313,19 @@ async function signXdrPayload(
       }
       const sigVec = xdr.ScVal.scvVec(sigElements)
 
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
-          new xdr.SorobanAddressCredentials({
-            address: addrCred.address(),
-            nonce: addrCred.nonce(),
-            signatureExpirationLedger: validUntilLedger,
-            signature: sigVec,
-          }),
-        ),
-      )
+      const addressCredentials = new xdr.SorobanAddressCredentials({
+        address: addrCred.address,
+        nonce: addrCred.nonce,
+        signatureExpirationLedger: validUntilLedger,
+        signature: sigVec,
+      })
+
+      authEntries[i] = new xdr.SorobanAuthorizationEntry({
+        credentials: isV2
+          ? xdr.SorobanCredentials.sorobanCredentialsAddressV2(addressCredentials)
+          : xdr.SorobanCredentials.sorobanCredentialsAddress(addressCredentials),
+        rootInvocation: parsed.rootInvocation,
+      })
     }
   }
 

@@ -12,28 +12,28 @@
 import { TextEncoder, TextDecoder } from 'util'
 
 Object.defineProperty(globalThis, 'TextEncoder', {
-    value: TextEncoder,
-    writable: true,
-    configurable: true,
+  value: TextEncoder,
+  writable: true,
+  configurable: true,
 })
 Object.defineProperty(globalThis, 'TextDecoder', {
-    value: TextDecoder,
-    writable: true,
-    configurable: true,
+  value: TextDecoder,
+  writable: true,
+  configurable: true,
 })
 
 const nativeEncode = TextEncoder.prototype.encode
 TextEncoder.prototype.encode = function (source = '') {
-    return Uint8Array.from(nativeEncode.call(this, source))
+  return Uint8Array.from(nativeEncode.call(this, source))
 }
 
 // jsdom does not expose crypto.subtle — polyfill with Node's webcrypto implementation.
 import { webcrypto } from 'crypto'
 
 if (!globalThis.crypto || !globalThis.crypto.subtle) {
-    Object.defineProperty(globalThis, 'crypto', {
-        value: webcrypto,
-        writable: true,
-        configurable: true,
-    })
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+    writable: true,
+    configurable: true,
+  })
 }

@@ -42,7 +42,9 @@ function base64UrlToUint8Array(value: string): Uint8Array {
     for (let i = 0; i < binary.length; i++) rawId[i] = binary.charCodeAt(i);
     return rawId;
   }
-  return new Uint8Array(Buffer.from(padded, 'base64'));
+  const nodeBuffer = (globalThis as { Buffer?: { from(data: string, encoding: string): Uint8Array } }).Buffer;
+  if (nodeBuffer) return new Uint8Array(nodeBuffer.from(padded, 'base64'));
+  throw new Error('No base64 decoder available: neither atob nor Buffer is present.');
 }
 
 /**
@@ -64,5 +66,5 @@ export async function deriveFeePayerKeypair(credentialIdBase64url: string): Prom
     256, // 32 bytes = Ed25519 seed
   );
 
-  return Keypair.fromRawEd25519Seed(Buffer.from(derived));
+  return Keypair.fromRawEd25519Seed(new Uint8Array(derived));
 }

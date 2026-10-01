@@ -1,7 +1,7 @@
 import * as bip39 from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
-import { p256 } from '@noble/curves/nist';
-import { sha256 } from '@noble/hashes/sha256';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
+import { p256 } from '@noble/curves/nist.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { hexToUint8Array } from '@veil/utils';
 import {
   Sep30Client,
@@ -25,8 +25,7 @@ export function deriveP256KeyPair(mnemonic: string): { privateKey: Uint8Array; p
 }
 
 export function signWithP256(payload: Uint8Array, privateKey: Uint8Array): Uint8Array {
-  const sig = p256.sign(payload, privateKey);
-  return sig.toCompactRawBytes();
+  return p256.sign(payload, privateKey);
 }
 
 // Custom base64 helpers for browser compatibility without Buffer
@@ -233,8 +232,7 @@ export function generateRecoveryWebAuthnSignature(
   message.set(clientDataHash, authData.length);
   const messageHash = sha256(message);
 
-  const sig = p256.sign(messageHash, privateKey);
-  const signature = sig.toCompactRawBytes();
+  const signature = p256.sign(messageHash, privateKey);
 
   return {
     publicKey,
