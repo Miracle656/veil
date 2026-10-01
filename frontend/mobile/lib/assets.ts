@@ -20,7 +20,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Horizon, Asset, Networks } from '@stellar/stellar-sdk';
+import { Horizon } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
 
@@ -151,21 +151,18 @@ export const KNOWN_SAC_CONTRACT_IDS: Record<'mainnet' | 'testnet', Record<string
 
 /**
  * The Soroban SAC contract ID for a registered asset's issuer, or null when the
- * code is not registered on that network. Prefers a pasted `sacContractId`;
- * otherwise derives it from the issuer the way the network would. Mirrors
+ * code is not registered on that network or its SAC is not pinned here.
+ * Resolved from constants only — no SDK import (the web counterpart of this
+ * module must stay import-free for the parity harness); a new registry entry
+ * needs its SAC added to `KNOWN_SAC_CONTRACT_IDS` (or a `sacContractId` on its
+ * registry entry) rather than deriving one at runtime. Mirrors
  * `frontend/wallet/lib/assets.ts` — edit both together.
  */
 export function sacContractIdForCode(code: string, network: 'mainnet' | 'testnet'): string | null {
   const asset = getRegisteredAsset(code, network);
   if (!asset) return null;
   if (asset.sacContractId && network === 'mainnet') return asset.sacContractId;
-  try {
-    return new Asset(asset.code, asset.issuer).contractId(
-      network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET,
-    );
-  } catch {
-    return null;
-  }
+  return KNOWN_SAC_CONTRACT_IDS[network][asset.code] ?? null;
 }
 
 /**

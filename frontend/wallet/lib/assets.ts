@@ -5,9 +5,11 @@
  * A code alone is not an asset: mainnet has eight assets called USDT0 and seven
  * are impostors. Anything that names, badges, prices or classifies an asset
  * must go through `verifiedAsset`, which checks the issuer, not just the code.
+ *
+ * This module must stay IMPORT-FREE: the mobile parity harness
+ * (`frontend/mobile/lib/__tests__/registryParity.test.ts`) loads it from the
+ * mobile-only CI job, where the wallet's node_modules is not installed.
  */
-
-import { Asset, Networks } from '@stellar/stellar-sdk'
 
 export interface RegisteredAsset {
   code: string
@@ -169,21 +171,17 @@ export const KNOWN_SAC_CONTRACT_IDS: Record<'mainnet' | 'testnet', Record<string
 
 /**
  * The Soroban SAC contract ID for a registered asset's issuer, or null when the
- * code is not registered on that network. Prefers a pasted `sacContractId`;
- * otherwise derives it from the issuer the way the network would. Mirrors
- * `frontend/mobile/lib/assets.ts` — edit both together.
+ * code is not registered on that network or its SAC is not pinned here.
+ * Resolved from constants only — no SDK import (see the module docstring);
+ * a new registry entry needs its SAC added to `KNOWN_SAC_CONTRACT_IDS` (or a
+ * `sacContractId` on its registry entry) rather than deriving one at runtime.
+ * Mirrors `frontend/mobile/lib/assets.ts` — edit both together.
  */
 export function sacContractIdForCode(code: string, network: 'mainnet' | 'testnet'): string | null {
   const asset = getRegisteredAsset(code, network)
   if (!asset) return null
   if (asset.sacContractId && network === 'mainnet') return asset.sacContractId
-  try {
-    return new Asset(asset.code, asset.issuer).contractId(
-      network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET,
-    )
-  } catch {
-    return null
-  }
+  return KNOWN_SAC_CONTRACT_IDS[network][asset.code] ?? null
 }
 
 /**
