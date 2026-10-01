@@ -68,10 +68,8 @@ describe('per-network SPP config', () => {
 
   it('matches the pinned deployments.json verifiers on testnet', () => {
     expect(getSppConfig('testnet')?.verifiers).toEqual({
-      // Keep public contract IDs split so secret scanners do not mistake the
-      // high-entropy Soroban identifiers for credentials.
-      standard: ['CD34JHLNB7AYASRLOTMT6EECBKFMOS3', '56PPP5RPXRO5Y5EA5Y4DIXGTV'].join(''),
-      traceable: ['CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2U', 'PTZIEO7BI32RKRTPFCUF2FMV'].join(''),
+      standard: 'CD34JHLNB7AYASRLOTMT6EECBKFMOS356PPP5RPXRO5Y5EA5Y4DIXGTV',
+      traceable: 'CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2UPTZIEO7BI32RKRTPFCUF2FMV',
     });
   });
 

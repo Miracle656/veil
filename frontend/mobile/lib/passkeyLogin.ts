@@ -4,6 +4,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { recordFeePayerSource } from './feePayerSource';
 import { getNetworkName } from './network';
 import { discoverWithPrf, nativePrfEvaluator, type DiscoveredPasskey } from './passkey';
 import { readSigners, WalletContractNotFoundError, type WalletSigner } from './signers';
@@ -88,6 +89,7 @@ export async function loginWithPasskey(): Promise<LoginResult> {
       await Promise.all([
         setWalletAddress(sdkAddress),
         setSignerSecret(feePayer.secret()),
+        recordFeePayerSource(feePayer.publicKey(), 'prf'),
         sdkPubKey ? setPasskeyCredential(sdkKeyId, sdkPubKey) : setPasskeyId(sdkKeyId),
       ]);
       const pkBytes = sdkPubKey && /^[0-9a-fA-F]{130}$/.test(sdkPubKey) ? new Uint8Array(Buffer.from(sdkPubKey, 'hex')) : null;
@@ -122,6 +124,7 @@ export async function loginWithPasskey(): Promise<LoginResult> {
   await Promise.all([
     setWalletAddress(crumbs.walletAddress),
     setSignerSecret(feePayer.secret()),
+    recordFeePayerSource(feePayer.publicKey(), 'prf'),
     crumbs.publicKeyBytes
       ? setPasskeyCredential(picked.credentialId, toHex(crumbs.publicKeyBytes))
       : setPasskeyId(picked.credentialId),
@@ -199,6 +202,7 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
   await Promise.all([
     setWalletAddress(address),
     setSignerSecret(feePayer.secret()),
+    recordFeePayerSource(feePayer.publicKey(), recoverable ? 'prf' : 'random'),
     setPasskeyCredential(picked.credentialId, publicKeyHex),
   ]);
 

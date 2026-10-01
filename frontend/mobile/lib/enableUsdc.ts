@@ -33,17 +33,17 @@ import { getAssetIssuer } from './assets';
 export const MIN_XLM_FOR_TRUSTLINE = 0.6;
 
 export class NotEnoughXlm extends Error {
-  constructor(readonly have: number, readonly assetCode: string = 'USDC') {
+  constructor(readonly have: number, readonly address: string, readonly assetCode: string = 'USDC') {
     super(
-      `This account holds ${have} XLM. Adding a ${assetCode} trustline needs about ${MIN_XLM_FOR_TRUSTLINE} XLM of refundable reserve.`,
+      `This account holds ${have} XLM. Adding a ${assetCode} trustline needs about ${MIN_XLM_FOR_TRUSTLINE} XLM of refundable reserve. Send XLM to ${address} to continue.`,
     );
     this.name = 'NotEnoughXlm';
   }
 }
 
 export class AccountNotFunded extends Error {
-  constructor() {
-    super('This account does not exist on the network yet, so it cannot add a trustline.');
+  constructor(readonly address: string) {
+    super(`This account does not exist on the network yet. Send XLM to ${address} to activate it.`);
     this.name = 'AccountNotFunded';
   }
 }
@@ -92,7 +92,7 @@ export async function enableTrustline(assetCode: string): Promise<string | null>
     account = await server.loadAccount(kp.publicKey());
   } catch (err) {
     const status = (err as { response?: { status?: number } })?.response?.status;
-    if (status === 404) throw new AccountNotFunded();
+    if (status === 404) throw new AccountNotFunded(kp.publicKey());
     throw err;
   }
 
@@ -110,7 +110,7 @@ export async function enableTrustline(assetCode: string): Promise<string | null>
 
   const native = balances.find((b) => b.asset_type === 'native');
   const xlm = Number(native?.balance ?? '0');
-  if (!(xlm >= MIN_XLM_FOR_TRUSTLINE)) throw new NotEnoughXlm(xlm, upperCode);
+  if (!(xlm >= MIN_XLM_FOR_TRUSTLINE)) throw new NotEnoughXlm(xlm, kp.publicKey(), upperCode);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,

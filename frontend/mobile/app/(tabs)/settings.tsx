@@ -85,6 +85,8 @@ export default function SettingsScreen() {
     { key: 'recovery-coverage', title: 'Recovery coverage', subtitle: 'See which ways can restore this wallet', onPress: () => router.push('/settings/recovery') },
     { key: 'recovery', title: 'Recovery servers', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
     { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
+    { key: 'privacy', title: 'Privacy', subtitle: 'Private payments and crash reporting', onPress: () => router.push('/settings/privacy') },
+    { key: 'dapps', title: 'Connected dApps', subtitle: 'Sites with permission, and revoke them', onPress: () => router.push('/settings/permissions') },
   ];
 
   // Live notification preferences.
@@ -164,8 +166,13 @@ export default function SettingsScreen() {
       onPress: () => handleNetworkToggle(onTestnet),
       switch: { value: !onTestnet, onChange: (v) => handleNetworkToggle(v) },
     },
+    { key: 'fee-payer', title: 'Fee payer', subtitle: 'The account that pays network fees, and its balance', onPress: () => router.push('/settings/fee-payer') },
+    { key: 'dapps', title: 'Discover dApps', subtitle: 'Browse the Stellar apps Veil can open', onPress: () => router.push('/dapps') },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
     { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
+    // Plain path, no params: the name lives in AsyncStorage, and a route
+    // parameter would carry it in a URL other apps can read.
+    { key: 'profile', title: 'Profile & AI', subtitle: 'Name, language, and agent personality', onPress: () => router.push('/settings/profile') },
     { key: 'about', title: 'About', subtitle: 'Version, updates, licences and support', onPress: () => router.push('/settings/about') },
   ];
   // NoticeModal rather than Alert.alert: these report an outcome, and the

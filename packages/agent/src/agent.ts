@@ -7,6 +7,7 @@ import {
   type ToolSpec,
 } from './llm.js'
 import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { classifyBalances, describeAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
 
@@ -112,13 +113,29 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'get_wallet_balance',
-    description: 'Get current XLM and token balances for a wallet address. Free.',
+    description:
+      'Get current XLM and token balances for a wallet address. Free. ' +
+      'The result includes "holdings": every issued asset with its issuer and a status of verified, unverified or unlisted. ' +
+      'Always name the issuer when reporting an issued asset, and report "unverified" holdings as unverified.',
     input_schema: {
       type: 'object' as const,
       properties: {
         address: { type: 'string', description: 'Stellar wallet address (G...)' },
       },
       required: ['address'],
+    },
+  },
+  {
+    name: 'get_asset_info',
+    description:
+      'Look up an asset in Veil\'s verified registry: its verified issuer, and whether it can be frozen or clawed back. ' +
+      'Use this for any "what is USDT0 / USDC" question. Pass "CODE" or "CODE:ISSUER" to check a specific issuer.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        asset: { type: 'string', description: '"USDT0", "USDC" or "CODE:ISSUER"' },
+      },
+      required: ['asset'],
     },
   },
   {
@@ -233,6 +250,7 @@ ${roleClause}
 You help users:
 - Check their balance and recent transfers
 - Get live prices
+- Explain assets such as USDT0 by their verified issuer
 - Set up swaps (opened in the Swap screen) and payments — the user always approves with their passkey
 
 RULES:
@@ -243,7 +261,8 @@ RULES:
 5. Format amounts clearly: "500 XLM", "47.3 USDC".
 6. If you need a recipient address and the user hasn't provided one, ask before building.
 7. Keep responses concise. Use bullet points for multi-step flows.
-8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.`
+8. Asset codes are not identities: several issuers publish the same code (eight publish USDT0). When you report or explain an issued asset, name its issuer. Use the "holdings" status from get_wallet_balance: report "unverified" holdings as unverified, with their issuer, and never call them the real asset. Use get_asset_info to say what USDT0 is, and mention that its issuer can freeze a trustline and claw back a balance.
+9. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.`
 }
 
 /**
@@ -390,7 +409,13 @@ export async function runAgent(
         const fpAddress = feePayerAddress ?? (input.address as string)
         const contractAddr = walletAddress?.startsWith('C') ? walletAddress : undefined
         const balances = await getBalances(fpAddress, contractAddr)
-        return JSON.stringify(balances)
+        // Keep the flat balances the model already sees, and add each issued
+        // asset classified by issuer. A code match alone is never "verified".
+        return JSON.stringify({ ...balances, holdings: classifyBalances(balances) })
+      }
+
+      case 'get_asset_info': {
+        return JSON.stringify(describeAsset(String(input.asset ?? '')))
       }
 
       case 'open_swap': {

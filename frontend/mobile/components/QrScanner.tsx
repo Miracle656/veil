@@ -26,7 +26,16 @@ interface QrScannerProps {
  * camera keeps scanning rather than latching onto junk.
  */
 function destinationFromScan(value: string): string | null {
-  const parsed = parseQrValue(value);
+  // parseQrValue refuses a SEP-7 URI whose memo_type is unknown or whose memo
+  // does not fit the type it declares (#817) — by throwing. Inside the camera
+  // callback that would be an unhandled exception, so a refused code is simply
+  // not a destination and the scanner keeps looking.
+  let parsed: ReturnType<typeof parseQrValue> = null;
+  try {
+    parsed = parseQrValue(value);
+  } catch {
+    parsed = null;
+  }
   const destination = parsed && 'destination' in parsed ? parsed.destination : undefined;
   if (destination && isValidStellarAddress(destination)) return destination;
 

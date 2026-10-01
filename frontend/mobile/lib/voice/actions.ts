@@ -8,7 +8,8 @@
  *   - Android App Shortcuts: `plugins/withAndroidShortcuts.js`, fed from the
  *     mirrored list in `app.config.ts` (Expo cannot import this file at config
  *     time; `lib/__tests__/appConfig.test.ts` keeps the two in agreement).
- *   - iOS App Intents: not built yet. They should read the same list.
+ *   - iOS App Intents: `plugins/withIosAppShortcuts.js`, which mirrors the
+ *     read-only list because Expo config files cannot import this module.
  *
  * Every action opens an existing screen through the app's own deep-link
  * resolver, so it reads through the same balance and price paths as a tap in the

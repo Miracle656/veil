@@ -56,6 +56,9 @@
       "@veil/sep7": [
         "../../sdk/src/sep7"
       ],
+      "@veil/dapps": [
+        "../mobile/lib/dappAllowlist"
+      ],
       "react": [
         "./node_modules/@types/react"
       ],

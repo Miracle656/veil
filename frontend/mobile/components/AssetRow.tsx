@@ -3,7 +3,8 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
-import type { HeldAsset } from '../lib/assets';
+import { verifiedAsset, type HeldAsset } from '../lib/assets';
+import { getNetworkName } from '../lib/network';
 import { truncateAddress } from './ui/AddressChip';
 
 /**
@@ -20,6 +21,7 @@ export function AssetRow({
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const registered = verifiedAsset(asset.code, asset.issuer, getNetworkName());
 
   return (
     <View style={styles.row}>
@@ -28,6 +30,14 @@ export function AssetRow({
           {asset.code}
           {asset.name ? <Text style={styles.assetName}> · {asset.name}</Text> : null}
         </Text>
+        {/* As on the web assets page: a registered asset names its issuer,
+            and anything else — including an impostor sharing a registered
+            code — is marked unverified. */}
+        {registered ? (
+          <Text style={styles.verified}>Issuer: {registered.issuerName}</Text>
+        ) : (
+          <Text style={styles.unverified}>Unverified asset</Text>
+        )}
         <Text style={styles.issuer} numberOfLines={1}>
           {truncateAddress(asset.issuer, 6, 6)}
         </Text>
@@ -66,6 +76,17 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textMuted,
       fontSize: 13,
       fontWeight: '400',
+    },
+    verified: {
+      color: colors.textSecondary,
+      fontSize: 12,
+    },
+    unverified: {
+      alignSelf: 'flex-start',
+      color: colors.danger,
+      fontSize: 11,
+      fontWeight: '600',
+      marginVertical: 2,
     },
     issuer: {
       color: colors.textMuted,

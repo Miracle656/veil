@@ -163,26 +163,26 @@ export type SppNetworkConfig = {
  */
 export const SPP_NETWORKS: Partial<Record<VeilNetworkName, SppNetworkConfig>> = {
   testnet: {
-    aspMembership: ['CAUPZISOB4GWTH22MVKA6MRWJMQRTLUMIGUSBFNJ', 'EF32Z6WEY3RFOKGC'].join(''),
-    aspNonMembership: ['CAFLZKGO3KYKNOBPCVT3APFEWMUBRDBF4EVYK65E6O', '653WYMX4XH4QYJ'].join(''),
+    aspMembership: 'CAUPZISOB4GWTH22MVKA6MRWJMQRTLUMIGUSBFNJEF32Z6WEY3RFOKGC',
+    aspNonMembership: 'CAFLZKGO3KYKNOBPCVT3APFEWMUBRDBF4EVYK65E6O653WYMX4XH4QYJ',
     verifiers: {
-      standard: ['CD34JHLNB7AYASRLOTMT6EECBKFMOS3', '56PPP5RPXRO5Y5EA5Y4DIXGTV'].join(''),
-      traceable: ['CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2U', 'PTZIEO7BI32RKRTPFCUF2FMV'].join(''),
+      standard: 'CD34JHLNB7AYASRLOTMT6EECBKFMOS356PPP5RPXRO5Y5EA5Y4DIXGTV',
+      traceable: 'CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2UPTZIEO7BI32RKRTPFCUF2FMV',
     },
-    publicKeyRegistry: ['CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZ', 'DDLCMNPWXIH4'].join(''),
+    publicKeyRegistry: 'CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZDDLCMNPWXIH4',
     bootnodeUrl: 'https://bootnode.dev-nethermind.xyz',
     pools: [
       {
         // XLM pool with a block-list policy.
-        id: ['CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZ', 'RGNMBXOT2GOT'].join(''),
-        tokenContractId: ['CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU', '2HHGCYSC'].join(''),
+        id: 'CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT',
+        tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',
       },
       {
         // XLM pool with a block-list policy and a global view key (traceable).
-        id: ['CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4Y', 'PL3PYIN42'].join(''),
-        tokenContractId: ['CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU', '2HHGCYSC'].join(''),
+        id: 'CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4YPL3PYIN42',
+        tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',
         gvkMode: 'traceable',

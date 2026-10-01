@@ -15,10 +15,13 @@ const Server = Horizon.Server
 import { ContactPicker } from '@/components/ContactPicker'
 import { QrScanner } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { parseQrValue } from '@/lib/sep7'
+import { readPaymentRequest, resolveRequestedAsset, type IssuedAsset } from '@/lib/requestedAsset'
+import { getRegisteredAsset } from '@/lib/assets'
+import { buildSep7Memo, type Sep7MemoType } from '@/lib/sep7'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { validateMemoText, MEMO_EXCEEDS_LIMIT_MESSAGE } from '@/lib/memo'
 
-import { getNativeAssetContractId, getNetwork } from '@/lib/network'
+import { getNativeAssetContractId, getNetwork, getNetworkName } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { fetchPrices } from '@/lib/fetchPrice'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
@@ -47,6 +50,16 @@ function maxSendable(asset: WalletAsset): number {
   return Math.max(0, bal)
 }
 
+/** An issuer as the review screen names it: who, when registered, then the full account. */
+function issuerLabel(code: string, issuer: string): string {
+  const registered = getRegisteredAsset(code)
+  return registered && registered.issuer === issuer ? `${registered.issuerName} · ${issuer}` : issuer
+}
+
+function shortIssuer(issuer: string): string {
+  return `${issuer.slice(0, 4)}…${issuer.slice(-4)}`
+}
+
 export default function SendPage() {
   const router = useRouter()
   useInactivityLock()
@@ -54,6 +67,27 @@ export default function SendPage() {
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
+  /**
+   * The exact asset a payment request asked for, held until the account's
+   * balances load so it can be selected by `code:issuer` rather than lost when
+   * the list arrives. `null` means the request named none (or native XLM).
+   */
+  const [requestedAsset, setRequestedAsset] = useState<IssuedAsset | null>(null)
+  /** Why the last payment request was refused, in words (#791). */
+  const [requestError, setRequestError]     = useState<string | null>(null)
+  /**
+   * SEP-7 `memo_type` for the memo above. A memo of the wrong type is credited
+   * by nobody, so the type travels with the value rather than being assumed
+   * to be text (#817).
+   */
+  const [memoType, setMemoType]       = useState<Sep7MemoType | string | undefined>()
+  /**
+   * Only MEMO_TEXT carries the 28-byte cap. A MEMO_ID is a uint64 and
+   * MEMO_HASH / MEMO_RETURN are 32 raw bytes written as 64 hex (or base64)
+   * characters, so applying the text cap to them would refuse valid links.
+   */
+  const memoIsText = !memoType || String(memoType).toUpperCase().replace(/^MEMO_/, '') === 'TEXT'
+  const memoLengthError = memoIsText ? validateMemoText(memo) : null
 
   /**
    * Prefill from the query string, so another screen can hand off a payment it
@@ -61,18 +95,31 @@ export default function SendPage() {
    * address and amount come from the order, and retyping either is a way to
    * lose money to a typo.
    *
+   * An asset is carried as `asset` plus `issuer`. A code without its issuer, or
+   * with an issuer Veil does not recognise, refuses the whole handoff — a
+   * half-applied request is how the wrong USDT0 gets paid.
+   *
    * Read once on mount rather than watched. These are an opening position, not
    * a binding: whatever the user does to the fields afterwards stands.
    */
   useEffect(() => {
     if (typeof window === 'undefined') return
     const q = new URLSearchParams(window.location.search)
+    const code = q.get('asset') ?? undefined
+    const issuer = q.get('issuer') ?? undefined
+    if (code || issuer) {
+      const resolved = resolveRequestedAsset(code, issuer, getNetworkName())
+      if (!resolved.ok) { setRequestError(resolved.reason); return }
+      setRequestedAsset(resolved.asset)
+    }
     const to = q.get('to')
     const amt = q.get('amount')
     const m = q.get('memo')
+    const mt = q.get('memo_type')
     if (to) setRecipient(to)
     if (amt) setAmount(amt)
     if (m) setMemo(m)
+    if (mt) setMemoType(mt)
   }, [])
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
@@ -145,6 +192,51 @@ export default function SendPage() {
     void fetchPrices(assets).then(setPrices)
   }, [assets])
 
+  // Select the requested asset by code AND issuer once balances are in. An
+  // asset the wallet does not hold yet is still shown — at a zero balance, so
+  // the form says plainly that it cannot be paid rather than switching the
+  // payment to some other asset that shares the code.
+  useEffect(() => {
+    if (!requestedAsset || assets.length === 0) return
+    const match = assets.find(a => a.code === requestedAsset.code && a.issuer === requestedAsset.issuer)
+    if (match) { setSelectedAsset(match); return }
+    const unheld: WalletAsset = {
+      code: requestedAsset.code,
+      issuer: requestedAsset.issuer,
+      contractId: new Asset(requestedAsset.code, requestedAsset.issuer).contractId(network.networkPassphrase),
+      balance: '0',
+    }
+    setAssets(prev => [...prev, unheld])
+  }, [assets, requestedAsset])
+
+  /**
+   * Apply a scanned or uploaded QR value: a bare address, or a SEP-7 request
+   * whose asset must resolve to an exact `code:issuer`. A refused request fills
+   * in nothing — not even the address — and says why.
+   */
+  function applyPaymentRequest(value: string): boolean {
+    const read = readPaymentRequest(value, getNetworkName(), assets)
+    if (!read.ok) {
+      setRequestError(read.reason)
+      return false
+    }
+    setRequestError(null)
+    const { prefill } = read
+    setRecipient(prefill.destination)
+    if (prefill.amount) setAmount(prefill.amount)
+    if (prefill.memo) setMemo(prefill.memo)
+    setMemoType(prefill.memoType)
+    if (read.asset) {
+      setRequestedAsset(read.asset)
+    } else if (prefill.assetCode === undefined && value.trim().toLowerCase().startsWith('web+stellar:')) {
+      // A SEP-7 request that names no asset is asking for native XLM.
+      setRequestedAsset(null)
+      const xlm = assets.find(a => a.code === 'XLM' && !a.issuer)
+      if (xlm) setSelectedAsset(xlm)
+    }
+    return true
+  }
+
   // ── QR image upload ─────────────────────────────────────────────────────────
   // Reads an image file, draws it to an offscreen canvas, and passes the
   // ImageData to BarcodeDetector. Falls back to a clear error if the browser
@@ -182,15 +274,7 @@ export default function SendPage() {
         return
       }
 
-      const value = codes[0].rawValue.trim()
-      const isAddress = (value.startsWith('G') || value.startsWith('C')) && value.length === 56
-      if (!isAddress) {
-        setImgError(`QR decoded "${value.slice(0, 20)}…" — doesn't look like a Stellar address.`)
-        return
-      }
-
-      setRecipient(value)
-      setImgError(null)
+      if (applyPaymentRequest(codes[0].rawValue.trim())) setImgError(null)
     } catch {
       setImgError('Could not read the image. Please try a different file.')
     } finally {
@@ -205,6 +289,7 @@ export default function SendPage() {
     if (!validAddress) return false
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return false
     if (!selectedAsset) return false
+    if (memo && memoLengthError !== null) return false
     return true
   }
 
@@ -213,6 +298,12 @@ export default function SendPage() {
     setStep('signing')
     setErrorMsg(null)
     try {
+      if (memo && memoLengthError) {
+        setErrorMsg(memoLengthError)
+        setStep('error')
+        return
+      }
+
       const signerSecret = walletSession.getItem('veil_signer_secret')
         || walletLocal.getItem('veil_signer_secret')
       if (!signerSecret) {
@@ -244,24 +335,31 @@ export default function SendPage() {
 
       if (recipient.startsWith('G') && recipient.length === 56) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
-        const tx = new TransactionBuilder(account, {
+        const builder = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
         })
           .addOperation(Operation.payment({
             destination: recipient,
-            asset: Asset.native(),
+            // The asset exactly as selected — code and issuer — never re-derived
+            // from the code alone.
+            asset: selectedAsset?.issuer
+              ? new Asset(selectedAsset.code, selectedAsset.issuer)
+              : Asset.native(),
             amount,
           }))
           .setTimeout(30)
-          .build()
+        if (memo.trim()) {
+          builder.addMemo(buildSep7Memo(memo.trim(), memoType))
+        }
+        const tx = builder.build()
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
         setTxHash(result.hash)
       } else {
         const rpcServer     = new SorobanRpc.Server(network.rpcUrl)
         const feePayerAcct  = await rpcServer.getAccount(feePayerKp.publicKey())
-        const sacContract   = new Contract(getNativeAssetContractId())
+        const sacContract   = new Contract(selectedAsset?.contractId ?? getNativeAssetContractId())
         const amountStroops = BigInt(Math.round(parseFloat(amount) * 10_000_000))
 
         const tx = new TransactionBuilder(feePayerAcct, {
@@ -331,6 +429,12 @@ export default function SendPage() {
           <div className="vw-send-stage vw-row vw-row--first" style={{ alignItems: 'flex-start' }}>
             <div className="vw-sendcol">
 
+            {requestError && (
+              <p role="alert" style={{ fontSize: '0.8125rem', color: 'var(--teal)', lineHeight: 1.5 }}>
+                Payment request refused. {requestError}
+              </p>
+            )}
+
             <div>
               <div className="vw-fieldlabel">Asset</div>
               <button
@@ -347,7 +451,7 @@ export default function SendPage() {
                       <span style={{ fontSize: 15, fontWeight: 600 }}>{selectedAsset?.code ?? '—'}</span>
                       <span className="vw-meta">
                         {selectedAsset
-                          ? `${parseFloat(selectedAsset.balance).toFixed(4)} available`
+                          ? `${parseFloat(selectedAsset.balance).toFixed(4)} available${selectedAsset.issuer ? ` · ${shortIssuer(selectedAsset.issuer)}` : ''}`
                           : 'Loading…'}
                       </span>
                     </span>
@@ -373,7 +477,9 @@ export default function SendPage() {
                         <span className="vw-avatar">{a.code.slice(0, 1)}</span>
                         <span>
                           <span style={{ display: 'block', fontSize: 15, fontWeight: 600 }}>{a.code}</span>
-                          <span className="vw-meta">{parseFloat(a.balance).toFixed(4)}</span>
+                          <span className="vw-meta">
+                            {parseFloat(a.balance).toFixed(4)}{a.issuer ? ` · ${shortIssuer(a.issuer)}` : ''}
+                          </span>
                         </span>
                       </span>
                     </button>
@@ -442,7 +548,7 @@ export default function SendPage() {
                   type="text"
                   placeholder="G… or C…"
                   value={recipient}
-                  onChange={e => { setRecipient(e.target.value.trim()); setImgError(null) }}
+                  onChange={e => { setRecipient(e.target.value.trim()); setImgError(null); setRequestError(null) }}
                   autoComplete="off"
                   spellCheck={false}
                   style={{ flex: 1 }}
@@ -525,8 +631,12 @@ export default function SendPage() {
                 placeholder="Add a note for the recipient"
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
-                maxLength={28}
               />
+              {memo && memoLengthError && (
+                <p style={{ fontSize: '0.75rem', color: '#e5484d', marginTop: '0.375rem', lineHeight: 1.4 }}>
+                  {MEMO_EXCEEDS_LIMIT_MESSAGE}
+                </p>
+              )}
             </div>
 
             <div className="vw-feerow">
@@ -597,6 +707,13 @@ export default function SendPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <Row label="To"      value={`${recipient.slice(0, 8)}...${recipient.slice(-8)}`} mono />
                 <Row label="Amount"  value={`${amount} ${selectedAsset?.code ?? 'XLM'}`} mono />
+                {selectedAsset?.issuer && (
+                  <Row
+                    label="Issuer"
+                    value={issuerLabel(selectedAsset.code, selectedAsset.issuer)}
+                    mono
+                  />
+                )}
                 {memo && <Row label="Memo" value={memo} />}
                 <Row label="Network" value={network.displayName} />
                 <Row label="Auth"    value="Passkey (WebAuthn)" />
@@ -676,23 +793,9 @@ export default function SendPage() {
       {showScanner && (
         <QrScanner
           onScan={value => {
-            const parsed = parseQrValue(value)
-            if (!parsed) return
-
-            if ('destination' in parsed) {
-              if (parsed.destination) setRecipient(parsed.destination)
-              if ('amount' in parsed && parsed.amount) setAmount(parsed.amount)
-            } else {
-              // Sep7Parsed
-              if (parsed.destination) setRecipient(parsed.destination)
-              if (parsed.amount) setAmount(parsed.amount)
-
-              // If asset info is present, we could later auto-select asset.
-            }
-
-            // If SEP-7 URI provided a memo, we can also fill it.
-            if (typeof parsed !== 'string' && 'memo' in parsed && parsed.memo) setMemo(parsed.memo)
-
+            // Close on refusal too: the reason is shown on the form, and a
+            // scanner left open would keep re-reading the same bad code.
+            applyPaymentRequest(value)
             setShowScanner(false)
           }}
           onClose={() => setShowScanner(false)}

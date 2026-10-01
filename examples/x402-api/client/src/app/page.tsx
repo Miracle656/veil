@@ -3,14 +3,14 @@
 import { useEffect, useState } from 'react'
 import { API_URL } from '@/lib/network'
 import { confirmWithPasskey, createWallet, loadWallet, type VeilWallet } from '@/lib/veil'
-import { payForResource } from '@/lib/x402'
+import { payForResource, type PaidResource } from '@/lib/x402'
 
 type Quote = { pair: string; price: number; asOf: string; note: string }
 
 export default function Home() {
   const [wallet, setWallet] = useState<VeilWallet | null>(null)
   const [busy, setBusy] = useState(false)
-  const [quote, setQuote] = useState<Quote | null>(null)
+  const [quote, setQuote] = useState<PaidResource<Quote> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -35,10 +35,12 @@ export default function Home() {
     setQuote(null)
     setBusy(true)
     try {
-      // 1. Veil confirmation — one biometric tap authorises the spend.
-      await confirmWithPasskey(wallet.keyId)
-      // 2. First call returns 402; the helper pays 0.01 XLM and retries → 200.
-      const result = await payForResource<Quote>(`${API_URL}/paid/quote`, wallet.feePayerSecret)
+      // The first call returns 402. The helper derives the passkey challenge
+      // from that payment, asks for the biometric tap over it, verifies the
+      // assertion, then pays 0.01 XLM and retries → 200.
+      const result = await payForResource<Quote>(`${API_URL}/paid/quote`, wallet, (challenge) =>
+        confirmWithPasskey(wallet, challenge),
+      )
       setQuote(result)
     } catch (err) {
       setError(message(err))
@@ -82,7 +84,11 @@ export default function Home() {
         {quote && (
           <div className="alert success">
             <strong>200 OK — payment settled</strong>
-            <pre style={{ marginTop: '0.5rem' }}>{JSON.stringify(quote, null, 2)}</pre>
+            <pre style={{ marginTop: '0.5rem' }}>{JSON.stringify(quote.data, null, 2)}</pre>
+            <p className="muted" style={{ marginTop: '0.5rem' }}>
+              Passkey assertion over this payment (challenge{' '}
+              <span className="mono">{quote.approval.challenge}</span>) verified before signing.
+            </p>
           </div>
         )}
 
