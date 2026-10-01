@@ -52,3 +52,37 @@ describe('wallet and mobile asset registries are identical — edit both lib/ass
     }
   })
 })
+
+/**
+ * #837 — every SAC pinned in `KNOWN_SAC_CONTRACT_IDS` must be the contract the
+ * SDK derives from the registry's own issuer. A StrKey check accepts any
+ * well-formed C-address, so it cannot tell a real SAC from a different real
+ * contract — derivation can (the testnet USDC slot held the XLM SAC here for
+ * four reviews). USDC is dual-network in `isRegisteredIssuer`, so its issuer
+ * is pinned per network: Circle's on mainnet, the SDF anchor's on testnet.
+ * The derivation lives here, not in `lib/assets.ts`, which must stay
+ * import-free for the mobile parity harness.
+ */
+const SAC_PINS: Array<['mainnet' | 'testnet', string, string, string]> = [
+  ['mainnet', 'USDC', 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'],
+  ['mainnet', 'USDT0', USDT0_ISSUER, 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'],
+  ['testnet', 'USDC', 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5', 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'],
+]
+
+describe('pinned SAC contract IDs are the ones their registered issuer derives', () => {
+  it.each(SAC_PINS)('derive %s %s', (network, code, issuer, expected) => {
+    const derived = new Asset(code, issuer).contractId(network === 'mainnet' ? Networks.PUBLIC : Networks.TESTNET)
+    expect(derived).toBe(expected)
+    for (const registry of [wallet, mobile]) {
+      expect(registry.KNOWN_SAC_CONTRACT_IDS[network][code]).toBe(derived)
+    }
+  })
+
+  it('cover every pinned SAC, so a new one cannot skip this check', () => {
+    for (const network of ['mainnet', 'testnet'] as const) {
+      const pinned = Object.keys(wallet.KNOWN_SAC_CONTRACT_IDS[network]).sort()
+      expect(pinned).toEqual(SAC_PINS.filter(([n]) => n === network).map(([, code]) => code).sort())
+      expect(Object.keys(mobile.KNOWN_SAC_CONTRACT_IDS[network]).sort()).toEqual(pinned)
+    }
+  })
+})

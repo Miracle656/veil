@@ -283,11 +283,6 @@ export function PortfolioSummary({
     ? formatFiat(totalUsd, currencyCode, fxRate)
     : '—'
 
-  const pricedAtLabel = new Date(pricedAt).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-
   return (
     <div className="vw-panel" style={{ padding: '8px 28px 18px' }} aria-label="Portfolio summary">
       {/* Card header: title + total */}
