@@ -22,6 +22,18 @@ function fmtAmount(raw: string): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 
+export function partitionHoldings(holdings: Holding[]) {
+  return {
+    verified: holdings.filter((holding) => holding.native || holding.verification.verified),
+    unverified: holdings.filter((holding) => !holding.native && !holding.verification.verified),
+  };
+}
+
+export function visibleHoldings(holdings: Holding[], showUnverified: boolean) {
+  const { verified, unverified } = partitionHoldings(holdings);
+  return showUnverified ? [...verified, ...unverified] : verified;
+}
+
 /**
  * The wallet's portfolio — one row per held asset (native XLM + trustlines), with
  * a token badge, name, on-chain balance, and its value in the user's currency.
@@ -46,6 +58,7 @@ export function AssetsList({
 
   const [holdings, setHoldings] = useState<Holding[] | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [showUnverified, setShowUnverified] = useState(false);
 
   const load = useCallback(async () => {
     if (!address) {
@@ -56,12 +69,23 @@ export function AssetsList({
       setHoldings(await loadHoldings(address));
       setLoadError(false);
     } catch (err) {
-      console.warn('[assets] loadHoldings failed:', err instanceof Error ? `${err.name}: ${err.message}` : err);
+      console.warn(
+        '[assets] loadHoldings failed:',
+        err instanceof Error ? `${err.name}: ${err.message}` : err
+      );
       // Fall back to the dashboard's own balance figure (fetched through a
       // different, independently-working path) rather than showing nothing.
       if (fallbackXlm) {
         setHoldings([
-          { code: 'XLM', name: 'Lumens', issuer: null, balance: fallbackXlm, usd: fallbackUsd, native: true },
+          {
+            code: 'XLM',
+            name: 'Lumens',
+            issuer: null,
+            balance: fallbackXlm,
+            usd: fallbackUsd,
+            native: true,
+            verification: { verified: true, impersonates: null },
+          },
         ]);
         setLoadError(false);
       } else {
@@ -79,7 +103,7 @@ export function AssetsList({
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [load]),
+    }, [load])
   );
 
   return (
@@ -107,30 +131,92 @@ export function AssetsList({
         </View>
       ) : holdings.length === 0 ? (
         <Text style={styles.empty}>
-          {loadError ? "Couldn't load assets — pull to refresh." : 'No assets yet. Fund this wallet to get started.'}
+          {loadError
+            ? "Couldn't load assets — pull to refresh."
+            : 'No assets yet. Fund this wallet to get started.'}
         </Text>
       ) : (
-        holdings.map((h, i) => (
-          <Pressable
-            key={`${h.code}-${h.issuer ?? 'native'}`}
-            onPress={() => router.push(`/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`)}
-            accessibilityRole="button"
-            accessibilityLabel={`${h.name} details`}
-            style={({ pressed }) => [styles.row, i > 0 && styles.rowBorder, pressed && styles.pressed]}
-          >
-            <View style={styles.left}>
-              <TokenIcon code={h.code} size={38} />
-              <View>
-                <Text style={styles.name}>{h.name}</Text>
-                <Text style={styles.code}>{h.code}</Text>
-              </View>
-            </View>
-            <View style={styles.right}>
-              <Text style={styles.balance}>{mask(fmtAmount(h.balance))}</Text>
-              <Text style={styles.fiat}>{h.usd === null ? '—' : mask(format(h.usd))}</Text>
-            </View>
-          </Pressable>
-        ))
+        (() => {
+          const { verified, unverified } = partitionHoldings(holdings);
+          return (
+            <>
+              {verified.map((h, i) => (
+                <Pressable
+                  key={`${h.code}-${h.issuer ?? 'native'}`}
+                  onPress={() =>
+                    router.push(
+                      `/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`
+                    )
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={`${h.name} details`}
+                  style={({ pressed }) => [
+                    styles.row,
+                    i > 0 && styles.rowBorder,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={styles.left}>
+                    <TokenIcon code={h.code} size={38} />
+                    <View>
+                      <Text style={styles.name}>{h.name}</Text>
+                      <Text style={styles.code}>{h.code}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.right}>
+                    <Text style={styles.balance}>{mask(fmtAmount(h.balance))}</Text>
+                    <Text style={styles.fiat}>{h.usd === null ? '—' : mask(format(h.usd))}</Text>
+                  </View>
+                </Pressable>
+              ))}
+              {unverified.length > 0 && (
+                <Pressable
+                  onPress={() => setShowUnverified((open) => !open)}
+                  style={styles.sectionToggle}
+                >
+                  <Text style={styles.sectionToggleText}>
+                    {showUnverified ? 'Hide' : 'Show'} unverified ({unverified.length})
+                  </Text>
+                </Pressable>
+              )}
+              {showUnverified &&
+                unverified.map((h, i) => (
+                  <Pressable
+                    key={`${h.code}-${h.issuer ?? 'native'}`}
+                    onPress={() =>
+                      router.push(
+                        `/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`
+                      )
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel={`${h.name} details`}
+                    style={({ pressed }) => [
+                      styles.row,
+                      i > 0 && styles.rowBorder,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={styles.left}>
+                      <TokenIcon code={h.code} size={38} />
+                      <View>
+                        <Text style={styles.name}>{h.name}</Text>
+                        <Text style={styles.code}>{h.code}</Text>
+                        {h.verification.impersonates && (
+                          <Text style={styles.warning}>
+                            Impersonates {h.verification.impersonates.issuerName}'s {h.code}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                    <View style={styles.right}>
+                      <Text style={styles.balance}>{mask(fmtAmount(h.balance))}</Text>
+                      <Text style={styles.fiat}>{h.usd === null ? '—' : mask(format(h.usd))}</Text>
+                    </View>
+                  </Pressable>
+                ))}
+            </>
+          );
+        })()
       )}
     </View>
   );
@@ -207,6 +293,18 @@ const createStyles = (colors: ThemeColors) =>
     fiat: {
       color: colors.textFaint,
       fontFamily: fontFamily.body,
+      fontSize: 11,
+      marginTop: 2,
+    },
+    sectionToggle: { paddingVertical: 12, borderTopWidth: 1, borderTopColor: colors.border },
+    sectionToggleText: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 12,
+    },
+    warning: {
+      color: colors.danger,
+      fontFamily: fontFamily.bodySemiBold,
       fontSize: 11,
       marginTop: 2,
     },

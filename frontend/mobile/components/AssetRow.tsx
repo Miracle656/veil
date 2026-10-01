@@ -41,6 +41,11 @@ export function AssetRow({
         <Text style={styles.issuer} numberOfLines={1}>
           {truncateAddress(asset.issuer, 6, 6)}
         </Text>
+        {asset.verification.impersonates && (
+          <Text style={styles.warning}>
+            Impersonates {asset.verification.impersonates.issuerName}'s {asset.code}
+          </Text>
+        )}
       </View>
       <View style={styles.right}>
         <Text style={styles.balance}>{asset.balance}</Text>
@@ -93,9 +98,20 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 12,
       fontFamily: 'monospace',
     },
+    warning: {
+      color: colors.danger,
+      fontSize: 11,
+      fontWeight: '600',
+      marginTop: 2,
+    },
     right: {
       alignItems: 'flex-end',
       gap: 2,
+    },
+    warning: {
+      color: colors.danger,
+      fontSize: 12,
+      fontWeight: '600',
     },
     balance: {
       color: colors.textPrimary,

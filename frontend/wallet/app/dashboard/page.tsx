@@ -7,6 +7,73 @@ import { inclusionFee } from '@/lib/fees'
 import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
+<<<<<<< HEAD
+  Horizon,
+  Keypair,
+  rpc as SorobanRpc,
+  Contract,
+  Account,
+  TransactionBuilder,
+  BASE_FEE,
+  Networks,
+  Asset,
+  nativeToScVal,
+  scValToNative,
+} from "@stellar/stellar-sdk";
+const Server = Horizon.Server;
+import { ConnectDAppModal } from "@/components/ConnectDAppModal";
+import { WalletConnectApprovalModal } from "@/components/WalletConnectApprovalModal";
+import { DepositModal } from "@/components/DepositModal";
+import { TxDetailSheet, type TxRecord } from "@/components/TxDetailSheet";
+import { PrivateBalanceCard } from "@/components/PrivateBalanceCard";
+import { useInactivityLock } from "@/hooks/useInactivityLock";
+import { usePrivacyRecoveryNotice } from "@/hooks/usePrivacyRecoveryNotice";
+import {
+  ensureFeePayer,
+  isFeePayerPrfDowngrade,
+  getFeePayerDiagnostics,
+} from "@/lib/feePayer";
+import { fetchPrices } from "@/lib/fetchPrice";
+import {
+  calculateAccountReserve,
+  type AccountReserveBreakdown,
+} from "@/lib/reserves";
+import {
+  change24h,
+  historyKey,
+  isComparableTotal,
+  readHistory,
+  recordSnapshot,
+  writeHistory,
+} from "@/lib/balanceHistory";
+import {
+  buildFriendbotUrl,
+  getNativeAssetContractId,
+  getNetwork,
+  getNetworkName,
+  walletConfig,
+} from "@/lib/network";
+import { isMultisigAvailable } from "@/lib/multisigConfig";
+import { sweepContractBalance } from "@/lib/sweepContractBalance";
+import { derToRawSignature, hexToUint8Array } from "@veil/utils";
+import { useInvisibleWallet, type WebAuthnSignature } from "@veil/sdk";
+import { ensureWalletDeployed } from "@/lib/walletDeployment";
+import {
+  getDueSchedules,
+  updateSchedule,
+  advanceNextRun,
+  type PaymentSchedule,
+} from "@/lib/schedules";
+import { VeilMark } from "@/components/ui/VeilMark";
+import { Amount, Label, Row, TokenIcon } from "@/components/ui/primitives";
+import { formatFiat, hydrateCurrency, useCurrency } from "@/lib/currency";
+import {
+  useActivityFeed,
+  initActivityFeed,
+  hydrateActivityFeed,
+  appendActivityFeed,
+} from "@/lib/activityFeed";
+=======
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
   TransactionBuilder, BASE_FEE, Networks, Asset, nativeToScVal, scValToNative,
 } from '@stellar/stellar-sdk'
@@ -17,10 +84,8 @@ import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { usePrivacyRecoveryNotice } from '@/hooks/usePrivacyRecoveryNotice'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
-import { calculateAccountReserve, type AccountReserveBreakdown } from '@/lib/reserves'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
 import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { isMultisigAvailable } from '@/lib/multisigConfig'
@@ -33,8 +98,9 @@ import { VeilMark } from '@/components/ui/VeilMark'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { verifyAsset, type AssetVerification } from '@/lib/assets'
 
-const network = getNetwork()
+const network = getNetwork();
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +108,7 @@ export interface WalletAsset {
   code: string
   issuer: string | null
   balance: string
+  verification: AssetVerification
 }
 
 // ── Shared types ─────────────────────────────────────────────────────────────
@@ -118,9 +185,48 @@ function DashboardPageContent() {
   useInactivityLock()
   const wallet = useInvisibleWallet(walletConfig)
 
+<<<<<<< HEAD
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [assets, setAssets] = useState<WalletAsset[]>(() => cachedAssets ?? []);
+  const [reserveInfo, setReserveInfo] =
+    useState<AccountReserveBreakdown | null>(null);
+  const transactions = useActivityFeed();
+  const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
+  const [txFilter, setTxFilter] = useState<"all" | "transfers" | "swaps">(
+    "all",
+  );
+  const [loading, setLoading] = useState(cachedAssets === null);
+  const [prices, setPrices] = useState<Record<string, number | null>>(
+    () => cachedPrices,
+  );
+  const [isFunding, setIsFunding] = useState(false);
+  const [fundingError, setFundingError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [hasFeePayerKey, setHasFeePayerKey] = useState(true);
+  const [agentBadge, setAgentBadge] = useState(false);
+  const [contractXlm, setContractXlm] = useState(() => cachedContractXlm ?? 0);
+  const [isSweeping, setIsSweeping] = useState(false);
+  const [sweepError, setSweepError] = useState<string | null>(null);
+  const [sweepDismissed, setSweepDismissed] = useState(false);
+  const [showConnectDapp, setShowConnectDapp] = useState(false);
+  const [connectToast, setConnectToast] = useState<string | null>(null);
+  const [sep24Modal, setSep24Modal] = useState<"deposit" | "withdraw" | null>(
+    null,
+  );
+  const [wraithInCursor, setWraithInCursor] = useState<string | null>(null);
+  const [wraithOutCursor, setWraithOutCursor] = useState<string | null>(null);
+  const [hasMorePages, setHasMorePages] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  // PRF downgrade: surfaced as a dismissible banner (issue #629).
+  const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false);
+  const [showPrfDowngrade, setShowPrfDowngrade] = useState(false);
+  // #711: true when this wallet's privacy keys cannot be re-derived from a
+  // passkey elsewhere — the private-balance card warns before anything shields.
+  const privacyRecoveryUnsupported = usePrivacyRecoveryNotice();
+=======
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [assets, setAssets]               = useState<WalletAsset[]>(() => cachedAssets ?? [])
-  const [reserveInfo, setReserveInfo]     = useState<AccountReserveBreakdown | null>(null)
+  const [showUnverified, setShowUnverified] = useState(false)
   const transactions                      = useActivityFeed()
   const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
@@ -145,9 +251,7 @@ function DashboardPageContent() {
   // PRF downgrade: surfaced as a dismissible banner (issue #629).
   const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
   const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
-  // #711: true when this wallet's privacy keys cannot be re-derived from a
-  // passkey elsewhere — the private-balance card warns before anything shields.
-  const privacyRecoveryUnsupported = usePrivacyRecoveryNotice()
+>>>>>>> 58afcb5 (fix asset verification review feedback)
 
   // Shoulder-surfing guard. Persisted, but read after mount so the server and
   // client render the same first paint.
@@ -299,16 +403,29 @@ function DashboardPageContent() {
 
     if (signerPublicKey) {
       try {
+<<<<<<< HEAD
+        const account = await horizonServer.loadAccount(signerPublicKey);
+        const native = account.balances.find(
+          (b: any) => b.asset_type === "native",
+        );
+        feePayerXlm = native ? parseFloat(native.balance) : 0;
+        const rInfo = calculateAccountReserve(account as any);
+        setReserveInfo(rInfo);
+=======
         const account = await horizonServer.loadAccount(signerPublicKey)
         const native  = account.balances.find((b: any) => b.asset_type === 'native')
         feePayerXlm   = native ? parseFloat(native.balance) : 0
-        const rInfo   = calculateAccountReserve(account as any)
-        setReserveInfo(rInfo)
+>>>>>>> 58afcb5 (fix asset verification review feedback)
 
         // All non-XLM balances (e.g. USDC from swaps)
         otherAssets = (account.balances as any[])
           .filter(b => b.asset_type !== 'native' && parseFloat(b.balance) > 0)
-          .map(b => ({ code: b.asset_code, issuer: b.asset_issuer, balance: b.balance }))
+          .map(b => ({
+            code: b.asset_code,
+            issuer: b.asset_issuer,
+            balance: b.balance,
+            verification: verifyAsset(b.asset_code, b.asset_issuer, getNetworkName()),
+          }))
 
         // Transaction history (fee-payer account)
         const paymentsPage = await horizonServer
@@ -395,7 +512,7 @@ function DashboardPageContent() {
     // ── 5. Combine and display ───────────────────────────────────────────────
     const totalXlm = (contractXlm + feePayerXlm).toFixed(7)
     const finalAssets: WalletAsset[] = [
-      { code: 'XLM', issuer: null, balance: totalXlm },
+      { code: 'XLM', issuer: null, balance: totalXlm, verification: { verified: true, impersonates: null } },
       ...otherAssets,
     ]
     cachedAssets = finalAssets
@@ -834,6 +951,7 @@ function DashboardPageContent() {
             it. The CSS for the layout was there the whole time; nothing put the
             two columns in a row. */}
         {/* ── Balance plate and earning: full width, above the columns ── */}
+          <PrivateBalanceCard balances={[]} syncState="syncing" hideAmounts={hideAmounts} />
           <div className="vw-balance-row">
             <div className="vw-silver">
               <div className="vw-silver__sheen" />
@@ -852,11 +970,6 @@ function DashboardPageContent() {
               <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', gap: '12px' }}>
                 <div className="vw-silver__sub">{hideAmounts ? '••••' : (balanceLine || 'No assets yet')}</div>
               </div>
-              {reserveInfo && !hideAmounts && (
-                <div style={{ position: 'relative', marginTop: '10px', fontSize: '11px', color: '#0F0F0F', opacity: 0.8, lineHeight: 1.4 }}>
-                  Reserved: <strong>{reserveInfo.totalReserve.toFixed(1)} XLM</strong> ({reserveInfo.reason})
-                </div>
-              )}
             </div>
 
             <div className="vw-panel" style={{ flex: 1, minWidth: 0, padding: '26px 28px' }}>
@@ -873,16 +986,57 @@ function DashboardPageContent() {
                 Open earn
               </button>
             </div>
+            {reserveInfo && !hideAmounts && (
+              <div
+                style={{
+                  position: "relative",
+                  marginTop: "10px",
+                  fontSize: "11px",
+                  color: "#0F0F0F",
+                  opacity: 0.8,
+                  lineHeight: 1.4,
+                }}
+              >
+                Reserved:{" "}
+                <strong>{reserveInfo.totalReserve.toFixed(1)} XLM</strong> (
+                {reserveInfo.reason})
+              </div>
+            )}
           </div>
+          <div className="vw-silver__amountrow">
+            <div className="vw-silver__amount">
+              {hideAmounts ? "••••" : totalLabel}
+            </div>
+            {!hideAmounts && dayChange !== null && (
+              <span
+                className={
+                  "vw-silver__delta " +
+                  (dayChange >= 0
+                    ? "vw-silver__delta--up"
+                    : "vw-silver__delta--down")
+                }
+              >
+                {dayChange >= 0 ? "▲" : "▼"} {Math.abs(dayChange).toFixed(2)}% ·
+                24h
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              position: "relative",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              marginTop: "24px",
+              gap: "12px",
+            }}
+          >
+            <div className="vw-silver__sub">
+              {hideAmounts ? "••••" : balanceLine || "No assets yet"}
+            </div>
+          </div>
+        </div>
 
-        {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
-            scan stub below stands in for the V134 client until it lands. */}
-        <PrivateBalanceCard
-          balances={[]}
-          syncState="syncing"
-          hideAmounts={hideAmounts}
-          recoveryWarning={privacyRecoveryUnsupported}
-        />
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.
@@ -957,7 +1111,10 @@ function DashboardPageContent() {
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>
                 No assets yet. Fund this address to get started.
               </p>
-            ) : assets.map((asset) => {
+            ) : (() => {
+              const verifiedAssets = assets.filter(asset => asset.verification.verified)
+              const unverifiedAssets = assets.filter(asset => !asset.verification.verified)
+              const renderAsset = (asset: WalletAsset) => {
               const price = priceOf(asset)
               const value = price != null ? parseFloat(asset.balance) * price : null
               return (
@@ -973,6 +1130,11 @@ function DashboardPageContent() {
                       <span className="vw-meta">
                         {hideAmounts ? '••••' : parseFloat(asset.balance).toFixed(4) + ' ' + asset.code}
                       </span>
+                      {asset.verification.impersonates && (
+                        <span style={{ color: '#E8A87C', fontSize: '11px' }}>
+                          Impersonates {asset.verification.impersonates.issuerName}&apos;s {asset.code}
+                        </span>
+                      )}
                     </span>
                   </span>
                   <Amount className="text-[15px] font-semibold shrink-0">
@@ -980,7 +1142,21 @@ function DashboardPageContent() {
                   </Amount>
                 </Row>
               )
-            })}
+              }
+              return <>
+                {verifiedAssets.map(renderAsset)}
+                {unverifiedAssets.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowUnverified(open => !open)}
+                    style={{ background: 'none', border: 0, color: 'rgba(246,247,248,0.6)', cursor: 'pointer', fontSize: '12px', padding: '12px 0', textAlign: 'left' }}
+                  >
+                    {showUnverified ? 'Hide' : 'Show'} unverified ({unverifiedAssets.length})
+                  </button>
+                )}
+                {showUnverified && unverifiedAssets.map(renderAsset)}
+              </>
+            })()}
           </div>
         </div>
         </div>

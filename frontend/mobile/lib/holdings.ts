@@ -1,7 +1,7 @@
 import { Horizon, StrKey } from '@stellar/stellar-sdk';
-
 import { getNetwork } from './network';
 import { verifiedAsset } from './assets';
+import { verifyAsset, type AssetVerification } from './assetRegistry';
 import { fetchPrice, usdValue } from './fetchPrice';
 import { fetchContractAssetBalance, fetchContractXlm, getFeePayerAddress } from './activity';
 
@@ -14,6 +14,7 @@ export type Holding = {
   usd: number | null;
   /** Whether this is the native (XLM) balance. */
   native: boolean;
+  verification: AssetVerification;
 };
 
 /**
@@ -37,7 +38,12 @@ function isAccountNotFound(err: unknown): boolean {
  */
 export async function loadHoldings(address: string): Promise<Holding[]> {
   const server = new Horizon.Server(getNetwork().horizonUrl);
-  let balances: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string; balance: string }>;
+  let balances: Array<{
+    asset_type: string;
+    asset_code?: string;
+    asset_issuer?: string;
+    balance: string;
+  }>;
 
   // A smart (contract) wallet has no Horizon account: read its native XLM over
   // Soroban RPC and combine it with the fee-payer G-account, whose classic
@@ -49,7 +55,17 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
     const feePayer = await getFeePayerAddress();
     if (!feePayer) {
       return contractExtraXlm > 0
-        ? [{ code: 'XLM', name: ASSET_NAMES['XLM']!, issuer: null, balance: contractExtraXlm.toFixed(7), usd: null, native: true }]
+        ? [
+            {
+              code: 'XLM',
+              name: ASSET_NAMES['XLM']!,
+              issuer: null,
+              balance: contractExtraXlm.toFixed(7),
+              usd: null,
+              native: true,
+              verification: { verified: true, impersonates: null },
+            },
+          ]
         : [];
     }
     effective = feePayer;
@@ -71,7 +87,10 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
         missing = true; // definitive: the account does not exist
         break;
       }
-      console.warn('[holdings] loadAccount failed:', err instanceof Error ? `${err.name}: ${err.message}` : err);
+      console.warn(
+        '[holdings] loadAccount failed:',
+        err instanceof Error ? `${err.name}: ${err.message}` : err
+      );
       await new Promise((r) => setTimeout(r, 400));
     }
   }
@@ -100,8 +119,16 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
     if (b.asset_type === 'native') {
       const total = Number(b.balance) + contractExtraXlm;
       rows.unshift({ code: 'XLM', issuer: null, balance: total.toFixed(7), native: true });
-    } else if ((b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12') && b.asset_code) {
-      rows.push({ code: b.asset_code, issuer: b.asset_issuer ?? null, balance: b.balance, native: false });
+    } else if (
+      (b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12') &&
+      b.asset_code
+    ) {
+      rows.push({
+        code: b.asset_code,
+        issuer: b.asset_issuer ?? null,
+        balance: b.balance,
+        native: false,
+      });
     }
   }
 
@@ -123,7 +150,7 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
             issuer: r.issuer as string,
           });
           if (held > 0) r.balance = (Number(r.balance) + held).toFixed(7);
-        }),
+        })
     );
   }
 
@@ -141,8 +168,11 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
         balance: r.balance,
         usd: usdValue(r.balance, price),
         native: r.native,
+        verification: r.native
+          ? { verified: true, impersonates: null }
+          : verifyAsset(r.code, r.issuer as string, getNetwork().name),
       };
-    }),
+    })
   );
 }
 

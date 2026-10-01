@@ -12,7 +12,6 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon } from '@stellar/stellar-sdk';
-
 import { getNetwork } from './network';
 
 /** AsyncStorage key holding the active wallet's public key (shared with backupFile). */
@@ -39,7 +38,13 @@ export interface RegisteredAsset {
   sacContractId?: string;
 }
 
+export type AssetVerification = {
+  verified: boolean;
+  impersonates: RegisteredAsset | null;
+};
+
 export const USDY_MAINNET_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6';
+export const BENJI_MAINNET_ISSUER = 'GBHNGLLIE3KWGKCHIKMHJ5VZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5';
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
 
@@ -55,6 +60,14 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     network: 'mainnet',
     kind: 'treasury',
     reserveXlm: 0.5,
+  },
+  BENJI: {
+    code: 'BENJI',
+    issuer: BENJI_MAINNET_ISSUER,
+    name: 'Franklin OnChain U.S. Government Money Fund',
+    issuerName: 'Franklin Templeton',
+    network: 'mainnet',
+    kind: 'fund',
   },
   USDC: {
     code: 'USDC',
@@ -78,7 +91,10 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   },
 };
 
-export function getRegisteredAsset(code: string, network?: 'mainnet' | 'testnet'): RegisteredAsset | null {
+export function getRegisteredAsset(
+  code: string,
+  network?: 'mainnet' | 'testnet'
+): RegisteredAsset | null {
   const asset = ASSET_REGISTRY[code.toUpperCase()] ?? null;
   if (!asset) return null;
   if (network && asset.network !== 'all' && asset.network !== network) {
@@ -87,7 +103,10 @@ export function getRegisteredAsset(code: string, network?: 'mainnet' | 'testnet'
   return asset;
 }
 
-export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'mainnet'): string | null {
+export function getAssetIssuer(
+  code: string,
+  network: 'mainnet' | 'testnet' = 'mainnet'
+): string | null {
   // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
   // for testnet returns null and every branch below becomes unreachable.
   if (code.toUpperCase() === 'USDC' && network === 'testnet') {
@@ -101,7 +120,11 @@ export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'm
   return asset.issuer;
 }
 
-export function isRegisteredIssuer(code: string, issuer: string, network: 'mainnet' | 'testnet' = 'mainnet'): boolean {
+export function isRegisteredIssuer(
+  code: string,
+  issuer: string,
+  network: 'mainnet' | 'testnet' = 'mainnet'
+): boolean {
   // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
   // for testnet returns null and every branch below becomes unreachable.
   if (code.toUpperCase() === 'USDC') {
@@ -118,22 +141,17 @@ export function isRegisteredIssuer(code: string, issuer: string, network: 'mainn
   return asset.issuer === issuer;
 }
 
-/**
- * The registry entry for an asset, but only when BOTH its code (exactly — codes
- * are case-sensitive) and its issuer are the registered ones. A code match on
- * its own is not an asset match: mainnet has eight assets called USDT0 and
- * seven are impostors, so anything that names or badges an asset goes through
- * here rather than looking the code up.
- */
-export function verifiedAsset(
+export function verifyAsset(
   code: string,
-  issuer: string | null | undefined,
-  network: 'mainnet' | 'testnet',
-): RegisteredAsset | null {
-  if (!issuer) return null;
-  const registered = ASSET_REGISTRY[code.toUpperCase()];
-  if (!registered || registered.code !== code) return null;
-  return isRegisteredIssuer(code, issuer, network) ? registered : null;
+  issuer: string,
+  network: 'mainnet' | 'testnet'
+): AssetVerification {
+  const registered = getRegisteredAsset(code, network);
+  if (!registered) return { verified: false, impersonates: null };
+  if (code !== registered.code) return { verified: false, impersonates: registered };
+  return isRegisteredIssuer(code, issuer, network)
+    ? { verified: true, impersonates: null }
+    : { verified: false, impersonates: registered };
 }
 
 /** A single non-native asset held by the wallet. */
@@ -143,6 +161,7 @@ export interface HeldAsset {
   balance: string;
   assetType: string;
   name?: string;
+  verification: AssetVerification;
 }
 
 /**
@@ -152,15 +171,18 @@ export interface HeldAsset {
  */
 export function parseHeldAssets(balances: HorizonBalanceLike[]): HeldAsset[] {
   return balances
-    .filter(
-      (b) => b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12',
-    )
+    .filter((b) => b.asset_type === 'credit_alphanum4' || b.asset_type === 'credit_alphanum12')
     .filter((b) => b.asset_code && b.asset_issuer)
     .map((b) => ({
       code: b.asset_code as string,
       issuer: b.asset_issuer as string,
       balance: b.balance,
       assetType: b.asset_type,
+      verification: verifyAsset(
+        b.asset_code as string,
+        b.asset_issuer as string,
+        getNetwork().name
+      ),
     }));
 }
 

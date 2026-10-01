@@ -16,7 +16,13 @@ import {
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
 import { getNetworkName } from '../lib/network';
-import { enableUsdc, enableUsdy, enableUsdt0, AccountNotFunded, NotEnoughXlm } from '../lib/enableUsdc';
+import {
+  enableUsdc,
+  enableUsdy,
+  enableUsdt0,
+  AccountNotFunded,
+  NotEnoughXlm,
+} from '../lib/enableUsdc';
 
 type State =
   | { kind: 'loading' }
@@ -32,6 +38,7 @@ export default function AssetsScreen() {
   const [usdyActionMessage, setUsdyActionMessage] = useState<string | null>(null);
   const [enablingUsdt0, setEnablingUsdt0] = useState(false);
   const [usdt0ActionMessage, setUsdt0ActionMessage] = useState<string | null>(null);
+  const [showUnverified, setShowUnverified] = useState(false);
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
@@ -49,7 +56,7 @@ export default function AssetsScreen() {
         assets.map(async (asset) => {
           const key = `${asset.code}:${asset.issuer}`;
           prices[key] = await fetchPrice(asset.code, asset.issuer);
-        }),
+        })
       );
 
       setState({ kind: 'ready', assets, prices });
@@ -76,11 +83,11 @@ export default function AssetsScreen() {
     } catch (err) {
       if (err instanceof NotEnoughXlm) {
         setUsdyActionMessage(
-          `This account holds ${err.have} XLM. Adding a USDY trustline needs about 0.6 XLM of refundable reserve.`,
+          `This account holds ${err.have} XLM. Adding a USDY trustline needs about 0.6 XLM of refundable reserve.`
         );
       } else if (err instanceof AccountNotFunded) {
         setUsdyActionMessage(
-          'This account does not exist on the network yet, so it cannot add a trustline.',
+          'This account does not exist on the network yet, so it cannot add a trustline.'
         );
       } else {
         setUsdyActionMessage(errorMessage(err));
@@ -104,11 +111,11 @@ export default function AssetsScreen() {
     } catch (err) {
       if (err instanceof NotEnoughXlm) {
         setUsdt0ActionMessage(
-          `This account holds ${err.have} XLM. Adding a USDT0 trustline needs about 0.6 XLM of refundable reserve.`,
+          `This account holds ${err.have} XLM. Adding a USDT0 trustline needs about 0.6 XLM of refundable reserve.`
         );
       } else if (err instanceof AccountNotFunded) {
         setUsdt0ActionMessage(
-          'This account does not exist on the network yet, so it cannot add a trustline.',
+          'This account does not exist on the network yet, so it cannot add a trustline.'
         );
       } else {
         setUsdt0ActionMessage(errorMessage(err));
@@ -121,14 +128,7 @@ export default function AssetsScreen() {
   const hasUsdy = useMemo(() => {
     if (state.kind !== 'ready') return false;
     return state.assets.some(
-      (a) => a.code.toUpperCase() === 'USDY' && a.issuer === USDY_MAINNET_ISSUER,
-    );
-  }, [state]);
-
-  const hasUsdt0 = useMemo(() => {
-    if (state.kind !== 'ready') return false;
-    return state.assets.some(
-      (a) => a.code.toUpperCase() === 'USDT0' && a.issuer === USDT0_MAINNET_ISSUER,
+      (a) => a.code.toUpperCase() === 'USDY' && a.issuer === USDY_MAINNET_ISSUER
     );
   }, [state]);
 
@@ -136,6 +136,19 @@ export default function AssetsScreen() {
   const usdt0Registered = getRegisteredAsset('USDT0');
 
   const onMainnet = getNetworkName() === 'mainnet';
+
+  const renderAsset = (asset: HeldAsset, prices: Record<string, number | null>) => {
+    const key = `${asset.code}:${asset.issuer}`;
+    const price = prices[key] ?? null;
+    const formattedVal = formatUsd(usdValue(asset.balance, price));
+    return (
+      <AssetRow
+        key={key}
+        asset={asset}
+        usdValueFormatted={formattedVal !== '—' ? formattedVal : undefined}
+      />
+    );
+  };
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
@@ -192,7 +205,6 @@ export default function AssetsScreen() {
             <Text style={styles.reserveNotice}>
               Reserve cost: 0.5 XLM (locked, not spent — released if removed).
             </Text>
-
           </View>
           <Pressable
             onPress={handleEnableUsdy}
@@ -213,7 +225,9 @@ export default function AssetsScreen() {
 
       {usdyActionMessage && <Text style={styles.actionNotice}>{usdyActionMessage}</Text>}
 
-      {state.kind === 'loading' && <ActivityIndicator color={colors.accent} style={styles.spinner} />}
+      {state.kind === 'loading' && (
+        <ActivityIndicator color={colors.accent} style={styles.spinner} />
+      )}
 
       {state.kind === 'no-wallet' && (
         <Text style={styles.muted}>No wallet found on this device yet.</Text>
@@ -228,6 +242,7 @@ export default function AssetsScreen() {
           </Text>
         ) : (
           <View style={styles.list}>
+            {/* Asset grouping is currently implemented on the dashboard; this detail screen remains out of scope for this PR. */}
             {state.assets.map((asset) => {
               const key = `${asset.code}:${asset.issuer}`;
               const price = state.prices[key] ?? null;
@@ -242,6 +257,7 @@ export default function AssetsScreen() {
                 />
               );
             })}
+>>>>>>> 58afcb5 (fix asset verification review feedback)
           </View>
         ))}
     </ScrollView>
