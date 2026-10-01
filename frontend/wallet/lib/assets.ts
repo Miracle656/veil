@@ -121,62 +121,6 @@ export function isRegisteredIssuer(
   return asset.issuer === issuer;
 }
 
-<<<<<<< HEAD
-export interface HorizonIssuerFlags {
-  auth_required?: boolean
-  auth_revocable?: boolean
-  auth_clawback_enabled?: boolean
-  auth_immutable?: boolean
-}
-
-export function getAssetControlDisclosure(flags?: HorizonIssuerFlags | null): string | null {
-  if (!flags) return null
-  if (flags.auth_revocable && flags.auth_clawback_enabled) {
-    return 'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.'
-  }
-  if (flags.auth_clawback_enabled) {
-    return 'The issuer can take this balance back, and this is a property of the asset, not of Veil.'
-  }
-  if (flags.auth_revocable) {
-    return 'The issuer can freeze this balance, and this is a property of the asset, not of Veil.'
-  }
-  return null
-}
-
-export async function fetchIssuerFlags(
-  server: { loadAccount: (id: string) => Promise<any> },
-  issuer: string,
-): Promise<HorizonIssuerFlags | null> {
-  try {
-    const account = await server.loadAccount(issuer)
-    return (account?.flags as HorizonIssuerFlags) ?? null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Shown when the issuer's flags could not be read at all. `null` has to keep
- * meaning "the flags are clear", so an unreachable Horizon must not collapse
- * into it — otherwise a transient 429 on one of the parallel `loadAccount`
- * calls silently removes the disclosure while the Add button still works.
- */
-export const DISCLOSURE_UNAVAILABLE =
-  'Could not check whether this issuer can freeze or claw back this balance. Try again before adding a trustline.'
-
-export async function fetchAssetDisclosure(
-  server: { loadAccount: (id: string) => Promise<any> },
-  issuer: string,
-): Promise<string | null> {
-  try {
-    const account = await server.loadAccount(issuer)
-    return getAssetControlDisclosure((account?.flags as HorizonIssuerFlags) ?? null)
-  } catch {
-    return DISCLOSURE_UNAVAILABLE
-  }
-}
-
-=======
 export function verifyAsset(
   code: string,
   issuer: string,
@@ -190,4 +134,3 @@ export function verifyAsset(
     ? { verified: true, impersonates: null }
     : { verified: false, impersonates: registered };
 }
->>>>>>> 58afcb5 (fix asset verification review feedback)

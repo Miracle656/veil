@@ -129,16 +129,6 @@ export default function AssetsScreen() {
     if (state.kind !== 'ready') return false;
     return state.assets.some(
       (a) => a.code.toUpperCase() === 'USDY' && a.issuer === USDY_MAINNET_ISSUER
-<<<<<<< HEAD
-    );
-  }, [state]);
-
-  const hasUsdt0 = useMemo(() => {
-    if (state.kind !== 'ready') return false;
-    return state.assets.some(
-      (a) => a.code.toUpperCase() === 'USDT0' && a.issuer === USDT0_MAINNET_ISSUER
-=======
->>>>>>> 58afcb5 (fix asset verification review feedback)
     );
   }, [state]);
 
@@ -252,26 +242,6 @@ export default function AssetsScreen() {
           </Text>
         ) : (
           <View style={styles.list}>
-<<<<<<< HEAD
-            {state.assets
-              .filter((asset) => asset.verification.verified)
-              .map((asset) => renderAsset(asset, state.prices))}
-            {state.assets.some((asset) => !asset.verification.verified) && (
-              <>
-                <Text
-                  style={styles.sectionLabel}
-                  onPress={() => setShowUnverified((open) => !open)}
-                >
-                  {showUnverified ? 'Hide' : 'Show'} unverified (
-                  {state.assets.filter((asset) => !asset.verification.verified).length})
-                </Text>
-                {showUnverified &&
-                  state.assets
-                    .filter((asset) => !asset.verification.verified)
-                    .map((asset) => renderAsset(asset, state.prices))}
-              </>
-            )}
-=======
             {/* Asset grouping is currently implemented on the dashboard; this detail screen remains out of scope for this PR. */}
             {state.assets.map((asset) => {
               const key = `${asset.code}:${asset.issuer}`;

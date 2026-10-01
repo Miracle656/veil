@@ -99,7 +99,6 @@ import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 import { verifyAsset, type AssetVerification } from '@/lib/assets'
->>>>>>> 58afcb5 (fix asset verification review feedback)
 
 const network = getNetwork();
 
@@ -1038,17 +1037,6 @@ function DashboardPageContent() {
           </div>
         </div>
 
-<<<<<<< HEAD
-        {/* ── Shielded pool balance. Flag-gated inside the card (V131); the
-            scan stub below stands in for the V134 client until it lands. */}
-        <PrivateBalanceCard
-          balances={[]}
-          syncState="syncing"
-          hideAmounts={hideAmounts}
-          recoveryWarning={privacyRecoveryUnsupported}
-        />
-=======
->>>>>>> 58afcb5 (fix asset verification review feedback)
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.

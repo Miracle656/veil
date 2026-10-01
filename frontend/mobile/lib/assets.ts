@@ -14,8 +14,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon } from '@stellar/stellar-sdk';
 import { getNetwork } from './network';
 
-import { getNetwork } from './network';
-
 /** AsyncStorage key holding the active wallet's public key (shared with backupFile). */
 export const WALLET_PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
 
@@ -143,24 +141,6 @@ export function isRegisteredIssuer(
   return asset.issuer === issuer;
 }
 
-<<<<<<< HEAD
-/**
- * The registry entry for an asset, but only when BOTH its code (exactly — codes
- * are case-sensitive) and its issuer are the registered ones. A code match on
- * its own is not an asset match: mainnet has eight assets called USDT0 and
- * seven are impostors, so anything that names or badges an asset goes through
- * here rather than looking the code up.
- */
-export function verifiedAsset(
-  code: string,
-  issuer: string | null | undefined,
-  network: 'mainnet' | 'testnet'
-): RegisteredAsset | null {
-  if (!issuer) return null;
-  const registered = ASSET_REGISTRY[code.toUpperCase()];
-  if (!registered || registered.code !== code) return null;
-  return isRegisteredIssuer(code, issuer, network) ? registered : null;
-=======
 export function verifyAsset(
   code: string,
   issuer: string,
@@ -172,7 +152,6 @@ export function verifyAsset(
   return isRegisteredIssuer(code, issuer, network)
     ? { verified: true, impersonates: null }
     : { verified: false, impersonates: registered };
->>>>>>> 58afcb5 (fix asset verification review feedback)
 }
 
 /** A single non-native asset held by the wallet. */
