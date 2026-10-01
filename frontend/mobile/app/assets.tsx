@@ -145,6 +145,8 @@ export default function AssetsScreen() {
       </View>
       <Text style={styles.subtitle}>Every asset your wallet holds beyond XLM.</Text>
 
+      {/* Featured USDY One-Tap Trustline Action */}
+      {state.kind === 'ready' && !hasUsdy && (
       {/* Featured USDT0 One-Tap Trustline Action. Mainnet only — USDT0's issuer
           does not exist on testnet. */}
       {state.kind === 'ready' && !hasUsdt0 && onMainnet && (

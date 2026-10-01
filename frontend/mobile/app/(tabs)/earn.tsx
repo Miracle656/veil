@@ -36,6 +36,9 @@ import { useWallet } from '../../components/WalletProvider';
 import { requirePasskey } from '../../lib/passkey';
 import { signAndSubmitSorobanXdr } from '../../lib/sorobanTx';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
+import { getAvailableInvestAssets, type InvestAsset } from '../../lib/invest';
+import { fetchHeldAssets, USDY_MAINNET_ISSUER } from '../../lib/assets';
+import { enableUsdy, NotEnoughXlm, AccountNotFunded } from '../../lib/enableUsdc';
 import { openExternalUrl } from '../../lib/about';
 
 /**
@@ -112,6 +115,11 @@ export default function EarnRoute() {
   const [loadingPools, setLoadingPools] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  const [investAssets, setInvestAssets] = useState<InvestAsset[]>([]);
+  const [hasUsdyTrustline, setHasUsdyTrustline] = useState(false);
+  const [enablingUsdyCode, setEnablingUsdyCode] = useState<string | null>(null);
+  const [investNotice, setInvestNotice] = useState<string | null>(null);
+
   const [selected, setSelected] = useState<Selected | null>(null);
   const [balances, setBalances] = useState<EarnBalances | null>(null);
   const [depositAmount, setDepositAmount] = useState('');
@@ -123,14 +131,52 @@ export default function EarnRoute() {
 
   const loadData = useCallback(async (address: string) => {
     setLoadingPools(true);
-    const [nextPools, nextPositions] = await Promise.all([
+    const [nextPools, nextPositions, heldAssets] = await Promise.all([
       loadBlendPools(),
       loadBlendPositions(address),
+      fetchHeldAssets(address).catch(() => []),
     ]);
     setPools(nextPools.filter((pool) => pool.reserves.length > 0));
     setPositions(nextPositions);
     setLoadingPools(false);
+
+    const availableInvest = getAvailableInvestAssets('GLOBAL');
+    setInvestAssets(availableInvest);
+
+    const trustsUsdy = heldAssets.some(
+      (a) => a.code.toUpperCase() === 'USDY' && a.issuer === USDY_MAINNET_ISSUER,
+    );
+    setHasUsdyTrustline(trustsUsdy);
   }, []);
+
+  const handleEnableUsdy = useCallback(async () => {
+    setEnablingUsdyCode('USDY');
+    setInvestNotice(null);
+    try {
+      const hash = await enableUsdy();
+      if (hash) {
+        setInvestNotice(`USDY trustline enabled successfully! (Tx: ${hash.slice(0, 8)}…)`);
+      } else {
+        setInvestNotice('USDY trustline is already enabled.');
+      }
+      setHasUsdyTrustline(true);
+      if (accountAddress) {
+        await loadData(accountAddress);
+      }
+    } catch (err: unknown) {
+      if (err instanceof NotEnoughXlm) {
+        setInvestNotice(
+          `Adding a USDY trustline requires about 0.6 XLM of refundable reserve (you hold ${err.have} XLM).`,
+        );
+      } else if (err instanceof AccountNotFunded) {
+        setInvestNotice('Account not funded on Stellar network yet.');
+      } else {
+        setInvestNotice(errorMessage(err));
+      }
+    } finally {
+      setEnablingUsdyCode(null);
+    }
+  }, [accountAddress, loadData]);
 
   // ── Load session ──
   useEffect(() => {
@@ -291,12 +337,17 @@ export default function EarnRoute() {
             <Text style={[typography.accent, styles.eyebrow]}>Earn</Text>
             <Text style={[typography.heading, styles.title]}>Put idle money to work</Text>
             <Text style={styles.lede}>
-              Lend USDC or XLM to Blend and earn interest. Nothing is locked, withdraw any time.
+              Lend USDC or XLM to Blend pools or invest in tokenized real-world assets.
             </Text>
           </View>
 
           {step === 'pools' ? (
             <>
+              {/* Section 1: Lending */}
+              <View style={styles.section}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={[typography.accent, styles.sectionLabel]}>Lending</Text>
+                  <Text style={styles.sectionSublabel}>Blend Protocol</Text>
               <Card style={styles.disclosureCard}>
                 <View style={styles.rowBetween}>
                   <Text style={[typography.accent, styles.disclosureLabel]}>Disclosures</Text>
@@ -347,10 +398,41 @@ export default function EarnRoute() {
                     </Card>
                   ))}
                 </View>
-              ) : null}
 
-              <View style={styles.section}>
-                <Text style={[typography.accent, styles.sectionLabel]}>Pools</Text>
+                {!loadingPools && bestApy > 0 ? (
+                  <Card variant="md" style={styles.hero}>
+                    <Text style={[typography.accent, styles.heroLabel]}>Best lending rate today</Text>
+                    <Text style={styles.heroRate}>{formatApy(bestApy)}</Text>
+                    <Text style={styles.muted}>a year, paid by borrowers on Blend. The rate moves with demand.</Text>
+                  </Card>
+                ) : null}
+
+                {positions.length > 0 ? (
+                  <View style={styles.subSection}>
+                    <Text style={[typography.accent, styles.sectionLabel]}>Your deposits</Text>
+                    {positions.map((position) => (
+                      <Card key={`${position.poolId}-${position.asset}`} style={styles.card}>
+                        <View style={styles.rowBetween}>
+                          <View>
+                            <Text style={styles.assetCode}>{position.code ?? `${position.asset.slice(0, 6)}…`}</Text>
+                            <Text style={styles.muted}>{poolName(position.poolId)} pool</Text>
+                          </View>
+                          <Text style={styles.value}>
+                            {mask(formatAmount(toUnits(position.deposited)))} {position.code ?? ''}
+                          </Text>
+                        </View>
+                        <Button
+                          label="Withdraw"
+                          variant="ghost"
+                          onPress={() => {
+                            setSelectedPosition(position);
+                            setStep('withdraw-form');
+                          }}
+                        />
+                      </Card>
+                    ))}
+                  </View>
+                ) : null}
 
                 {loadingPools ? (
                   <View style={styles.centered}>
@@ -368,7 +450,7 @@ export default function EarnRoute() {
                     <Card key={pool.id} style={styles.card}>
                       <View style={styles.rowBetween}>
                         <Text style={[typography.heading, styles.cardTitle]}>{pool.name} pool</Text>
-                        <Text style={[typography.accent, styles.badge]}>Blend</Text>
+                        <Text style={[typography.accent, styles.badge]}>Blend Protocol</Text>
                       </View>
                       {pool.reserves.map((reserve) => (
                         <View key={reserve.assetId} style={styles.reserveRow}>
@@ -388,6 +470,66 @@ export default function EarnRoute() {
                   ))
                 )}
               </View>
+
+              {/* Section 2: Invest (Tokenized Assets) - Hides cleanly when nothing is available */}
+              {investAssets.length > 0 ? (
+                <View style={styles.section}>
+                  <View style={styles.sectionHeaderRow}>
+                    <Text style={[typography.accent, styles.sectionLabel]}>Invest</Text>
+                    <Text style={styles.sectionSublabel}>Tokenized Assets</Text>
+                  </View>
+
+                  {investNotice ? <Text style={styles.investNoticeText}>{investNotice}</Text> : null}
+
+                  {investAssets.map((asset) => (
+                    <Card key={asset.code} style={styles.investCard}>
+                      <View style={styles.rowBetween}>
+                        <View style={styles.investTitleGroup}>
+                          <Text style={[typography.heading, styles.cardTitle]}>
+                            {asset.name} ({asset.code})
+                          </Text>
+                          <Text style={styles.issuerText}>Issuer: {asset.issuerName}</Text>
+                        </View>
+                        <Text style={[typography.accent, styles.investBadge]}>Treasury</Text>
+                      </View>
+
+                      <View style={styles.investDetailGroup}>
+                        <View style={styles.investDetailRow}>
+                          <Text style={styles.detailLabel}>Backing:</Text>
+                          <Text style={styles.detailValue}>{asset.backs}</Text>
+                        </View>
+                        <View style={styles.investDetailRow}>
+                          <Text style={styles.detailLabel}>Risk:</Text>
+                          <Text style={styles.riskValue}>{asset.riskLine}</Text>
+                        </View>
+                        <View style={styles.investDetailRow}>
+                          <Text style={styles.detailLabel}>Yield:</Text>
+                          <Text style={styles.yieldValue}>{asset.yieldDescription}</Text>
+                        </View>
+                      </View>
+
+                      {hasUsdyTrustline ? (
+                        <Button
+                          label={`Buy ${asset.code}`}
+                          onPress={() =>
+                            router.push({ pathname: '/swap', params: { outputAsset: asset.code } } as any)
+                          }
+                        />
+                      ) : (
+                        <Button
+                          label={
+                            enablingUsdyCode === asset.code
+                              ? 'Enabling…'
+                              : `Enable ${asset.code} (${asset.reserveXlm} XLM reserve)`
+                          }
+                          disabled={enablingUsdyCode === asset.code}
+                          onPress={handleEnableUsdy}
+                        />
+                      )}
+                    </Card>
+                  ))}
+                </View>
+              ) : null}
             </>
           ) : null}
 
@@ -563,4 +705,27 @@ const createStyles = (colors: ThemeColors) =>
     successMark: { fontFamily: fontFamily.bodySemiBold, color: colors.positive, fontSize: 34 },
     errorMark: { fontFamily: fontFamily.bodySemiBold, color: colors.danger, fontSize: 34 },
     hash: { fontFamily: fontFamily.address, fontSize: 12, color: colors.textMuted, alignSelf: 'stretch', textAlign: 'center' },
+    sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    sectionSublabel: { fontFamily: fontFamily.body, fontSize: 11, color: colors.textMuted },
+    subSection: { gap: 8, marginTop: 4 },
+    investCard: { padding: 18, gap: 14 },
+    investTitleGroup: { gap: 2, flex: 1 },
+    issuerText: { fontFamily: fontFamily.bodyMedium, fontSize: 13, color: colors.accentText },
+    investBadge: { color: colors.accent, fontSize: 11, fontFamily: fontFamily.accent },
+    investDetailGroup: { gap: 8, paddingVertical: 4 },
+    investDetailRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+    detailLabel: { fontFamily: fontFamily.bodySemiBold, fontSize: 12, color: colors.textMuted },
+    detailValue: { fontFamily: fontFamily.body, fontSize: 13, color: colors.textPrimary, flexShrink: 1 },
+    riskValue: { fontFamily: fontFamily.body, fontSize: 13, color: colors.textMuted, flexShrink: 1 },
+    yieldValue: { fontFamily: fontFamily.bodyMedium, fontSize: 13, color: colors.positive, flexShrink: 1 },
+    investNoticeText: {
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      color: colors.textPrimary,
+      backgroundColor: colors.surfaceMd,
+      borderRadius: 8,
+      padding: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
   });
