@@ -19,6 +19,9 @@ module.exports = {
     pattern.startsWith('/node_modules/(?!(') ? pattern.replace('(?!(', '(?!(@noble|') : pattern
   ),
   moduleNameMapper: {
+    // Merge with the preset's own map (it carries the `@veil/*` tsconfig-path
+    // aliases and the expo icon shims — replacing it breaks them).
+    ...expoPreset.moduleNameMapper,
     // The parity harness imports `frontend/wallet/lib/assets.ts`, which stays
     // import-free by design — but babel's expo preset still rewrites every
     // transformed module with `@babel/runtime` helper requires, and node's
