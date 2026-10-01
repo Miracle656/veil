@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { SecureKey, getSecureItem, setSecureItem, deleteSecureItem } from './storage';
 import { getNetworkName, hydrateNetwork } from './network';
+import { clearSppDatabase } from './privacy/storage';
 
 /**
  * Thin, typed accessors for the wallet identifiers the app keeps on the device.
@@ -112,12 +113,16 @@ const SDK_KEYS = [
 
 /** Wipe the ACTIVE NETWORK's stored wallet identifiers only. */
 export async function clearWalletStore(): Promise<void> {
+  const walletAddress = await getWalletAddress();
   const suffix = getNetworkName() === 'mainnet' ? '_mainnet' : '';
+
   await Promise.all([
     key(SecureKey.walletAddress).then(deleteSecureItem),
     key(SecureKey.passkeyId).then(deleteSecureItem),
     key(SecureKey.passkeyPublicKey).then(deleteSecureItem),
     key(SecureKey.signerSecret).then(deleteSecureItem),
     ...SDK_KEYS.map((k) => AsyncStorage.removeItem(`${k}${suffix}`)),
+    // Clear SPP state when the wallet is removed.
+    walletAddress ? clearSppDatabase(walletAddress) : Promise.resolve(),
   ]);
 }

@@ -34,6 +34,9 @@ import {
   loadRegisteredIssuerMetadata,
   type IssuerTomlMetadata,
 } from '@/lib/issuerToml'
+import { enhanceAssetsWithYield, getAssetYield } from '@/lib/costBasisTracker'
+import { getNetworkName } from '@/lib/network'
+import { YieldDisplay } from '@/components/YieldDisplay'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -408,6 +411,21 @@ export default function AssetsPage() {
                       <p style={mutedTextStyle}>
                         Balance: {line.balance} {usdVal != null ? `(~$${usdVal.toFixed(2)} USD)` : ''}
                       </p>
+                      {signerAddress && (
+                        (() => {
+                          const yieldMetrics = getAssetYield(
+                            getNetworkName(),
+                            signerAddress,
+                            line.code,
+                            line.issuer,
+                            price,
+                          );
+                          return yieldMetrics ? (
+                            <div style={{ marginTop: '0.5rem' }}>
+                              <YieldDisplay metrics={yieldMetrics} detailed={false} />
+                            </div>
+                          ) : null;
+                        })()
                       {rowDisclosure && (
                         <p style={{ ...mutedTextStyle, fontSize: '0.75rem', marginTop: '0.25rem', color: 'rgba(246,247,248,0.6)' }}>
                           {rowDisclosure}
