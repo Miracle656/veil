@@ -28,6 +28,7 @@ import {
   initiateWithdraw,
   getTransactionStatus,
   isSep24Complete,
+  getDefaultSep24Anchor,
   type Sep24TransactionStatus,
 } from '@/lib/sep24'
 import { getNetwork } from '@/lib/network'
@@ -36,9 +37,7 @@ import { beginTx, endTx } from '@/lib/txState'
 const Server = Horizon.Server
 const network = getNetwork()
 
-const DEFAULT_ANCHOR =
-  process.env.NEXT_PUBLIC_SEP24_ANCHORS?.split(',')[0]?.trim()
-  || 'testanchor.stellar.org'
+const DEFAULT_ANCHOR = getDefaultSep24Anchor()
 
 const XLM_FEE_RESERVE = 1 // keep at least 1 XLM after withdrawal for base reserve + fees
 
