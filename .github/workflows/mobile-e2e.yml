@@ -62,7 +62,7 @@ jobs:
         with:
           workspaces: frontend/mobile/modules/spp-native/rust
       - name: Add Android targets and cargo-ndk
-        run: sh frontend/mobile/modules/spp-native/scripts/install-rust-toolchain.sh
+        run: sh modules/spp-native/scripts/install-rust-toolchain.sh
 
       - name: Install dependencies
         run: npm ci
