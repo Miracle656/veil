@@ -55,6 +55,10 @@ export const BILL_SERVICES: BillService[] = [
   // hides it when the backend that holds the API key is unreachable, since
   // there is no order to create without it.
   { id: 'transfer', label: 'Cash out', hint: 'To any bank', Icon: BankIcon, status: 'live', route: '/cash-out' },
+  // The onramp: naira in, XLM or USDC out, via Linq. Nothing is signed — the
+  // user transfers from their own bank app and Linq delivers to the wallet's
+  // classic account, whose balances the holdings list already includes.
+  { id: 'buy-ngn', label: 'Buy', hint: 'With naira', Icon: BankIcon, status: 'live', route: '/buy-ngn' },
   { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
 ];
 

@@ -1,0 +1,826 @@
+/**
+ * Buy XLM or USDC with naira.
+ *
+ * Screens a1–a6 of the design, plus the expired case (f1).
+ *
+ * ## Nothing here signs anything
+ *
+ * This whole flow is passkey-free. The user is handed a Nigerian account
+ * number, transfers naira from their own bank app, and Linq delivers the crypto.
+ * The wallet is a destination, not a signer. (Bills are the opposite: their
+ * deposit is crypto leaving this wallet, and that payment is signed.)
+ *
+ * ## Where the money actually lands
+ *
+ * Linq pays by classic operation, which **cannot name a contract** as a
+ * destination — so the delivery address is the fee-payer `G…` account, not the
+ * `C…` smart wallet. That is not a compromise: `loadHoldings` already combines
+ * the contract's native XLM with the fee-payer account's classic balances, so
+ * what arrives there is what the wallet shows. wraith refuses a `C…` before it
+ * reaches Linq, and the receive screen made exactly this mistake once.
+ *
+ * ## The countdown is load-bearing
+ *
+ * An order holds its rate for a window and then dies, and the account stops
+ * accepting the payment. The person this protects is the one who left for their
+ * bank app with the number on screen — so the remaining time travels with the
+ * account number on every screen that shows it, and the expired screen says
+ * plainly not to send.
+ */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { FlowHeader } from '../components/FlowHeader';
+import { useTheme } from '../hooks/useTheme';
+import { useNetwork } from '../hooks/useNetwork';
+import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
+import { errorMessage } from '../lib/errorMessage';
+import { getFeePayerAddress } from '../lib/activity';
+import { getWalletAddress } from '../lib/walletStore';
+import {
+  createOnrampOrder,
+  getOnrampRate,
+  getOnrampStatus,
+  provisionCustomer,
+  secondsUntil,
+  submitKyc,
+  type NairaCoin,
+  type OnrampOrder,
+} from '../lib/onramp';
+
+type Step = 'verify' | 'amount' | 'confirm' | 'pay' | 'waiting' | 'done' | 'expired';
+
+/** Verification is once per person, so the outcome is remembered. */
+const CUSTOMER_KEY = 'veil_ngn_customer';
+
+const QUICK_AMOUNTS = [2000, 5000, 10000, 20000];
+
+function naira(n: number): string {
+  return `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function clock(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+export default function BuyWithNairaScreen() {
+  const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
+  // Linq has no sandbox. A G-address is valid on both networks, so a testnet
+  // order would take real naira and deliver to an address this build never
+  // shows. wraith refuses it; saying so here saves the round trip.
+  const { networkName } = useNetwork();
+  const mainnetOnly = networkName !== 'mainnet';
+
+  const [step, setStep] = useState<Step>('amount');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [customerRef, setCustomerRef] = useState<string | null>(null);
+  const [verified, setVerified] = useState<boolean | null>(null);
+
+  // Verification fields. The NIN is never written to storage or logged — it is
+  // read from this state once, sent, and the field is cleared.
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [nin, setNin] = useState('');
+
+  const [coin, setCoin] = useState<NairaCoin>('usdc');
+  const [amountNGN, setAmountNGN] = useState('');
+
+  // 'loading' and 'failed' are distinct: a missing rate is not the same as a
+  // rate we have not asked for yet, and the CTA must not be live for either.
+  const [rate, setRate] = useState<number | null>(null);
+  const [rateState, setRateState] = useState<'loading' | 'ready' | 'failed'>('loading');
+
+  const [deliveryAddress, setDeliveryAddress] = useState<string | null>(null);
+  const [order, setOrder] = useState<OnrampOrder | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [status, setStatus] = useState<string>('initiated');
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Who we are, to Linq ────────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const stored = await AsyncStorage.getItem(CUSTOMER_KEY).catch(() => null);
+      if (cancelled) return;
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as { customerRef: string; verified: boolean };
+          setCustomerRef(parsed.customerRef);
+          setVerified(parsed.verified);
+          if (!parsed.verified) setStep('verify');
+          return;
+        } catch {
+          /* fall through and re-derive */
+        }
+      }
+      // Derived from the wallet, so it is stable across reinstalls on the same
+      // wallet. It is not a secret — Linq requires the orderId too, and that is
+      // the unguessable half.
+      const wallet = await getWalletAddress().catch(() => null);
+      if (cancelled) return;
+      const ref = wallet ? `veil_${wallet.slice(-12).toLowerCase()}` : null;
+      setCustomerRef(ref);
+      setVerified(false);
+      setStep('verify');
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Where Linq delivers ───────────────────────────────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const addr = await getFeePayerAddress().catch(() => null);
+      if (!cancelled) setDeliveryAddress(addr);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ── Rate ──────────────────────────────────────────────────────────────────
+  const loadRate = useCallback(async () => {
+    if (mainnetOnly) return;
+    setRateState('loading');
+    try {
+      setRate(await getOnrampRate());
+      setRateState('ready');
+    } catch {
+      setRate(null);
+      setRateState('failed');
+    }
+  }, [mainnetOnly]);
+
+  useEffect(() => {
+    void loadRate();
+  }, [loadRate]);
+
+  // ── Countdown ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!order) return;
+    const tick = () => {
+      const left = secondsUntil(order.expiresAt);
+      setSecondsLeft(left);
+      if (left === 0) setStep((s) => (s === 'pay' || s === 'waiting' ? 'expired' : s));
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [order]);
+
+  // ── Status polling, only while an order is live ───────────────────────────
+  useEffect(() => {
+    if (!order || !customerRef || (step !== 'pay' && step !== 'waiting')) return;
+    const check = async () => {
+      try {
+        const s = await getOnrampStatus(customerRef, order.orderId);
+        setStatus(s.status);
+        if (/complete|success|settled/i.test(s.status)) setStep('done');
+        if (/fail|cancel/i.test(s.status)) setError('This order did not complete.');
+      } catch {
+        // Silent: a failed poll is not news the user can act on, and the
+        // countdown already tells them where they stand.
+      }
+    };
+    void check();
+    pollRef.current = setInterval(check, 12_000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = null;
+    };
+  }, [order, customerRef, step]);
+
+  const ngn = Number(amountNGN.replace(/[^\d.]/g, '')) || 0;
+  const code = coin.toUpperCase();
+  const youGet = rate && ngn > 0 ? ngn / rate : 0;
+
+  const copy = useCallback(async (value: string, label: string) => {
+    await Clipboard.setStringAsync(value);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 1600);
+  }, []);
+
+  // ── Verification: one time, ever ──────────────────────────────────────────
+  const submitVerification = useCallback(async () => {
+    if (!customerRef) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await provisionCustomer({ customerRef, firstName, lastName, email, phone });
+      const result = await submitKyc(customerRef, nin);
+      // Cleared immediately. A NIN is personal data under the NDPA and the
+      // cheapest way to hold it correctly is not to hold it.
+      setNin('');
+      setVerified(result.verified);
+      await AsyncStorage.setItem(
+        CUSTOMER_KEY,
+        JSON.stringify({ customerRef, verified: result.verified }),
+      );
+      if (result.verified) setStep('amount');
+      else setError('Verification is still pending. Try again shortly.');
+    } catch (err) {
+      setNin('');
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [customerRef, firstName, lastName, email, phone, nin]);
+
+  // ── Create the order ──────────────────────────────────────────────────────
+  const getPaymentDetails = useCallback(async () => {
+    if (!customerRef || !deliveryAddress) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // Re-read the rate immediately before locking it. The one on screen may
+      // be a minute old and XLM floats; this is the number the order carries.
+      const fresh = await getOnrampRate();
+      setRate(fresh);
+      const created = await createOnrampOrder({
+        customerRef,
+        amountStableCoin: Number((ngn / fresh).toFixed(7)),
+        walletAddress: deliveryAddress,
+        rate: fresh,
+        coin,
+      });
+      setOrder(created);
+      setStatus(created.status);
+      setStep('pay');
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [customerRef, deliveryAddress, ngn, coin]);
+
+  const stepNumber = step === 'amount' ? 1 : step === 'confirm' ? 2 : 3;
+  const showProgress = step === 'amount' || step === 'confirm' || step === 'pay';
+
+  return (
+    <SafeAreaView style={styles.screen} edges={['top']}>
+      <View style={styles.header}>
+        <FlowHeader title="Buy" />
+        {!mainnetOnly && showProgress ? (
+          <View style={styles.progressRow}>
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, { flex: stepNumber }]} />
+              <View style={{ flex: 3 - stepNumber }} />
+            </View>
+            <Text style={styles.progressLabel}>{stepNumber} / 3</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+        {mainnetOnly ? (
+          <View style={styles.card}>
+            <Text style={styles.eyebrow}>MAINNET ONLY</Text>
+            <Text style={styles.question}>Switch to mainnet to buy</Text>
+            <Text style={styles.hint}>
+              Buying converts real naira into real crypto, so this only works on mainnet —
+              there is no test mode. Switch network in Settings, then come back.
+            </Text>
+          </View>
+        ) : null}
+
+        {error ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
+        {/* ── Verify, once ──────────────────────────────────────────────── */}
+        {!mainnetOnly && step === 'verify' && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>ONE TIME ONLY</Text>
+              <Text style={styles.question}>Verify your identity</Text>
+              <Text style={styles.hint}>
+                Nigerian rules require this once before your first naira transfer. You will
+                not be asked again.
+              </Text>
+            </View>
+
+            <View style={styles.field}>
+              <Text style={styles.label}>FIRST NAME</Text>
+              <TextInput style={styles.input} value={firstName} onChangeText={setFirstName} autoCapitalize="words" />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>LAST NAME</Text>
+              <TextInput style={styles.input} value={lastName} onChangeText={setLastName} autoCapitalize="words" />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>EMAIL</Text>
+              <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>PHONE</Text>
+              <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+            </View>
+            <View style={styles.field}>
+              <Text style={styles.label}>NIN</Text>
+              <TextInput
+                style={styles.input}
+                value={nin}
+                onChangeText={(t) => setNin(t.replace(/\D/g, '').slice(0, 11))}
+                keyboardType="number-pad"
+                placeholder="11 digits"
+                placeholderTextColor={colors.textMuted}
+              />
+              <Text style={styles.hint}>
+                Sent straight to our payment partner for the check. Veil does not store it.
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={submitVerification}
+              disabled={busy || nin.length !== 11 || !firstName || !lastName || !email || !phone}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                (busy || nin.length !== 11 || !firstName || !lastName || !email || !phone) && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {busy ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.primaryText}>Verify</Text>}
+            </Pressable>
+          </>
+        )}
+
+        {/* ── a1 · amount ───────────────────────────────────────────────── */}
+        {!mainnetOnly && step === 'amount' && (
+          <>
+            <View style={styles.segment}>
+              {(['xlm', 'usdc'] as NairaCoin[]).map((c) => (
+                <Pressable
+                  key={c}
+                  onPress={() => setCoin(c)}
+                  style={[styles.segmentItem, coin === c && styles.segmentActive]}
+                >
+                  <Text style={[styles.segmentText, coin === c && styles.segmentTextActive]}>
+                    {c.toUpperCase()}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <Text style={styles.question}>You pay</Text>
+            <View style={styles.amountRow}>
+              <Text style={styles.currency}>₦</Text>
+              <TextInput
+                style={styles.amountInput}
+                value={amountNGN}
+                onChangeText={(t) => setAmountNGN(t.replace(/[^\d]/g, ''))}
+                keyboardType="number-pad"
+                placeholder="0"
+                placeholderTextColor={colors.textMuted}
+              />
+            </View>
+
+            <View style={styles.quickRow}>
+              {QUICK_AMOUNTS.map((q) => (
+                <Pressable key={q} onPress={() => setAmountNGN(String(q))} style={styles.quickChip}>
+                  <Text style={styles.quickText}>₦{q.toLocaleString('en-NG')}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>YOU GET, IN THIS WALLET</Text>
+              <Text style={styles.money}>
+                {rateState === 'ready' && youGet > 0 ? `${youGet.toFixed(coin === 'xlm' ? 4 : 2)} ${code}` : '—'}
+              </Text>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Rate</Text>
+                <Text style={styles.rowValue}>
+                  {rateState === 'loading'
+                    ? 'Checking…'
+                    : rateState === 'failed'
+                      ? 'Unavailable'
+                      : `₦${rate?.toLocaleString('en-NG', { maximumFractionDigits: 2 })} per ${code}`}
+                </Text>
+              </View>
+              {rateState === 'failed' ? (
+                <Pressable onPress={() => void loadRate()}>
+                  <Text style={styles.linkText}>Try again</Text>
+                </Pressable>
+              ) : null}
+            </View>
+
+            <Text style={styles.hint}>
+              You&apos;ll pay by bank transfer from any Nigerian bank app.
+            </Text>
+
+            <Pressable
+              onPress={() => setStep('confirm')}
+              disabled={rateState !== 'ready' || ngn <= 0}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                (rateState !== 'ready' || ngn <= 0) && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.primaryText}>Continue</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── a2 · confirm ──────────────────────────────────────────────── */}
+        {!mainnetOnly && step === 'confirm' && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>YOU RECEIVE</Text>
+              <Text style={styles.money}>
+                {youGet.toFixed(coin === 'xlm' ? 4 : 2)} {code}
+              </Text>
+              <Text style={styles.hint}>into this wallet</Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Rate</Text>
+                <Text style={styles.rowValue}>
+                  ₦{rate?.toLocaleString('en-NG', { maximumFractionDigits: 2 })} per {code}
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Total to transfer</Text>
+                <Text style={styles.rowValueStrong}>{naira(ngn)}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.hint}>
+              Next you&apos;ll get a bank account to send {naira(ngn)} to. The order holds this
+              rate until it expires.
+            </Text>
+
+            <Pressable
+              onPress={getPaymentDetails}
+              disabled={busy || !deliveryAddress}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                (busy || !deliveryAddress) && styles.disabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              {busy ? (
+                <ActivityIndicator color={colors.onAccent} />
+              ) : (
+                <Text style={styles.primaryText}>Get payment details</Text>
+              )}
+            </Pressable>
+            <Pressable onPress={() => setStep('amount')}>
+              <Text style={styles.linkText}>Back</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── a3 · pay this account ─────────────────────────────────────── */}
+        {!mainnetOnly && step === 'pay' && order && (
+          <>
+            <View style={styles.countdownCard}>
+              <Text style={styles.eyebrow}>ORDER EXPIRES IN</Text>
+              <Text style={styles.countdown}>{secondsLeft === null ? '—' : clock(secondsLeft)}</Text>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>TRANSFER EXACTLY</Text>
+              <Pressable onPress={() => void copy(String(order.amountNgn), 'amount')}>
+                <Text style={styles.money}>{naira(order.amountNgn)}</Text>
+                <Text style={styles.linkText}>{copied === 'amount' ? 'Copied' : 'Tap to copy'}</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>ACCOUNT NUMBER</Text>
+              <Pressable onPress={() => void copy(order.accountNumber, 'account')}>
+                <Text style={styles.account}>{order.accountNumber}</Text>
+                <Text style={styles.linkText}>{copied === 'account' ? 'Copied' : 'Tap to copy'}</Text>
+              </Pressable>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Bank</Text>
+                <Text style={styles.rowValue}>{order.bankName}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Account name</Text>
+                <Text style={styles.rowValue}>{order.accountName}</Text>
+              </View>
+            </View>
+
+            {/* Said before the bank app says it, so the unfamiliar name on the
+                transfer screen reads as expected rather than as a scam. */}
+            <View style={styles.noteCard}>
+              <Text style={styles.noteTitle}>Your bank will show {order.accountName}</Text>
+              <Text style={styles.hint}>
+                That&apos;s expected. It is Veil&apos;s payment partner, and it receives this
+                transfer for your order.
+              </Text>
+            </View>
+
+            <Text style={styles.hint}>
+              You can leave Veil to make the transfer. This order stays open until it&apos;s paid
+              or expires.
+            </Text>
+
+            <Pressable
+              onPress={() => setStep('waiting')}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>I&apos;ve sent the transfer</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── a4 · waiting ──────────────────────────────────────────────── */}
+        {!mainnetOnly && step === 'waiting' && order && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>WAITING FOR YOUR TRANSFER</Text>
+              <Text style={styles.question}>
+                Buying {youGet.toFixed(coin === 'xlm' ? 4 : 2)} {code}
+              </Text>
+              <Text style={styles.hint}>
+                We pick it up as soon as it reaches the account, usually a minute or two after
+                you send.
+              </Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Order open for</Text>
+                <Text style={styles.rowValue}>{secondsLeft === null ? '—' : clock(secondsLeft)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Waiting for</Text>
+                <Text style={styles.rowValue}>{naira(order.amountNgn)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>To</Text>
+                <Text style={styles.rowValue}>
+                  {order.bankName} ··{order.accountNumber.slice(-4)}
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Status</Text>
+                <Text style={styles.rowValue}>{status}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.hint}>
+              You can close Veil. Your {code} will appear in your balance when it arrives.
+            </Text>
+
+            <Pressable onPress={() => setStep('pay')}>
+              <Text style={styles.linkText}>Haven&apos;t paid yet? Show the account again</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.secondaryText}>Back to home</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── a6 · done ─────────────────────────────────────────────────── */}
+        {!mainnetOnly && step === 'done' && order && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.question}>
+                {youGet.toFixed(coin === 'xlm' ? 4 : 2)} {code} is in your wallet
+              </Text>
+              <Text style={styles.hint}>Your {naira(order.amountNgn)} transfer arrived.</Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>You paid</Text>
+                <Text style={styles.rowValue}>{naira(order.amountNgn)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Rate</Text>
+                <Text style={styles.rowValue}>
+                  ₦{rate?.toLocaleString('en-NG', { maximumFractionDigits: 2 })} per {code}
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Received</Text>
+                <Text style={styles.rowValueStrong}>
+                  {youGet.toFixed(coin === 'xlm' ? 4 : 2)} {code}
+                </Text>
+              </View>
+            </View>
+
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>Done</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── f1 · expired ──────────────────────────────────────────────── */}
+        {!mainnetOnly && step === 'expired' && order && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.question}>This order expired</Text>
+              <Text style={styles.hint}>
+                The window ran out before a transfer arrived. Nothing was charged.
+              </Text>
+            </View>
+
+            {/* The loudest thing on the screen, because the account number is
+                still in their bank app's recents. */}
+            <View style={styles.dangerCard}>
+              <Text style={styles.dangerTitle}>DON&apos;T SEND MONEY TO THIS ACCOUNT</Text>
+              <Text style={styles.accountMuted}>{order.accountNumber}</Text>
+              <Text style={styles.hint}>
+                {order.bankName} · {order.accountName} · {naira(order.amountNgn)}
+              </Text>
+            </View>
+
+            <Text style={styles.hint}>
+              Already sent it? It isn&apos;t lost — start a new order and we&apos;ll match it or
+              send it back.
+            </Text>
+
+            <Pressable
+              onPress={() => {
+                setOrder(null);
+                setSecondsLeft(null);
+                setError(null);
+                setStep('amount');
+                void loadRate();
+              }}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>Start a new order</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.secondaryText}>Back to home</Text>
+            </Pressable>
+          </>
+        )}
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function createStyles(colors: ThemeColors) {
+  return StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    header: { paddingHorizontal: 20 },
+    body: { padding: 20, paddingBottom: 60, gap: 16 },
+
+    progressRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
+    progressTrack: { flex: 1, flexDirection: 'row', height: 3, borderRadius: 2, backgroundColor: colors.border },
+    progressFill: { backgroundColor: colors.accent, borderRadius: 2 },
+    progressLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 12 },
+
+    card: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      gap: 8,
+    },
+    noteCard: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      gap: 6,
+      backgroundColor: colors.surface,
+    },
+    dangerCard: {
+      borderWidth: 1,
+      borderColor: colors.danger,
+      borderRadius: 16,
+      padding: 16,
+      gap: 8,
+    },
+    errorCard: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.danger,
+      borderRadius: 12,
+      padding: 12,
+      backgroundColor: colors.dangerSurface,
+    },
+    errorText: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+
+    countdownCard: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      alignItems: 'center',
+      gap: 4,
+    },
+    countdown: { color: colors.accent, fontFamily: fontFamily.accent, fontSize: 34 },
+
+    eyebrow: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
+    question: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 20 },
+    hint: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+    money: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 28 },
+    account: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 24, letterSpacing: 1 },
+    accountMuted: { color: colors.textMuted, fontFamily: fontFamily.address, fontSize: 20, letterSpacing: 1 },
+
+    noteTitle: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
+    dangerTitle: { color: colors.danger, fontFamily: fontFamily.accent, fontSize: 12, letterSpacing: 0.8 },
+
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
+    rowLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },
+    rowValue: { color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 13 },
+    rowValueStrong: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+
+    field: { gap: 6 },
+    label: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
+    input: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: colors.textPrimary,
+      fontFamily: fontFamily.body,
+      fontSize: 16,
+    },
+
+    segment: { flexDirection: 'row', gap: 8 },
+    segmentItem: {
+      flex: 1,
+      alignItems: 'center',
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    segmentActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+    segmentText: { color: colors.textMuted, fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
+    segmentTextActive: { color: colors.onAccent },
+
+    amountRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    currency: { color: colors.textMuted, fontFamily: fontFamily.heading, fontSize: 30 },
+    amountInput: { flex: 1, color: colors.textPrimary, fontFamily: fontFamily.heading, fontSize: 34, paddingVertical: 4 },
+
+    quickRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+    quickChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    quickText: { color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 13 },
+
+    primaryBtn: {
+      backgroundColor: colors.accent,
+      borderRadius: 14,
+      paddingVertical: 16,
+      alignItems: 'center',
+    },
+    primaryText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
+    secondaryBtn: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 14,
+      paddingVertical: 16,
+      alignItems: 'center',
+    },
+    secondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
+    linkText: { color: colors.accent, fontFamily: fontFamily.body, fontSize: 13, paddingTop: 6 },
+
+    disabled: { opacity: 0.4 },
+    pressed: { opacity: 0.85 },
+  });
+}
