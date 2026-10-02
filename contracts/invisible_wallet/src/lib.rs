@@ -15,6 +15,8 @@ pub mod policies;
 mod auth_failure_tests;
 #[cfg(test)]
 mod guardian_test;
+#[cfg(test)]
+mod batch_tests;
 use storage::{DataKey, AllowanceKey, PendingRecovery};
 
 /// Recovery timelock duration: 3 days in seconds.
