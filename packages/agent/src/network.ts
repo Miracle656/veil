@@ -1,4 +1,5 @@
 import { Networks } from '@stellar/stellar-sdk'
+import { registeredAsset } from './assets.js'
 
 /**
  * Which Stellar network this agent serves, and every endpoint that follows
@@ -31,13 +32,13 @@ const DEFAULTS = {
     // SDF runs no public mainnet RPC. This is Veil's own proxy, which fails over
     // across several providers — the same one the web and mobile apps use.
     sorobanRpcUrl: 'https://app.useveilapp.xyz/api/rpc/mainnet',
-    usdcIssuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    usdcIssuer: registeredAsset('USDC', 'mainnet')?.issuer ?? 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
   },
   testnet: {
     passphrase: Networks.TESTNET,
     horizonUrl: 'https://horizon-testnet.stellar.org',
     sorobanRpcUrl: 'https://soroban-testnet.stellar.org',
-    usdcIssuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    usdcIssuer: registeredAsset('USDC', 'testnet')?.issuer ?? 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
   },
 } as const
 
