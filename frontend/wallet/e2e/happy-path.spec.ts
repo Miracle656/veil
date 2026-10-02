@@ -8,173 +8,16 @@
  * 4. Verify the dashboard reflects the updated balance
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { addVirtualAuthenticator } from './_authenticator';
-
-// ── Network Stubs ─────────────────────────────────────────────────────────────
-
-async function stubNetworkCalls(page: Page) {
-  // Friendbot — always succeed
-  await page.route('**/friendbot.stellar.org/**', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ 
-        result: 'funded', 
-        hash: 'a'.repeat(64) // Valid hex hash
-      }),
-    })
-  );
-
-  // Horizon loadAccount — return a properly formatted funded account
-  await page.route('**/horizon-testnet.stellar.org/accounts/**', (route) => {
-    const url = route.request().url();
-    const pubkey = url.split('/accounts/')[1]?.split('?')[0] || 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
-    
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        id: pubkey,
-        account_id: pubkey,
-        sequence: '123456789',
-        subentry_count: 0,
-        balances: [
-          { 
-            asset_type: 'native', 
-            balance: '10000.0000000',
-            buying_liabilities: '0.0000000',
-            selling_liabilities: '0.0000000'
-          }
-        ],
-        thresholds: { 
-          low_threshold: 0, 
-          med_threshold: 0, 
-          high_threshold: 0 
-        },
-        flags: {
-          auth_required: false,
-          auth_revocable: false,
-          auth_immutable: false
-        },
-        signers: [
-          {
-            weight: 1,
-            key: pubkey,
-            type: 'ed25519_public_key'
-          }
-        ],
-        data: {},
-        paging_token: '',
-        last_modified_ledger: 1000,
-        last_modified_time: new Date().toISOString()
-      }),
-    });
-  });
-
-  // Soroban RPC — simulate and send transaction with valid XDR
-  await page.route('**/soroban-testnet.stellar.org', async (route) => {
-    const request = route.request();
-    const postData = request.postDataJSON();
-    
-    if (postData?.method === 'simulateTransaction') {
-      // Return valid simulation response with proper XDR
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            transactionData: 'AAAAAAAAAAIAAAAGAAAAAem354u9STQWq5b3Ed1j9tOemvL7xV0NPwhn4gXg0AP8AAAAFAAAAAEAAAAH8dTto4AAAAAAAAAAAAAAAAAAAAA=',
-            minResourceFee: '100',
-            cost: { 
-              cpuInsns: '100000', 
-              memBytes: '1000' 
-            },
-            latestLedger: 1000,
-            results: [
-              {
-                auth: [],
-                xdr: 'AAAAEAAAAAEAAAACAAAADwAAAAdCYWxhbmNlAAAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAA='
-              }
-            ]
-          },
-        }),
-      });
-    }
-    
-    if (postData?.method === 'sendTransaction') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            status: 'PENDING',
-            hash: 'a'.repeat(64),
-          },
-        }),
-      });
-    }
-    
-    if (postData?.method === 'getTransaction') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            status: 'SUCCESS',
-            latestLedger: 1001,
-            latestLedgerCloseTime: Math.floor(Date.now() / 1000),
-            oldestLedger: 900,
-            oldestLedgerCloseTime: Math.floor(Date.now() / 1000) - 1000,
-            applicationOrder: 1,
-            envelopeXdr: 'AAAAAgAAAAA=',
-            resultXdr: 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAA=',
-            resultMetaXdr: 'AAAAAwAAAAAAAAACAAAAAwAAA+gAAAAAAAAAAO3nZDVD4KR9yD1MLNfJWzeMIBB0ZM3bTJmHeVvHLcGkAAAAF0h1FHwAAAPnAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAA',
-            ledger: 1001,
-            createdAt: Math.floor(Date.now() / 1000)
-          },
-        }),
-      });
-    }
-    
-    if (postData?.method === 'getContractData') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            xdr: 'AAAAEAAAAAEAAAACAAAADwAAAAdCYWxhbmNlAAAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAA=',
-            lastModifiedLedgerSeq: 1000,
-            latestLedger: 1001
-          },
-        }),
-      });
-    }
-    
-    // Default response for other methods
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: postData?.id || 1,
-        result: {},
-      }),
-    });
-  });
-}
+import { stubNetworkCalls } from './_stubs';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test.describe('Happy Path: Register → Fund → Send', () => {
+  // Wallet creation plus a full send flow does not fit the 30s default.
+  test.setTimeout(120_000);
+
   test.beforeEach(async ({ page }) => {
     // Clear storage before each test
     await page.goto('/');
@@ -252,11 +95,16 @@ test.describe('Happy Path: Register → Fund → Send', () => {
     await expect(amountInput.first()).toBeVisible({ timeout: 10_000 });
     await amountInput.first().fill('1');
     
-    // Step 7: Submit the send transaction
-    const sendButton = page.getByRole('button', { name: /send|submit|confirm/i });
-    await expect(sendButton.first()).toBeVisible({ timeout: 10_000 });
-    await sendButton.first().click();
-    
+    // Step 7: Submit the send transaction. The form is two-step —
+    // "Review" opens the confirmation card, "Confirm & sign" submits it.
+    const reviewButton = page.getByRole('button', { name: /^review$/i });
+    await expect(reviewButton).toBeEnabled({ timeout: 10_000 });
+    await reviewButton.click();
+
+    const confirmButton = page.getByRole('button', { name: /confirm.*sign/i });
+    await expect(confirmButton).toBeVisible({ timeout: 10_000 });
+    await confirmButton.click();
+
     // Step 8: Wait for transaction confirmation
     await expect(
       page.getByText(/success|sent|confirmed|complete/i).first()
@@ -318,39 +166,45 @@ test.describe('Happy Path: Register → Fund → Send', () => {
   test('displays error when send fails', async ({ page }) => {
     await addVirtualAuthenticator(page);
     
-    // Override network stubs to simulate failure
-    await page.route('**/soroban-testnet.stellar.org', async (route) => {
-      const request = route.request();
-      const postData = request.postDataJSON();
-      
-      if (postData?.method === 'sendTransaction') {
-        return route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: postData.id || 1,
-            error: {
-              code: -32600,
-              message: 'Transaction failed: insufficient balance',
-            },
-          }),
-        });
-      }
-      
-      // Use default stubs for other calls
-      return route.continue();
-    });
-    
     await stubNetworkCalls(page);
-    
+
     // Create wallet and navigate to send
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     
     await page.getByRole('button', { name: /create wallet/i }).click({ force: true });
     await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
-    
+
+    // A payment to a `G...` recipient is a classic Stellar transaction, so it
+    // is submitted to Horizon rather than over Soroban RPC. Registered after
+    // the base stubs so it matches first, and falls back to them for every
+    // request other than the submission being made to fail.
+    await page.route(
+      (url) => url.hostname === 'horizon-testnet.stellar.org',
+      async (route) => {
+        const url = new URL(route.request().url());
+
+        if (url.pathname === '/transactions' && route.request().method() === 'POST') {
+          return route.fulfill({
+            status: 400,
+            contentType: 'application/problem+json',
+            body: JSON.stringify({
+              type: 'https://stellar.org/horizon-errors/transaction_failed',
+              title: 'Transaction Failed',
+              status: 400,
+              detail: 'The transaction failed when submitted to the Stellar network.',
+              extras: {
+                result_codes: { transaction: 'tx_insufficient_balance' },
+              },
+            }),
+          });
+        }
+
+        return route.fallback();
+      },
+    );
+
+
     const sendLink = page.getByRole('link', { name: /send/i }).or(
       page.getByRole('button', { name: /send/i })
     );
@@ -362,10 +216,11 @@ test.describe('Happy Path: Register → Fund → Send', () => {
       'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
     );
     await page.getByLabel(/amount/i).first().fill('1000000'); // Unrealistic amount
-    
-    // Submit
-    await page.getByRole('button', { name: /send|submit|confirm/i }).first().click();
-    
+
+    // Submit — review, then confirm
+    await page.getByRole('button', { name: /^review$/i }).click();
+    await page.getByRole('button', { name: /confirm.*sign/i }).click();
+
     // Verify error message appears
     await expect(
       page.getByText(/error|fail|insufficient/i).first()

@@ -8,12 +8,19 @@ members = [
 ]
 resolver = "2"
 
+# Size-optimized release profile for on-chain WASM. Smaller bytecode means
+# lower upload/instantiation fees on Soroban. Profile settings only take effect
+# from the workspace root, so they live here rather than in member crates.
+#
+# Measured impact (invisible_wallet, wasm32-unknown-unknown): a naive release
+# build is ~626 KB; this profile produces ~30 KB — a ~95% reduction. Reproduce
+# with scripts/bench-wasm-size.sh; see docs/wasm-size-optimization.md.
 [profile.release]
-opt-level = "z"
-overflow-checks = true
-debug = 0
-strip = "symbols"
-debug-assertions = false
-panic = "abort"
-codegen-units = 1
-lto = true
+opt-level = "z"           # optimize for size (smallest tier) over speed
+overflow-checks = true    # keep arithmetic overflow trapping on-chain (safety > a few bytes)
+debug = 0                 # no debug info
+strip = "symbols"         # strip symbols AND debuginfo (a superset of strip="debuginfo")
+debug-assertions = false  # no debug_assert! in release
+panic = "abort"           # no unwinding tables; required for Soroban contracts
+codegen-units = 1         # whole-crate codegen for better cross-function size optimization
+lto = true                # link-time optimization: cross-crate inlining + dead-code elimination

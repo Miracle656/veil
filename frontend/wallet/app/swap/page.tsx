@@ -1,5 +1,28 @@
 'use client'
 
+import { spendableNativeXlm } from '@/lib/reserves'
+import { getUsdcIssuer } from '@/lib/network'
+import { inclusionFee } from '@/lib/fees'
+import { PageHeader, Card, SectionLabel, Pill } from '@/components/ui/primitives'
+import {
+  assetKey,
+  parseSwapPrefill,
+  resolveFlip,
+  toDestAsset,
+  type StellarAsset,
+  type SwapPrefill,
+} from './direction'
+import {
+  checkSwapAsset,
+  classicAsset,
+  noRouteMessage,
+  pathPaysOut,
+  swapAssetLabel,
+  swapDestinations,
+  swapRouteInput,
+  type SwapAsset,
+} from '@/lib/swapAssets'
+import { getAssetIssuer } from '@/lib/assets'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -12,8 +35,9 @@ import {
   Networks,
   Transaction,
 } from '@stellar/stellar-sdk'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
-import { VeilLogo } from '@/components/VeilLogo'
+import { VeilMark } from '@/components/ui/VeilMark'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
@@ -22,7 +46,6 @@ import { signAndSubmitSorobanXdr } from '@/lib/sorobanTx'
 import {
   getSoroswapQuote,
   buildSoroswapSwapXdr,
-  resolveTokenAddress,
   type SwapQuote,
 } from '@/lib/soroswap'
 
@@ -30,9 +53,14 @@ const network = getNetwork()
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const DEBOUNCE_MS = 600
-const TESTNET_USDC = {
-  code: 'USDC',
-  issuer: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+// Resolved per network — see getUsdcIssuer(). Previously pinned to the
+// testnet issuer, which made mainnet swaps default to the wrong asset.
+const DEFAULT_USDC = { code: 'USDC', issuer: getUsdcIssuer() }
+/** What the receive side offers: XLM and each registered asset on this network, issuer included. */
+const DESTINATIONS = swapDestinations(network.name)
+
+function toSwapAsset(a: StellarAsset): SwapAsset {
+  return { code: a.code, issuer: a.issuer ?? null }
 }
 
 const SLIPPAGE_OPTIONS = [
@@ -43,11 +71,6 @@ const SLIPPAGE_OPTIONS = [
 
 type Step = 'form' | 'confirm' | 'swapping' | 'done' | 'error'
 
-interface StellarAsset {
-  code: string
-  issuer?: string
-  balance: string
-}
 
 // ── Swap Page ─────────────────────────────────────────────────────────────────
 export default function SwapPage() {
@@ -58,10 +81,13 @@ export default function SwapPage() {
 
   // Assets & Amounts
   const [sourceBalances, setSourceBalances] = useState<StellarAsset[]>([])
+  // Native XLM that can actually leave the account once the base reserve and
+  // any selling liabilities are held back. Null until the account is loaded.
+  const [spendableXlm, setSpendableXlm] = useState<string | null>(null)
   const [sourceAsset, setSourceAsset] = useState<StellarAsset | null>(null)
   const [destAsset, setDestAsset] = useState<StellarAsset>({
     code: 'USDC',
-    issuer: TESTNET_USDC.issuer,
+    issuer: DEFAULT_USDC.issuer,
     balance: '0',
   })
   const [sourceAmount, setSourceAmount] = useState('')
@@ -74,6 +100,10 @@ export default function SwapPage() {
 
   // Classic SDEX fallback
   const [path, setPath] = useState<Asset[]>([])
+  /** Why the quote came from the classic DEX rather than Soroswap, when it did. */
+  const [venueNote, setVenueNote] = useState<string | null>(null)
+  /** Guards against a slow quote for an earlier pair landing after the pair changed. */
+  const quoteSeq = useRef(0)
 
   // Slippage
   const [slippageBps, setSlippageBps] = useState(50)
@@ -85,9 +115,24 @@ export default function SwapPage() {
   const server = new Server(network.horizonUrl)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // A swap handed over by the agent (/swap?from=XLM&to=USDC&amount=10). Read on
+  // mount, before balances load, so the pay side can pick the named asset.
+  const prefillRef = useRef<SwapPrefill | null>(null)
+  useEffect(() => {
+    const prefill = parseSwapPrefill(window.location.search)
+    prefillRef.current = prefill
+    // A code from the agent is resolved to the one registered asset with that
+    // code on this network — never matched against whatever else shares it.
+    const wantedDest = prefill.to && prefill.to !== prefill.from
+      ? DESTINATIONS.find((d) => d.code === prefill.to)
+      : undefined
+    if (wantedDest) setDestAsset(toDestAsset(wantedDest))
+    if (prefill.amount) setSourceAmount(prefill.amount)
+  }, [])
+
   // ── Load session ──
   useEffect(() => {
-    const addr = sessionStorage.getItem('invisible_wallet_address')
+    const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
     setWalletAddress(addr)
     fetchBalances(addr)
@@ -95,10 +140,10 @@ export default function SwapPage() {
 
   const fetchBalances = async (_addr: string) => {
     try {
-      const signerSecret = sessionStorage.getItem('veil_signer_secret')
+      const signerSecret = walletSession.getItem('veil_signer_secret')
       const accountAddr = signerSecret
         ? Keypair.fromSecret(signerSecret).publicKey()
-        : (localStorage.getItem('veil_signer_public_key') || null)
+        : (walletLocal.getItem('veil_signer_public_key') || null)
       if (!accountAddr || accountAddr.startsWith('C')) {
         setErrorMsg('Signing key not found. Go to Dashboard and tap "Set up fee-payer" first.')
         return
@@ -111,8 +156,19 @@ export default function SwapPage() {
           issuer: b.asset_issuer,
           balance: b.balance,
         }))
+        setSpendableXlm(spendableNativeXlm(data))
         setSourceBalances(assets)
-        setSourceAsset(assets.find((a) => a.code === 'XLM') || assets[0])
+        // The asset the agent named, if the account holds the REGISTERED one;
+        // otherwise XLM. A held impostor sharing the code is never picked.
+        const wanted = prefillRef.current?.from
+        const wantedIssuer = wanted && wanted !== 'XLM' ? getAssetIssuer(wanted, network.name) : null
+        const wantedKey = wanted === 'XLM' ? 'native' : wantedIssuer ? `${wanted}:${wantedIssuer}` : null
+        setSourceAsset(
+          (wantedKey && assets.find((a) => assetKey(a) === wantedKey)) ||
+            assets.find((a) => assetKey(a) === 'native') ||
+            assets.find((a) => checkSwapAsset(toSwapAsset(a), network.name).ok) ||
+            null,
+        )
       }
     } catch (err) {
       console.error('Failed to fetch balances', err)
@@ -120,7 +176,19 @@ export default function SwapPage() {
   }
 
   // ── Quote fetching (Soroswap first, SDEX fallback) ──
+  //
+  // Both venues are asked about exactly one pair: the SAC derived from each
+  // asset's code:issuer for Soroswap, `new Asset(code, issuer)` for the classic
+  // DEX (#793). The DEX is tried only when Soroswap is unavailable or has no
+  // route — never after Soroswap answered about a different asset — and a pair
+  // neither venue can route is reported as such, not quoted as something else.
   useEffect(() => {
+    // A new pair or amount invalidates whatever was quoted before it.
+    const seq = ++quoteSeq.current
+    setQuote(null)
+    setPath([])
+    setUsingSoroswap(false)
+    setVenueNote(null)
     if (
       !sourceAsset ||
       !destAsset ||
@@ -129,74 +197,64 @@ export default function SwapPage() {
       parseFloat(sourceAmount) <= 0
     ) {
       setDestAmount('')
-      setQuote(null)
-      setPath([])
+      return
+    }
+
+    const route = swapRouteInput(
+      toSwapAsset(sourceAsset),
+      toSwapAsset(destAsset),
+      network.name,
+      network.networkPassphrase,
+    )
+    if (!route.ok) {
+      setDestAmount('')
+      setErrorMsg(route.reason)
       return
     }
 
     if (debounceRef.current) clearTimeout(debounceRef.current)
 
     debounceRef.current = setTimeout(async () => {
+      const stale = () => seq !== quoteSeq.current
       setIsFetchingQuote(true)
       setErrorMsg(null)
-      setUsingSoroswap(false)
+      setDestAmount('')
 
       // --- Try Soroswap aggregator first ---
-      try {
-        const [tokenInAddress, tokenOutAddress] = await Promise.all([
-          sourceAsset.code === 'XLM'
-            ? Asset.native().contractId(network.networkPassphrase)
-            : resolveTokenAddress(sourceAsset.code),
-          destAsset.code === 'XLM'
-            ? Asset.native().contractId(network.networkPassphrase)
-            : resolveTokenAddress(destAsset.code),
-        ])
+      const signerSecret =
+        walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
+      const soroswap = await getSoroswapQuote({
+        tokenIn: route.tokenIn,
+        tokenOut: route.tokenOut,
+        amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
+        slippageBps,
+        feePayerAddress: signerSecret ? Keypair.fromSecret(signerSecret).publicKey() : '',
+      })
+      if (stale()) return
 
-        if (tokenInAddress && tokenOutAddress) {
-          const amountInStroops = Math.round(
-            parseFloat(sourceAmount) * 1e7
-          ).toString()
-          const signerPub =
-            Keypair.fromSecret(
-              sessionStorage.getItem('veil_signer_secret') ||
-                localStorage.getItem('veil_signer_secret') ||
-                ''
-            ).publicKey() || ''
-
-          const q = await getSoroswapQuote({
-            tokenIn: tokenInAddress,
-            tokenOut: tokenOutAddress,
-            amountIn: amountInStroops,
-            slippageBps,
-            feePayerAddress: signerPub,
-          })
-
-          if (q) {
-            setQuote(q)
-            setUsingSoroswap(true)
-            // Convert stroops back to display units
-            setDestAmount((Number(q.amountOut) / 1e7).toFixed(7))
-            setIsFetchingQuote(false)
-            return
-          }
-        }
-      } catch (soroErr) {
-        console.warn('Soroswap quote failed, falling back to SDEX:', soroErr)
+      if (soroswap.ok) {
+        setQuote(soroswap.quote)
+        setUsingSoroswap(true)
+        // Convert stroops back to display units
+        setDestAmount((Number(soroswap.quote.amountOut) / 1e7).toFixed(7))
+        setIsFetchingQuote(false)
+        return
+      }
+      if (soroswap.kind === 'mismatch') {
+        setErrorMsg(soroswap.reason)
+        setIsFetchingQuote(false)
+        return
       }
 
-      // --- SDEX Fallback ---
+      // --- SDEX Fallback, for the same pair ---
       try {
-        const source =
-          sourceAsset.code === 'XLM' || !sourceAsset.issuer
-            ? Asset.native()
-            : new Asset(sourceAsset.code, sourceAsset.issuer!)
-        const dest =
-          destAsset.code === 'XLM' || !destAsset.issuer
-            ? Asset.native()
-            : new Asset(destAsset.code, destAsset.issuer!)
+        const source = classicAsset(route.from)
+        const dest = classicAsset(route.to)
         const pathsResult = await server.strictSendPaths(source, sourceAmount, [dest]).call()
-        if (pathsResult.records.length > 0) {
-          const bestPath = pathsResult.records[0]
+        if (stale()) return
+        // Only a path that pays out the asset asked for is a quote for it.
+        const bestPath = pathsResult.records.find((r) => pathPaysOut(r, route.to))
+        if (bestPath) {
           setDestAmount(bestPath.destination_amount)
           setPath(
             bestPath.path.map((p: any) =>
@@ -205,17 +263,16 @@ export default function SwapPage() {
                 : new Asset(p.asset_code, p.asset_issuer)
             )
           )
-          setUsingSoroswap(false)
-          setQuote(null)
+          setVenueNote(soroswap.reason)
         } else {
-          setErrorMsg('No path found. Try a different amount or asset.')
-          setDestAmount('')
+          setErrorMsg(noRouteMessage(route.from, route.to, network.name))
         }
       } catch (err) {
+        if (stale()) return
         console.error('SDEX pathfind error', err)
-        setErrorMsg('Error finding swap path. Check your connection.')
+        setErrorMsg('Could not get a quote for this pair. Check your connection and try again.')
       } finally {
-        setIsFetchingQuote(false)
+        if (!stale()) setIsFetchingQuote(false)
       }
     }, DEBOUNCE_MS)
 
@@ -233,8 +290,8 @@ export default function SwapPage() {
       await requirePasskey()
 
       const signerSecret =
-        sessionStorage.getItem('veil_signer_secret') ||
-        localStorage.getItem('veil_signer_secret')
+        walletSession.getItem('veil_signer_secret') ||
+        walletLocal.getItem('veil_signer_secret')
       if (!signerSecret) {
         setErrorMsg('Signing key not found.')
         setStep('error')
@@ -243,53 +300,45 @@ export default function SwapPage() {
       const signerKeypair = Keypair.fromSecret(signerSecret)
       const signerPubKey = signerKeypair.publicKey()
 
+      // The pair is re-checked at submit, not trusted from when it was quoted.
+      const route = swapRouteInput(
+        toSwapAsset(sourceAsset!),
+        toSwapAsset(destAsset),
+        network.name,
+        network.networkPassphrase,
+      )
+      if (!route.ok) {
+        setErrorMsg(route.reason)
+        setStep('error')
+        return
+      }
+
       // ── Soroswap path ──
       if (usingSoroswap && quote) {
-        // Re-fetch quote if it has expired
-        const liveQuote =
-          Date.now() > quote.ttl
-            ? await (async () => {
-                const tokenIn = await (sourceAsset!.code === 'XLM'
-                  ? Asset.native().contractId(network.networkPassphrase)
-                  : resolveTokenAddress(sourceAsset!.code))
-                const tokenOut = await (destAsset.code === 'XLM'
-                  ? Asset.native().contractId(network.networkPassphrase)
-                  : resolveTokenAddress(destAsset.code))
-                return tokenIn && tokenOut
-                  ? getSoroswapQuote({
-                      tokenIn,
-                      tokenOut,
-                      amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
-                      slippageBps,
-                      feePayerAddress: signerPubKey,
-                    })
-                  : null
-              })()
-            : quote
-
-        if (!liveQuote) {
-          setErrorMsg('Quote expired and could not be refreshed. Please retry.')
-          setStep('error')
-          return
+        // Re-fetch an expired quote — for the same two contracts only. If the
+        // router no longer routes them, say so; do not switch venue or asset
+        // behind a quote the user has already reviewed.
+        let liveQuote: SwapQuote = quote
+        if (Date.now() > quote.ttl) {
+          const fresh = await getSoroswapQuote({
+            tokenIn: route.tokenIn,
+            tokenOut: route.tokenOut,
+            amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
+            slippageBps,
+            feePayerAddress: signerPubKey,
+          })
+          if (!fresh.ok) {
+            setErrorMsg(`The quote expired and could not be refreshed: ${fresh.reason} Please retry.`)
+            setStep('error')
+            return
+          }
+          liveQuote = fresh.quote
         }
 
-        const tokenIn = await (sourceAsset!.code === 'XLM'
-          ? Asset.native().contractId(network.networkPassphrase)
-          : resolveTokenAddress(sourceAsset!.code))
-        const tokenOut = await (destAsset.code === 'XLM'
-          ? Asset.native().contractId(network.networkPassphrase)
-          : resolveTokenAddress(destAsset.code))
-
-        const xdr = await buildSoroswapSwapXdr({
-          tokenIn: tokenIn!,
-          tokenOut: tokenOut!,
-          amountIn: Math.round(parseFloat(sourceAmount) * 1e7).toString(),
-          slippageBps,
-          feePayerAddress: signerPubKey,
-        })
+        const xdr = await buildSoroswapSwapXdr(liveQuote, signerPubKey)
 
         if (!xdr) {
-          throw new Error('Failed to build Soroswap transaction. Falling back to SDEX is required.')
+          throw new Error('Soroswap could not build this swap. Nothing was sent — please retry.')
         }
 
         const hash = await signAndSubmitSorobanXdr({
@@ -305,14 +354,8 @@ export default function SwapPage() {
 
       // ── Classic SDEX fallback ──
       const account = await server.loadAccount(signerPubKey)
-      const source =
-        sourceAsset!.code === 'XLM' || !sourceAsset!.issuer
-          ? Asset.native()
-          : new Asset(sourceAsset!.code, sourceAsset!.issuer!)
-      const dest =
-        destAsset.code === 'XLM' || !destAsset.issuer
-          ? Asset.native()
-          : new Asset(destAsset.code, destAsset.issuer!)
+      const source = classicAsset(route.from)
+      const dest = classicAsset(route.to)
 
       const destMin = (parseFloat(destAmount) * (1 - slippageBps / 10000)).toFixed(7)
 
@@ -324,7 +367,7 @@ export default function SwapPage() {
         )
 
       const txBuilder = new TransactionBuilder(account, {
-        fee: BASE_FEE,
+        fee: inclusionFee(),
         networkPassphrase: network.networkPassphrase,
       })
 
@@ -373,6 +416,14 @@ export default function SwapPage() {
       : null
 
   const slippageTolerance = slippageBps / 10000
+  /** Same derivation the send screen uses, so the two quote the fee alike. */
+  const feeXlm = (Number(inclusionFee()) / 10_000_000).toFixed(7)
+
+  const flip = resolveFlip(sourceAsset, destAsset, sourceBalances, DESTINATIONS)
+  // Every place the swap names an asset names its issuer too, so the user can
+  // see which USDT0 (of eight) they are trading (#793).
+  const payLabel = sourceAsset ? swapAssetLabel(toSwapAsset(sourceAsset), network.name) : '—'
+  const receiveLabel = swapAssetLabel(toSwapAsset(destAsset), network.name)
 
   return (
     <div className="wallet-shell">
@@ -401,129 +452,92 @@ export default function SwapPage() {
           </svg>
           Dashboard
         </button>
-        <VeilLogo size={22} />
-        {/* Slippage settings icon */}
-        <button
-          onClick={() => setShowSlippage((v) => !v)}
-          title="Slippage settings"
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: 'rgba(246,247,248,0.5)',
-            display: 'flex',
-            alignItems: 'center',
-          }}
-        >
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="1.4" />
-            <path
-              d="M7 10h6M10 7v6"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-            />
-          </svg>
-        </button>
+        <VeilMark size={22} />
       </nav>
 
-      {/* Slippage panel */}
-      {showSlippage && (
-        <div
-          className="card"
-          style={{ margin: '0 1.25rem', padding: '0.875rem', display: 'flex', gap: '0.5rem' }}
-        >
-          <span style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.45)', alignSelf: 'center', marginRight: '0.5rem' }}>
-            Slippage:
-          </span>
-          {SLIPPAGE_OPTIONS.map((opt) => (
-            <button
-              key={opt.bps}
-              onClick={() => { setSlippageBps(opt.bps); setShowSlippage(false) }}
-              style={{
-                padding: '0.25rem 0.75rem',
-                borderRadius: '999px',
-                border: slippageBps === opt.bps ? '1px solid var(--gold)' : '1px solid rgba(246,247,248,0.15)',
-                background: slippageBps === opt.bps ? 'rgba(212,175,55,0.12)' : 'transparent',
-                color: slippageBps === opt.bps ? 'var(--gold)' : 'var(--off-white)',
-                cursor: 'pointer',
-                fontSize: '0.8125rem',
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
+      <main className="wallet-main wallet-main--wide">
+        <div style={{ marginBottom: '1.75rem' }}>
+          <PageHeader
+            eyebrow="Exchange"
+            title="Swap"
+            action={
+              <Pill
+                variant={showSlippage ? 'outline-gold' : 'ghost'}
+                onClick={() => setShowSlippage((v) => !v)}
+              >
+                {slippageBps / 100}% slippage
+              </Pill>
+            }
+          />
         </div>
-      )}
 
-      <main className="wallet-main">
-        <h2
-          style={{
-            fontFamily: 'Lora, Georgia, serif',
-            fontWeight: 600,
-            fontStyle: 'italic',
-            fontSize: '1.75rem',
-            marginBottom: '1.75rem',
-          }}
-        >
-          Swap tokens
-        </h2>
+        {/* Slippage selector */}
+        {showSlippage && (
+          <Card className="mb-4">
+            <div className="flex items-center gap-2">
+              <SectionLabel tone="dim">Slippage</SectionLabel>
+              <div className="flex gap-2 ml-auto">
+                {SLIPPAGE_OPTIONS.map((opt) => (
+                  <Pill
+                    key={opt.bps}
+                    variant={slippageBps === opt.bps ? 'outline-gold' : 'ghost'}
+                    onClick={() => { setSlippageBps(opt.bps); setShowSlippage(false) }}
+                  >
+                    {opt.label}
+                  </Pill>
+                ))}
+              </div>
+            </div>
+          </Card>
+        )}
 
         {step === 'form' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div className="vw-row vw-row--first" style={{ alignItems: 'flex-start' }}>
+            <div className="vw-swapcol">
+            {/* The pay/receive pair sits flush so the toggle straddles the seam. */}
+            <div className="flex flex-col relative">
             {/* You Pay */}
-            <div className="card" style={{ padding: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                <label
-                  style={{
-                    fontSize: '0.75rem',
-                    color: 'rgba(246,247,248,0.4)',
-                    fontFamily: 'Anton, Impact, sans-serif',
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  YOU PAY
-                </label>
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.3)' }}>
+            <Card>
+              <div className="flex justify-between items-center mb-3">
+                <SectionLabel tone="dim">You pay</SectionLabel>
+                <div className="flex gap-2 items-center">
+                  <span className="font-mono text-[12px] text-[rgba(246,247,248,0.35)]">
                     Balance: {sourceAsset?.balance || '0'} {sourceAsset?.code}
                   </span>
-                  <button
-                    onClick={() => setSourceAmount(sourceAsset?.balance || '')}
-                    style={{
-                      fontSize: '0.6875rem',
-                      padding: '0.125rem 0.375rem',
-                      border: '1px solid rgba(212,175,55,0.35)',
-                      borderRadius: '4px',
-                      background: 'transparent',
-                      color: 'var(--gold)',
-                      cursor: 'pointer',
-                    }}
+                  <Pill
+                    variant="outline-gold"
+                    onClick={() =>
+                      setSourceAmount(
+                        sourceAsset?.code === 'XLM' && spendableXlm !== null
+                          ? spendableXlm
+                          : sourceAsset?.balance || '',
+                      )
+                    }
                   >
                     Max
-                  </button>
+                  </Pill>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+              <div className="flex gap-4 items-center">
                 <select
-                  style={{
-                    background: 'var(--surface-md)',
-                    border: 'none',
-                    color: 'white',
-                    padding: '0.5rem',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                  }}
-                  value={sourceAsset?.code || ''}
+                  className="bg-surface-md border-0 text-off-white py-2 px-3 rounded-xl cursor-pointer text-[15px] font-semibold"
+                  value={sourceAsset ? assetKey(sourceAsset) : ''}
                   onChange={(e) =>
-                    setSourceAsset(sourceBalances.find((b) => b.code === e.target.value) || null)
+                    setSourceAsset(sourceBalances.find((b) => assetKey(b) === e.target.value) || null)
                   }
                 >
-                  {sourceBalances.map((b) => (
-                    <option key={b.code} value={b.code}>
-                      {b.code}
-                    </option>
-                  ))}
+                  {/* Keyed by code:issuer, so two holdings that share a code stay
+                      two options. One that shares a REGISTERED code without its
+                      issuer is listed but cannot be picked. */}
+                  {sourceBalances.map((b) => {
+                    const tradeable = checkSwapAsset(toSwapAsset(b), network.name).ok
+                    return (
+                      <option key={assetKey(b)} value={assetKey(b)} disabled={!tradeable}>
+                        {b.issuer ? `${b.code} (${b.issuer.slice(0, 4)}…${b.issuer.slice(-4)})` : b.code}
+                        {tradeable ? '' : ' — unregistered issuer, cannot swap'}
+                      </option>
+                    )
+                  })}
                 </select>
                 <input
                   className="input-field"
@@ -536,162 +550,168 @@ export default function SwapPage() {
                     textAlign: 'right',
                     border: 'none',
                     padding: 0,
-                    fontSize: '1.5rem',
+                    fontSize: '1.75rem',
                     background: 'none',
+                    fontFamily: 'Inconsolata, monospace',
                   }}
                 />
               </div>
-            </div>
+            </Card>
 
-            {/* Down Arrow */}
-            <div style={{ display: 'flex', justifyContent: 'center', margin: '-0.5rem 0' }}>
-              <div
+            {/* Circular swap toggle */}
+            <div className="flex justify-center" style={{ margin: '-18px 0', zIndex: 10 }}>
+              <button
+                type="button"
+                aria-label="Swap direction"
+                disabled={!flip}
+                title={flip ? 'Swap direction' : 'This pair cannot be flipped'}
+                onClick={() => {
+                  if (!flip) return
+                  setDestAsset(flip.nextDest)
+                  setSourceAsset(flip.nextSource)
+                  // The receive amount becomes what we now pay; the quote effect
+                  // refills the other side rather than showing a stale figure.
+                  setSourceAmount(destAmount)
+                  setDestAmount('')
+                }}
+                className="rounded-full flex items-center justify-center transition-transform duration-200 hover:scale-110 active:scale-95 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                 style={{
+                  width: 40,
+                  height: 40,
                   background: 'var(--surface-md)',
-                  borderRadius: '50%',
-                  width: '32px',
-                  height: '32px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  border: '4px solid var(--background)',
+                  border: '4px solid var(--near-black)',
                 }}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
                   <path
-                    d="M8 3v10M4 9l4 4 4-4"
+                    d="M9 3v12M5 11l4 4 4-4"
                     stroke="var(--gold)"
                     strokeWidth="1.5"
                     strokeLinecap="round"
                     strokeLinejoin="round"
                   />
                 </svg>
-              </div>
+              </button>
             </div>
 
             {/* You Receive */}
-            <div className="card" style={{ padding: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                <label
-                  style={{
-                    fontSize: '0.75rem',
-                    color: 'rgba(246,247,248,0.4)',
-                    fontFamily: 'Anton, Impact, sans-serif',
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  YOU RECEIVE
-                </label>
+            <Card>
+              <div className="flex justify-between items-center mb-3">
+                <SectionLabel tone="dim">You receive</SectionLabel>
                 {usingSoroswap && quote && (
-                  <span
-                    style={{
-                      fontSize: '0.6875rem',
-                      background: 'rgba(212,175,55,0.1)',
-                      border: '1px solid rgba(212,175,55,0.3)',
-                      color: 'var(--gold)',
-                      padding: '0.125rem 0.5rem',
-                      borderRadius: '999px',
-                    }}
-                  >
+                  <span className="text-[11px] font-semibold uppercase rounded-pill px-2 py-[2px] whitespace-nowrap text-gold bg-[rgba(253,218,36,0.1)]" style={{ letterSpacing: '0.08em' }}>
                     via {quote.protocols.join(' · ')}
                   </span>
                 )}
               </div>
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+              <div className="flex gap-4 items-center">
                 <select
-                  style={{
-                    background: 'var(--surface-md)',
-                    border: 'none',
-                    color: 'white',
-                    padding: '0.5rem',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
+                  className="bg-surface-md border-0 text-off-white py-2 px-3 rounded-xl cursor-pointer text-[15px] font-semibold"
+                  value={assetKey(destAsset)}
+                  onChange={(e) => {
+                    const next = DESTINATIONS.find((d) => assetKey(d) === e.target.value)
+                    if (next) setDestAsset(toDestAsset(next))
                   }}
-                  value={destAsset.code}
-                  onChange={(e) =>
-                    setDestAsset(
-                      e.target.value === 'XLM'
-                        ? { code: 'XLM', balance: '0' }
-                        : { code: 'USDC', issuer: TESTNET_USDC.issuer, balance: '0' }
-                    )
-                  }
                 >
-                  <option value="USDC">USDC</option>
-                  <option value="XLM">XLM</option>
+                  {DESTINATIONS.map((d) => (
+                    <option key={assetKey(d)} value={assetKey(d)}>
+                      {d.code}
+                    </option>
+                  ))}
                 </select>
-                <div
-                  style={{
-                    flex: 1,
-                    textAlign: 'right',
-                    fontSize: '1.5rem',
-                    fontFamily: 'Inconsolata, monospace',
-                  }}
-                >
+                <div className="flex-1 text-right font-mono text-[1.75rem] text-off-white">
                   {isFetchingQuote ? '...' : destAmount || '0.00'}
                 </div>
               </div>
+            </Card>
+
             </div>
-
-            {/* Quote details */}
-            {usingSoroswap && quote && !errorMsg && (
-              <div className="card" style={{ padding: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                <Row
-                  label="Price impact"
-                  value={
-                    quote.priceImpact < 0.005
-                      ? '< 0.01%'
-                      : `${(quote.priceImpact * 100).toFixed(2)}%`
-                  }
-                />
-                <Row label="Route" value={quote.protocols.join(' · ')} />
-                <Row label="Slippage" value={`${slippageBps / 100}%`} />
-              </div>
-            )}
-
-            {!usingSoroswap && rate && !errorMsg && (
-              <div style={{ textAlign: 'center', margin: '0.5rem 0' }}>
-                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)' }}>
-                  1 {sourceAsset?.code} ≈ {rate} {destAsset.code}
-                  {' '}· via SDEX (no Soroswap liquidity)
-                </p>
-              </div>
-            )}
 
             {errorMsg && (
               <div
                 className="card"
                 style={{ background: 'rgba(255,0,0,0.05)', border: '1px solid rgba(255,0,0,0.1)' }}
               >
-                <p style={{ fontSize: '0.8125rem', color: 'var(--teal)', textAlign: 'center' }}>
+                <p className="text-[13px] text-teal text-center">
                   {errorMsg}
                 </p>
               </div>
             )}
 
-            <button
-              className="btn-gold"
-              onClick={() => setStep('confirm')}
-              disabled={!sourceAmount || !destAmount || isFetchingQuote || !!errorMsg}
-              style={{ marginTop: '1rem' }}
-            >
-              Review swap
-            </button>
+            <div style={{ marginTop: '0.5rem' }}>
+              <button
+                className="btn-gold"
+                onClick={() => setStep('confirm')}
+                disabled={!sourceAmount || !destAmount || isFetchingQuote || !!errorMsg}
+              >
+                Review swap
+              </button>
+            </div>
+            </div>
+
+            <div className="vw-swapside">
+            {/* Route panel.
+                Always rendered, with a dash where a figure is not known yet.
+                It was gated on having a quote, so the whole right-hand column
+                was empty until an amount was typed and then appeared all at
+                once. Showing the shape of the answer before there is one also
+                tells the user what they will be told before they commit: which
+                venue, how much impact, what the fee is. */}
+              <Card>
+                <SectionLabel tone="dim" className="mb-3">Route</SectionLabel>
+                <div className="flex flex-col gap-2">
+                  <Row label="Pay" value={payLabel} />
+                  <Row label="Receive" value={receiveLabel} />
+                  <Row
+                    label="Rate"
+                    value={rate ? `1 ${sourceAsset?.code} ≈ ${rate} ${destAsset.code}` : '—'}
+                  />
+                  <Row
+                    label="Venue"
+                    value={rate ? (usingSoroswap && quote ? quote.protocols.join(' · ') : 'SDEX') : '—'}
+                  />
+                  {rate && venueNote && <Row label="Why SDEX" value={venueNote} />}
+                  <Row
+                    label="Price impact"
+                    value={
+                      usingSoroswap && quote && rate
+                        ? quote.priceImpact < 0.005
+                          ? '< 0.01%'
+                          : `${(quote.priceImpact * 100).toFixed(2)}%`
+                        : '—'
+                    }
+                  />
+                  <Row label="Slippage" value={`${slippageBps / 100}%`} />
+                  {/* Just the figure. The longer "paid by fee-payer" broke
+                      mid-word in this column, and the confirm step says who
+                      pays it anyway. */}
+                  <Row label="Network fee" value={`${feeXlm} XLM`} />
+                  <Row
+                    label="Min. received"
+                    value={
+                      rate && destAmount
+                        ? `${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${receiveLabel}`
+                        : '—'
+                    }
+                  />
+                </div>
+              </Card>
+            </div>
           </div>
         )}
 
         {step === 'confirm' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div className="card">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                <Row label="Pay" value={`${sourceAmount} ${sourceAsset?.code}`} />
-                <Row label="Receive (est.)" value={`${destAmount} ${destAsset.code}`} />
+          <div className="flex flex-col gap-5">
+            <Card>
+              <SectionLabel tone="dim" className="mb-4">Confirm swap</SectionLabel>
+              <div className="flex flex-col gap-3">
+                <Row label="Pay" value={`${sourceAmount} ${payLabel}`} />
+                <Row label="Receive (est.)" value={`${destAmount} ${receiveLabel}`} />
                 <Row
-                  label="Min. Received"
-                  value={`${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${
-                    destAsset.code
-                  }`}
+                  label="Min. received"
+                  value={`${(parseFloat(destAmount) * (1 - slippageTolerance)).toFixed(7)} ${receiveLabel}`}
                 />
-                <Row label="Slippage Tolerance" value={`${slippageBps / 100}%`} />
+                <Row label="Slippage tolerance" value={`${slippageBps / 100}%`} />
                 {usingSoroswap && quote && (
                   <>
                     <Row
@@ -705,10 +725,11 @@ export default function SwapPage() {
                     <Row label="Route" value={quote.protocols.join(' · ')} />
                   </>
                 )}
-                <Row label="Network Fee" value="0.00001 XLM" />
+                {!usingSoroswap && <Row label="Route" value={venueNote ? `SDEX — ${venueNote}` : 'SDEX'} />}
+                <Row label="Network fee" value="0.00001 XLM" />
               </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            </Card>
+            <div className="flex flex-col gap-3">
               <button className="btn-gold" onClick={handleSwap}>
                 Confirm swap
               </button>
@@ -720,29 +741,20 @@ export default function SwapPage() {
         )}
 
         {step === 'swapping' && (
-          <div className="card" style={{ textAlign: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem' }}>
+          <Card className="text-center">
+            <div className="flex justify-center mb-4">
               <div className="spinner spinner-light" />
             </div>
-            <p style={{ fontWeight: 500 }}>Waiting for passkey…</p>
-            <p
-              style={{
-                fontSize: '0.8125rem',
-                color: 'rgba(246,247,248,0.4)',
-                marginTop: '0.5rem',
-              }}
-            >
+            <p className="font-medium">Waiting for passkey…</p>
+            <p className="text-[13px] text-[rgba(246,247,248,0.4)] mt-2">
               Approve with Face ID / fingerprint to continue
             </p>
-          </div>
+          </Card>
         )}
 
         {step === 'done' && (
-          <div
-            className="card"
-            style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}
-          >
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none" style={{ margin: '0 auto' }}>
+          <Card className="flex flex-col gap-5 items-center text-center">
+            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
               <circle cx="20" cy="20" r="19" stroke="var(--teal)" strokeWidth="1.5" />
               <path
                 d="M13 20.5l5 5 9-9"
@@ -753,26 +765,11 @@ export default function SwapPage() {
               />
             </svg>
             <div>
-              <p
-                style={{
-                  fontFamily: 'Lora, Georgia, serif',
-                  fontWeight: 600,
-                  fontStyle: 'italic',
-                  fontSize: '1.25rem',
-                }}
-              >
+              <p className="font-lora italic font-semibold text-[1.25rem]">
                 Swap successful
               </p>
               {txHash && (
-                <p
-                  style={{
-                    fontSize: '0.75rem',
-                    color: 'rgba(246,247,248,0.35)',
-                    fontFamily: 'Inconsolata, monospace',
-                    marginTop: '0.5rem',
-                    wordBreak: 'break-all',
-                  }}
-                >
+                <p className="font-mono text-[12px] text-[rgba(246,247,248,0.35)] mt-2 break-all">
                   {txHash.slice(0, 20)}...
                 </p>
               )}
@@ -780,31 +777,22 @@ export default function SwapPage() {
             <button className="btn-gold" onClick={() => router.push('/dashboard')}>
               Done
             </button>
-          </div>
+          </Card>
         )}
 
         {step === 'error' && (
-          <div
-            className="card"
-            style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', textAlign: 'center' }}
-          >
-            <div style={{ color: 'var(--teal)', fontSize: '2.5rem' }}>!</div>
+          <Card className="flex flex-col gap-5 items-center text-center">
+            <div className="text-teal text-[2.5rem]">!</div>
             <div>
-              <p style={{ fontWeight: 500 }}>Swap failed</p>
-              <p
-                style={{
-                  fontSize: '0.8125rem',
-                  color: 'rgba(246,247,248,0.4)',
-                  marginTop: '0.5rem',
-                }}
-              >
+              <p className="font-medium">Swap failed</p>
+              <p className="text-[13px] text-[rgba(246,247,248,0.4)] mt-2">
                 {errorMsg}
               </p>
             </div>
             <button className="btn-ghost" onClick={() => setStep('form')}>
               Try again
             </button>
-          </div>
+          </Card>
         )}
       </main>
     </div>
@@ -813,18 +801,11 @@ export default function SwapPage() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-        gap: '1rem',
-      }}
-    >
-      <span style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', flexShrink: 0 }}>
+    <div className="flex justify-between items-start gap-4">
+      <span className="text-[13px] text-[rgba(246,247,248,0.4)] shrink-0">
         {label}
       </span>
-      <span style={{ fontSize: '0.875rem', textAlign: 'right', wordBreak: 'break-all' }}>
+      <span className="text-[14px] text-right break-all">
         {value}
       </span>
     </div>

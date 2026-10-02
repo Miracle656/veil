@@ -1,0 +1,75 @@
+<svg width="160" height="48" viewBox="0 0 160 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Veil">
+  <defs>
+
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Anton&amp;display=swap');
+    </style>
+
+    <linearGradient id="gText" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#FFE566"/>
+      <stop offset="50%"  stop-color="#FDDA24"/>
+      <stop offset="100%" stop-color="#C4A200"/>
+    </linearGradient>
+
+    <linearGradient id="gMark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#FFE566"/>
+      <stop offset="100%" stop-color="#B89000"/>
+    </linearGradient>
+
+    <!-- soft ambient glow on the V mark -->
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+  </defs>
+
+  <!-- ── Mark: layered geometric V ──────────────────────────────────── -->
+  <g filter="url(#glow)">
+
+    <!-- outer V — bold strokes -->
+    <path d="M4 7 L19.5 41 L35 7"
+          fill="none"
+          stroke="url(#gMark)"
+          stroke-width="3"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- inner ghost V — depth layer -->
+    <path d="M9.5 7 L19.5 31 L29.5 7"
+          fill="none"
+          stroke="#FDDA24"
+          stroke-width="1.1"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          opacity="0.28"/>
+
+    <!-- horizontal veil line -->
+    <line x1="8" y1="22" x2="31" y2="22"
+          stroke="#FDDA24" stroke-width="0.8"
+          stroke-linecap="round" opacity="0.22"/>
+
+    <!-- apex dot -->
+    <circle cx="19.5" cy="41" r="1.5" fill="#FDDA24" opacity="0.6"/>
+
+  </g>
+
+  <!-- ── Wordmark ────────────────────────────────────────────────────── -->
+  <text
+    x="46"
+    y="34"
+    font-family="'Anton', 'Impact', 'Arial Black', sans-serif"
+    font-size="26"
+    font-weight="400"
+    letter-spacing="4"
+    fill="url(#gText)"
+  >VEIL</text>
+
+  <!-- thin gold baseline rule -->
+  <line x1="46" y1="39" x2="149" y2="39"
+        stroke="#FDDA24" stroke-width="0.7" opacity="0.22"/>
+
+</svg>

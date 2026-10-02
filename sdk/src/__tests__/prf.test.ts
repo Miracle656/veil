@@ -1,4 +1,9 @@
 /**
+ * @jest-environment node
+ *
+ * Runs under Node (not jsdom): jsdom's separate ArrayBuffer realm makes
+ * SubtleCrypto reject same-realm buffers ("not instance of ArrayBuffer").
+ *
  * Tests for WebAuthn PRF-derived client-side encryption.
  *
  * The PRF ceremony (navigator.credentials.get) is replaced with an injected
@@ -8,9 +13,12 @@
  */
 
 import { webcrypto } from 'node:crypto'
+import { Keypair } from '@stellar/stellar-sdk'
 import {
   createLocalCipher,
   deriveKeyFromPrf,
+  deriveFeePayerSeedFromPrf,
+  evaluateFeePayerPrf,
   encryptWithKey,
   decryptWithKey,
   isPrfSupported,
@@ -92,6 +100,48 @@ describe('encrypt / decrypt round-trip', () => {
   it('rejects a truncated/corrupt payload', async () => {
     const key = await deriveKeyFromPrf(new Uint8Array(32).fill(5))
     await expect(decryptWithKey(key, btoa('short'))).rejects.toThrow('Ciphertext too short')
+  })
+})
+
+describe('fee-payer seed derivation (ADR 0003)', () => {
+  it('derives a stable 32-byte Ed25519 seed for identical PRF output', async () => {
+    const prf = new Uint8Array(32).fill(42)
+    const a = await deriveFeePayerSeedFromPrf(prf)
+    const b = await deriveFeePayerSeedFromPrf(prf)
+    expect(a).toHaveLength(32)
+    expect(Array.from(a)).toEqual(Array.from(b))
+    // Same seed → same Stellar account, tx after tx.
+    expect(Keypair.fromRawEd25519Seed(Buffer.from(a)).publicKey())
+      .toBe(Keypair.fromRawEd25519Seed(Buffer.from(b)).publicKey())
+  })
+
+  it('produces a different seed for different PRF output', async () => {
+    const a = await deriveFeePayerSeedFromPrf(new Uint8Array(32).fill(1))
+    const b = await deriveFeePayerSeedFromPrf(new Uint8Array(32).fill(2))
+    expect(Array.from(a)).not.toEqual(Array.from(b))
+  })
+
+  it('domain-separates the seed from the raw PRF output (HKDF info applied)', async () => {
+    const prf = new Uint8Array(32).fill(5)
+    const seed = await deriveFeePayerSeedFromPrf(prf)
+    expect(Array.from(seed)).not.toEqual(Array.from(prf))
+  })
+
+  it('evaluateFeePayerPrf runs the injected evaluator with the fee-payer salt', async () => {
+    let seenSalt: Uint8Array | null = null
+    const evaluator: PrfEvaluator = async (salt) => { seenSalt = salt; return new Uint8Array(32).fill(9) }
+    const out = await evaluateFeePayerPrf('cred', undefined, evaluator)
+    expect(out && Array.from(out)).toEqual(Array.from(new Uint8Array(32).fill(9)))
+    expect(new TextDecoder().decode(seenSalt!)).toBe('invisible-wallet/prf/feepayer/v1')
+  })
+
+  it('evaluateFeePayerPrf returns null when PRF is unsupported (no evaluator, no browser)', async () => {
+    expect(await evaluateFeePayerPrf('cred')).toBeNull()
+  })
+
+  it('evaluateFeePayerPrf surfaces a null result (authenticator without PRF)', async () => {
+    const noPrf: PrfEvaluator = async () => null
+    expect(await evaluateFeePayerPrf('cred', undefined, noPrf)).toBeNull()
   })
 })
 

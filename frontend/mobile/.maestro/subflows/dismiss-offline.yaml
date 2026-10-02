@@ -1,0 +1,32 @@
+appId: xyz.veil.wallet
+---
+# Get past the offline screen if it is covering the app.
+#
+# `ConnectivityGate` in app/_layout.tsx pushes /offline whenever NetInfo
+# positively reports no usable connection, and a freshly booted CI emulator
+# often has not finished bringing up its network when the first flow launches.
+# The previous run of this suite failed every flow on exactly this: nothing past
+# the cold start was ever reached.
+#
+# Retrying re-probes the network; if that succeeds the gate pops the screen
+# itself. `back` is the fallback for the case where the emulator really has no
+# connection, so the rest of the flow — none of which needs the network — can
+# still run.
+- runFlow:
+    when:
+      visible:
+        id: "offline-screen"
+    commands:
+      - tapOn:
+          id: "offline-retry-button"
+      - extendedWaitUntil:
+          notVisible:
+            id: "offline-screen"
+          timeout: 15000
+          optional: true
+      - runFlow:
+          when:
+            visible:
+              id: "offline-screen"
+          commands:
+            - back

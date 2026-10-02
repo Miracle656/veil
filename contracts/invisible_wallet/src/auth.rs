@@ -1,6 +1,8 @@
 use soroban_sdk::{contracttype, Bytes, BytesN, Env};
 use crate::WalletError;
 
+pub(crate) mod expiration;
+
 #[contracttype]
 pub struct WebAuthnSignature {
     pub public_key: BytesN<65>,
@@ -37,6 +39,27 @@ pub fn base64url_encode_32(input: &[u8; 32]) -> [u8; 43] {
     out[41] = BASE64URL[(((b0 << 4) | (b1 >> 4)) & 0x3f) as usize];
     out[42] = BASE64URL[((b1 << 2) & 0x3f) as usize];
     out
+}
+
+/// True if `needle` appears as a contiguous byte substring of `haystack`.
+fn contains(haystack: &Bytes, needle: &[u8]) -> bool {
+    let n_len = needle.len();
+    let h_len = haystack.len() as usize;
+    if n_len == 0 {
+        return true;
+    }
+    if h_len < n_len {
+        return false;
+    }
+    'outer: for start in 0..=(h_len - n_len) {
+        for j in 0..n_len {
+            if haystack.get_unchecked((start + j) as u32) != needle[j] {
+                continue 'outer;
+            }
+        }
+        return true;
+    }
+    false
 }
 
 /// Verify that the base64url(signature_payload) string appears inside clientDataJSON.
@@ -181,9 +204,32 @@ pub fn verify_webauthn(
     client_data_json: Bytes,
     signature: BytesN<64>,
 ) -> Result<(), WalletError> {
+    // 0. Reject anything that is not a WebAuthn *get* assertion. A
+    //    `webauthn.create` clientDataJSON also carries a challenge, so without
+    //    this a registration response could be replayed as an authorization
+    //    (the classic cross-ceremony confusion class).
+    if !contains(&client_data_json, b"\"type\":\"webauthn.get\"") {
+        return Err(WalletError::InvalidCeremonyType);
+    }
+
     // 1. Verify the challenge in clientDataJSON is base64url(signature_payload)
     if !challenge_is_present(&client_data_json, &signature_payload.to_array()) {
         return Err(WalletError::InvalidChallenge);
+    }
+
+    // 1b. Enforce the authenticator flags. authenticatorData layout is
+    //     rpIdHash[32] | flags[1] | signCount[4] | (extensions), so a valid
+    //     assertion is at least 37 bytes. Byte 32 must have User Present (0x01)
+    //     and User Verified (0x04) set — the frontend requests
+    //     `userVerification: 'required'`, so a genuine biometric assertion
+    //     always sets both. Without this the contract cannot distinguish a
+    //     biometric-verified assertion from a silent one.
+    if auth_data.len() < 37 {
+        return Err(WalletError::InvalidAuthData);
+    }
+    let flags = auth_data.get_unchecked(32);
+    if flags & 0x01 == 0 || flags & 0x04 == 0 {
+        return Err(WalletError::UserVerificationRequired);
     }
 
     // 2. SHA256(clientDataJSON) via host function

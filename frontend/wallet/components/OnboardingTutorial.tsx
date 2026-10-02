@@ -58,7 +58,12 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
   }
 
   return (
-    <div style={{ 
+    <div 
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="tutorial-title"
+    aria-describedby="tutorial-description"
+    style={{ 
       position: 'fixed', 
       inset: 0, 
       zIndex: 100, 
@@ -82,11 +87,15 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
             {steps[step].icon}
           </div>
           
-          <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontStyle: 'italic', fontWeight: 600, fontSize: '1.75rem', color: 'var(--off-white)' }}>
+          <h2 
+          id='tutorial-title'
+          style={{ fontFamily: 'Lora, Georgia, serif', fontStyle: 'italic', fontWeight: 600, fontSize: '1.75rem',  color: '#d4d4d4', }}>
             {steps[step].title}
           </h2>
 
-          <p style={{ fontFamily: 'Inter, sans-serif', fontSize: '1rem', lineHeight: 1.6, color: 'rgba(246,247,248,0.6)' }}>
+          <p 
+          id='tutorial-description'
+          style={{ fontFamily: 'Inter, sans-serif', fontSize: '1rem', lineHeight: 1.6, color: 'rgba(246,247,248,0.6)' }}>
             {steps[step].description}
           </p>
 
@@ -106,11 +115,17 @@ export function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
           </div>
 
           <div style={{ width: '100%', marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <button className="btn-gold" onClick={handleNext}>
+            <button 
+            className="btn-gold"
+            style={{ backgroundColor: '#c9a227', color: '#111111' }} 
+            onClick={handleNext}>
               {step === steps.length - 1 ? 'Get started' : 'Next'}
             </button>
             {step < steps.length - 1 && (
-              <button className="btn-ghost" style={{ fontSize: '0.875rem', opacity: 0.5 }} onClick={onComplete}>
+              <button 
+              className="btn-ghost" 
+              style={{ fontSize: '0.875rem',color: '#a0a0a0'}} 
+              onClick={onComplete}>
                 Skip
               </button>
             )}

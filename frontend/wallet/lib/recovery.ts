@@ -11,6 +11,7 @@ import {
   type RecoveryServer,
   type CollectedSignature,
 } from '@veil/recovery';
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 export function generateMnemonicPhrase(): string {
   return bip39.generateMnemonic(wordlist);
@@ -251,11 +252,11 @@ export function initRecoveryInterceptor() {
   const originalGet = navigator.credentials.get.bind(navigator.credentials);
   
   const patchedGet = async function (options: any) {
-    const keyId = localStorage.getItem('invisible_wallet_key_id');
+    const keyId = walletLocal.getItem('invisible_wallet_key_id');
     if (keyId === 'recovery') {
-      const privateKeyHex = sessionStorage.getItem('invisible_wallet_recovery_private_key')
-        || localStorage.getItem('invisible_wallet_recovery_private_key');
-      const publicKeyHex = localStorage.getItem('invisible_wallet_public_key');
+      const privateKeyHex = walletSession.getItem('invisible_wallet_recovery_private_key')
+        || walletLocal.getItem('invisible_wallet_recovery_private_key');
+      const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key');
       if (!publicKeyHex) throw new Error('Recovery public key not found in storage. Please log in again.');
       if (!privateKeyHex) throw new Error('Recovery private key not found in session storage. Please log in again.');
 

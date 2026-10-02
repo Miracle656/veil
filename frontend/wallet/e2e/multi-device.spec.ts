@@ -8,164 +8,17 @@
  * passkey sync works correctly.
  */
 
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { addVirtualAuthenticator, getCredentials, addCredential } from './_authenticator';
-
-// ── Network Stubs ─────────────────────────────────────────────────────────────
-
-async function stubNetworkCalls(page: Page) {
-  await page.route('**/friendbot.stellar.org/**', (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ result: 'funded', hash: 'a'.repeat(64) }),
-    })
-  );
-
-  await page.route('**/horizon-testnet.stellar.org/accounts/**', (route) => {
-    const url = route.request().url();
-    const pubkey = url.split('/accounts/')[1]?.split('?')[0] || 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
-    
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        id: pubkey,
-        account_id: pubkey,
-        sequence: '123456789',
-        subentry_count: 0,
-        balances: [
-          { 
-            asset_type: 'native', 
-            balance: '10000.0000000',
-            buying_liabilities: '0.0000000',
-            selling_liabilities: '0.0000000'
-          }
-        ],
-        thresholds: { 
-          low_threshold: 0, 
-          med_threshold: 0, 
-          high_threshold: 0 
-        },
-        flags: {
-          auth_required: false,
-          auth_revocable: false,
-          auth_immutable: false
-        },
-        signers: [
-          {
-            weight: 1,
-            key: pubkey,
-            type: 'ed25519_public_key'
-          }
-        ],
-        data: {},
-        paging_token: '',
-        last_modified_ledger: 1000,
-        last_modified_time: new Date().toISOString()
-      }),
-    });
-  });
-
-  await page.route('**/soroban-testnet.stellar.org', async (route) => {
-    const postData = route.request().postDataJSON();
-    
-    if (postData?.method === 'simulateTransaction') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            transactionData: 'AAAAAAAAAAIAAAAGAAAAAem354u9STQWq5b3Ed1j9tOemvL7xV0NPwhn4gXg0AP8AAAAFAAAAAEAAAAH8dTto4AAAAAAAAAAAAAAAAAAAAA=',
-            minResourceFee: '100',
-            cost: { 
-              cpuInsns: '100000', 
-              memBytes: '1000' 
-            },
-            latestLedger: 1000,
-            results: [
-              {
-                auth: [],
-                xdr: 'AAAAEAAAAAEAAAACAAAADwAAAAdCYWxhbmNlAAAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAA='
-              }
-            ]
-          },
-        }),
-      });
-    }
-    
-    if (postData?.method === 'sendTransaction') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            status: 'PENDING',
-            hash: 'a'.repeat(64),
-          },
-        }),
-      });
-    }
-    
-    if (postData?.method === 'getTransaction') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            status: 'SUCCESS',
-            latestLedger: 1001,
-            latestLedgerCloseTime: Math.floor(Date.now() / 1000),
-            oldestLedger: 900,
-            oldestLedgerCloseTime: Math.floor(Date.now() / 1000) - 1000,
-            applicationOrder: 1,
-            envelopeXdr: 'AAAAAgAAAAA=',
-            resultXdr: 'AAAAAAAAAGQAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAA=',
-            resultMetaXdr: 'AAAAAwAAAAAAAAACAAAAAwAAA+gAAAAAAAAAAO3nZDVD4KR9yD1MLNfJWzeMIBB0ZM3bTJmHeVvHLcGkAAAAF0h1FHwAAAPnAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAA',
-            ledger: 1001,
-            createdAt: Math.floor(Date.now() / 1000)
-          },
-        }),
-      });
-    }
-    
-    if (postData?.method === 'getContractData') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: postData.id || 1,
-          result: {
-            xdr: 'AAAAEAAAAAEAAAACAAAADwAAAAdCYWxhbmNlAAAAABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAA=',
-            lastModifiedLedgerSeq: 1000,
-            latestLedger: 1001
-          },
-        }),
-      });
-    }
-    
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: postData?.id || 1,
-        result: {},
-      }),
-    });
-  });
-}
+import { stubNetworkCalls } from './_stubs';
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
+  // Each test drives two full browser contexts through wallet creation, which
+  // does not fit the 30s default.
+  test.setTimeout(120_000);
+
   test('register on device A, sign in on device B with synced credential', async ({ browser }) => {
     // Create two separate browser contexts to simulate two devices
     const deviceA = await browser.newContext();
@@ -182,6 +35,10 @@ test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
       await pageA.evaluate(() => {
         localStorage.clear();
         sessionStorage.clear();
+        // Re-arm the flag the init script set — clearing storage would
+        // otherwise let the first-run tutorial overlay re-appear and swallow
+        // clicks on the buttons underneath it.
+        localStorage.setItem('veil_seen_tutorial', '1');
       });
       
       // Wait for page to be fully loaded
@@ -226,6 +83,10 @@ test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
       await pageB.evaluate(() => {
         localStorage.clear();
         sessionStorage.clear();
+        // Re-arm the flag the init script set — clearing storage would
+        // otherwise let the first-run tutorial overlay re-appear and swallow
+        // clicks on the buttons underneath it.
+        localStorage.setItem('veil_seen_tutorial', '1');
       });
       
       // On device B, click "Recover existing wallet" or "Sign in"
@@ -233,10 +94,12 @@ test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
       
       if (await recoverButton.isVisible({ timeout: 5_000 }).catch(() => false)) {
         await recoverButton.click();
-        
-        // The app should trigger WebAuthn authentication
-        // With the synced credential, this should succeed
-        await pageB.waitForURL(/\/dashboard|\/lock/, { timeout: 30_000 });
+
+        // The button opens the recovery screen — it does not itself complete
+        // the WebAuthn challenge, so /dashboard is not reachable from here.
+        // Completing recovery is simulated below; this test's subject is that
+        // both devices derive the same address from a synced credential.
+        await pageB.waitForURL(/\/recover/, { timeout: 30_000 });
       } else {
         // If there's no explicit recover button, the app might auto-detect
         // the credential and sign in automatically
@@ -289,7 +152,10 @@ test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
       await stubNetworkCalls(pageA);
       
       await pageA.goto('/');
-      await pageA.evaluate(() => localStorage.clear());
+      await pageA.evaluate(() => {
+        localStorage.clear();
+        localStorage.setItem('veil_seen_tutorial', '1');
+      });
       await pageA.waitForLoadState('networkidle');
       
       await pageA.getByRole('button', { name: /create wallet/i }).click({ force: true });

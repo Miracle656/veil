@@ -1,11 +1,69 @@
-const path = require('path')
+const path = require("path");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Dev only. Next serves HMR and font assets to `localhost` by default, so
+  // opening the dev server on the loopback IP silently loses hot reload and the
+  // page keeps retrying a blocked request. No effect on a production build.
+  allowedDevOrigins: ["127.0.0.1"],
+  outputFileTracingRoot: path.join(__dirname, "../../"),
+  // Vercel auto-populates VERCEL_GIT_COMMIT_SHA, but it isn't prefixed
+  // NEXT_PUBLIC_ so it never reaches the client bundle on its own. Re-expose it
+  // under a NEXT_PUBLIC_ name so the About screen can show which build is
+  // running; 'dev' covers local builds where no commit env var is set.
+  env: {
+    NEXT_PUBLIC_COMMIT_SHA:
+      process.env.VERCEL_GIT_COMMIT_SHA || process.env.NEXT_PUBLIC_COMMIT_SHA || "dev",
+  },
   experimental: {
     // Allow imports from outside the Next.js project root (e.g. ../../sdk/src)
     externalDir: true,
+  },
+  async headers() {
+    // Baseline security headers on every route. The wallet CSP is generated in
+    // middleware so Next's inline scripts receive a per-request nonce.
+    const securityHeaders = [
+      { key: "X-Frame-Options", value: "DENY" },
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      {
+        key: "Permissions-Policy",
+        value:
+          "camera=(), microphone=(), geolocation=(), payment=(), " +
+          "publickey-credentials-get=(self), publickey-credentials-create=(self)",
+      },
+    ];
+
+    // iOS refuses an apple-app-site-association file that is not served as
+    // JSON, and the file has no extension so Next cannot infer the type.
+    // Android is stricter still: assetlinks.json must be reachable over HTTPS
+    // with no redirect. Both files live in public/.well-known/.
+    return [
+      {
+        source: "/:path*",
+        headers: securityHeaders,
+      },
+      // Issuer logos (possibly SVG) served from the wallet origin must never
+      // run script if opened directly, so this replaces the page CSP above.
+      {
+        source: '/api/issuer-logo',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; sandbox",
+          },
+        ],
+      },
+      {
+        source: "/.well-known/apple-app-site-association",
+        headers: [{ key: "Content-Type", value: "application/json" }],
+      },
+      {
+        source: "/.well-known/assetlinks.json",
+        headers: [{ key: "Content-Type", value: "application/json" }],
+      },
+    ];
   },
   webpack: (config) => {
     // When webpack compiles SDK source files from ../../sdk/src/, it resolves
@@ -13,21 +71,28 @@ const nextConfig = {
     // node_modules. Prepend wallet's node_modules so imports like
     // @stellar/stellar-sdk resolve correctly regardless of the importer's path.
     config.resolve.modules = [
-      path.resolve(__dirname, 'node_modules'),
+      path.resolve(__dirname, "node_modules"),
       ...config.resolve.modules,
-    ]
-    return config
+    ];
+    // The agent package (packages/agent) is ESM TypeScript that imports its own
+    // modules as './network.js' — the extension TypeScript emits. When webpack
+    // compiles that source directly, those files only exist as .ts; try .ts first.
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias || {}),
+      ".js": [".ts", ".tsx", ".js"],
+    };
+    return config;
   },
-}
+};
 
-const withPWA = require('next-pwa')({
-  dest: 'public',
-  disable: process.env.NODE_ENV === 'development',
+const withPWA = require("next-pwa")({
+  dest: "public",
+  disable: process.env.NODE_ENV === "development",
   register: true,
   skipWaiting: true,
   fallbacks: {
-    document: '/offline',
+    document: "/offline",
   },
-})
+});
 
-module.exports = withPWA(nextConfig)
+module.exports = withPWA(nextConfig);

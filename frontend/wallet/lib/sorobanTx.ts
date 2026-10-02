@@ -1,4 +1,5 @@
 import { Keypair, TransactionBuilder, rpc as SorobanRpc } from '@stellar/stellar-sdk'
+import { buildSponsoredFeeBumpTransaction } from './feeBump'
 
 /**
  * Sign a Soroban transaction XDR with the fee-payer key and submit via RPC.
@@ -9,6 +10,7 @@ export async function signAndSubmitSorobanXdr(params: {
   signerSecret: string
   rpcUrl: string
   networkPassphrase: string
+  sponsorSecret?: string
 }): Promise<string> {
   const rpc = new SorobanRpc.Server(params.rpcUrl)
   const signer = Keypair.fromSecret(params.signerSecret)
@@ -23,8 +25,15 @@ export async function signAndSubmitSorobanXdr(params: {
 
   const assembled = SorobanRpc.assembleTransaction(built, sim).build()
   assembled.sign(signer)
+  const submission = params.sponsorSecret
+    ? buildSponsoredFeeBumpTransaction({
+        innerTransaction: assembled,
+        networkPassphrase: params.networkPassphrase,
+        sponsor: { secret: params.sponsorSecret },
+      })
+    : assembled
 
-  const sendResult = await rpc.sendTransaction(assembled)
+  const sendResult = await rpc.sendTransaction(submission)
   if (sendResult.status === 'ERROR') {
     throw new Error(
       `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown'}`

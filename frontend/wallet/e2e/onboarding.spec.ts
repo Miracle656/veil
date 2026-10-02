@@ -1,74 +1,7 @@
 // @ts-ignore
-import { test, expect, type BrowserContext, type Page } from '@playwright/test'
-
-// ── WebAuthn virtual authenticator helpers ────────────────────────────────────
-
-async function addVirtualAuthenticator(context: BrowserContext) {
-  const cdpSession = await context.newCDPSession(await context.newPage())
-  await cdpSession.send('WebAuthn.enable', { enableUI: false })
-  const { authenticatorId } = await cdpSession.send('WebAuthn.addVirtualAuthenticator', {
-    options: {
-      protocol: 'ctap2',
-      transport: 'internal',
-      hasResidentKey: true,
-      hasUserVerification: true,
-      isUserVerified: true,
-      automaticPresenceSimulation: true,
-    },
-  })
-  return { cdpSession, authenticatorId }
-}
-
-// ── Stub out network calls that require live testnet infra ────────────────────
-
-async function stubNetworkCalls(page: Page) {
-  // Friendbot — always succeed
-  await page.route('https://friendbot.stellar.org/**', (route: any) =>
-    route.fulfill({ status: 200, body: JSON.stringify({ result: 'funded' }) }),
-  )
-
-  // Horizon loadAccount — return a minimal funded account
-  await page.route('https://horizon-testnet.stellar.org/accounts/**', (route: any) =>
-    route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        id: 'GTEST',
-        sequence: '0',
-        balances: [{ asset_type: 'native', balance: '10000.0000000' }],
-        thresholds: { low_threshold: 0, med_threshold: 0, high_threshold: 0 },
-        flags: {},
-        signers: [],
-      }),
-    }),
-  )
-
-  // Soroban RPC — return a minimal simulate response with a fake contract address
-  await page.route('https://soroban-testnet.stellar.org', (route: any) => {
-    const body = route.request().postDataJSON() as { method?: string }
-    if (body?.method === 'simulateTransaction' || body?.method === 'sendTransaction') {
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          result: {
-            status: 'SUCCESS',
-            results: [{ xdr: 'AAAAAQAAAA==' }],
-            latestLedger: '1000',
-            cost: { cpuInsns: '0', memBytes: '0' },
-          },
-        }),
-      })
-    }
-    return route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, result: {} }),
-    })
-  })
-}
+import { test, expect, type Page } from '@playwright/test'
+import { addVirtualAuthenticator } from './_authenticator'
+import { stubNetworkCalls } from './_stubs'
 
 // ── Seed localStorage to simulate "existing wallet" state ─────────────────────
 
@@ -82,6 +15,12 @@ async function seedExistingWallet(page: Page) {
 
 test.describe('Onboarding — new wallet creation', () => {
   test.beforeEach(async ({ page }) => {
+    // Skip the first-run onboarding tutorial on every navigation (incl. each
+    // test's own goto). Its full-screen overlay otherwise intercepts the
+    // "Create wallet" click. The tutorial itself is covered separately below.
+    await page.addInitScript(() => {
+      try { window.localStorage.setItem('veil_seen_tutorial', '1') } catch {}
+    })
     // Clear all storage so each test starts fresh
     await page.goto('/')
     await page.evaluate(() => {
@@ -101,9 +40,9 @@ test.describe('Onboarding — new wallet creation', () => {
     await expect(page.getByRole('button', { name: /recover existing wallet/i })).toBeVisible()
   })
 
-  test('shows biometric waiting state after clicking Create wallet', async ({ page, context }) => {
+  test('shows biometric waiting state after clicking Create wallet', async ({ page }) => {
     // Register a virtual authenticator so WebAuthn doesn't block
-    await addVirtualAuthenticator(context)
+    await addVirtualAuthenticator(page)
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
@@ -115,8 +54,8 @@ test.describe('Onboarding — new wallet creation', () => {
     ).toBeVisible({ timeout: 10_000 })
   })
 
-  test('full onboarding flow: create wallet → dashboard redirect', async ({ page, context }) => {
-    await addVirtualAuthenticator(context)
+  test('full onboarding flow: create wallet → dashboard redirect', async ({ page }) => {
+    await addVirtualAuthenticator(page)
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 

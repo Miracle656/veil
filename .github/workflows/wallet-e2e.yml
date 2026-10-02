@@ -14,9 +14,12 @@ on:
       - 'sdk/**'
 
 permissions:
+  # The PR comment step posts a comment on a pull request. That needs
+  # `pull-requests: write` even though the REST endpoint is /issues/{n}/comments;
+  # `issues: write` alone fails at runtime with "Resource not accessible".
   contents: read
-  pull-requests: write
   issues: write
+  pull-requests: write
 
 jobs:
   e2e-tests:
@@ -28,12 +31,18 @@ jobs:
       run:
         working-directory: frontend/wallet
 
+    env:
+      # Without a factory address `computeWalletAddress('')` throws
+      # "invalid version byte. expected 16, got undefined" and every
+      # wallet-creation test fails. Same public testnet address ci.yml uses.
+      NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: 'npm'
@@ -45,14 +54,20 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # Built here rather than by playwright's webServer so the build cost sits
+      # outside the server-boot timeout; the config serves this build with
+      # `next start` when CI is set.
+      - name: Build wallet
+        run: npm run build
+
       - name: Run Playwright tests
-        run: npx playwright test
+        run: npx playwright test --grep-invert @nightly
         env:
           CI: true
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-results
           path: frontend/wallet/test-results/
@@ -60,7 +75,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: frontend/wallet/playwright-report/
@@ -68,7 +83,7 @@ jobs:
 
       - name: Upload screenshots
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-screenshots
           path: frontend/wallet/test-results/**/*.png
@@ -76,7 +91,7 @@ jobs:
 
       - name: Upload traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-traces
           path: frontend/wallet/test-results/**/*.zip
@@ -84,7 +99,7 @@ jobs:
 
       - name: Comment PR with results
         if: github.event_name == 'pull_request' && failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const fs = require('fs');
