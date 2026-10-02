@@ -46,6 +46,23 @@ jobs:
       # 'tools'"); it defaults to `platform-tools` instead.
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
 
+      # The release APK builds the spp-native Rust prover, so this job needs the
+      # Rust toolchain — unconditionally. SppNativeModule.kt imports
+      # `uniffi.spp_native.*`, which `generateUniffiBindings` produces, so the
+      # module's "skip the Rust build and fall back to WASM" path only covers a
+      # missing .so at runtime; it cannot survive a missing binding at compile
+      # time. Dropping these steps is what broke this job when #758 landed.
+      #
+      # The host compiler comes from the action; the Android targets and
+      # cargo-ndk come from the module's own script, which is the single place
+      # that pins them (and already handles cargo-ndk being yanked mid-flight).
+      # Actions pinned to a commit like every other action here (#773).
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: frontend/mobile/modules/spp-native/rust
+      - name: Add Android targets and cargo-ndk
+        run: sh frontend/mobile/modules/spp-native/scripts/install-rust-toolchain.sh
 
       - name: Install dependencies
         run: npm ci

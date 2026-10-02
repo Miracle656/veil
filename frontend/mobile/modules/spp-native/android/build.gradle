@@ -40,10 +40,23 @@ def rustTargets = [
 ]
 
 // Toolchain probe at configuration time. If cargo is missing (a bare gradle
-// run on a machine without Rust) the Rust tasks skip with a warning — the
-// app builds without the .so, the JS layer detects the missing module, and
-// everything falls back to WASM, exactly like a binary built before this
-// module existed. CI and EAS always install the toolchain.
+// run on a machine without Rust) the Rust tasks skip with a warning.
+//
+// Read that narrowly. Skipping only produces a working build for a consumer of
+// the *published* module: SppNativeModule.kt imports `uniffi.spp_native.*`,
+// which `generateUniffiBindings` generates, so skipping inside this repo trades
+// a missing .so for an unresolved Kotlin reference. The WASM fallback the JS
+// layer implements covers a missing native library at **runtime**; it cannot
+// cover a missing binding at **compile** time.
+//
+// So CI and EAS do not merely "always install the toolchain" as a convenience —
+// they must. mobile-e2e.yml installs it explicitly, and the job fails without
+// it (this is what broke when #758 landed with those steps removed).
+//
+// The probe deliberately tests `cargo` rather than `cargo ndk`: when cargo is
+// present but cargo-ndk is not, letting the task run and fail with
+// "no such command: `ndk`" names the missing piece, where skipping would hide
+// it behind an unresolved-reference error several tasks later.
 def cargoAvailable = {
   try {
     def proc = ['which', 'cargo'].execute()
