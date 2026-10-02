@@ -1,0 +1,96 @@
+name: SPP config drift check
+
+# Scheduled check to notice when Nethermind redeploys SPP and pinned testnet
+# contract IDs drift (V207 — Issue #796).
+#
+# Runs on a daily schedule, not on the push path, so third-party GitHub / raw
+# content downtime never blocks contributors' unrelated PRs.
+#
+# When drift is detected on the scheduled run, opens an issue naming the changed
+# keys and old/new values, deduplicating against open issues.
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # Daily at 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      warn_only:
+        description: 'Report without failing the job'
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - 'scripts/check-spp-drift.mjs'
+      - 'scripts/tests/check-spp-drift.test.mjs'
+      - '.github/workflows/spp-drift.yml'
+
+concurrency:
+  group: spp-drift-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-drift:
+    name: Check SPP deployment drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Run drift detection unit tests
+        run: node --test scripts/tests/check-spp-drift.test.mjs
+
+      - name: Run drift check
+        id: check
+        shell: bash
+        run: |
+          code=0
+          node scripts/check-spp-drift.mjs \
+            ${{ (github.event_name == 'pull_request' || inputs.warn_only) && '--warn-only' || '' }} > drift.txt || code=$?
+          cat drift.txt
+          exit $code
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish result to step summary
+        if: always()
+        run: |
+          cat drift.txt 2>/dev/null >> "$GITHUB_STEP_SUMMARY" || echo "No drift report generated" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open GitHub issue on drift
+        if: failure() && github.event_name != 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('drift.txt') ? fs.readFileSync('drift.txt', 'utf8') : 'Drift detected, but drift.txt was empty.';
+            const title = 'Notice: SPP testnet deployment config has drifted from upstream';
+
+            // Avoid duplicate issues (following testnet-smoke.yml house pattern)
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'area:ci',
+            });
+            const alreadyOpen = existing.data.some((i) => i.title.includes('SPP testnet deployment config has drifted'));
+            if (alreadyOpen) {
+              console.log('Issue already open for SPP drift — skipping duplicate.');
+              return;
+            }
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: report,
+              labels: ['area:ci', 'epic:privacy'],
+            });
