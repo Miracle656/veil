@@ -1,0 +1,32 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "types": [
+      "jest"
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ],
+      "@/components/*": [
+        "./components/*"
+      ],
+      "@/assets/*": [
+        "./assets/*"
+      ],
+      "@veil/sdk": ["../../sdk/src/index"],
+      "@veil/events": ["../../sdk/src/events"],
+      "@veil/utils": ["../../sdk/src/utils"],
+      "@veil/recovery": ["../../sdk/src/recovery/sep30"],
+      "@veil/backup": ["../../sdk/src/backup"],
+      "@veil/sep7": ["../../sdk/src/sep7"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ]
+}

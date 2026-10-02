@@ -1,0 +1,22 @@
+{
+  "name": "veil-nuxt-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.6.1",
+    "invisible-wallet-sdk": "file:../../sdk",
+    "nuxt": "^3.13.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

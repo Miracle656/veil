@@ -1,0 +1,495 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { errorMessage } from '../../lib/errorMessage';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect, useRouter } from 'expo-router';
+
+import { colors } from '@/components/ScreenScaffold';
+import { FirstRunTutorial } from '../../components/OnboardingTutorial';
+import { TxDetailSheet } from '../../components/TxDetailSheet';
+import type { BottomSheetModal } from '@gorhom/bottom-sheet';
+import { VeilLogo } from '../../components/VeilLogo';
+import { SilverBalanceCard } from '../../components/SilverBalanceCard';
+import { PrivateBalanceCard } from '../../components/PrivateBalanceCard';
+import { PayForGrid, BILL_SERVICES } from '../../components/PayForGrid';
+import { isOfframpAvailable, lastKnownAvailability } from '../../lib/offramp';
+import { ServicesDrawer } from '../../components/ServicesDrawer';
+import { AssetsList } from '../../components/AssetsList';
+import { WalletAddressChip } from '../../components/WalletAddressChip';
+import { fontFamily } from '../../theme/typography';
+import { useTheme } from '../../hooks/useTheme';
+import type { ThemeColors } from '../../lib/theme';
+import { getWalletAddress } from '../../lib/walletStore';
+import ActivityFeed from '../../components/ActivityFeed';
+import { useInitActivityFeed, hydrateActivityFeed, type TxRecord } from '../../lib/activityFeed';
+import { loadHorizonActivity } from '../../lib/horizonActivity';
+import { usePolling } from '../../hooks/usePolling';
+import { fetchDashboardData } from '../../lib/activity';
+import { fetchPrice, usdValue } from '../../lib/fetchPrice';
+import { loadHoldings } from '../../lib/holdings';
+import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
+import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
+import { useNetwork } from '../../hooks/useNetwork';
+
+/** Shorten a Stellar address for the header chip: `GDKF…9QX3`. */
+function shortAddress(addr: string): string {
+  return addr.length > 8 ? `${addr.slice(0, 4)}…${addr.slice(-4)}` : addr;
+}
+
+const WRAITH_URL =
+  process.env.EXPO_PUBLIC_WRAITH_URL?.replace(/\/+$/, '') ?? null;
+
+// Last-known balance/price survive remounts (e.g. returning from the lock
+// screen), so the card paints instantly instead of flashing a loading state.
+// Scoped to the wallet ADDRESS: after a reset/new wallet the old figures must
+// never paint under the new address.
+const lastKnown: {
+  address: string | null;
+  balance: string;
+  price: number | null;
+  totalUsd: number | null;
+  breakdown: string | null;
+} = {
+  address: null,
+  balance: '—',
+  price: null,
+  totalUsd: null,
+  breakdown: null,
+};
+
+/**
+ * Dashboard tab — primary destination after unlock.
+ *
+ * Shows the wallet balance, quick actions, and a live activity feed
+ * sourced from the Wraith indexer.
+ */
+export default function DashboardTab() {
+  const router = useRouter();
+  const { colors: themeColors } = useTheme();
+  const themedStyles = useMemo(() => createThemedStyles(themeColors), [themeColors]);
+  const [servicesOpen, setServicesOpen] = useState(false);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [balance, setBalance] = useState<string>(() => lastKnown.balance);
+  const [price, setPrice] = useState<number | null>(() => lastKnown.price);
+  // The whole wallet in fiat, across every asset and both accounts. The card
+  // used to show XLM only, so a wallet holding mostly USDC looked nearly empty.
+  const [totalUsd, setTotalUsd] = useState<number | null>(() => lastKnown.totalUsd);
+  const [breakdown, setBreakdown] = useState<string | null>(() => lastKnown.breakdown);
+  const [reservedXlm, setReservedXlm] = useState<number | null>(null);
+  const [reserveReason, setReserveReason] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  // Whether the Horizon activity load has finished once. On testnet the Wraith
+  // feed is deliberately skipped, so `loading` below reports false immediately
+  // and the feed rendered "No transactions yet" while Horizon — the source that
+  // actually fills it there — was still in flight. Tracked separately so the
+  // skeleton covers the real wait rather than only the Wraith one.
+  const [activitySettled, setActivitySettled] = useState(false);
+  // Each source reports its own failure. The balance card used to show the
+  // INDEXER's error, so a Wraith call that failed in transport told the user
+  // their balance could not be loaded — while the balance, which comes from
+  // Horizon, was fine. Supplementary sources must never speak for primary ones.
+  const [balanceError, setBalanceError] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [selectedTx, setSelectedTx] = useState<TxRecord | null>(null);
+  // Probed once per mount rather than per render: a 503 here means "no offramp
+  // on this deployment", which is also what a sleeping backend looks like.
+  const [offrampReady, setOfframpReady] = useState(false);
+  const detailSheetRef = useRef<BottomSheetModal>(null);
+
+  const handleSelectTx = useCallback((tx: TxRecord) => {
+    setSelectedTx(tx);
+    detailSheetRef.current?.present();
+  }, []);
+
+  // Subscribed, not read once. A tab screen is not remounted on a network
+  // switch, so the address resolved at mount survived the change: the header
+  // kept showing the testnet C-address while /receive, which re-reads on mount,
+  // showed the mainnet one. Same staleness applied to `onTestnet`, which gates
+  // which activity source is used.
+  const { networkName } = useNetwork();
+  const onTestnet = networkName === 'testnet';
+
+  // Refetch balance + price and rebuild the activity feed from Horizon + SAC
+  // events — on EVERY network (Wraith, when configured, only supplements).
+  const refreshAll = useCallback(
+    async (addr: string) => {
+      try {
+        const [data, p] = await Promise.all([fetchDashboardData(addr), fetchPrice('XLM', null)]);
+        lastKnown.balance = data.xlmBalance;
+        lastKnown.price = p;
+        setBalance(data.xlmBalance);
+        setPrice(p);
+        setReservedXlm(data.reserveXlm ?? null);
+        setReserveReason(data.reserveReason ?? null);
+        setBalanceError(false);
+      } catch {
+        // Keep the last-known values. Only flag an error the card will show —
+        // it renders one only while there is no figure at all to fall back on.
+        setBalanceError(true);
+      }
+      try {
+        // Total across every holding. Shown only when every non-zero holding
+        // has a price: a sum that silently leaves an asset out would understate
+        // the wallet while presenting itself as the total, which is worse than
+        // falling back to the XLM figure the card already knows how to show.
+        const holdings = (await loadHoldings(addr)).filter((h) => Number(h.balance) > 0);
+        const allPriced = holdings.length > 0 && holdings.every((h) => h.usd !== null);
+        const total = allPriced ? holdings.reduce((sum, h) => sum + (h.usd as number), 0) : null;
+        const line = holdings
+          .slice()
+          .sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0))
+          .slice(0, 3)
+          .map((h) => `${Number(h.balance).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${h.code}`)
+          .join(' · ');
+        lastKnown.totalUsd = total;
+        lastKnown.breakdown = line || null;
+        setTotalUsd(total);
+        setBreakdown(line || null);
+      } catch {
+        // Keep the last known total; the XLM figure still renders meanwhile.
+      }
+      try {
+        // Merge, don't replace: this runs every 15s, and any single source
+        // blinking (rate-limited RPC, slow Horizon page) would otherwise blank
+        // the feed until the next poll refilled it.
+        hydrateActivityFeed(await loadHorizonActivity(addr), { merge: true });
+        setActivityError(null);
+      } catch (err) {
+        setActivityError(errorMessage(err));
+      } finally {
+        // Settled, not "succeeded": a failed load must still stop the skeleton,
+        // otherwise it spins forever with no way to say what went wrong.
+        setActivitySettled(true);
+      }
+    },
+    [],
+  );
+
+  // Load the wallet address (repairing a wrong-network derivation first),
+  // then its balance / price / activity on mount.
+  useEffect(() => {
+    let alive = true;
+    // Seed from the last known answer so the card renders correctly on first
+    // paint, then confirm. Without it the tile was absent for a beat and the
+    // whole Pay-for card popped in, pushing the layout down — the jump we
+    // removed everywhere else with skeletons.
+    void lastKnownAvailability().then((cached) => { if (alive) setOfframpReady(cached); });
+    void isOfframpAvailable().then((ok) => { if (alive) setOfframpReady(ok); });
+    return () => { alive = false; };
+  }, [networkName]);
+
+  useEffect(() => {
+    // Blank the feed on the way in. Clearing only after the new address
+    // resolved meant the previous network's history stayed on screen for as
+    // long as that took — mainnet transactions listed under a testnet wallet,
+    // which is worse than an empty feed.
+    hydrateActivityFeed([]);
+    setActivitySettled(false);
+    ensureCorrectWalletAddress()
+      .then((addr) => {
+        setWalletAddress(addr);
+        if (addr) {
+          // Different wallet than the cached one (reset / fresh create / login):
+          // drop every carried-over figure before fetching, so the new wallet
+          // never paints the old wallet's data.
+          if (lastKnown.address !== addr) {
+            lastKnown.address = addr;
+            lastKnown.balance = '—';
+            lastKnown.price = null;
+            lastKnown.totalUsd = null;
+            lastKnown.breakdown = null;
+            setBalance('—');
+            setPrice(null);
+            setTotalUsd(null);
+            setBreakdown(null);
+            hydrateActivityFeed([]);
+            setActivitySettled(false);
+          }
+          void refreshAll(addr);
+          // Backfill the on-chain sign-in record for wallets created before
+          // breadcrumbs existed (idempotent, once per session, best-effort).
+          void ensureBreadcrumbs();
+        }
+      })
+      .catch(() => setWalletAddress(null));
+    // networkName: re-resolve the wallet for the network now active. Each
+    // network has its own wallet (lib/walletStore.ts), so a switch invalidates
+    // the address, the balance and the feed together.
+  }, [refreshAll, networkName]);
+
+  // Wraith feed init — skipped on testnet (Horizon covers it in refreshAll).
+  // Wraith supplements Horizon here; its own failures are logged by the feed
+  // module and deliberately not surfaced as a screen-level error.
+  const { loading, refresh: refreshFeed } = useInitActivityFeed(
+    walletAddress,
+    onTestnet ? null : WRAITH_URL,
+  );
+
+  // Refresh whenever the tab regains focus (e.g. returning from a send/swap).
+  useFocusEffect(
+    useCallback(() => {
+      if (walletAddress) void refreshAll(walletAddress);
+    }, [walletAddress, refreshAll]),
+  );
+
+  // Background polling every 15s.
+  usePolling(
+    async () => {
+      if (walletAddress) await refreshAll(walletAddress);
+    },
+    15_000,
+    !!walletAddress,
+  );
+
+  // Pull-to-refresh.
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    if (walletAddress) {
+      await refreshAll(walletAddress);
+      if (!onTestnet) await refreshFeed().catch(() => undefined);
+    }
+    setRefreshing(false);
+  }, [walletAddress, refreshAll, refreshFeed, onTestnet]);
+
+  const usd = useMemo(() => usdValue(balance, price), [balance, price]);
+
+  return (
+    <SafeAreaView style={themedStyles.screen} edges={['top']} testID="dashboard-screen">
+      <ScrollView showsVerticalScrollIndicator={false}
+        contentContainerStyle={themedStyles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            // tintColor is iOS-only; Android reads `colors` and paints the
+            // ring on `progressBackgroundColor`. With only tintColor set the
+            // Android spinner fell back to the platform default, which is the
+            // one build most people actually install.
+            tintColor={themeColors.accent}
+            colors={[themeColors.accent]}
+            progressBackgroundColor={themeColors.surfaceMd}
+          />
+        }
+      >
+      {/* Header — Drape logo + wordmark, and the wallet address chip */}
+      <View style={themedStyles.homeHeader}>
+        <Pressable
+          onPress={() => setServicesOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Open services menu"
+          hitSlop={10}
+          style={({ pressed }) => [themedStyles.brand, pressed && { opacity: 0.6 }]}
+        >
+          <VeilLogo size={22} color={themeColors.accent} />
+          <Text style={themedStyles.wordmark}>VEIL</Text>
+        </Pressable>
+        {walletAddress ? <WalletAddressChip contractAddress={walletAddress} /> : null}
+      </View>
+
+      <SilverBalanceCard
+        balance={balance === '—' ? undefined : balance}
+        usd={usd}
+        loading={balance === '—' && !balanceError}
+        error={balance === '—' && balanceError}
+        totalUsd={totalUsd}
+        breakdown={breakdown}
+        reservedXlm={reservedXlm}
+        reserveReason={reserveReason}
+      />
+
+
+      {/* Cash out is hidden unless the backend answers AND we are on mainnet.
+          The Linq key lives on the backend, so without it there is no order to
+          create; and Linq's Stellar leg is mainnet only — its deposit wallets
+          are mainnet accounts holding Circle's mainnet USDC, which a testnet
+          wallet cannot reach. Better to not offer it than to fail after
+          someone has entered their bank details. */}
+      <PayForGrid
+        services={
+          offrampReady && !onTestnet
+            ? BILL_SERVICES
+            : BILL_SERVICES.filter((s) => s.id !== 'transfer')
+        }
+        onSelect={(service) => {
+          if (service.route) router.push(service.route as never);
+        }}
+        onMore={() => setServicesOpen(true)}
+      />
+
+      {/* Private balance preview — the card gates itself on isPrivacyEnabled()
+          from lib/privacy/config (build-time flag, and never on mainnet), so it
+          renders nothing unless this build opts in. Sits between the public card
+          and the Pay-for grid so both balance types are visible at a glance. */}
+      <PrivateBalanceCard />
+
+      <ServicesDrawer visible={servicesOpen} onClose={() => setServicesOpen(false)} />
+
+      <AssetsList
+        address={walletAddress}
+        fallbackXlm={balance === '—' ? null : balance}
+        fallbackUsd={usd}
+      />
+
+      {/* Activity feed — 3 most recent, full history on the transactions page */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Collectibles</Text>
+        <Pressable onPress={() => router.push('/nfts')} hitSlop={8} accessibilityRole="button">
+          <Text style={styles.sectionLink}>View NFTs →</Text>
+        </Pressable>
+      </View>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Activity</Text>
+        <Pressable onPress={() => router.push('/transactions')} hitSlop={8} accessibilityRole="button">
+          <Text style={styles.sectionLink}>See all →</Text>
+        </Pressable>
+      </View>
+      <ActivityFeed
+        filter="all"
+        loading={loading || !activitySettled}
+        error={activityError}
+        onSelectTx={handleSelectTx}
+        limit={3}
+      />
+
+      {activityError ? (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{activityError}</Text>
+        </View>
+      ) : null}
+
+      {/* Shows once per install; self-gates on the persisted flag. */}
+      <FirstRunTutorial />
+
+      {/* Opened by tapping a row in the activity feed. */}
+      <TxDetailSheet ref={detailSheetRef} tx={selectedTx} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginTop: 12,
+  },
+  sectionTitle: {
+    color: colors.gold,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
+  },
+  sectionHint: {
+    color: colors.muted,
+    fontSize: 11,
+  },
+  sectionLink: {
+    color: colors.gold,
+    fontSize: 12,
+    fontFamily: fontFamily.bodyMedium,
+  },
+  grid: {
+    gap: 8,
+  },
+  errorBanner: {
+    backgroundColor: 'rgba(255, 107, 107, 0.1)',
+    borderColor: 'rgba(255, 107, 107, 0.3)',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+  },
+  errorText: {
+    color: '#FF6B6B',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+});
+
+const createThemedStyles = (themeColors: ThemeColors) =>
+  StyleSheet.create({
+    screen: {
+      flex: 1,
+      backgroundColor: themeColors.background,
+    },
+    scrollContent: {
+      paddingHorizontal: 20,
+      paddingTop: 12,
+      // Extra bottom room so the floating VeilTabBar never covers the last row.
+      paddingBottom: 140,
+      // Breathing room between the card, Pay-for, Assets, and Activity.
+      gap: 22,
+    },
+    homeHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 4,
+      marginBottom: 6,
+    },
+    brand: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    wordmark: {
+      fontFamily: fontFamily.accent,
+      fontSize: 15,
+      letterSpacing: 1.2,
+      color: themeColors.accent,
+    },
+    addrChip: {
+      borderWidth: 1,
+      borderColor: 'rgba(253,218,36,0.18)',
+      backgroundColor: 'rgba(253,218,36,0.08)',
+      borderRadius: 999,
+      paddingHorizontal: 14,
+      paddingVertical: 5,
+    },
+    addrText: {
+      fontFamily: fontFamily.address,
+      fontSize: 13,
+      color: themeColors.accent,
+    },
+    connectButton: {
+      alignSelf: 'flex-start',
+      backgroundColor: themeColors.accent,
+      borderRadius: 999,
+      paddingVertical: 12,
+      paddingHorizontal: 28,
+    },
+    pressed: {
+      opacity: 0.75,
+    },
+    connectLabel: {
+      color: themeColors.onAccent,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    sessions: {
+      alignSelf: 'stretch',
+      gap: 8,
+    },
+    sessionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      borderWidth: 1,
+      borderColor: themeColors.border,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+    },
+    sessionName: {
+      color: themeColors.textPrimary,
+      fontSize: 14,
+      flexShrink: 1,
+    },
+    disconnect: {
+      color: themeColors.accentText,
+      fontSize: 13,
+      fontWeight: '600',
+    },
+  });

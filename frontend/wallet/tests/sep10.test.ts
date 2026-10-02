@@ -1,4 +1,9 @@
 /**
+ * @jest-environment node
+ *
+ * Runs under Node (not jsdom) for native TextEncoder/TextDecoder, which the
+ * XDR encoding path in lib/sep24.ts relies on.
+ *
  * SEP-10 Challenge Verification Tests
  *
  * Tests the pure `signSep10Challenge` function in lib/sep24.ts against known

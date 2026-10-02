@@ -1,0 +1,11 @@
+{
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "sourceSecret": "S........................",
+  "token": "native",
+  "payments": [
+    { "to": "GDX1...................", "amount": "100.00", "memo": "June payroll" },
+    { "to": "GDY2...................", "amount": "150.50", "memo": "June payroll" },
+    { "to": "GDZ3...................", "amount": "120.00", "memo": "June payroll" }
+  ]
+}

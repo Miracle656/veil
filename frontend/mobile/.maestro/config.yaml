@@ -1,0 +1,14 @@
+# Maestro workspace config.
+#
+# Only files under flows/ are treated as entry points; subflows/ holds shared
+# fragments that flows pull in with `runFlow` and must not run on their own.
+flows:
+  - flows/*.yaml
+
+# The passkey smoke test drives the platform biometric prompt, which no emulator
+# or simulator can satisfy without an enrolled credential. It is excluded from
+# the default run and executed explicitly on a real device:
+#
+#   maestro test --include-tags device .maestro
+excludeTags:
+  - device

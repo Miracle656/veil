@@ -1,0 +1,25 @@
+# Package set for Changesets — NOT an npm workspace, and NOT an invitation to
+# use pnpm. Veil installs with npm, one package at a time (see CONTRIBUTING.md).
+#
+# Why this file exists:
+#   Changesets discovers publishable packages through @manypkg/get-packages,
+#   which needs a workspace manifest. That used to be a `workspaces` field in
+#   the root package.json, but npm acts on that field: `npm install` at the
+#   repo root pulled sdk/ and packages/* into one hoisted tree and rewrote
+#   package-lock.json from ~950 to ~21,000 lines on every fresh clone (#670).
+#   Hoisting also broke the SDK's jest `<rootDir>/node_modules` module mappers
+#   and split its @stellar/stellar-sdk 15 / typescript 6 away from the root's
+#   14 / 5 — which is why CI had to delete the `workspaces` field before every
+#   SDK job.
+#
+#   npm does not read this file, so declaring the package set here gives
+#   Changesets what it needs without giving npm a workspace to install.
+#
+#   Publishing is unaffected: Changesets picks its publish tool from the nearest
+#   lockfile, and every package here has a package-lock.json, so it runs
+#   `npm publish`.
+#
+# Keep in sync with the publishable packages built by .github/workflows/release.yml.
+packages:
+  - 'sdk'
+  - 'packages/*'

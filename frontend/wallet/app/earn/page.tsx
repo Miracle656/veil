@@ -1,9 +1,10 @@
 'use client'
 
+import { PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
-import { VeilLogo } from '@/components/VeilLogo'
+import { VeilMark } from '@/components/ui/VeilMark'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
@@ -17,6 +18,7 @@ import {
   type BlendPool,
   type BlendPosition,
 } from '@/lib/blend'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const network = getNetwork()
 
@@ -42,12 +44,12 @@ export default function EarnPage() {
 
   // ── Load session ──
   useEffect(() => {
-    const addr = sessionStorage.getItem('invisible_wallet_address')
+    const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
 
     const signerSecret =
-      sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
-    const signerPublic = localStorage.getItem('veil_signer_public_key')
+      walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
+    const signerPublic = walletLocal.getItem('veil_signer_public_key')
 
     if (!signerSecret && !signerPublic) {
       setErrorMsg('Signing key not found. Return to dashboard and set up a fee-payer first.')
@@ -84,7 +86,7 @@ export default function EarnPage() {
       await requirePasskey()
 
       const signerSecret =
-        sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
+        walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
       if (!signerSecret) throw new Error('Signing key not found. Please unlock wallet again.')
 
       const amountInStroops = BigInt(Math.round(parseFloat(depositAmount) * 1e7))
@@ -136,7 +138,7 @@ export default function EarnPage() {
       await requirePasskey()
 
       const signerSecret =
-        sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret')
+        walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
       if (!signerSecret) throw new Error('Signing key not found. Please unlock wallet again.')
 
       const bTokenAmount = BigInt(selectedPosition.bTokenBalance)
@@ -190,25 +192,66 @@ export default function EarnPage() {
           </svg>
           Dashboard
         </button>
-        <VeilLogo size={22} />
+        <VeilMark size={22} />
         <div style={{ width: 40 }} />
       </nav>
 
       <main className="wallet-main">
-        <h2
-          style={{
-            fontFamily: 'Lora, Georgia, serif',
-            fontWeight: 600,
-            fontStyle: 'italic',
-            fontSize: '1.75rem',
-            marginBottom: '0.5rem',
-          }}
-        >
-          Earn
-        </h2>
-        <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginBottom: '1.75rem' }}>
+        <div style={{ marginBottom: '1.75rem' }}>
+          <PageHeader eyebrow="Yield" title="Earn" />
+        </div>
+        <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginBottom: '1.25rem' }}>
           Deposit XLM or USDC into Blend Protocol to earn yield on-chain.
         </p>
+
+        {/* ── Invest & Yield Disclosures ── */}
+        <div
+          className="card"
+          style={{
+            marginBottom: '1.75rem',
+            padding: '1rem',
+            border: '1px solid var(--border-dim)',
+            background: 'rgba(255,255,255,0.02)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 240px' }}>
+              <p
+                style={{
+                  fontSize: '0.6875rem',
+                  fontFamily: 'Anton, Impact, sans-serif',
+                  letterSpacing: '0.06em',
+                  color: 'var(--gold)',
+                  marginBottom: '0.25rem',
+                }}
+              >
+                INVEST &amp; YIELD DISCLOSURES
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', lineHeight: 1.4, margin: 0 }}>
+                Veil is a self-custody wallet, not a broker. Veil never takes custody, never performs KYC, and never gives advice.
+              </p>
+            </div>
+            <a
+              href="https://docs.useveilapp.xyz/invest"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-ghost"
+              style={{
+                fontSize: '0.75rem',
+                padding: '0.4rem 0.75rem',
+                border: '1px solid var(--border-dim)',
+                textDecoration: 'none',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.25rem',
+                color: 'var(--off-white)',
+                flexShrink: 0,
+              }}
+            >
+              How it works &amp; risks ↗
+            </a>
+          </div>
+        </div>
 
         {/* ── Existing Positions ── */}
         {positions.length > 0 && (
@@ -268,7 +311,7 @@ export default function EarnPage() {
         )}
 
         {/* ── Pool list ── */}
-        {(step === 'pools' || step === 'deposit-form' || step === 'withdraw-form') && (
+        {step === 'pools' && (
           <>
             <p
               style={{
@@ -303,8 +346,8 @@ export default function EarnPage() {
                     padding: '1rem',
                     border:
                       selectedPool?.id === pool.id
-                        ? '1px solid rgba(212,175,55,0.5)'
-                        : '1px solid transparent',
+                        ? '1px solid var(--gold)'
+                        : '1px solid var(--border-dim)',
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
@@ -323,7 +366,7 @@ export default function EarnPage() {
                     Total liquidity: {(Number(pool.totalSupply) / 1e7).toLocaleString()}
                   </div>
                   <button
-                    className="btn-gold"
+                    className="btn-secondary"
                     style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem' }}
                     onClick={() => { setSelectedPool(pool); setStep('deposit-form') }}
                   >

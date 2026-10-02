@@ -1,0 +1,22 @@
+{
+  "name": "veil-vue-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^15.1.0",
+    "invisible-wallet-sdk": "file:../../sdk",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.0",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.11",
+    "vue-tsc": "^2.1.10"
+  }
+}

@@ -1,0 +1,74 @@
+appId: xyz.veil.wallet
+name: Passkey smoke (real device)
+tags:
+  - device
+  - passkey
+---
+# Real-device smoke test. Excluded from the default run by `excludeTags` in
+# config.yaml, because the platform biometric prompt cannot be satisfied on a
+# stock emulator or simulator — there is no enrolled credential to match, and
+# the prompt either never appears or cannot be dismissed.
+#
+# Run it against a device with a screen lock set and Face ID / fingerprint
+# enrolled:
+#
+#   maestro test --include-tags device .maestro     # or: npm run e2e:device
+#
+# Maestro cannot press a physical fingerprint sensor. On the iOS simulator the
+# "Matching Touch ID" menu item stands in; on a real device the operator
+# authenticates by hand while the flow waits. Everything before and after that
+# moment is asserted automatically, so this catches the two failures that
+# actually happen in the field: the prompt never being raised, and the app not
+# recovering after it is answered.
+- runFlow: ../subflows/launch-fresh.yaml
+
+- tapOn:
+    id: "welcome-create"
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-screen"
+    timeout: 20000
+
+# The passkey path specifically — the keypair path is what the emulator suite
+# exercises; this one only runs where a real credential exists.
+- tapOn:
+    id: "create-passkey-button"
+
+# The system credential sheet is drawn by the OS, so it is matched by its text
+# rather than a testID. Optional because the ceremony may complete without a
+# visible sheet (e.g. already-unlocked face auth).
+- extendedWaitUntil:
+    visible:
+      text: "(?i)(face id|touch id|fingerprint|passkey|biometric)"
+    timeout: 20000
+    optional: true
+
+# The operator authenticates. The generous timeout is the human in the loop.
+# The creation card renders the new address once the wallet is persisted; a
+# recovery-binding failure shows repair buttons there, which this smoke test
+# deliberately does not step through.
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-address"
+    timeout: 60000
+
+- tapOn:
+    id: "create-wallet-continue-button"
+- runFlow: ../subflows/skip-tutorial.yaml
+- extendedWaitUntil:
+    visible:
+      id: "dashboard-screen"
+    timeout: 20000
+
+# Relaunch cold. The passkey wallet persists its address and passkey id, so
+# the entry router must come back to the dashboard, not to onboarding — a
+# credential that only authenticates the session that created it fails here.
+# (The inactivity lock arms on devices with enrolled biometrics, but only
+# after idle/background beyond its grace window, which a relaunch is not.)
+- stopApp
+- launchApp
+- runFlow: ../subflows/dismiss-offline.yaml
+- extendedWaitUntil:
+    visible:
+      id: "dashboard-screen"
+    timeout: 30000

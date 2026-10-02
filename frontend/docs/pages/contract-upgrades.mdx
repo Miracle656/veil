@@ -1,0 +1,486 @@
+---
+title: Contract Upgrade Procedure
+description: How to upgrade the Veil smart contract WASM, update the factory hash, and manage state migrations for existing wallets.
+---
+
+import { Callout } from 'nextra/components'
+
+# Contract Upgrade Procedure
+
+Existing wallets need a known, deterministic upgrade path when the WASM changes. This page covers everything from triggering an upgrade through verifying and rolling back.
+
+## When to Upgrade
+
+New contract releases fall into two categories — those that require an upgrade and those that do not.
+
+### Requires upgrade
+
+| Scenario | Example | Risk |
+|---|---|---|
+| Bug fix in `__check_auth` | Fixing a signature verification edge case | High — wallets will reject valid txs |
+| New contract function | Adding `approve` or `cancel_recovery` | Medium — old wallets simply lack the fn |
+| Storage layout change | Changing a `DataKey` variant or `ContractType` struct | Critical — data corruption |
+| Cryptographic dependency bump | Updating the `p256` crate version | Medium — verification path changes |
+| Gas optimization | Reducing a function's compute budget | Low — transparent to users |
+
+### Does not require upgrade
+
+| Scenario | How |
+|---|---|
+| New SDK version | SDK changes are client-side only — no on-chain upgrade needed |
+| New frontend feature | The wallet app can call existing contract functions in new ways |
+| Lens / Wraith / Agent update | Backend services are independent of the contract |
+| Factory address change | Only affects new deployments; existing wallets keep working |
+| Network migration (testnet → mainnet) | Separate factory deployment with fresh wallets |
+
+<Callout type="info">
+  **Rule of thumb:** If the change touches `contracts/invisible_wallet/src/lib.rs`, `auth.rs`, or `storage.rs`, plan an upgrade. If it only touches the SDK, frontend, or backend services, no upgrade is needed.
+</Callout>
+
+---
+
+## Two Upgrade Paths
+
+Veil has two contracts that can be upgraded independently:
+
+| Contract | Upgrade Mechanism | Affects |
+|---|---|---|
+| **Factory** | `set_wasm_hash` | Only **new** wallet deployments |
+| **Invisible Wallet** (per-wallet) | `update_current_contract_wasm` | Each **existing** wallet individually |
+
+### Path 1 — Factory WASM Hash Bump
+
+The factory stores a single `wasm_hash` that it uses when deploying new wallet instances. To make new wallets use a new version:
+
+1. Build the new wallet WASM
+2. Upload it to the network
+3. Call `set_wasm_hash` on the factory
+
+```rust
+// Factory contract — new function for operator-controlled upgrade
+pub fn set_wasm_hash(env: Env, new_wasm_hash: BytesN<32>) {
+    // Only the factory deployer/operator can call this
+    // Requires auth of the operator address stored at init time
+    env.current_contract_address().require_auth();
+    storage::set_wasm_hash(&env, &new_wasm_hash);
+}
+```
+
+**CLI example:**
+
+```bash
+# 1. Build the new WASM
+cd contracts/invisible_wallet
+cargo build --target wasm32-unknown-unknown --release
+
+# 2. Upload WASM and capture its hash
+stellar contract upload \
+  --wasm target/wasm32-unknown-unknown/release/invisible_wallet.wasm \
+  --source <OPERATOR_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+
+# 3. Update the factory's stored hash (output hash from step 2)
+stellar contract invoke \
+  --id <FACTORY_CONTRACT_ID> \
+  --fn set_wasm_hash \
+  --source <OPERATOR_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  -- \
+  --new_wasm_hash <HEX_WASM_HASH>
+```
+
+**Important:** This only affects wallets deployed _after_ the bump. Existing wallets are NOT upgraded — they still run the old WASM.
+
+### Path 2 — Existing Wallet Upgrade (`update_current_contract_wasm`)
+
+Soroban provides a host function to atomically replace a contract's WASM:
+
+```rust
+// Host function — called from within the wallet contract
+env.deployer().update_current_contract_wasm(new_wasm_hash);
+```
+
+The wallet contract needs an explicit upgrade entry point:
+
+```rust
+/// Upgrade this wallet's WASM to a new version.
+/// Only callable by the wallet signer (passkey required).
+pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+    env.current_contract_address().require_auth();
+    env.deployer().update_current_contract_wasm(new_wasm_hash);
+}
+```
+
+**CLI example** — with passkey signature:
+
+```bash
+# 1. Build and upload new WASM (same as Path 1)
+cd contracts/invisible_wallet
+cargo build --target wasm32-unknown-unknown --release
+stellar contract upload \
+  --wasm target/wasm32-unknown-unknown/release/invisible_wallet.wasm \
+  --source <FEE_PAYER_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+
+# 2. Build the upgrade transaction (from the Veil wallet UI or Agent)
+# The SDK's signAuthEntry flow handles the passkey challenge
+# See sdk/src/useInvisibleWallet.ts for the sign-and-submit pattern
+
+# 3. Submit the upgrade (using stellar CLI as operator)
+stellar contract invoke \
+  --id <WALLET_CONTRACT_ID> \
+  --fn upgrade \
+  --source <FEE_PAYER_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  -- \
+  --new_wasm_hash <HEX_WASM_HASH>
+```
+
+<Callout type="warning">
+  `update_current_contract_wasm` is an **atomic** operation — once confirmed, the contract's code is immediately replaced. There is no two-phase commit or staged rollout at the contract level. You must batch-upgrade wallets individually or via a script.
+</Callout>
+
+---
+
+## Storage Compatibility Rules
+
+The upgrade is safe as long as existing storage keys remain valid.
+
+### What survives
+
+All storage back to permanent storage. Upgrades only replace the contract code — stored data persists across upgrades.
+
+| Data | Storage Type | Key | Survives Upgrade? |
+|---|---|---|---|
+| Signers map | Instance | `DataKey::Signers` | ✅ Yes |
+| Guardian address | Instance | `DataKey::Guardian` | ✅ Yes |
+| RP ID | Instance | `DataKey::RpId` | ✅ Yes |
+| Origin | Instance | `DataKey::Origin` | ✅ Yes |
+| Nonce counter | Instance | `DataKey::Nonce` | ✅ Yes |
+| Pending recovery | Persistent | `DataKey::RecoveryPending` | ✅ Yes |
+| Allowance records | Persistent | `DataKey::Allowance(AllowanceKey)` | ✅ Yes |
+
+### What can break
+
+Adding, removing, or reordering `DataKey` variants, `ContractType` structs, or storage prefix bytes will corrupt existing data.
+
+```rust
+// ❌ BREAKING — reordering variants changes the storage key discriminant
+#[contracttype]
+pub enum DataKey {
+    Signers,         // Was index 0, now index 0 (ok if nothing inserted before)
+    // ...but inserting Nonce here would shift RpId and Origin's discriminant
+    Guardian,
+}
+
+// ✅ SAFE — append new variants at the end
+#[contracttype]
+pub enum DataKey {
+    Signers,
+    Guardian,
+    RpId,
+    Origin,
+    // Existing variants above — never reorder
+    Nonce,
+    RecoveryPending,
+    Allowance(AllowanceKey),
+    // New variants go HERE — at the end
+}
+```
+
+```rust
+// ❌ BREAKING — removing a variant shifts all subsequent discriminant values
+// If you remove DataKey::Nonce, the stored Nonce value cannot be read
+
+// ❌ BREAKING — renaming a variant
+// DataKey::Signers → DataKey::AuthorizedKeys changes the discriminant
+
+// ❌ BREAKING — changing a struct field type
+// pub struct Allowance { amount: i128, expiry: Option<u64> }
+// → pub struct Allowance { amount: i128, expiry: u64 } // wrong type
+```
+
+```rust
+// ✅ SAFE — adding optional fields to a struct (if handled via migration)
+// Old: pub struct Allowance { amount: i128, expiry: Option<u64> }
+// New: pub struct Allowance { amount: i128, expiry: Option<u64>, max_per_tx: Option<i128> }
+// Only safe if you handle the old format in a migration step
+```
+
+### Golden Rules
+
+| Rule | Why |
+|---|---|
+| **Always append** new `DataKey` variants at the end | Variants are encoded as their ordinal index — inserting or reordering changes existing keys |
+| **Never rename** an existing variant | The name is irrelevant; the ordinal matters |
+| **Never remove** a variant | Stored data for that key becomes orphans |
+| **Never change** a stored struct's field types | Deserialization will panic |
+| **Only add** optional fields at the end of a struct | Old serialized records lack the field; Soroban's `Env::try_from` may not handle the mismatch |
+| **Test against a snapshot** of real storage | `stellar contract read` to dump storage before and after |
+
+---
+
+## Worked Example — Adding a Feature Flag
+
+Walkthrough of a real upgrade: adding an `emergency_pause` flag to the wallet contract.
+
+### Step 1 — Extend storage
+
+Append the new variant at the end of `DataKey`:
+
+```rust
+#[contracttype]
+pub enum DataKey {
+    Signers,
+    Guardian,
+    RpId,
+    Origin,
+    Nonce,
+    RecoveryPending,
+    Allowance(AllowanceKey),
+    SessionKeyAcl(BytesN<32>),
+    // NEW — append at the end
+    EmergencyPause,
+}
+```
+
+### Step 2 — Add the new function
+
+```rust
+/// Pause all non-recovery operations. Only callable by a wallet signer.
+pub fn emergency_pause(env: Env) {
+    env.current_contract_address().require_auth();
+    env.storage().instance().set(&DataKey::EmergencyPause, &true);
+}
+
+/// Resume normal operations.
+pub fn emergency_unpause(env: Env) {
+    env.current_contract_address().require_auth();
+    env.storage().instance().set(&DataKey::EmergencyPause, &false);
+}
+```
+
+### Step 3 — Guard `__check_auth`
+
+```rust
+pub fn __check_auth(...) -> Result<(), WalletError> {
+    // Check pause flag early — reject all auth if paused
+    if env.storage().instance().has(&DataKey::EmergencyPause) {
+        let paused: bool = env.storage().instance().get(&DataKey::EmergencyPause).unwrap();
+        if paused {
+            return Err(WalletError::ContractPaused); // New error variant
+        }
+    }
+    // ... rest of auth logic
+}
+```
+
+### Step 4 — Build & upload
+
+```bash
+cd contracts/invisible_wallet
+cargo build --target wasm32-unknown-unknown --release
+
+NEW_HASH=$(stellar contract upload \
+  --wasm target/wasm32-unknown-unknown/release/invisible_wallet.wasm \
+  --source <OPERATOR_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --output hash \
+  2>&1 | tail -1)
+
+echo "New WASM hash: $NEW_HASH"
+```
+
+### Step 5 — Upgrade the factory (new deployments)
+
+```bash
+stellar contract invoke \
+  --id <FACTORY_ID> \
+  --fn set_wasm_hash \
+  --source <OPERATOR_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  -- \
+  --new_wasm_hash "$NEW_HASH"
+
+echo "Factory WASM hash updated — new wallets will use the new code."
+```
+
+### Step 6 — Batch-upgrade existing wallets
+
+```typescript
+// scripts/batch-upgrade.ts
+import { Keypair, rpc as SorobanRpc, Contract, TransactionBuilder, BASE_FEE, nativeToScVal } from '@stellar/stellar-sdk';
+
+async function upgradeWallet(
+  rpcUrl: string,
+  networkPassphrase: string,
+  walletAddress: string,
+  feePayer: Keypair,
+  newWasmHash: string,
+) {
+  const server = new SorobanRpc.Server(rpcUrl);
+  const source = await server.getAccount(feePayer.publicKey());
+  const wallet = new Contract(walletAddress);
+  const hashBytes = Buffer.from(newWasmHash, 'hex');
+
+  const tx = new TransactionBuilder(source, {
+    fee: BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(wallet.call('upgrade', nativeToScVal(hashBytes, { type: 'bytes' })))
+    .setTimeout(30)
+    .build();
+
+  const sim = await server.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(sim)) throw new Error(`Sim failed: ${sim.error}`);
+
+  const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+  assembled.sign(feePayer);
+
+  const sendResult = await server.sendTransaction(assembled);
+  if (sendResult.status === 'ERROR') throw new Error(`Send failed: ${sendResult.errorResult?.toXDR('base64')}`);
+
+  // Poll for confirmation
+  for (let i = 0; i < 30; i++) {
+    const result = await server.getTransaction(sendResult.hash);
+    if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
+      return result;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  throw new Error('Timeout waiting for confirmation');
+}
+
+// Usage
+const wallets = ['C...1', 'C...2', 'C...3']; // fetch from your deployment list
+const feePayer = Keypair.fromSecret('S...');
+for (const addr of wallets) {
+  console.log(`Upgrading ${addr}...`);
+  await upgradeWallet(
+    'https://soroban-testnet.stellar.org',
+    'Test SDF Network ; September 2015',
+    addr,
+    feePayer,
+    'abcdef...', // new WASM hash
+  );
+  console.log(`  ✅ ${addr} upgraded`);
+}
+```
+
+### Step 7 — Verify
+
+```bash
+# Check that the new function exists
+stellar contract invoke \
+  --id <WALLET_ADDRESS> \
+  --fn emergency_pause \
+  --source <FEE_PAYER_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+
+# Verify old state is intact (signers, guardian, nonce)
+stellar contract invoke \
+  --id <WALLET_ADDRESS> \
+  --fn get_nonce \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+```
+
+---
+
+## Rollback Plan
+
+Upgrades are one-directional — Soroban does not have a built-in `revert` for `update_current_contract_wasm`. Rollback means deploying the previous WASM hash.
+
+### Prerequisite — Keep the Old WASM
+
+Before any upgrade:
+
+```bash
+# Archive the current WASM binary and its hash
+cp target/wasm32-unknown-unknown/release/invisible_wallet.wasm \
+  releases/invisible_wallet-v0.1.0.wasm
+sha256sum releases/invisible_wallet-v0.1.0.wasm | tee releases/invisible_wallet-v0.1.0.sha256
+
+# Record the hash used by the factory
+stellar contract invoke \
+  --id <FACTORY_ID> \
+  --fn get_wasm_hash \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015"
+```
+
+### Rollback scenarios
+
+| Scenario | What to do |
+|---|---|
+| **New deployments broken** | Call `set_wasm_hash(old_hash)` on the factory — all new deployments go back to the old WASM |
+| **Single existing wallet broken** | Call `upgrade(old_hash)` on that wallet — signed by the wallet's passkey, or deploy a fresh wallet and use guardian recovery |
+| **All existing wallets broken** | Batch-upgrade every wallet to the old hash (same script as Step 6 above) |
+| **Storage corruption** | No WASM-level rollback can fix this. Each wallet must be recovered via guardian recovery (see [architecture.mdx](/architecture)) — deploy a fresh contract instance and migrate assets out of the corrupted wallet |
+
+### Rollback checklist
+
+```bash
+# 1. Build the old WASM from the previous git tag
+git checkout v0.1.0
+cargo build --target wasm32-unknown-unknown --release
+
+# 2. Upload it (gets a new hash — same code, different upload)
+OLD_UPLOAD_HASH=$(stellar contract upload \
+  --wasm target/wasm32-unknown-unknown/release/invisible_wallet.wasm \
+  --source <OPERATOR_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --output hash \
+  2>&1 | tail -1)
+
+# 3. Point factory to old hash
+stellar contract invoke \
+  --id <FACTORY_ID> \
+  --fn set_wasm_hash \
+  --source <OPERATOR_SECRET> \
+  --rpc-url https://soroban-testnet.stellar.org \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  -- \
+  --new_wasm_hash "$OLD_UPLOAD_HASH"
+
+# 4. Roll back individual wallets as needed
+# (re-run batch-upgrade.ts with OLD_UPLOAD_HASH)
+```
+
+<Callout type="warning">
+  Uploading the same source code produces a **different WASM hash** on each upload because the Soroban host binds metadata (upload timestamp, signer). Always save the hex hash from the upload command output — do not rely on bit-reproducible builds for rollback identity.
+</Callout>
+
+---
+
+## Verification Checklist
+
+After every upgrade, verify:
+
+| Check | Command / Method | Expected |
+|---|---|---|
+| Factory hash updated | `stellar contract invoke --id <FACTORY_ID> --fn get_wasm_hash` | Matches new upload |
+| Wallet upgrades | Call `get_nonce` on an upgraded wallet | Returns pre-upgrade nonce (storage intact) |
+| Signers survive | Invoke `get_signers` on an upgraded wallet | Returns pre-upgrade signer list |
+| New function works | Invoke any newly added function | Returns expected result |
+| Old function works | Initiate a test payment or swap | Transaction completes successfully |
+| Guardian still set | Invoke `get_guardian` on an upgraded wallet | Returns pre-upgrade guardian address |
+| Reproducible build | Run `scripts/reproducible-build.sh` and compare to `contracts/expected-hashes.json` | No unexpected hash drift |
+| Smoke test | Run `npm run smoke` from the repo root — see `scripts/smoke_test.ts` | All assertions pass |
+
+---
+
+## Related
+
+- [Architecture](/architecture) — Two-account model and WebAuthn pipeline
+- [Contract API](/contract-api) — Full reference for all contract functions
+- [Factory Deploy](/cookbook/factory-deploy) — Deploying the factory contract itself
+- [Secure Development](/security) — Security considerations for contract development

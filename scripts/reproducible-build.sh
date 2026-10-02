@@ -26,8 +26,8 @@
 set -euo pipefail
 
 # Pinned build image. Matches contracts/rust-toolchain.toml (channel 1.85.0).
-# Pin to a digest for the strongest guarantee; the tag is used here for clarity.
-BUILD_IMAGE="${VEIL_BUILD_IMAGE:-rust:1.85.0-bookworm}"
+# Pinned to an immutable multi-arch digest for byte-for-byte reproducibility.
+BUILD_IMAGE="${VEIL_BUILD_IMAGE:-rust:1.85.0-bookworm@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e}"
 TARGET="wasm32-unknown-unknown"
 
 MODE="check"

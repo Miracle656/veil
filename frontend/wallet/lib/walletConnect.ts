@@ -1,5 +1,6 @@
 'use client'
 
+import { inclusionFee } from './fees'
 import { useState, useEffect, useCallback } from 'react'
 import { Core } from '@walletconnect/core'
 import { Web3Wallet, type IWeb3Wallet } from '@walletconnect/web3wallet'
@@ -17,6 +18,7 @@ import {
   BASE_FEE,
   Operation,
 } from '@stellar/stellar-sdk'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 async function getWalletNonce(
   rpc: SorobanRpc.Server,
@@ -27,7 +29,7 @@ async function getWalletNonce(
     const dummyKp = Keypair.random()
     const dummyAcct = new Account(dummyKp.publicKey(), '0')
     const probeTx = new TransactionBuilder(dummyAcct, {
-      fee: BASE_FEE,
+      fee: inclusionFee(),
       networkPassphrase,
     })
       .addOperation(new Contract(contractAddress).call('get_nonce'))
@@ -45,6 +47,7 @@ async function getWalletNonce(
 import type { WebAuthnSignature } from '@veil/sdk'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import { getNetwork } from './network'
+import { WalletNotActivatedError, getDeploymentState } from './walletDeployment'
 
 const SESSION_STORAGE_KEY = 'veil_walletconnect_sessions'
 const METHODS = ['stellar_signXDR', 'stellar_signAndSubmitXDR']
@@ -133,8 +136,8 @@ async function syncSessionsFromClient(client: IWeb3Wallet): Promise<void> {
 
 function getFeePayerKeypair(): Keypair {
   const signerSecret =
-    sessionStorage.getItem('veil_signer_secret')
-    || localStorage.getItem('veil_signer_secret')
+    walletSession.getItem('veil_signer_secret')
+    || walletLocal.getItem('veil_signer_secret')
   if (!signerSecret) {
     throw new Error('No fee-payer signer secret found in storage.')
   }
@@ -142,8 +145,8 @@ function getFeePayerKeypair(): Keypair {
 }
 
 async function signAuthEntry(payload: Uint8Array): Promise<WebAuthnSignature | null> {
-  const keyId = localStorage.getItem('invisible_wallet_key_id')
-  const publicKeyHex = localStorage.getItem('invisible_wallet_public_key')
+  const keyId = walletLocal.getItem('invisible_wallet_key_id')
+  const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
   if (!keyId || !publicKeyHex) {
     throw new Error('No passkey found. Please register the wallet first.')
   }
@@ -153,7 +156,9 @@ async function signAuthEntry(payload: Uint8Array): Promise<WebAuthnSignature | n
     payload.byteOffset + payload.byteLength,
   ) as ArrayBuffer
 
-  const credIdBin = atob(keyId.replace(/-/g, '+').replace(/_/g, '/'))
+  const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+  const credIdBin = atob(padded)
   const credId = Uint8Array.from(credIdBin, (c) => c.charCodeAt(0))
 
   try {
@@ -258,6 +263,17 @@ async function signXdrPayload(
 
       const addrCred = cred.address()
       const contractAddr = Address.fromScAddress(addrCred.address()).toString()
+
+      // A dApp can only be answered by a contract that exists: `__check_auth`
+      // runs on chain. Wallets are deployed on first use now, so stop here with
+      // a sentence about what to do, instead of asking for a passkey signature
+      // the network is guaranteed to reject.
+      if (
+        contractAddr === walletLocal.getItem('invisible_wallet_address')
+        && (await getDeploymentState(contractAddr)) === 'undeployed'
+      ) {
+        throw new WalletNotActivatedError(feePayerKeypair.publicKey())
+      }
       const currentNonce = await getWalletNonce(rpc, contractAddr, network.networkPassphrase)
 
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
@@ -307,7 +323,7 @@ async function signXdrPayload(
   const ihfOp = tx.operations[0] as Operation.InvokeHostFunction
   const feePayerAcct = await rpc.getAccount(feePayerKeypair.publicKey())
   const signedTx = new TransactionBuilder(feePayerAcct, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(Operation.invokeHostFunction({

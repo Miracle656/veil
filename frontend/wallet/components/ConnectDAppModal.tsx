@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import jsQR from 'jsqr'
 import { useWalletConnect } from '@/hooks/useWalletConnect'
+import { walletSession } from '@/lib/walletStorage'
 
 type ConnectDAppModalProps = {
   isOpen: boolean
@@ -31,7 +32,7 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
   const dappIcon = pendingProposal?.proposer?.metadata?.icons?.[0] || ''
 
   const walletAddress = useMemo(
-    () => (typeof window !== 'undefined' ? sessionStorage.getItem('invisible_wallet_address') : null),
+    () => (typeof window !== 'undefined' ? walletSession.getItem('invisible_wallet_address') : null),
     [isOpen],
   )
 

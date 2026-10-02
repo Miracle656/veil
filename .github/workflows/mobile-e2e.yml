@@ -1,0 +1,128 @@
+name: Mobile E2E Tests
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/mobile/**'
+      - '.github/workflows/mobile-e2e.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'frontend/mobile/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  maestro-android:
+    name: Maestro — Android emulator
+    runs-on: ubuntu-latest
+    # Prebuild plus a Gradle release build dominates the runtime; the flows
+    # themselves take a few minutes.
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        working-directory: frontend/mobile
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/mobile/package-lock.json
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # v4 no longer installs the removed `tools` SDK package (v3.2.2 ran
+      # `sdkmanager tools`, which now fails with "Failed to find package
+      # 'tools'"); it defaults to `platform-tools` instead.
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ios/ and android/ are gitignored and generated on demand, so the native
+      # project has to be produced before Gradle can build it.
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install
+
+      # A debug APK is an expo-dev-client build, so it boots to the "Development
+      # Build" launcher waiting for a Metro server instead of running the app —
+      # every flow then fails on the cold-start `welcome-screen` assertion before
+      # it starts. Release builds bundle the JS and skip the launcher (it only
+      # auto-shows in debuggable builds), so the app comes up on its own UI, and
+      # deep links resolve because the manifest intent filters are live rather
+      # than behind the dev client. The template signs release with the debug
+      # keystore, so the result is still installable with `adb install`.
+      - name: Build release APK
+        working-directory: frontend/mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Install Maestro
+        run: |
+          maestro_version='2.10.0'
+          maestro_archive='maestro.zip'
+          maestro_url="https://github.com/mobile-dev-inc/maestro/releases/download/cli-${maestro_version}/${maestro_archive}"
+          maestro_sha256='29b675e10cc12080e445e9bfb2e2b4e4dfb9c0f2e30d5884120d258b5e1cd991'
+          maestro_tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$maestro_tmp_dir"' EXIT
+          curl -fsSL "$maestro_url" -o "$maestro_tmp_dir/$maestro_archive"
+          echo "$maestro_sha256  $maestro_tmp_dir/$maestro_archive" | sha256sum --check --status
+          mkdir -p "$HOME/.maestro"
+          unzip -q "$maestro_tmp_dir/$maestro_archive" -d "$maestro_tmp_dir"
+          cp -R "$maestro_tmp_dir/maestro/." "$HOME/.maestro/"
+          chmod +x "$HOME/.maestro/bin/maestro"
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # The `device`-tagged passkey smoke test is excluded by .maestro/config.yaml;
+      # an emulator has no enrolled biometric credential to satisfy the prompt.
+      - name: Run Maestro flows
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          working-directory: frontend/mobile
+          script: |
+            adb install -r android/app/build/outputs/apk/release/app-release.apk
+
+            # The app pushes /offline whenever NetInfo reports no usable
+            # connection, and a freshly booted emulator often has not finished
+            # bringing its network up. Without this wait every flow fails on the
+            # cold-start assertion before it reaches anything it meant to test.
+            # The flows also dismiss the offline screen defensively, so a failure
+            # to validate here degrades rather than blocks.
+            #
+            # Kept on one line: the emulator runner hands this whole block to a
+            # single `sh -c`, and a multi-line `for ... done` there trips dash
+            # with "Syntax error: end of file unexpected (expecting done)".
+            for i in $(seq 1 30); do if adb shell dumpsys connectivity | grep -q "VALIDATED"; then echo "Emulator network validated"; break; fi; echo "Waiting for emulator network ($i/30)"; sleep 5; done
+
+            maestro test .maestro --format junit --output maestro-report.xml
+
+      - name: Upload Maestro report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: maestro-report
+          path: |
+            frontend/mobile/maestro-report.xml
+            ~/.maestro/tests/**
+          if-no-files-found: ignore

@@ -1,3 +1,4 @@
+import { inclusionFee } from './fees'
 import {
   Keypair,
   rpc as SorobanRpc,
@@ -13,11 +14,12 @@ import {
   Operation
 } from '@stellar/stellar-sdk';
 import { getNetwork } from './network';
+import { getMultisigWasmHash } from './multisigConfig';
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const network = getNetwork();
 const RPC_URL = network.rpcUrl;
 const NETWORK_PASSPHRASE = network.networkPassphrase;
-const MULTISIG_WASM_HASH = '7eb63568a7a41c19f5d85c55b5ec88c6f95ef840bcf98d1797850ace2dd3cf24';
 
 export interface ProposalDetails {
   id: number;
@@ -40,7 +42,7 @@ export async function getOrFundFeePayer(explicitSecret?: string): Promise<Keypai
     return Keypair.fromSecret(explicitSecret);
   }
   const stored = typeof window !== 'undefined'
-    ? (sessionStorage.getItem('veil_signer_secret') || localStorage.getItem('veil_signer_secret'))
+    ? (walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret'))
     : null;
   
   if (stored) {
@@ -75,6 +77,11 @@ export async function deployAndInitMultisig(params: {
   threshold: number;
   feePayerSecret?: string;
 }): Promise<string> {
+  // Resolved before anything is funded or signed: on a network where the
+  // multisig WASM is not installed this throws with the network named, rather
+  // than building a transaction that can only fail at the signature (#672).
+  const multisigWasmHash = getMultisigWasmHash();
+
   const server = new SorobanRpc.Server(RPC_URL);
   const feePayer = await getOrFundFeePayer(params.feePayerSecret);
   const account = await server.getAccount(feePayer.publicKey());
@@ -82,11 +89,11 @@ export async function deployAndInitMultisig(params: {
   const salt = crypto.getRandomValues(new Uint8Array(32));
   const createOp = Operation.createCustomContract({
     address: feePayer.publicKey() as any,
-    wasmHash: Buffer.from(MULTISIG_WASM_HASH, 'hex'),
+    wasmHash: Buffer.from(multisigWasmHash, 'hex'),
     salt: Buffer.from(salt),
   });
 
-  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const tx = new TransactionBuilder(account, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(createOp)
     .setTimeout(60)
     .build();
@@ -126,7 +133,7 @@ export async function deployAndInitMultisig(params: {
 
   const ownersScVal = nativeToScVal(params.owners.map(addr => nativeToScVal(addr, { type: 'address' })), { type: 'vec' });
 
-  const initTx = new TransactionBuilder(initAccount, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const initTx = new TransactionBuilder(initAccount, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(multisigContract.call(
       'initialize',
       ownersScVal,
@@ -161,7 +168,7 @@ export async function fetchMultisigDetails(contractId: string): Promise<Multisig
   const dummyAcct = new Account(dummyKp.publicKey(), '0');
 
   // Query owners
-  const ownersTx = new TransactionBuilder(dummyAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const ownersTx = new TransactionBuilder(dummyAcct, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(contract.call('get_owners'))
     .setTimeout(30)
     .build();
@@ -170,7 +177,7 @@ export async function fetchMultisigDetails(contractId: string): Promise<Multisig
   const owners = scValToNative((ownersSim as any).result.retval) as string[];
 
   // Query threshold
-  const thresholdTx = new TransactionBuilder(dummyAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const thresholdTx = new TransactionBuilder(dummyAcct, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(contract.call('get_threshold'))
     .setTimeout(30)
     .build();
@@ -181,7 +188,7 @@ export async function fetchMultisigDetails(contractId: string): Promise<Multisig
   // Query native balance
   const nativeTokenAddress = Asset.native().contractId(NETWORK_PASSPHRASE);
   const sac = new Contract(nativeTokenAddress);
-  const balanceTx = new TransactionBuilder(dummyAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const balanceTx = new TransactionBuilder(dummyAcct, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(sac.call('balance', nativeToScVal(contractId, { type: 'address' })))
     .setTimeout(30)
     .build();
@@ -214,7 +221,7 @@ export async function proposeTransaction(params: {
 
   const amountStroops = BigInt(Math.round(parseFloat(params.amountXlm) * 10_000_000));
 
-  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const tx = new TransactionBuilder(account, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(contract.call(
       'propose_transaction',
       nativeToScVal(params.to, { type: 'address' }),
@@ -247,7 +254,7 @@ export async function signTransaction(params: {
   const account = await server.getAccount(feePayer.publicKey());
   const contract = new Contract(params.contractId);
 
-  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const tx = new TransactionBuilder(account, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(contract.call(
       'sign_transaction',
       nativeToScVal(params.proposalId, { type: 'u64' }),
@@ -279,7 +286,7 @@ export async function getProposalsOnChain(contractId: string): Promise<ProposalD
   const dummyAcct = new Account(dummyKp.publicKey(), '0');
 
   // Query proposal count
-  const countTx = new TransactionBuilder(dummyAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const countTx = new TransactionBuilder(dummyAcct, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(contract.call('get_proposal_count'))
     .setTimeout(30)
     .build();
@@ -290,7 +297,7 @@ export async function getProposalsOnChain(contractId: string): Promise<ProposalD
 
   const proposals: ProposalDetails[] = [];
   for (let id = 1; id <= proposalCount; id++) {
-    const propTx = new TransactionBuilder(dummyAcct, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+    const propTx = new TransactionBuilder(dummyAcct, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
       .addOperation(contract.call('get_proposal', nativeToScVal(id, { type: 'u64' })))
       .setTimeout(30)
       .build();
