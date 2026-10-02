@@ -21,7 +21,7 @@ export interface VerifiedAsset {
 }
 
 // Verified against mainnet Horizon on 2026-09-24 (issue #795). The SAC is
-// derived from the issuer rather than trusted as pasted.
+// derived from the issuer; the constant is here for tests to validate the derivation.
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
 
