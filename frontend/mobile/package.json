@@ -9,6 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "eas-build-post-install": "sh ./modules/spp-native/scripts/install-rust-toolchain.sh",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
     "test": "jest",
     "e2e": "maestro test .maestro",

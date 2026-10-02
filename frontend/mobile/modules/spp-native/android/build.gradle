@@ -141,7 +141,35 @@ rustTargets.each { target ->
 tasks.register('generateUniffiBindings', Exec) {
   group = 'spp'
   description = 'Generates Kotlin bindings from spp_native.udl'
-  onlyIf { cargoAvailable }
+  // Deliberately NOT guarded by `onlyIf { cargoAvailable }`, unlike the
+  // buildRust<abi> tasks above.
+  //
+  // Skipping those costs a .so, which the JS layer detects at runtime and
+  // replaces with WASM. Skipping *this* costs the Kotlin bindings that
+  // SppNativeModule.kt imports, and that is not survivable: the module then
+  // fails to compile with eight "Unresolved reference" errors pointing at
+  // `uniffi.spp_native.*`, which name the symptom and not the cause. An EAS
+  // build spent 37 minutes reaching exactly that.
+  //
+  // So when the toolchain is missing, say so here instead, where the fix fits
+  // in the message.
+  doFirst {
+    if (!cargoAvailable) {
+      throw new GradleException(
+        "[spp-native] cargo is required to build this module, and it was not found.
+" +
+        "SppNativeModule.kt imports uniffi.spp_native.*, which this task generates, so " +
+        "skipping it would fail the Kotlin compile with unresolved references instead.
+" +
+        "Install the toolchain with:
+" +
+        "  sh modules/spp-native/scripts/install-rust-toolchain.sh
+" +
+        "On EAS this runs automatically via the eas-build-post-install hook in " +
+        "frontend/mobile/package.json; on GitHub Actions, mobile-e2e.yml installs it."
+      )
+    }
+  }
   workingDir rustDir
   def udlFile = file("${rustDir}/spp-prover/src/spp_native.udl")
   // Up-to-date / cache tracking: rerun only when the UDL changes, and treat
