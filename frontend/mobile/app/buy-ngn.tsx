@@ -244,7 +244,29 @@ export default function BuyWithNairaScreen() {
       else setError('Verification is still pending. Try again shortly.');
     } catch (err) {
       setNin('');
-      setError(errorMessage(err));
+      const message = errorMessage(err);
+
+      // Linq deduplicates NINs: one verified customer per NIN, forever. So
+      // "already used" is the expected answer for someone who verified before
+      // and lost local state — a reinstall, cleared storage — and treating it
+      // as a failure strands them on this screen with no way forward, because
+      // the one NIN that would verify them is the one being refused.
+      //
+      // The reference is unchanged in that case (it is seeded from the wallet
+      // address, which a recovered wallet reproduces), so they are already
+      // verified against it. Move on and let Linq be the authority at order
+      // time: if the reference really is unverified, order creation says so
+      // with its own message rather than this screen guessing.
+      if (/already|duplicate|exists|in use|verified/i.test(message)) {
+        await AsyncStorage.setItem(
+          CUSTOMER_KEY,
+          JSON.stringify({ customerRef, verified: true }),
+        ).catch(() => undefined);
+        setStep('amount');
+        return;
+      }
+
+      setError(message);
     } finally {
       setBusy(false);
     }
