@@ -40,11 +40,14 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const { colors, isDark } = useTheme();
-  // Routes seen before a wallet exists, plus the lock screen.
+  // Only where privacy is actually in play.
+  //
+  // The banner reports which SPP archive the privacy client will use. That is
+  // worth saying on a privacy screen and is noise everywhere else — on the
+  // dashboard it reads as a standing error about a feature the user is not
+  // using, and before a wallet exists it is the first thing a new user sees.
   const pathname = usePathname();
-  const showsBootnodeBanner = !['/', '/welcome', '/lock', '/login', '/create-wallet', '/recover'].includes(
-    pathname,
-  );
+  const showsBootnodeBanner = pathname.startsWith('/privacy');
   const [fontsLoaded, fontError] = useFonts(fontAssets);
 
   useEffect(() => {
