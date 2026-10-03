@@ -143,7 +143,14 @@ export function SilverBalanceCard({
         </View>
       </View>
       <Pressable onPress={toggleFlip} accessibilityRole="button" accessibilityLabel="Flip balance" style={styles.balanceArea}>
-        <Text style={styles.amount} numberOfLines={1} adjustsFontSizeToFit>
+        <Text
+            style={styles.amount}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            // Without a floor a long balance shrinks until it is unreadable;
+            // 0.65 of 44 is ~28pt, which still reads as the headline figure.
+            minimumFontScale={0.65}
+          >
           {mask(big)}
         </Text>
         <Text style={styles.sub}>{hidden ? '••••' : sub}</Text>
@@ -263,7 +270,9 @@ const createStyles = () =>
       color: INK,
       fontFamily: fontFamily.heading,
       fontSize: 44,
-      lineHeight: 50,
+      // No lineHeight on purpose: with `adjustsFontSizeToFit` a fixed line box
+      // does not shrink with the font, so a long balance shrinks inside a 50pt
+      // box and the glyphs come out visibly squashed on Android.
       marginTop: 10,
     },
     subRow: {
