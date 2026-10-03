@@ -35,6 +35,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -263,7 +265,17 @@ export default function AirtimeScreen() {
         ) : null}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={16}
+      >
+        <ScrollView
+          style={styles.flex}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.body}
+          keyboardShouldPersistTaps="handled"
+        >
         {mainnetOnly ? (
           <View style={styles.card}>
             <Text style={styles.eyebrow}>MAINNET ONLY</Text>
@@ -575,7 +587,8 @@ export default function AirtimeScreen() {
             ) : null}
           </>
         )}
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -583,7 +596,8 @@ export default function AirtimeScreen() {
 function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
-    header: { paddingHorizontal: 20 },
+    flex: { flex: 1 },
+    header: { paddingHorizontal: 20, paddingTop: 16 },
     body: { padding: 20, paddingBottom: 60, gap: 16 },
 
     progressRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },

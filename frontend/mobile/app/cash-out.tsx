@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -198,18 +200,6 @@ export default function CashOutScreen() {
     setStep('amount');
   };
 
-  // Typed through an in-brand keypad rather than the OS keyboard: this is the
-  // only field on the screen, and a system numpad covering the balance and
-  // rate while the user decides an amount is a worse trade than owning the
-  // keys.
-  const pressKey = (k: string) => {
-    setAmountNGN((prev) => {
-      if (k === '<') return prev.slice(0, -1);
-      if (k === '.') return prev.includes('.') ? prev : prev === '' ? '0.' : prev + '.';
-      const next = prev === '0' ? k : prev + k;
-      return next.replace(/^0+(?=[0-9])/, '');
-    });
-  };
 
   // The idempotency key is generated ONCE per attempt and reused on retry.
   // A fresh key on a retry is how one order becomes two, and the second one
@@ -472,7 +462,17 @@ export default function CashOutScreen() {
         ) : null}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={16}
+      >
+        <ScrollView
+          style={styles.flex}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.body}
+          keyboardShouldPersistTaps="handled"
+        >
         {mainnetOnly ? (
           <View style={styles.hairlineCard}>
             <Text style={styles.eyebrow}>MAINNET ONLY</Text>
@@ -500,9 +500,16 @@ export default function CashOutScreen() {
 
             <View style={styles.amountRow}>
               <Text style={styles.currency}>₦</Text>
-              <Text style={styles.amountValue} numberOfLines={1}>
-                {amountNGN === '' ? '0' : Number(amountNGN).toLocaleString('en-US')}
-              </Text>
+              <TextInput
+                style={styles.amountValue}
+                value={amountNGN}
+                onChangeText={(t) => setAmountNGN(t.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1'))}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                placeholderTextColor={colors.textFaint}
+                numberOfLines={1}
+                accessibilityLabel="Amount in naira"
+              />
             </View>
 
             <View style={styles.underAmount}>
@@ -542,19 +549,6 @@ export default function CashOutScreen() {
               </Text>
             ) : null}
 
-            <View style={styles.keypad}>
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '<'].map((k) => (
-                <Pressable
-                  key={k}
-                  onPress={() => pressKey(k)}
-                  accessibilityRole="button"
-                  accessibilityLabel={k === '<' ? 'Delete' : k}
-                  style={({ pressed }) => [styles.key, pressed && styles.keyPressed]}
-                >
-                  <Text style={styles.keyText}>{k === '<' ? '⌫' : k}</Text>
-                </Pressable>
-              ))}
-            </View>
 
             <Pressable
               onPress={() => setStep('bank')}
@@ -868,7 +862,8 @@ export default function CashOutScreen() {
         )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -902,6 +897,7 @@ function Row({
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
+    flex: { flex: 1 },
     header: { paddingHorizontal: 20, paddingTop: 16, gap: 12 },
     body: { padding: 20, paddingBottom: 60, gap: 18 },
 
@@ -971,16 +967,6 @@ const createStyles = (colors: ThemeColors) =>
       borderColor: colors.border,
     },
     maxPillText: { color: colors.accentText, fontFamily: fontFamily.bodySemiBold, fontSize: 12 },
-
-    keypad: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
-    key: {
-      width: '33.33%',
-      paddingVertical: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    keyPressed: { opacity: 0.4 },
-    keyText: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 26 },
 
     field: { gap: 8 },
     fieldHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
