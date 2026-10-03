@@ -50,9 +50,9 @@ import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { errorMessage } from '../lib/errorMessage';
 import { getFeePayerAddress } from '../lib/activity';
-import { getWalletAddress } from '../lib/walletStore';
 import {
   createOnrampOrder,
+  getCustomerRef,
   getOnrampRate,
   getOnrampStatus,
   provisionCustomer,
@@ -95,7 +95,6 @@ export default function BuyWithNairaScreen() {
   const [busy, setBusy] = useState(false);
 
   const [customerRef, setCustomerRef] = useState<string | null>(null);
-  const [verified, setVerified] = useState<boolean | null>(null);
 
   // Verification fields. The NIN is never written to storage or logged — it is
   // read from this state once, sent, and the field is cleared.
@@ -131,21 +130,18 @@ export default function BuyWithNairaScreen() {
         try {
           const parsed = JSON.parse(stored) as { customerRef: string; verified: boolean };
           setCustomerRef(parsed.customerRef);
-          setVerified(parsed.verified);
           if (!parsed.verified) setStep('verify');
           return;
         } catch {
           /* fall through and re-derive */
         }
       }
-      // Derived from the wallet, so it is stable across reinstalls on the same
-      // wallet. It is not a secret — Linq requires the orderId too, and that is
-      // the unguessable half.
-      const wallet = await getWalletAddress().catch(() => null);
+      // One shared accessor, persisted — never re-derived here. Linq allows one
+      // verified customer per NIN, so a reference that drifts is a customer
+      // whose NIN is already spent. See getCustomerRef.
+      const ref = await getCustomerRef().catch(() => null);
       if (cancelled) return;
-      const ref = wallet ? `veil_${wallet.slice(-12).toLowerCase()}` : null;
       setCustomerRef(ref);
-      setVerified(false);
       setStep('verify');
     })();
     return () => {
@@ -238,7 +234,6 @@ export default function BuyWithNairaScreen() {
       // Cleared immediately. A NIN is personal data under the NDPA and the
       // cheapest way to hold it correctly is not to hold it.
       setNin('');
-      setVerified(result.verified);
       await AsyncStorage.setItem(
         CUSTOMER_KEY,
         JSON.stringify({ customerRef, verified: result.verified }),

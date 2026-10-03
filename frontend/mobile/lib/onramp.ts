@@ -25,6 +25,9 @@
  * `spendAsset`, not by anything in this file.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { getWalletAddress } from './walletStore';
 import { OfframpTimeout, OfframpUnavailable, withoutProviderName } from './offramp';
 
 const BASE_URL = process.env['EXPO_PUBLIC_WRAITH_URL']?.replace(/\/+$/, '') ?? '';
@@ -77,6 +80,43 @@ async function call<T>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+
+// ─── Who we are to Linq ──────────────────────────────────────────────────────
+
+const CUSTOMER_REF_KEY = 'veil_ngn_customer_ref';
+
+/**
+ * This wallet's Linq `customerRef`, stable for the life of the install.
+ *
+ * **Linq enforces one verified customer per NIN** (confirmed with them
+ * 2026-10-03). That makes this value far more load-bearing than it looks: a
+ * `customerRef` that changes is not a new reference to the same person, it is a
+ * second person Linq has never heard of — and the NIN that would verify them is
+ * already spent, with no self-service way to get it back.
+ *
+ * So it is **persisted, not derived on each read**. It is seeded from the
+ * wallet address the first time only, which keeps a passkey-recovered wallet on
+ * the same reference it had before. After that the stored value wins even if
+ * the wallet address changes.
+ *
+ * The gap this does not close: a user who creates a genuinely new wallet, or
+ * reinstalls without a backup, gets a new reference and hits "NIN already
+ * used". Closing that needs Linq to expose a way to resolve the existing
+ * customer for a NIN — see `docs/NGN_RAILS.md`. Until then, do not add any code
+ * path that regenerates this value.
+ */
+export async function getCustomerRef(): Promise<string | null> {
+  const stored = await AsyncStorage.getItem(CUSTOMER_REF_KEY).catch(() => null);
+  if (stored) return stored;
+
+  const wallet = await getWalletAddress().catch(() => null);
+  if (!wallet) return null;
+
+  const ref = `veil_${wallet.slice(-12).toLowerCase()}`;
+  await AsyncStorage.setItem(CUSTOMER_REF_KEY, ref).catch(() => undefined);
+  return ref;
 }
 
 // ─── Customer ────────────────────────────────────────────────────────────────

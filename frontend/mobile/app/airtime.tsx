@@ -55,10 +55,10 @@ import { fontFamily } from '../theme/typography';
 import { errorMessage } from '../lib/errorMessage';
 import { getAssetIssuer } from '../lib/assets';
 import { getFeePayerAddress } from '../lib/activity';
-import { getWalletAddress } from '../lib/walletStore';
 import { NotEnoughToSend, spendAsset } from '../lib/spendAsset';
 import {
   getBillStatus,
+  getCustomerRef,
   getOnrampRate,
   payBill,
   type NairaCoin,
@@ -139,13 +139,13 @@ export default function AirtimeScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [addr, walletAddr] = await Promise.all([
+      const [addr, ref] = await Promise.all([
         getFeePayerAddress().catch(() => null),
-        getWalletAddress().catch(() => null),
+        getCustomerRef().catch(() => null),
       ]);
       if (cancelled) return;
       setRefundAddress(addr);
-      setCustomerRef(walletAddr ? `veil_${walletAddr.slice(-12).toLowerCase()}` : null);
+      setCustomerRef(ref);
     })();
     return () => {
       cancelled = true;
