@@ -5,7 +5,7 @@
 import '../lib/polyfills';
 
 import { useEffect, useRef } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
@@ -40,6 +40,11 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const { colors, isDark } = useTheme();
+  // Routes seen before a wallet exists, plus the lock screen.
+  const pathname = usePathname();
+  const showsBootnodeBanner = !['/', '/welcome', '/lock', '/login', '/create-wallet', '/recover'].includes(
+    pathname,
+  );
   const [fontsLoaded, fontError] = useFonts(fontAssets);
 
   useEffect(() => {
@@ -102,7 +107,12 @@ export default function RootLayout() {
         <BottomSheetModalProvider>
           <ConnectivityProvider>
             <WalletProvider>
-              <BootnodeBanner />
+              {/* Not on the way in. The banner reports which SPP archive the
+                  privacy client will use, which is meaningless before there is
+                  a wallet — and on the splash and the landing it reads as an
+                  error on a first impression. Gated here rather than inside the
+                  banner so the banner stays a pure render of its own status. */}
+              {showsBootnodeBanner ? <BootnodeBanner /> : null}
               <ConnectivityGate />
               <OutboxReplayGate />
               <InactivityLockGate />
