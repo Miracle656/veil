@@ -303,7 +303,13 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     flex: { flex: 1 },
     center: { alignItems: 'center', gap: 12, paddingVertical: 48 },
-    muted: { color: colors.textMuted, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+    muted: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: 'center',
+    },
     pressed: { opacity: 0.7 },
     emptyCard: {
       alignItems: 'center',
@@ -313,7 +319,7 @@ const createStyles = (colors: ThemeColors) =>
       borderWidth: 1,
       borderStyle: 'dashed',
       borderColor: colors.border,
-      borderRadius: 20,
+      borderRadius: 16,
       backgroundColor: colors.surface,
     },
     emptyTitle: {
@@ -329,28 +335,42 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 24,
       borderWidth: 1,
       borderColor: colors.danger,
-      borderRadius: 20,
+      borderRadius: 16,
       backgroundColor: colors.dangerSurface,
     },
-    errorTitle: { color: colors.danger, fontSize: 18, fontWeight: '700', textAlign: 'center' },
-    errorBody: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+    errorTitle: {
+      color: colors.danger,
+      fontFamily: fontFamily.heading,
+      fontSize: 18,
+      textAlign: 'center',
+    },
+    errorBody: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: 'center',
+    },
     retryButton: {
       backgroundColor: colors.danger,
-      borderRadius: 10,
+      borderRadius: 14,
       paddingVertical: 10,
       paddingHorizontal: 24,
       marginTop: 8,
     },
-    retryLabel: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+    // No token means "ink on danger": textStrong inverts with the theme and
+    // would go near-black on red in light mode. White is the contrast-correct
+    // value on this surface in both themes.
+    retryLabel: { color: '#FFFFFF', fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
     ghostButton: {
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 10,
+      borderRadius: 14,
       paddingVertical: 10,
       paddingHorizontal: 24,
       marginTop: 8,
     },
-    ghostLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+    ghostLabel: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
     grid: { gap: 12, paddingBottom: 32 },
     row: { gap: 12 },
     card: {
@@ -373,8 +393,18 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceMd,
     },
     fallbackGlyph: { color: colors.accent, fontSize: 28 },
-    fallbackName: { color: colors.textPrimary, fontSize: 13, fontWeight: '600', textAlign: 'center' },
-    fallbackHint: { color: colors.textMuted, fontSize: 11, textAlign: 'center' },
+    fallbackName: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
+      textAlign: 'center',
+    },
+    fallbackHint: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 11,
+      textAlign: 'center',
+    },
     tokenBadge: {
       position: 'absolute',
       top: 8,
@@ -384,20 +414,26 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 8,
       paddingVertical: 3,
     },
-    tokenBadgeLabel: { color: '#FDDA24', fontSize: 12, fontWeight: '700' },
+    // A token id is an identifier, so it takes the mono face like every other
+    // one in the app. The gold comes from the token rather than a literal, so
+    // it follows the theme instead of staying dark-mode gold on a light build.
+    tokenBadgeLabel: { color: colors.accent, fontFamily: fontFamily.address, fontSize: 12 },
     cardBody: { padding: 12, gap: 2 },
+    // The house eyebrow: Anton caps, 0.8 tracking, muted. It was teal — a
+    // colour the palette reserves for a good outcome, which a collection name
+    // is not.
     collection: {
-      color: colors.positive,
+      color: colors.textMuted,
+      fontFamily: fontFamily.accent,
       fontSize: 11,
-      fontWeight: '700',
       textTransform: 'uppercase',
-      letterSpacing: 0.6,
+      letterSpacing: 0.8,
     },
-    cardTitle: { color: colors.textStrong, fontSize: 15, fontWeight: '600' },
+    cardTitle: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
     contract: { color: colors.textMuted, fontSize: 12, fontFamily: fontFamily.address },
     modalRoot: { flex: 1, backgroundColor: colors.background },
     closeRow: { paddingHorizontal: 20, paddingVertical: 12 },
-    closeLabel: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
+    closeLabel: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
     modalBody: { paddingHorizontal: 20, paddingBottom: 32, gap: 10 },
     detailImage: { width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: colors.surfaceMd },
     detailFallback: {
@@ -411,14 +447,19 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceMd,
     },
     detailCollection: {
-      color: colors.positive,
+      color: colors.textMuted,
+      fontFamily: fontFamily.accent,
       fontSize: 12,
-      fontWeight: '700',
       textTransform: 'uppercase',
       letterSpacing: 0.8,
     },
     detailTitle: { fontFamily: fontFamily.heading, fontSize: 26, color: colors.textStrong },
-    detailDesc: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+    detailDesc: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 20,
+    },
     propsBox: {
       backgroundColor: colors.surface,
       borderWidth: 1,
@@ -428,8 +469,8 @@ const createStyles = (colors: ThemeColors) =>
       gap: 8,
     },
     propRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-    propKey: { color: colors.textMuted, fontSize: 13 },
-    propValue: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+    propKey: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },
+    propValue: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 13 },
     mono: { fontFamily: fontFamily.address },
     traits: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     trait: {
@@ -442,6 +483,17 @@ const createStyles = (colors: ThemeColors) =>
       minWidth: '47%',
       flexGrow: 1,
     },
-    traitKey: { color: colors.textMuted, fontSize: 11, textTransform: 'uppercase' },
-    traitValue: { color: colors.textPrimary, fontSize: 13, fontWeight: '600', marginTop: 2 },
+    traitKey: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.accent,
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    traitValue: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
+      marginTop: 2,
+    },
   });
