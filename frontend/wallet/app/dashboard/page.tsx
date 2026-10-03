@@ -33,7 +33,7 @@ import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
-import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
+import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer, getRegisteredAsset, isRegisteredIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
 import { PortfolioSummary } from '@/components/PortfolioSummary'
 
@@ -128,6 +128,7 @@ function DashboardPageContent() {
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
   const [loading, setLoading]             = useState(cachedAssets === null)
   const [prices, setPrices]               = useState<Record<string, number | null>>(() => cachedPrices)
+  const [showUnverifiedAssets, setShowUnverifiedAssets] = useState(false)
   // Seeded from the price cache, never Date.now(): the timestamp belongs to
   // the moment the cached prices were collected.
   const [pricesTimestamp, setPricesTimestamp] = useState<number>(() => cachedPricesTimestamp ?? 0)
@@ -237,6 +238,8 @@ function DashboardPageContent() {
     () => buildPortfolio(assets, blendPositions, prices, pricesTimestamp, { contractKeys }),
     [assets, blendPositions, prices, pricesTimestamp, contractKeys],
   )
+  const verifiedAssetLines = portfolio.lines.filter((line) => line.verification !== 'unverified')
+  const unverifiedAssetLines = portfolio.lines.filter((line) => line.verification === 'unverified')
 
   const recent = transactions.slice(0, 4)
 
@@ -1014,34 +1017,110 @@ function DashboardPageContent() {
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>
                 No assets yet. Fund this address to get started.
               </p>
-            ) : portfolio.lines.map((line) => (
-              <Row
-                key={line.code + '-' + (line.issuer ?? 'native')}
-                className="vw-listrow"
-                onClick={() => router.push(
-                  line.issuer && line.status !== 'unresolved'
-                    ? '/token/' + line.code + '?issuer=' + line.issuer
-                    : '/token/' + line.code,
-                )}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
-                  <TokenIcon code={line.code} size={38} />
-                  <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                    <span style={{ fontSize: '15px', fontWeight: 600 }}>{line.code}</span>
-                    <span className="vw-meta">
-                      {hideAmounts
-                        ? '••••'
-                        : line.status === 'unresolved'
-                          ? 'Unknown contract'
-                          : parseFloat(line.amount).toFixed(4) + ' ' + line.code}
+            ) : (
+              <>
+                <div className="vw-meta" style={{ padding: '8px 0 2px', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Verified
+                </div>
+                {verifiedAssetLines.map((line) => (
+                  <Row
+                    key={line.code + '-' + (line.issuer ?? 'native')}
+                    className="vw-listrow"
+                    onClick={() => router.push(
+                      line.issuer && line.status !== 'unresolved'
+                        ? '/token/' + line.code + '?issuer=' + line.issuer
+                        : '/token/' + line.code,
+                    )}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+                      <TokenIcon code={line.code} size={38} />
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                        <span style={{ fontSize: '15px', fontWeight: 600 }}>{line.code}</span>
+                        <span className="vw-meta">
+                          {hideAmounts
+                            ? '••••'
+                            : line.status === 'unresolved'
+                              ? 'Unknown contract'
+                              : parseFloat(line.amount).toFixed(4) + ' ' + line.code}
+                        </span>
+                      </span>
                     </span>
-                  </span>
-                </span>
-                <Amount className="text-[15px] font-semibold shrink-0">
-                  {hideAmounts ? '••••' : (line.valueUsd !== null ? usd(line.valueUsd) : '—')}
-                </Amount>
-              </Row>
-            ))}
+                    <Amount className="text-[15px] font-semibold shrink-0">
+                      {hideAmounts ? '••••' : (line.valueUsd !== null ? usd(line.valueUsd) : '—')}
+                    </Amount>
+                  </Row>
+                ))}
+                {unverifiedAssetLines.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      aria-expanded={showUnverifiedAssets}
+                      aria-controls="dashboard-unverified-assets"
+                      onClick={() => setShowUnverifiedAssets((visible) => !visible)}
+                      className="vw-meta"
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        background: 'none',
+                        border: 0,
+                        borderTop: '1px solid rgba(255,255,255,0.08)',
+                        cursor: 'pointer',
+                        padding: '12px 0 8px',
+                      }}
+                    >
+                      Unverified ({unverifiedAssetLines.length}) {showUnverifiedAssets ? '−' : '+'}
+                    </button>
+                    {showUnverifiedAssets && (
+                      <div id="dashboard-unverified-assets">
+                        {unverifiedAssetLines.map((line) => {
+                          const registered = getRegisteredAsset(line.code, getNetworkName())
+                          const impersonated = registered &&
+                            line.issuer &&
+                            line.issuer !== registered.issuer &&
+                            !isRegisteredIssuer(line.code, line.issuer, getNetworkName())
+                            ? registered
+                            : null
+                          return (
+                            <Row
+                              key={line.code + '-' + (line.issuer ?? 'native')}
+                              className="vw-listrow"
+                              onClick={() => router.push(
+                                line.issuer && line.status !== 'unresolved'
+                                  ? '/token/' + line.code + '?issuer=' + line.issuer
+                                  : '/token/' + line.code,
+                              )}
+                            >
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+                                <TokenIcon code={line.code} size={38} />
+                                <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                                  <span style={{ fontSize: '15px', fontWeight: 600 }}>{line.code}</span>
+                                  <span className="vw-meta">
+                                    {hideAmounts
+                                      ? '••••'
+                                      : line.status === 'unresolved'
+                                        ? 'Unknown contract'
+                                        : parseFloat(line.amount).toFixed(4) + ' ' + line.code}
+                                  </span>
+                                  {impersonated && (
+                                    <span style={{ fontSize: '11px', color: 'rgba(248,113,113,0.95)' }}>
+                                      Impersonating {impersonated.issuerName}
+                                    </span>
+                                  )}
+                                </span>
+                              </span>
+                              <Amount className="text-[15px] font-semibold shrink-0">
+                                {hideAmounts ? '••••' : (line.valueUsd !== null ? usd(line.valueUsd) : '—')}
+                              </Amount>
+                            </Row>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
         </div>
