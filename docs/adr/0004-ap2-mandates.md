@@ -263,7 +263,9 @@ Re-read this document if any of these happen:
 
 - No code changes follow from this ADR.
 - Findings that stand on their own, whatever happens to AP2, and are best filed separately:
-  - `SessionKeyAcl` cannot restrict the payee. A session key for a token can pay any address.
+  - Session-key payees are now optional and enforced from the invocation's
+    recipient argument; a configured payee cannot be replaced by another
+    address. Per-payment ranges remain future work.
   - Paying x402 from the `C…` wallet needs the auth-entry expiry taken from `maxTimeoutSeconds`,
     not the fixed `+100` ledgers.
   - `README.md` still describes Lens and the agent's x402 client as live.
