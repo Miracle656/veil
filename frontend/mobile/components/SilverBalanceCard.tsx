@@ -15,7 +15,10 @@ import { EyeIcon, EyeOffIcon, PaperPlaneIcon, ReceiveIcon } from './icons';
 const INK = '#0F0F0F';
 const INK_55 = 'rgba(15,15,15,0.55)';
 const INK_60 = 'rgba(15,15,15,0.6)';
-const CARD_HEIGHT = 208;
+// Tall enough for the fullest state: header, the 44pt amount, the sub line, the
+// reserve note that a funded account adds, and the action row. At 208 the note
+// had no room and the absolutely-positioned buttons simply covered it.
+const CARD_HEIGHT = 240;
 
 export type SilverBalanceCardProps = {
   /** Native balance string (XLM), or undefined while loading. */
@@ -318,10 +321,16 @@ const createStyles = () =>
       marginTop: 12,
     },
     actions: {
-      position: 'absolute',
-      left: 24,
-      right: 24,
-      bottom: 20,
+      // In the flow, pinned to the bottom by `marginTop: 'auto'` — not
+      // absolutely positioned.
+      //
+      // Absolute meant the buttons floated OVER whatever was above them, so on
+      // a funded wallet the reserve note ran underneath them and `overflow:
+      // 'hidden'` clipped what stuck out. Nothing about the text was wrong; it
+      // had nowhere to go. In the flow the text pushes the buttons down and
+      // they can never overlap it.
+      marginTop: 'auto',
+      paddingTop: 16,
       flexDirection: 'row',
       gap: 10,
     },

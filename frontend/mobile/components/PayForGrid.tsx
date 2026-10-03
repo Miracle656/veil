@@ -9,6 +9,7 @@ import {
   BankIcon,
   BettingIcon,
   BillsIcon,
+  BuyIcon,
   DataIcon,
   GridIcon,
   PowerIcon,
@@ -61,7 +62,7 @@ export const BILL_SERVICES: BillService[] = [
   // The onramp: naira in, XLM or USDC out, via Linq. Nothing is signed — the
   // user transfers from their own bank app and Linq delivers to the wallet's
   // classic account, whose balances the holdings list already includes.
-  { id: 'buy-ngn', label: 'Buy', hint: 'With naira', Icon: BankIcon, status: 'live', route: '/buy-ngn' },
+  { id: 'buy-ngn', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn' },
   { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
 ];
 
