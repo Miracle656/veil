@@ -14,7 +14,8 @@
         "buildType": "apk"
       },
       "env": {
-        "APP_ENV": "development"
+        "APP_ENV": "development",
+        "EXPO_PUBLIC_NETWORK": "mainnet"
       }
     },
     "device": {
@@ -27,7 +28,8 @@
         "buildType": "apk"
       },
       "env": {
-        "APP_ENV": "development"
+        "APP_ENV": "development",
+        "EXPO_PUBLIC_NETWORK": "mainnet"
       }
     },
     "preview": {
@@ -36,13 +38,15 @@
         "buildType": "apk"
       },
       "env": {
-        "APP_ENV": "preview"
+        "APP_ENV": "preview",
+        "EXPO_PUBLIC_NETWORK": "mainnet"
       }
     },
     "production": {
       "autoIncrement": true,
       "env": {
-        "APP_ENV": "production"
+        "APP_ENV": "production",
+        "EXPO_PUBLIC_NETWORK": "mainnet"
       }
     },
     "community": {
