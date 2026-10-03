@@ -155,19 +155,22 @@ tasks.register('generateUniffiBindings', Exec) {
   // in the message.
   doFirst {
     if (!cargoAvailable) {
-      throw new GradleException(
-        "[spp-native] cargo is required to build this module, and it was not found.
-" +
-        "SppNativeModule.kt imports uniffi.spp_native.*, which this task generates, so " +
-        "skipping it would fail the Kotlin compile with unresolved references instead.
-" +
-        "Install the toolchain with:
-" +
-        "  sh modules/spp-native/scripts/install-rust-toolchain.sh
-" +
-        "On EAS this runs automatically via the eas-build-post-install hook in " +
-        "frontend/mobile/package.json; on GitHub Actions, mobile-e2e.yml installs it."
-      )
+      // Triple-quoted on purpose: a multi-line message built by concatenating
+      // "..\n" fragments is one lost backslash away from a real newline inside a
+      // double-quoted literal, which Groovy rejects at *parse* time — so the
+      // build file stops compiling and the error points at a quote character
+      // rather than at anything to do with cargo. That is exactly how this
+      // check first shipped.
+      throw new GradleException('''\
+[spp-native] cargo is required to build this module, and it was not found.
+SppNativeModule.kt imports uniffi.spp_native.*, which this task generates, so
+skipping it would fail the Kotlin compile with unresolved references instead.
+
+Install the toolchain with:
+  sh modules/spp-native/scripts/install-rust-toolchain.sh
+
+On EAS this runs automatically via the eas-build-post-install hook in
+frontend/mobile/package.json; on GitHub Actions, mobile-e2e.yml installs it.''')
     }
   }
   workingDir rustDir
