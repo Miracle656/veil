@@ -87,6 +87,9 @@ async function call<T>(
 
 const CUSTOMER_REF_KEY = 'veil_ngn_customer_ref';
 
+/** Where the buy screen kept `{ customerRef, verified }` before this accessor. */
+const LEGACY_CUSTOMER_KEY = 'veil_ngn_customer';
+
 /**
  * This wallet's Linq `customerRef`, stable for the life of the install.
  *
@@ -110,6 +113,27 @@ const CUSTOMER_REF_KEY = 'veil_ngn_customer_ref';
 export async function getCustomerRef(): Promise<string | null> {
   const stored = await AsyncStorage.getItem(CUSTOMER_REF_KEY).catch(() => null);
   if (stored) return stored;
+
+  // Adopt the reference the buy screen stored before this accessor existed.
+  //
+  // Skipping this is how a verified user gets told "this NIN has already been
+  // used": their verified reference is sitting under the old key, this function
+  // ignores it, derives a fresh one from the current wallet, and Linq sees a
+  // customer it has never met holding a NIN that is already spent. Switching
+  // network makes it certain, because the wallet address — and so the derived
+  // reference — differs per network while the NIN does not.
+  const legacy = await AsyncStorage.getItem(LEGACY_CUSTOMER_KEY).catch(() => null);
+  if (legacy) {
+    try {
+      const parsed = JSON.parse(legacy) as { customerRef?: unknown };
+      if (typeof parsed.customerRef === 'string' && parsed.customerRef) {
+        await AsyncStorage.setItem(CUSTOMER_REF_KEY, parsed.customerRef).catch(() => undefined);
+        return parsed.customerRef;
+      }
+    } catch {
+      // Unparseable legacy blob: fall through and derive.
+    }
+  }
 
   const wallet = await getWalletAddress().catch(() => null);
   if (!wallet) return null;
