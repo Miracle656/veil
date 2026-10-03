@@ -62,7 +62,7 @@ const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc63255
 jest.mock('../polyfills', () => ({}));
 jest.mock('@walletconnect/core', () => ({ Core: jest.fn() }));
 jest.mock('@walletconnect/utils', () => ({ getSdkError: jest.fn() }));
-jest.mock('@walletconnect/web3wallet', () => ({ Web3Wallet: { init: jest.fn() } }));
+jest.mock('@reown/walletkit', () => ({ WalletKit: { init: jest.fn() } }));
 
 jest.mock('expo-crypto', () => ({
   CryptoDigestAlgorithm: { SHA256: 'SHA-256' },

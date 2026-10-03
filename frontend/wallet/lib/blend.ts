@@ -46,7 +46,15 @@ export interface BlendPool {
 
 export interface BlendPosition {
   poolId: string
+  /** Soroban contract ID of the underlying reserve asset. */
   asset: string
+  /**
+   * Reserve token code from the pool metadata (e.g. "USDC"), when known.
+   * A code alone does not identify the asset — pair it with the issuer (or
+   * resolve the contract ID against the verified registry) before treating
+   * it as a specific token.
+   */
+  assetCode?: string
   deposited: string
   bTokenBalance: string
   accruedInterest: string
@@ -100,7 +108,7 @@ export async function loadBlendPositions(userAddress: string): Promise<BlendPosi
         const user = await pool.loadUser(userAddress)
 
         return [...pool.reserves.values()]
-          .map((reserve) => {
+          .map((reserve): BlendPosition | null => {
             const bTokenBalance = user.getSupplyBTokens(reserve)
             if (bTokenBalance <= 0n) return null
 
@@ -110,6 +118,10 @@ export async function loadBlendPositions(userAddress: string): Promise<BlendPosi
             return {
               poolId,
               asset: reserve.assetId,
+              // Reserve list order from the pool metadata, not a price signal:
+              // the portfolio matches the contract ID against the verified
+              // registry before it ever names the token.
+              assetCode: pool.metadata.reserveList[reserve.config.index],
               deposited: deposited.toString(),
               bTokenBalance: bTokenBalance.toString(),
               accruedInterest: accruedInterest.toString(),

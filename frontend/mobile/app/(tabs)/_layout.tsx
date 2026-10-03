@@ -18,6 +18,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="earn" options={{ title: 'Earn' }} />
       <Tabs.Screen name="agent" options={{ title: 'Agent' }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
+      <Tabs.Screen name="prover-spike" options={{ href: null }} />
     </Tabs>
   );
 }

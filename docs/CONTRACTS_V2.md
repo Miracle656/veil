@@ -114,6 +114,15 @@ funded by the award.
 - [ ] **Factory `set_wasm_hash(new_hash)`, admin-gated** (the admin is already fixed at
       construction). Affects only wallets deployed afterwards.
 - [ ] **Spend limits keyed per `(key_id, token contract)`** instead of one asset-blind sum.
+- [ ] **A batch entry point — `batch_execute(calls)` or a router — so one signature can cover
+      many payments.** `execute(target, func, args)` (`contracts/invisible_wallet/src/lib.rs:450`)
+      takes exactly one call, and a Soroban transaction carries one `InvokeHostFunction`, so N
+      recipients means N signatures and N submissions. This is why #932 (V250, bulk payout) shipped
+      with `MAX_ROWS_PER_TRANSACTION = 1`, paying row by row and saying so on screen: the feature's
+      headline promise — *sign once, pay everyone* — is not implementable against the deployed
+      contract. The fake-success bug is fixed; the capability is still missing, and it only arrives
+      with a new factory. Whatever shape v2 takes, this is the one user-visible feature blocked
+      purely by the contract.
 - [ ] **Decide multi-wallet.** If yes: salt = `SHA-256(public_key ‖ index)`, with index 0
       defined as `SHA-256(public_key)` so the derivation formula is unchanged. Also needs a
       per-index fee-payer derivation (the PRF salt ends in `/v1`), index discovery on recovery

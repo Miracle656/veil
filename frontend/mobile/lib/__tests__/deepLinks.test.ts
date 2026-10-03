@@ -1,6 +1,11 @@
 import { FALLBACK_ROUTE, MAX_DEEP_LINK_LENGTH, resolveDeepLink } from '../deepLinks';
+import { resolveRequestedAsset } from '../requestedAsset';
 
 const DESTINATION = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+// A well-formed account that holds no registered asset: the resolver must say
+// so rather than guess from the code (#704).
+const UNKNOWN_ISSUER = 'GB6KGMCJWSWVNWAJI63R2766NDHYQF2KPW3KA7CM4GVXVICLBADECCFN';
 
 describe('resolveDeepLink — veil:// custom scheme', () => {
   it('routes a bare screen link', () => {
@@ -97,6 +102,36 @@ describe('resolveDeepLink — SEP-7 payment requests', () => {
     expect(query.get('uri')).toBe(uri);
   });
 
+  it('maps SEP-7 memo and memo_type (MEMO_ID) onto pay route (#704)', () => {
+    const uri = `web+stellar:pay?destination=${DESTINATION}&amount=50&memo=987654321&memo_type=MEMO_ID`;
+    const target = resolveDeepLink(uri);
+
+    expect(target.startsWith('/pay?')).toBe(true);
+    const query = new URLSearchParams(target.slice(target.indexOf('?') + 1));
+    expect(query.get('to')).toBe(DESTINATION);
+    expect(query.get('amount')).toBe('50');
+    expect(query.get('memo')).toBe('987654321');
+    expect(query.get('memo_type')).toBe('MEMO_ID');
+  });
+
+  it('forwards memo_type on /send route (#704)', () => {
+    expect(
+      resolveDeepLink(
+        `veil://send?to=${DESTINATION}&amount=5&memo=12345&memo_type=MEMO_ID`,
+      ),
+    ).toBe(`/send?to=${DESTINATION}&amount=5&memo=12345&memo_type=MEMO_ID`);
+  });
+
+  it('carries asset_issuer alongside asset_code (#791)', () => {
+    const issuer = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
+    const target = resolveDeepLink(
+      `web+stellar:pay?destination=${DESTINATION}&asset_code=USDT0&asset_issuer=${issuer}`,
+    );
+    const query = new URLSearchParams(target.slice(target.indexOf('?') + 1));
+    expect(query.get('asset')).toBe('USDT0');
+    expect(query.get('issuer')).toBe(issuer);
+  });
+
   it('forwards the raw URI even when no fields map', () => {
     expect(resolveDeepLink('web+stellar:pay')).toBe(
       `/pay?uri=${encodeURIComponent('web+stellar:pay')}`,
@@ -167,3 +202,89 @@ describe('resolveDeepLink — cold start vs warm resume', () => {
     );
   });
 });
+
+describe('resolveDeepLink — asset issuer and memo carrying (#704)', () => {
+  // Asset resolution requires code + issuer (`lib/requestedAsset.ts`): these
+  // tests prove the issuer survives the link so the resolver has both halves.
+  it('carries asset and issuer through veil://pay', () => {
+    const link = `veil://pay?to=${DESTINATION}&amount=50&asset=USDC&issuer=${ISSUER}&memo=inv-99`;
+    expect(resolveDeepLink(link)).toBe(
+      `/pay?to=${DESTINATION}&amount=50&asset=USDC&issuer=${ISSUER}&memo=inv-99`,
+    );
+  });
+
+  it('carries asset and issuer through veil://send', () => {
+    const link = `veil://send?to=${DESTINATION}&amount=10&asset=USDC&issuer=${ISSUER}&memo=rent`;
+    expect(resolveDeepLink(link)).toBe(
+      `/send?to=${DESTINATION}&amount=10&asset=USDC&issuer=${ISSUER}&memo=rent`,
+    );
+  });
+
+  it('carries issuer through universal links', () => {
+    const link = `https://app.useveilapp.xyz/pay?to=${DESTINATION}&asset=USDC&issuer=${ISSUER}`;
+    expect(resolveDeepLink(link)).toBe(
+      `/pay?to=${DESTINATION}&asset=USDC&issuer=${ISSUER}`,
+    );
+  });
+
+  it('maps asset_issuer and memo from SEP-7 URIs onto the issuer param', () => {
+    const uri = `web+stellar:pay?destination=${DESTINATION}&amount=25&asset_code=USDC&asset_issuer=${ISSUER}&memo=deposit-ref`;
+    const target = resolveDeepLink(uri);
+
+    expect(target.startsWith('/pay?')).toBe(true);
+    const query = new URLSearchParams(target.slice(target.indexOf('?') + 1));
+    expect(query.get('to')).toBe(DESTINATION);
+    expect(query.get('amount')).toBe('25');
+    expect(query.get('asset')).toBe('USDC');
+    expect(query.get('issuer')).toBe(ISSUER);
+    expect(query.get('memo')).toBe('deposit-ref');
+    expect(query.get('uri')).toBe(uri);
+  });
+
+  it('a link naming an asset with an unknown issuer is refused by requestedAsset — not guessed (#704)', () => {
+    // The deep link delivers code + issuer; `lib/requestedAsset.ts` refuses an
+    // unknown issuer with the reason in words rather than picking a holding.
+    // See `__tests__/requestedAsset.test.ts` for the full refusal matrix.
+    const refused = resolveRequestedAsset('USDC', UNKNOWN_ISSUER, 'testnet', [
+      { code: 'USDC', issuer: ISSUER },
+    ]);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.reason).toContain('Unregistered issuer');
+      expect(refused.reason).toContain(UNKNOWN_ISSUER);
+    }
+    const bare = resolveRequestedAsset('USDC', undefined, 'testnet', [
+      { code: 'USDC', issuer: ISSUER },
+    ]);
+    expect(bare.ok).toBe(false);
+    if (!bare.ok) {
+      expect(bare.reason).toContain('does not say who issued it');
+    }
+  });
+});
+
+describe('resolveDeepLink — memo-carrying SEP-7 URIs (#704)', () => {
+  // A URI carrying a memo must deliver it to the pay route: exchange deposits
+  // sent without their memo are typically lost.
+  it('maps a memo from a SEP-7 URI onto /pay', () => {
+    const uri = `web+stellar:pay?destination=${DESTINATION}&amount=25&memo=deposit-ref-42`;
+    const target = resolveDeepLink(uri);
+
+    expect(target.startsWith('/pay?')).toBe(true);
+    const query = new URLSearchParams(target.slice(target.indexOf('?') + 1));
+    expect(query.get('to')).toBe(DESTINATION);
+    expect(query.get('amount')).toBe('25');
+    expect(query.get('memo')).toBe('deposit-ref-42');
+    expect(query.get('uri')).toBe(uri);
+  });
+
+  it('carries a memo on veil://pay and veil://send links', () => {
+    expect(
+      resolveDeepLink(`veil://pay?to=${DESTINATION}&amount=7.25&memo=invoice-7`),
+    ).toBe(`/pay?to=${DESTINATION}&amount=7.25&memo=invoice-7`);
+    expect(
+      resolveDeepLink(`veil://send?to=${DESTINATION}&amount=9&memo=invoice-9`),
+    ).toBe(`/send?to=${DESTINATION}&amount=9&memo=invoice-9`);
+  });
+});
+

@@ -24,6 +24,7 @@ export type ProposalStatus =
 
 /** A swap the agent handed to the Swap screen. Codes as the Swap screen lists them. */
 export type SwapIntent = { from: string; to: string; amount?: string };
+export type InvestIntent = { asset: { code: string; issuer: string }; amount: string };
 
 /** What a transaction the agent proposed will actually do, decoded locally. */
 export type ProposalReview = {
@@ -44,6 +45,8 @@ export type AgentMessage =
   | { id: string; kind: 'agent'; text: string }
   /** Prose from the agent plus a swap for the Swap screen to quote and confirm. */
   | { id: string; kind: 'swap'; text: string; intent: SwapIntent }
+  /** An issued-asset purchase the agent handed to Earn. */
+  | { id: string; kind: 'invest'; text: string; intent: InvestIntent }
   /** A failure, from the service or from this app. */
   | { id: string; kind: 'error'; text: string }
   /** App-generated context, never attributed to the agent. */

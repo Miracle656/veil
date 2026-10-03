@@ -61,4 +61,23 @@ describe('PrivateBalanceCard', () => {
     expect(html).toMatch(/12\.5/)
     expect(html).toMatch(/Up to date/)
   })
+
+  it('stays quiet when the wallet can recover its privacy keys elsewhere', () => {
+    process.env[FLAG] = 'true'
+    const html = render({ balances: [], syncState: 'syncing', hideAmounts: false })
+    expect(html).not.toMatch(/recoverable only on this device/)
+  })
+
+  it('warns before anything is shielded when recovery is passkey-impossible (#711)', () => {
+    process.env[FLAG] = 'true'
+    const html = render({
+      balances: [],
+      syncState: 'syncing',
+      hideAmounts: false,
+      recoveryWarning: true,
+    })
+    expect(html).toMatch(/recoverable only on this device/)
+    expect(html).toMatch(/PRF-capable/)
+    expect(html).toMatch(/privacy-recovery-warning/)
+  })
 })
