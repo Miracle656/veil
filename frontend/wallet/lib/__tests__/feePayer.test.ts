@@ -135,3 +135,26 @@ describe('clearFeePayer', () => {
     expect(peekFeePayerSecret()).not.toBeNull()
   })
 })
+
+describe('cross-platform key agreement (issue #682 acceptance criterion)', () => {
+  it('derives the same fee-payer address as the mobile app for the same PRF output', async () => {
+    // 'prf-raw' uses the PRF output directly as the Ed25519 seed (no HKDF) —
+    // see the comment on FeePayerMode. That means web and mobile MUST produce
+    // byte-identical addresses for the same passkey, or a user's fee payer
+    // (and the funds/trustlines it needs to pay for) differs per device.
+    //
+    // This fixture (PRF output = 32 bytes of 0x07) and its expected address are
+    // pinned identically in frontend/mobile/lib/__tests__/passkeyWallet.test.ts
+    // ("PRF_FIXTURE_PUBLIC_KEY"). If either side's derivation ever changes
+    // (e.g. someone "helpfully" adds an HKDF step to match the legacy path),
+    // this test and its mobile twin diverge instead of silently drifting.
+    const GOLDEN_PRF_OUTPUT = new Uint8Array(32).fill(7)
+    const GOLDEN_FEE_PAYER_ADDRESS = 'GDVEU3DD4KOFECV66VIHWEZOYX4ZKR3WV27L464SIIPOU2IUI3JCZA57'
+
+    localStorage.setItem(KEY_ID, CRED)
+    const kp = await ensureFeePayer(async () => GOLDEN_PRF_OUTPUT)
+
+    expect(getFeePayerMode()).toBe('prf-raw')
+    expect(kp!.publicKey()).toBe(GOLDEN_FEE_PAYER_ADDRESS)
+  })
+})
