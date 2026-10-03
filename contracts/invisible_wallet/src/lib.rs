@@ -15,6 +15,8 @@ pub mod policies;
 mod auth_failure_tests;
 #[cfg(test)]
 mod guardian_test;
+#[cfg(test)]
+mod batch_tests;
 use storage::{DataKey, AllowanceKey, PendingRecovery};
 
 /// Recovery timelock duration: 3 days in seconds.
@@ -321,34 +323,22 @@ impl InvisibleWallet {
                         return Err(WalletError::NonceMismatch);
                     }
 
-                    // Step 4 — ACL enforcement (expiry, target, selector, payee,
-                    // cumulative budget). For token transfers, the second
-                    // argument is the recipient in the SAC `(from, to, amount)`
-                    // shape. A configured payee makes that recipient part of
-                    // the session-key authorization instead of leaving the key
-                    // as a bearer credential for any destination.
+                    // Step 4 — ACL enforcement (expiry, target, selector, cumulative budget).
                     for context in _auth_contexts.iter() {
                         let Context::Contract(c) = context else {
                             return Err(WalletError::SignerNotAuthorized);
                         };
-                        let amount = if c.args.len() >= 3 {
-                            i128::try_from_val(&env, &c.args.get(2).unwrap())
-                                .unwrap_or(0)
-                        } else {
-                            0
-                        };
-                        let payee = if c.args.len() >= 2 {
-                            Address::try_from_val(&env, &c.args.get(1).unwrap()).ok()
-                        } else {
-                            None
-                        };
+                        // Arguments are read per selector (unknown selectors and
+                        // malformed args are refused, never guessed at).
+                        let effect =
+                            session_key::extract_call_effect(&env, &c.fn_name, &c.args)?;
                         session_key::enforce(
                             &env,
                             &key_id,
                             &c.contract,
                             &c.fn_name,
-                            payee.as_ref(),
-                            amount,
+                            effect.amount,
+                            effect.payee.as_ref(),
                         )?;
                     }
 
@@ -634,15 +624,12 @@ impl InvisibleWallet {
     /// `signature_payload` produced by the corresponding private key.
     ///
     /// Requires wallet owner authorization (existing signer via `__check_auth`).
-    /// `payee`, when set, restricts the key to calls whose second argument is
-    /// that exact recipient (the standard token transfer argument shape).
     pub fn register_session_key(
         env: Env,
         pubkey: BytesN<32>,
         key_id: BytesN<32>,
         target_contract: Address,
         selector: Symbol,
-        payee: Option<Address>,
         amount_cap: i128,
         expiry: u64,
     ) {
@@ -651,10 +638,47 @@ impl InvisibleWallet {
             pubkey,
             target_contract,
             selector,
-            payee,
             amount_cap,
             spent: 0,
             expiry,
+            payees: Vec::new(&env),
+            per_call_max: None,
+        });
+    }
+
+    /// Register a session key that also constrains who may be paid and how
+    /// much a single call may spend.
+    ///
+    /// - `payees`: allowed recipients (`to` of `transfer`/`transfer_from`,
+    ///   `spender` of `approve`). Non-empty means any other recipient, and any
+    ///   call with no recipient, is rejected. Empty means unconstrained, exactly
+    ///   like [`register_session_key`].
+    /// - `per_call_max`: optional ceiling for one call, on top of `amount_cap`.
+    ///
+    /// Requires wallet owner authorization. Like `register_session_key`, this
+    /// exists only in deployments of this contract version; the deployed
+    /// (non-upgradeable) wallets are unaffected.
+    pub fn register_session_key_scoped(
+        env: Env,
+        pubkey: BytesN<32>,
+        key_id: BytesN<32>,
+        target_contract: Address,
+        selector: Symbol,
+        amount_cap: i128,
+        expiry: u64,
+        payees: Vec<Address>,
+        per_call_max: Option<i128>,
+    ) {
+        env.current_contract_address().require_auth();
+        session_key::register(&env, key_id, session_key::SessionKeyAcl {
+            pubkey,
+            target_contract,
+            selector,
+            amount_cap,
+            spent: 0,
+            expiry,
+            payees,
+            per_call_max,
         });
     }
 

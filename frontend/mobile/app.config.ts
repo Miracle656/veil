@@ -120,6 +120,9 @@ const config: ExpoConfig = {
     // react-native-passkeys contains native code, so Expo Go cannot load it.
     // The dev client is what makes passkey registration testable on a device.
     'expo-dev-client',
+    // Read-only Siri/App Intents for balance and price. Expo Go cannot load
+    // these native intents; they are included in development and store builds.
+    './plugins/withIosAppShortcuts',
     // Local plugin: static App Shortcuts for the read-only actions.
     ['./plugins/withAndroidShortcuts', { shortcuts: ANDROID_SHORTCUTS }],
     [
@@ -141,6 +144,14 @@ const config: ExpoConfig = {
       },
     ],
     'expo-secure-store',
+    // SPP state storage uses SQLite with SQLCipher for encryption.
+    // Database is encrypted at rest with a key held in the secure store.
+    [
+      'expo-sqlite',
+      {
+        useSQLCipher: true,
+      },
+    ],
     // Periodic background check for payments, so a notification can arrive
     // without the app being opened. Android runs it through WorkManager; the
     // plugin adds the iOS background-processing entitlement.
@@ -168,6 +179,12 @@ const config: ExpoConfig = {
         color: '#FDDA24',
       },
     ],
+    // The SPP native prover (Rust/uniffi, Android-first) needs no `plugins`
+    // entry: expo-modules-autolinking scans the app's `modules/` directory and
+    // wires the Gradle project itself (local Expo modules ship an
+    // `expo-module.config.json`, not a config plugin). Listing a local module
+    // path here makes `expo prebuild` evaluate the package root as a plugin,
+    // which cannot work for a module whose JS entry re-exports TypeScript.
   ],
   experiments: {
     typedRoutes: true,

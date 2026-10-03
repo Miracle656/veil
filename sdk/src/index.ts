@@ -35,12 +35,29 @@ export type {
     Sep7PayRequest,
     Sep7PayParams,
 } from './sep7';
+export {
+    submitSep8Transaction,
+    verifyRevisedTransaction,
+    isRegulatedAsset,
+    Sep8Error,
+} from './sep8';
+export type {
+    Sep8Status,
+    Sep8Response,
+    Sep8SuccessResponse,
+    Sep8RevisedResponse,
+    Sep8PendingResponse,
+    Sep8ActionRequiredResponse,
+    Sep8RejectedResponse,
+    Sep8SubmitOptions,
+} from './sep8';
 export * from './webauthn/attestation';
 export * from './recovery/sep30';
 export * from './crypto/prf';
 export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';
+export type { TransactionSigner, SignTransactionContext, SignerInput } from './signer';
 export * from './claimableBalance';
 export * from './network';
 export * from './fees';

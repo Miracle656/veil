@@ -121,6 +121,8 @@ export function getPolicyMetadata(
 export type SppPool = {
   /** `poolContractId` — the pool's own contract. */
   id: string
+  /** Ledger at which this pool was deployed. */
+  deploymentLedger: number
   /** `tokenContractId` — the token contract the pool moves. */
   tokenContractId: string
   /** `policyFlags` — the compliance policy the pool was deployed with. */
@@ -133,6 +135,10 @@ export type SppPool = {
 
 /** The SPP deployment the wallet should talk to on one network, if any. */
 export type SppNetworkConfig = {
+  /** Stellar account that deployed the SPP contracts. */
+  deployer: string
+  /** Stellar account that administers the SPP contracts. */
+  admin: string
   /** `asp_membership` — ASP contract holding the approved-key Merkle tree. */
   aspMembership: string
   /** `asp_non_membership` — ASP contract holding the blocked-key tree. */
@@ -152,6 +158,22 @@ export type SppNetworkConfig = {
   pools: readonly SppPool[]
 }
 
+const NETHERMIND_TESTNET_BOOTNODE = 'https://bootnode.dev-nethermind.xyz'
+
+/**
+ * Veil's own bootnode, or null when unset. This is the probe *primary*:
+ * `resolveBootnodeWithFallback(null)` skips the probe instead of
+ * health-checking Nethermind's archive and "falling back" to itself.
+ */
+export function getConfiguredBootnodeUrl(): string | null {
+  return process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL?.trim() || null
+}
+
+/** Select Veil's archive when configured, otherwise use Nethermind's archive. */
+export function getSppBootnodeUrl(configuredUrl?: string): string {
+  return configuredUrl?.trim() || NETHERMIND_TESTNET_BOOTNODE
+}
+
 /**
  * SPP contract addresses, copied from SPP's
  * `deployments/testnet/deployments.json` at upstream commit
@@ -166,6 +188,8 @@ export type SppNetworkConfig = {
  */
 export const SPP_NETWORKS: Partial<Record<VeilNetworkName, SppNetworkConfig>> = {
   testnet: {
+    deployer: 'GDX6X7DZQGIAGP6MWUK24BRQFDNQCP6E4FCJ4M6K3OCTNQM3EMWLQGPH',
+    admin: 'GCBU2YCJGVLRSPPFK3ADYNUEH2W6ZFNNJLX6IHCEZT54VOHZZNYNHXDG',
     aspMembership: 'CAUPZISOB4GWTH22MVKA6MRWJMQRTLUMIGUSBFNJEF32Z6WEY3RFOKGC',
     aspNonMembership: 'CAFLZKGO3KYKNOBPCVT3APFEWMUBRDBF4EVYK65E6O653WYMX4XH4QYJ',
     verifiers: {
@@ -173,11 +197,12 @@ export const SPP_NETWORKS: Partial<Record<VeilNetworkName, SppNetworkConfig>> = 
       traceable: 'CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2UPTZIEO7BI32RKRTPFCUF2FMV',
     },
     publicKeyRegistry: 'CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZDDLCMNPWXIH4',
-    bootnodeUrl: 'https://bootnode.dev-nethermind.xyz',
+    bootnodeUrl: getSppBootnodeUrl(process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL),
     pools: [
       {
         // XLM pool with a block-list policy.
         id: 'CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT',
+        deploymentLedger: 4831618,
         tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',
@@ -185,6 +210,7 @@ export const SPP_NETWORKS: Partial<Record<VeilNetworkName, SppNetworkConfig>> = 
       {
         // XLM pool with a block-list policy and a global view key (traceable).
         id: 'CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4YPL3PYIN42',
+        deploymentLedger: 4831623,
         tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',

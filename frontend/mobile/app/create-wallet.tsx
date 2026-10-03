@@ -104,7 +104,7 @@ export default function CreateWallet() {
 
   if (status === 'created' && result) {
     return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="create-wallet-success">
         <View style={styles.body}>
           <FlowHeader title="Wallet ready" />
           <View style={styles.doneCard}>

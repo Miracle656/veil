@@ -20,7 +20,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { PageHeader } from '@/components/ui/primitives'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { NIGERIAN_BANKS, bankName } from '@/lib/nigerianBanks'
-import { getNetwork } from '@/lib/network'
+import { getNetwork, getUsdcIssuer } from '@/lib/network'
 import {
   OfframpUnavailable,
   createOrder,
@@ -595,7 +595,7 @@ export default function CashOutPage() {
                 <button
                   onClick={() =>
                     router.push(
-                      `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC`,
+                      `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC&issuer=${getUsdcIssuer()}`,
                     )
                   }
                   style={{ ...primary, flex: 1 }}

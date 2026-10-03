@@ -21,6 +21,7 @@ import { getNetworkName } from '../../network'
 import {
   SPP_NETWORKS,
   getSppConfig,
+  getSppBootnodeUrl,
   isPrivacyEnabled,
   DEFAULT_ASSOCIATION_SET_POLICY,
   getAssociationSetPolicy,
@@ -80,6 +81,11 @@ describe('per-network SPP config', () => {
     })
   })
 
+  it('uses Veil’s configured archive URL when supplied', () => {
+    expect(getSppBootnodeUrl('https://bootnode.veil.app/ ')).toBe('https://bootnode.veil.app/')
+    expect(getSppBootnodeUrl('')).toBe('https://bootnode.dev-nethermind.xyz')
+  })
+
   it('matches the pinned deployments.json verifiers on testnet', () => {
     expect(getSppConfig('testnet')?.verifiers).toEqual({
       standard: 'CD34JHLNB7AYASRLOTMT6EECBKFMOS356PPP5RPXRO5Y5EA5Y4DIXGTV',
@@ -91,12 +97,14 @@ describe('per-network SPP config', () => {
     expect(getSppConfig('testnet')?.pools).toEqual([
       {
         id: 'CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT',
+        deploymentLedger: 4831618,
         tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',
       },
       {
         id: 'CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4YPL3PYIN42',
+        deploymentLedger: 4831623,
         tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',

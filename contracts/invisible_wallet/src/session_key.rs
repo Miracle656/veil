@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Symbol};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Symbol, TryFromVal, Val, Vec};
 use crate::WalletError;
 
 // Approximate seconds per Stellar ledger — used when converting a wall-clock
@@ -26,10 +26,6 @@ pub struct SessionKeyAcl {
     pub target_contract: Address,
     /// The only function selector this key may invoke.
     pub selector: Symbol,
-    /// Optional recipient constraint. When set, the invocation must expose the
-    /// same recipient as its second argument (the Soroban token `transfer`
-    /// shape is `(from, to, amount)`).
-    pub payee: Option<Address>,
     /// Total token budget across the lifetime of this session key (raw units).
     ///
     /// Authorisation is rejected once `spent + amount > amount_cap`.
@@ -44,6 +40,69 @@ pub struct SessionKeyAcl {
     pub spent: i128,
     /// Unix timestamp (seconds) after which the key is no longer valid.
     pub expiry: u64,
+    /// Allowed recipients. **Empty means unconstrained** (the original
+    /// behaviour): the cap then bounds how much leaves, not where it goes.
+    /// When non-empty, a call whose payee is not in this list is rejected, and
+    /// so is any call whose payee cannot be determined.
+    pub payees: Vec<Address>,
+    /// Optional per-call ceiling, alongside the cumulative `amount_cap`.
+    /// `None` means a single call may spend the whole remaining budget.
+    pub per_call_max: Option<i128>,
+}
+
+/// What a call spends and who receives it, read per selector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CallEffect {
+    pub amount: i128,
+    /// `None` for selectors with no recipient (e.g. `burn`).
+    pub payee: Option<Address>,
+}
+
+/// Reads the amount and payee out of a call's arguments using the argument
+/// layout of that specific selector (SEP-41 token interface):
+///
+/// | selector        | args                                   | amount | payee   |
+/// |-----------------|----------------------------------------|--------|---------|
+/// | `transfer`      | `(from, to, amount)`                   | 2      | `to`    |
+/// | `transfer_from` | `(spender, from, to, amount)`          | 3      | `to`    |
+/// | `approve`       | `(from, spender, amount, expiration)`  | 2      | spender |
+/// | `burn`          | `(from, amount)`                       | 1      | none    |
+///
+/// An unknown selector, a wrong argument count or an argument of the wrong type
+/// is refused with `SessionKeyAclViolation` instead of being guessed at (the
+/// previous positional `args[2]` read silently produced `0` for these).
+pub fn extract_call_effect(
+    env: &Env,
+    selector: &Symbol,
+    args: &Vec<Val>,
+) -> Result<CallEffect, WalletError> {
+    let (len, amount_idx, payee_idx): (u32, u32, Option<u32>) =
+        if *selector == Symbol::new(env, "transfer") {
+            (3, 2, Some(1))
+        } else if *selector == Symbol::new(env, "transfer_from") {
+            (4, 3, Some(2))
+        } else if *selector == Symbol::new(env, "approve") {
+            (4, 2, Some(1))
+        } else if *selector == Symbol::new(env, "burn") {
+            (2, 1, None)
+        } else {
+            return Err(WalletError::SessionKeyAclViolation);
+        };
+
+    if args.len() != len {
+        return Err(WalletError::SessionKeyAclViolation);
+    }
+
+    let amount = i128::try_from_val(env, &args.get(amount_idx).unwrap())
+        .map_err(|_| WalletError::SessionKeyAclViolation)?;
+    let payee = match payee_idx {
+        Some(i) => Some(
+            Address::try_from_val(env, &args.get(i).unwrap())
+                .map_err(|_| WalletError::SessionKeyAclViolation)?,
+        ),
+        None => None,
+    };
+    Ok(CallEffect { amount, payee })
 }
 
 #[contracttype]
@@ -105,7 +164,8 @@ pub fn revoke(env: &Env, key_id: &BytesN<32>) {
 ///   - the key exists and has not expired,
 ///   - `target` matches `acl.target_contract`,
 ///   - `selector` matches `acl.selector`, and
-///   - when configured, `payee` matches the ACL recipient constraint, and
+///   - `amount <= acl.per_call_max` when a per-call maximum is set,
+///   - the payee is in `acl.payees` when that list is non-empty, and
 ///   - `acl.spent + amount <= acl.amount_cap` (cumulative budget not exceeded).
 ///
 /// On success the updated ACL (with incremented `spent`) is written back to
@@ -116,8 +176,8 @@ pub fn enforce(
     key_id: &BytesN<32>,
     target: &Address,
     selector: &Symbol,
-    payee: Option<&Address>,
     amount: i128,
+    payee: Option<&Address>,
 ) -> Result<(), WalletError> {
     let mut acl = get_acl(env, key_id).ok_or(WalletError::SignerNotAuthorized)?;
 
@@ -137,9 +197,19 @@ pub fn enforce(
         return Err(WalletError::SessionKeyAclViolation);
     }
 
-    if let Some(expected_payee) = &acl.payee {
-        if payee != Some(expected_payee) {
+    if let Some(max) = acl.per_call_max {
+        if amount > max {
             return Err(WalletError::SessionKeyAclViolation);
+        }
+    }
+
+    // Payee constraint: only enforced when the key has an allow-list, so a key
+    // registered without one behaves exactly as before. With an allow-list, a
+    // call with no determinable payee (e.g. `burn`) is refused too.
+    if !acl.payees.is_empty() {
+        match payee {
+            Some(p) if acl.payees.contains(p) => {}
+            _ => return Err(WalletError::SessionKeyAclViolation),
         }
     }
 
@@ -187,10 +257,11 @@ mod tests {
             pubkey: mock_pubkey(env, 0xAA),
             target_contract: target,
             selector: sel,
-            payee: None,
             amount_cap: 1_000_000,
             spent: 0,
             expiry: env.ledger().timestamp() + 10_000,
+            payees: Vec::new(env),
+            per_call_max: None,
         }
     }
 
@@ -207,10 +278,10 @@ mod tests {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
             assert_eq!(
-                enforce(&env, &key_id, &other, &sel, None, 100),
+                enforce(&env, &key_id, &other, &sel, 100, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, None, 100).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 100, None).is_ok());
         });
     }
 
@@ -227,41 +298,10 @@ mod tests {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &other_sel, None, 100),
+                enforce(&env, &key_id, &target, &other_sel, 100, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, None, 100).is_ok());
-        });
-    }
-
-    #[test]
-    fn acl_payee_is_optional_but_strict_when_configured() {
-        let (env, contract_id, target) = setup();
-        let key_id = mock_key_id(&env, 0x09);
-        let sel = symbol_short!("transfer");
-        let allowed = Address::generate(&env);
-        let other = Address::generate(&env);
-
-        env.as_contract(&contract_id, || {
-            register(&env, key_id.clone(), SessionKeyAcl {
-                pubkey: mock_pubkey(&env, 0xAB),
-                target_contract: target.clone(),
-                selector: sel.clone(),
-                payee: Some(allowed.clone()),
-                amount_cap: 1_000,
-                spent: 0,
-                expiry: env.ledger().timestamp() + 10_000,
-            });
-
-            assert!(enforce(&env, &key_id, &target, &sel, Some(&allowed), 100).is_ok());
-            assert_eq!(
-                enforce(&env, &key_id, &target, &sel, Some(&other), 100),
-                Err(WalletError::SessionKeyAclViolation)
-            );
-            assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 100),
-                Err(WalletError::SessionKeyAclViolation)
-            );
+            assert!(enforce(&env, &key_id, &target, &sel, 100, None).is_ok());
         });
     }
 
@@ -278,17 +318,18 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xBB),
                 target_contract: target.clone(),
                 selector: sel.clone(),
-                payee: None,
                 amount_cap: 500,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 501),
+                enforce(&env, &key_id, &target, &sel, 501, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, None, 500).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 500, None).is_ok());
         });
     }
 
@@ -305,29 +346,30 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xCC),
                 target_contract: target.clone(),
                 selector: sel.clone(),
-                payee: None,
                 amount_cap: 1_000,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
             // First call: spend 600
-            assert!(enforce(&env, &key_id, &target, &sel, None, 600).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 600, None).is_ok());
             // spent is now 600; cap is 1_000 → 400 remaining
 
             // Second call: 401 exceeds remaining budget even though 401 < cap
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 401),
+                enforce(&env, &key_id, &target, &sel, 401, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
 
             // Second call: exactly 400 is still allowed
-            assert!(enforce(&env, &key_id, &target, &sel, None, 400).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 400, None).is_ok());
             // spent is now 1_000 = cap
 
             // Third call: budget exhausted, even amount=1 is rejected
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 1),
+                enforce(&env, &key_id, &target, &sel, 1, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
         });
@@ -344,21 +386,22 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xDD),
                 target_contract: target.clone(),
                 selector: sel.clone(),
-                payee: None,
                 amount_cap: 300,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
-            enforce(&env, &key_id, &target, &sel, None, 100).unwrap(); // spent = 100
-            enforce(&env, &key_id, &target, &sel, None, 100).unwrap(); // spent = 200
-            enforce(&env, &key_id, &target, &sel, None, 100).unwrap(); // spent = 300
+            enforce(&env, &key_id, &target, &sel, 100, None).unwrap(); // spent = 100
+            enforce(&env, &key_id, &target, &sel, 100, None).unwrap(); // spent = 200
+            enforce(&env, &key_id, &target, &sel, 100, None).unwrap(); // spent = 300
 
             // Now fully exhausted
             let acl = get_acl(&env, &key_id).unwrap();
             assert_eq!(acl.spent, 300);
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 1),
+                enforce(&env, &key_id, &target, &sel, 1, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
         });
@@ -377,10 +420,11 @@ mod tests {
                 pubkey: mock_pubkey(&env, 0xEE),
                 target_contract: target.clone(),
                 selector: sel.clone(),
-                payee: None,
                 amount_cap: 1_000_000,
                 spent: 0,
                 expiry: 1_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
             let mut info = env.ledger().get();
@@ -388,7 +432,7 @@ mod tests {
             env.ledger().set(info);
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 100),
+                enforce(&env, &key_id, &target, &sel, 100, None),
                 Err(WalletError::SessionKeyExpired)
             );
         });
@@ -410,15 +454,16 @@ mod tests {
                 pubkey: mock_pubkey(env, 0xAB),
                 target_contract: target.clone(),
                 selector: sel.clone(),
-                payee: None,
                 amount_cap: 1_000_000,
                 spent: 0,
                 expiry,
+                payees: Vec::new(env),
+                per_call_max: None,
             });
             let mut info = env.ledger().get();
             info.timestamp = now;
             env.ledger().set(info);
-            enforce(env, &key_id, target, &sel, None, 1)
+            enforce(env, &key_id, target, &sel, 1, None)
         })
     }
 
@@ -460,7 +505,7 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 100),
+                enforce(&env, &key_id, &target, &sel, 100, None),
                 Err(WalletError::SignerNotAuthorized)
             );
         });
@@ -476,14 +521,167 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
-            assert!(enforce(&env, &key_id, &target, &sel, None, 1).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 1, None).is_ok());
 
             revoke(&env, &key_id);
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, None, 1),
+                enforce(&env, &key_id, &target, &sel, 1, None),
                 Err(WalletError::SignerNotAuthorized)
             );
         });
+    }
+
+    // ── Payee constraint, per-call max and per-selector extraction ────────────
+
+    use soroban_sdk::{vec, IntoVal};
+
+    fn scoped_acl(
+        env: &Env,
+        target: Address,
+        payees: Vec<Address>,
+        per_call_max: Option<i128>,
+    ) -> SessionKeyAcl {
+        SessionKeyAcl {
+            payees,
+            per_call_max,
+            ..base_acl(env, target, symbol_short!("transfer"))
+        }
+    }
+
+    #[test]
+    fn payee_constraint_accepts_right_payee_rejects_wrong_payee() {
+        let (env, contract_id, target) = setup();
+        let right = Address::generate(&env);
+        let wrong = Address::generate(&env);
+        let key_id = mock_key_id(&env, 0x20);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), scoped_acl(&env, target.clone(), vec![&env, right.clone()], None));
+
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 10, Some(&wrong)),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            // A rejected call must not consume budget.
+            assert_eq!(get_acl(&env, &key_id).unwrap().spent, 0);
+            assert!(enforce(&env, &key_id, &target, &sel, 10, Some(&right)).is_ok());
+            // No determinable payee is refused when a constraint exists.
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 10, None),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+        });
+    }
+
+    #[test]
+    fn payee_allow_list_accepts_any_listed_payee() {
+        let (env, contract_id, target) = setup();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let key_id = mock_key_id(&env, 0x21);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), scoped_acl(&env, target.clone(), vec![&env, a.clone(), b.clone()], None));
+            assert!(enforce(&env, &key_id, &target, &sel, 1, Some(&a)).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 1, Some(&b)).is_ok());
+        });
+    }
+
+    #[test]
+    fn no_payee_constraint_allows_any_payee() {
+        let (env, contract_id, target) = setup();
+        let anyone = Address::generate(&env);
+        let key_id = mock_key_id(&env, 0x22);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
+            assert!(enforce(&env, &key_id, &target, &sel, 1, Some(&anyone)).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 1, None).is_ok());
+        });
+    }
+
+    #[test]
+    fn per_call_max_rejects_single_large_call() {
+        let (env, contract_id, target) = setup();
+        let key_id = mock_key_id(&env, 0x23);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), scoped_acl(&env, target.clone(), Vec::new(&env), Some(100)));
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 101, None),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            assert!(enforce(&env, &key_id, &target, &sel, 100, None).is_ok());
+        });
+    }
+
+    #[test]
+    fn extract_transfer_reads_payee_and_amount() {
+        let env = Env::default();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        let args: Vec<Val> = vec![&env, from.into_val(&env), to.clone().into_val(&env), 42i128.into_val(&env)];
+        let e = extract_call_effect(&env, &symbol_short!("transfer"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 42, payee: Some(to) });
+    }
+
+    #[test]
+    fn extract_other_selectors_use_their_own_layout() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let c = Address::generate(&env);
+
+        // transfer_from(spender, from, to, amount): payee is index 2, amount index 3.
+        let args: Vec<Val> = vec![&env, a.clone().into_val(&env), b.clone().into_val(&env), c.clone().into_val(&env), 7i128.into_val(&env)];
+        let e = extract_call_effect(&env, &Symbol::new(&env, "transfer_from"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 7, payee: Some(c.clone()) });
+
+        // approve(from, spender, amount, expiration_ledger)
+        let args: Vec<Val> = vec![&env, a.clone().into_val(&env), b.clone().into_val(&env), 9i128.into_val(&env), 100u32.into_val(&env)];
+        let e = extract_call_effect(&env, &symbol_short!("approve"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 9, payee: Some(b) });
+
+        // burn(from, amount): amount is index 1 and there is no payee.
+        let args: Vec<Val> = vec![&env, a.into_val(&env), 5i128.into_val(&env)];
+        let e = extract_call_effect(&env, &symbol_short!("burn"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 5, payee: None });
+    }
+
+    #[test]
+    fn extract_refuses_unknown_selector_and_malformed_args() {
+        let env = Env::default();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        let args: Vec<Val> = vec![&env, from.clone().into_val(&env), to.clone().into_val(&env), 1i128.into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("mint"), &args),
+            Err(WalletError::SessionKeyAclViolation)
+        );
+
+        // Too few / too many arguments.
+        let short: Vec<Val> = vec![&env, from.clone().into_val(&env), to.clone().into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("transfer"), &short),
+            Err(WalletError::SessionKeyAclViolation)
+        );
+        let long: Vec<Val> = vec![&env, from.clone().into_val(&env), to.clone().into_val(&env), 1i128.into_val(&env), 1i128.into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("transfer"), &long),
+            Err(WalletError::SessionKeyAclViolation)
+        );
+
+        // Amount of the wrong type is not silently read as 0.
+        let bad: Vec<Val> = vec![&env, from.into_val(&env), to.into_val(&env), symbol_short!("x").into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("transfer"), &bad),
+            Err(WalletError::SessionKeyAclViolation)
+        );
     }
 }

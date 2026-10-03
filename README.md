@@ -146,7 +146,7 @@ veil/
 │   └── factory/                   # Factory contract — deploys wallet instances
 │       ├── src/
 │       │   ├── lib.rs             # init(wasm_hash) + deploy(pubkey, rp_id, origin)
-│       │   ├── storage.rs         # WasmHash + Deployed(salt) keys
+│       │   ├── storage.rs         # WasmHash/Admin (instance) + Deployed(salt) markers (persistent)
 │       │   └── validation.rs      # P-256 public key validation
 │       └── Cargo.toml
 ├── sdk/
@@ -216,7 +216,8 @@ Claude-powered AI agent embedded in the Veil wallet. Connects via WebSocket. Too
 | Tool                    | Description                                                       |
 | ----------------------- | ----------------------------------------------------------------- |
 | `get_price`             | Fetches live SDEX/AMM price via Lens (x402 auto-paid)             |
-| `get_wallet_balance`    | Fetches XLM + token balances via Horizon                          |
+| `get_wallet_balance`    | Fetches XLM + token balances via Horizon; issued assets are classified verified / unverified / unlisted by issuer |
+| `get_asset_info`        | Verified issuer (and clawback/freeze properties) for USDT0 / USDC |
 | `get_transfer_history`  | Fetches transfer history via Wraith + Horizon payments            |
 | `build_swap`            | Builds unsigned path payment XDR (auto-adds trustline if missing) |
 | `build_payment`         | Builds unsigned payment XDR                                       |
@@ -431,9 +432,9 @@ const wallet = createWalletStore({
 
 // $wallet reactively reflects { address, isDeployed, isPending, error }
 await wallet.register('alice');
-await wallet.deploy(feePayerSecret);
+await wallet.deploy(feePayerSigner); // a TransactionSigner, see sdk/README.md
 const sig = await wallet.signAuthEntry(signaturePayload);
-await wallet.sendPayment(feePayerSecret, to, amountInStroops);
+await wallet.sendPayment(feePayerSigner, to, amountInStroops);
 ```
 
 The store binds the same `InvisibleWalletCore` the React hook and the Vue
@@ -541,7 +542,7 @@ const wallet = createInvisibleWallet({
 
 // Register a passkey and deploy a wallet contract
 const { walletAddress } = await wallet.register('alice');
-await wallet.deploy(feePayerKeypair);
+await wallet.deploy(feePayerSigner); // a TransactionSigner, see sdk/README.md
 
 // Sign a Soroban authorization entry
 const sig = await wallet.signAuthEntry(signaturePayload);

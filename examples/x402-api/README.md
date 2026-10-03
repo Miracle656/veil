@@ -24,11 +24,12 @@ Next.js client                         Express x402 server
 GET /paid/quote ───────────────────▶   no X-PAYMENT header
                 ◀───────────────────   402 Payment Required + requirements (0.01 XLM)
 
-(read the 402 requirements → hash them into the WebAuthn challenge → passkey tap)
+(challenge = SHA-256(network, asset, amount, payTo, resource, timeout)
+ → passkey tap over that challenge → assertion verified locally
+ → sign 0.01 XLM payment with the exact Stellar scheme)
 
 GET /paid/quote                        verify payment
   PAYMENT-SIGNATURE: <payload> ────▶   settle on Stellar (facilitator sponsors the fee)
-  X-Veil-Passkey-Assertion: <assertion> ─▶ bind the approval to those requirements
                 ◀───────────────────   200 OK + data + PAYMENT-RESPONSE receipt
 ```
 
@@ -76,13 +77,45 @@ funds a fee-payer key from Friendbot), then **Get quote — pay 0.01 XLM with
 Veil**. After the biometric tap the client pays and the quote appears with a
 `200 OK`.
 
+## What the passkey prompt does and does not guarantee
+
+The WebAuthn challenge is **derived from the payment**, not random
+(`client/src/lib/challenge.ts`): a SHA-256 over the network, asset, amount,
+recipient, resource URL and validity window from the server's 402 requirements.
+The client verifies the returned assertion (challenge, user presence + user
+verification, ES256 signature against the passkey public key stored at
+registration) **before** it signs, and refuses to sign if the payload it built
+differs from the requirement the user approved. The verified assertion is
+returned with the response and shown in the UI as the record of what was
+approved. Tests (`npm test` in `client/`) prove a different payment yields a
+different challenge and that a random-challenge or wrong-payment assertion is
+rejected.
+
+What it **does** provide: a biometric approval that is cryptographically tied to
+*this* amount, *this* recipient and *this* network, checked before signing.
+
+What it does **not** provide: the Stellar transaction is still signed by the
+fee-payer key held in `localStorage`, and neither the server nor the chain
+checks the passkey assertion. Malicious code running in the page could read
+that key and pay without any prompt. The passkey is a consent gate, not the
+authorisation the network enforces. To make the passkey signature *be* the
+authorisation, route the payment through the Veil wallet contract's
+`__check_auth` ceremony (as `frontend/mobile`'s `signXdrPayload()` does); this
+example does not do that.
+
+### Payment validity window
+
+The server sets `maxTimeoutSeconds: 120` (~24 ledgers). The Veil wallet's own
+`__check_auth` signatures expire 100 ledgers (~500 s) out. The difference is
+intentional: a 0.01 XLM call needs a much shorter window. It is a named
+constant (`MAX_TIMEOUT_SECONDS` in `server/src/x402.ts`) and is part of the
+passkey challenge, so changing it changes what the user approves.
+
 ## Acceptance criteria
 
 - **API returns 402 when unpaid** — `curl` above, or the client's first request.
-- **Client pays via Veil, returns 200** — the "Get quote" button first derives a
-  WebAuthn challenge from the exact 402 URL and payment requirements, then sends
-  that assertion alongside the x402 payment and renders the unlocked `200`
-  response.
+- **Client pays via Veil, returns 200** — the "Get quote" button signs the 0.01
+  XLM payment with the Veil wallet and renders the unlocked `200` response.
 
 ## Notes
 
@@ -90,10 +123,9 @@ Veil**. After the biometric tap the client pays and the quote appears with a
   (native asset SAC + stroops) as the price, rather than a `"$0.01"` money
   string, which the scheme would otherwise resolve to USDC.
 - The fee-payer key is generated and funded client-side purely to keep the
-  example self-contained. The passkey assertion is payment-bound and forwarded
-  in `X-Veil-Passkey-Assertion`; a production resource server must verify that
-  assertion against the Veil wallet policy before treating it as authorization.
-  Production integrations should hold the spending key in the Veil wallet
-  contract.
+  example self-contained; the passkey gates every spend (see the section
+  above for exactly what that means). Wallets created before the passkey
+  public key was stored are treated as not set up; create a new one. Production
+  integrations should hold the spending key in the Veil wallet contract.
 - This is testnet-only sample code and has not been audited. Do not reuse the
   key-handling shortcuts on mainnet.
