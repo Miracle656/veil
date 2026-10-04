@@ -184,6 +184,63 @@ export function verifiedAsset(
 }
 
 /** A single non-native asset held by the wallet. */
+/**
+ * The issuer controls Horizon reports for an asset's issuing account.
+ *
+ * These are set on the ISSUER, not on the holder, so they are a property of the
+ * asset and the same for everyone who holds it.
+ */
+export interface HorizonIssuerFlags {
+  auth_required?: boolean;
+  auth_revocable?: boolean;
+  auth_clawback_enabled?: boolean;
+  auth_immutable?: boolean;
+}
+
+/**
+ * What the issuer can do to a balance of this asset, in a sentence, or null
+ * when it can do neither.
+ *
+ * Ported from the web wallet's `getAssetControlDisclosure` so the two cannot
+ * drift into saying different things about the same asset. It matters most for
+ * USDT0: its issuer has both flags set, and until now the only place mobile
+ * said so was a hardcoded line inside the "enable USDT0" banner — which a
+ * holder never sees again after they tap it once.
+ *
+ * The wording puts the fact where it belongs. This is the asset behaving as the
+ * asset was designed to, not Veil holding anything back.
+ */
+export function getAssetControlDisclosure(flags?: HorizonIssuerFlags | null): string | null {
+  if (!flags) return null;
+  if (flags.auth_revocable && flags.auth_clawback_enabled) {
+    return 'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.';
+  }
+  if (flags.auth_clawback_enabled) {
+    return 'The issuer can take this balance back, and this is a property of the asset, not of Veil.';
+  }
+  if (flags.auth_revocable) {
+    return 'The issuer can freeze this balance, and this is a property of the asset, not of Veil.';
+  }
+  return null;
+}
+
+/**
+ * The issuing account's flags, or null when Horizon cannot answer.
+ *
+ * Null means "unknown", and callers show nothing rather than implying the
+ * issuer is powerless — the web wallet had a bug of exactly that shape, where a
+ * Horizon failure silently dropped the disclosure.
+ */
+export async function fetchIssuerFlags(issuer: string): Promise<HorizonIssuerFlags | null> {
+  if (!issuer) return null;
+  try {
+    const account = await new Horizon.Server(getNetwork().horizonUrl).loadAccount(issuer);
+    return (account.flags as HorizonIssuerFlags) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface HeldAsset {
   code: string;
   issuer: string;

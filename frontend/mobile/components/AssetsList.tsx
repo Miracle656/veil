@@ -190,6 +190,28 @@ export function AssetsList({
           </Pressable>
         ))
       )}
+
+      {/* The way in to the assets Veil knows but this wallet does not hold yet.
+          USDT0 has been shipped end to end since the wave — registry, trustline,
+          send, receive, swap — and the only route to turning it on was Settings
+          → "Trustlines & reserves". An asset you cannot find is an asset you do
+          not have, so the list that would show it also offers to add it. */}
+      {view === 'loading' ? null : (
+        <Pressable
+          onPress={() => router.push('/assets')}
+          accessibilityRole="button"
+          accessibilityLabel="Add an asset"
+          style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
+        >
+          <View style={styles.addDisc}>
+            <Text style={styles.addPlus}>+</Text>
+          </View>
+          <View>
+            <Text style={styles.addLabel}>Add an asset</Text>
+            <Text style={styles.addHint}>USDC, USDT0, EURC and more</Text>
+          </View>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -237,6 +259,41 @@ const createStyles = (colors: ThemeColors) =>
       gap: 6,
     },
     pressed: { opacity: 0.6 },
+    addRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 13,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    addDisc: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceMd,
+    },
+    addPlus: {
+      color: colors.accent,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    addLabel: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 14.5,
+    },
+    addHint: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.body,
+      fontSize: 11,
+      marginTop: 2,
+    },
     left: {
       flexDirection: 'row',
       alignItems: 'center',

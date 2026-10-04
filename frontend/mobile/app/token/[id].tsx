@@ -28,6 +28,7 @@ import {
   fetchContractAssetBalance,
   getFeePayerAddress,
 } from '../../lib/activity';
+import { fetchIssuerFlags, getAssetControlDisclosure } from '../../lib/assets';
 import type { AccountReserveBreakdown } from '../../lib/reserves';
 
 const NAMES: Record<string, string> = { XLM: 'Stellar Lumens', USDC: 'USD Coin' };
@@ -52,6 +53,7 @@ export default function TokenDetailScreen() {
   const [detail, setDetail] = useState<TokenDetail | null>(null);
   const [price, setPrice] = useState<number | null>(null);
   const [reserve, setReserve] = useState<AccountReserveBreakdown | null>(null);
+  const [issuerControl, setIssuerControl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -105,6 +107,12 @@ export default function TokenDetailScreen() {
       // which is the account Stellar actually holds the reserve against.
       if (asset.code === 'XLM' && !asset.issuer && effective) {
         setReserve(await fetchAccountReserve(effective));
+      }
+
+      // What the issuer can do to this balance. Read from the ISSUING account,
+      // so it is the same answer for everyone holding the asset.
+      if (asset.issuer) {
+        setIssuerControl(getAssetControlDisclosure(await fetchIssuerFlags(asset.issuer)));
       }
     } catch {
       // leave last-known
@@ -190,6 +198,18 @@ export default function TokenDetailScreen() {
                 </Pressable>
               ))}
             </View>
+
+            {/* What the issuer can do to this balance.
+                Mobile only ever said this inside the "enable USDT0" banner on
+                the trustlines screen — a line you see once, before you hold
+                any, and never again. USDT0's issuer has both auth_revocable and
+                auth_clawback_enabled set, so it is true for every USDT0 balance
+                on the network, and this is where someone holding one looks. */}
+            {issuerControl ? (
+              <View style={styles.disclosure}>
+                <Text style={styles.disclosureText}>{issuerControl}</Text>
+              </View>
+            ) : null}
 
             {/* Why some XLM cannot be spent.
                 This was one truncated line on the dashboard's balance card —
@@ -386,6 +406,19 @@ const createStyles = (colors: ThemeColors) =>
     balance: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 40, marginTop: 6 },
     fiat: { color: colors.textMuted, fontFamily: fontFamily.address, fontSize: 13 },
 
+    disclosure: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 14,
+      marginTop: 4,
+    },
+    disclosureText: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 12.5,
+      lineHeight: 19,
+    },
     reserveCard: {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
