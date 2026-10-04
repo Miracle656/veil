@@ -479,12 +479,7 @@ function NinBoxes({
 }) {
   const digits = Array.from({ length: NIN_LENGTH }, (_, i) => value[i] ?? '');
   return (
-    <Pressable
-      onPress={() => inputRef.current?.focus()}
-      accessibilityRole="button"
-      accessibilityLabel="Enter your 11 digit NIN"
-      style={styles.ninRow}
-    >
+    <View style={styles.ninRow}>
       {digits.map((d, i) => (
         <View
           key={i}
@@ -497,20 +492,28 @@ function NinBoxes({
           <Text style={styles.ninDigit}>{d}</Text>
         </View>
       ))}
+      {/* The real input, stretched over the boxes.
+          It used to be a 1x1 `opacity: 0` field that a Pressable focused by
+          ref, and on Android that focus simply did not happen — the boxes
+          looked tappable and nothing came up. Covering the row instead means a
+          tap anywhere on it IS a tap on the input, with no programmatic focus
+          to fail. `color: 'transparent'` rather than `opacity: 0`, because a
+          zero-opacity view is not reliably focusable. */}
       <TextInput
         ref={inputRef}
         value={value}
         onChangeText={(t) => onChange(t.replace(/\D/g, '').slice(0, NIN_LENGTH))}
         keyboardType="number-pad"
         maxLength={NIN_LENGTH}
-        style={styles.ninHidden}
+        style={styles.ninInput}
         caretHidden
+        accessibilityLabel="Enter your 11 digit NIN"
         // Never offered to a password manager or a keyboard's suggestion strip.
         autoComplete="off"
         importantForAutofill="no"
         textContentType="none"
       />
-    </Pressable>
+    </View>
   );
 }
 
@@ -642,12 +645,16 @@ const createStyles = (colors: ThemeColors) =>
       flexShrink: 1,
     },
 
-    ninRow: { flexDirection: 'row', gap: 5, marginTop: 6 },
+    ninRow: { flexDirection: 'row', gap: 5, marginTop: 6, position: 'relative' },
     ninBox: {
       flex: 1,
       aspectRatio: 0.78,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
+      // A hairline at 10% black is almost nothing on a white screen; these are
+      // the thing the screen is asking you to tap, so they have to read as
+      // fields rather than as a faint ruling.
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      backgroundColor: colors.surfaceMd,
       borderRadius: 7,
       alignItems: 'center',
       justifyContent: 'center',
@@ -657,7 +664,12 @@ const createStyles = (colors: ThemeColors) =>
     ninDigit: { color: colors.textStrong, fontFamily: fontFamily.address, fontSize: 15 },
     // Present for the keyboard, invisible on screen. Not `display: none`, which
     // would stop it taking focus at all.
-    ninHidden: { position: 'absolute', opacity: 0, width: 1, height: 1 },
+    ninInput: {
+      ...StyleSheet.absoluteFillObject,
+      color: 'transparent',
+      backgroundColor: 'transparent',
+      padding: 0,
+    },
 
     infoCard: {
       borderWidth: StyleSheet.hairlineWidth,

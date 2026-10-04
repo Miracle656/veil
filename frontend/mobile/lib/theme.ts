@@ -63,6 +63,15 @@ export type ThemeColors = {
   surfaceMd: string;
   /** Borders, dividers, and secondary button fills. */
   border: string;
+  /**
+   * A border that has to be seen rather than merely felt.
+   *
+   * `border` is deliberately faint — it rules dividers and card edges, where
+   * being noticed would be a fault. An input the screen is asking you to tap is
+   * the opposite: the NIN boxes drawn at `border` on a white screen were nearly
+   * invisible, so nobody knew there was anything to tap.
+   */
+  borderStrong: string;
   /** Screen and section titles. */
   textStrong: string;
   /** Body text and input contents. */
@@ -106,6 +115,7 @@ export const THEMES: Record<Theme, ThemeColors> = {
     surfaceRaised: '#1C1C1E',
     surfaceMd: 'rgba(255,255,255,0.06)',
     border: 'rgba(255,255,255,0.08)',
+    borderStrong: 'rgba(255,255,255,0.22)',
     textStrong: '#FFFFFF',
     textPrimary: '#F6F7F8',
     textSecondary: 'rgba(246,247,248,0.62)',
@@ -127,6 +137,7 @@ export const THEMES: Record<Theme, ThemeColors> = {
     surfaceRaised: '#FFFFFF',
     surfaceMd: 'rgba(0,0,0,0.04)',
     border: 'rgba(0,0,0,0.10)',
+    borderStrong: 'rgba(0,0,0,0.22)',
     textStrong: '#0F0F0F',
     textPrimary: '#1A1A1A',
     textSecondary: '#4B5563',
