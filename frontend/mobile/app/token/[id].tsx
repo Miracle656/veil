@@ -23,7 +23,12 @@ import type { TxRecord } from '../../lib/activityFeed';
 import { fetchTokenDetail, parseAssetId, type TokenActivity, type TokenDetail } from '../../lib/token';
 import { getWalletAddress } from '../../lib/walletStore';
 import { knownDepositAddresses } from '../../lib/offramp';
-import { fetchContractAssetBalance, getFeePayerAddress } from '../../lib/activity';
+import {
+  fetchAccountReserve,
+  fetchContractAssetBalance,
+  getFeePayerAddress,
+} from '../../lib/activity';
+import type { AccountReserveBreakdown } from '../../lib/reserves';
 
 const NAMES: Record<string, string> = { XLM: 'Stellar Lumens', USDC: 'USD Coin' };
 
@@ -46,6 +51,7 @@ export default function TokenDetailScreen() {
 
   const [detail, setDetail] = useState<TokenDetail | null>(null);
   const [price, setPrice] = useState<number | null>(null);
+  const [reserve, setReserve] = useState<AccountReserveBreakdown | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -93,6 +99,13 @@ export default function TokenDetailScreen() {
         extraXlm > 0 ? { ...d, balance: (Number(d.balance) + extraXlm).toFixed(7) } : d;
       setDetail({ ...withBalance, activity: merged });
       setPrice(p);
+
+      // Only the native asset has a reserve, and only a classic account can be
+      // asked for one. `effective` is the fee payer for a contract wallet,
+      // which is the account Stellar actually holds the reserve against.
+      if (asset.code === 'XLM' && !asset.issuer && effective) {
+        setReserve(await fetchAccountReserve(effective));
+      }
     } catch {
       // leave last-known
     } finally {
@@ -177,6 +190,42 @@ export default function TokenDetailScreen() {
                 </Pressable>
               ))}
             </View>
+
+            {/* Why some XLM cannot be spent.
+                This was one truncated line on the dashboard's balance card —
+                "Reserved: 1.5 XLM (account base re…". A number whose reason is
+                cut off is worse than no number, and this page has room for the
+                arithmetic behind it. */}
+            {reserve ? (
+              <View style={styles.reserveCard}>
+                <Text style={styles.reserveTitle}>
+                  {reserve.totalReserve.toFixed(1)} XLM is reserved
+                </Text>
+                <Text style={styles.reserveBody}>{reserve.reason}</Text>
+                <View style={styles.reserveRow}>
+                  <Text style={styles.reserveKey}>Account minimum</Text>
+                  <Text style={styles.reserveVal}>
+                    {reserve.baseAccountReserve.toFixed(1)} XLM
+                  </Text>
+                </View>
+                <View style={styles.reserveRow}>
+                  <Text style={styles.reserveKey}>
+                    Trustlines and signers ({reserve.subentries})
+                  </Text>
+                  <Text style={styles.reserveVal}>
+                    {reserve.subentryReserve.toFixed(1)} XLM
+                  </Text>
+                </View>
+                <View style={styles.reserveRow}>
+                  <Text style={styles.reserveKey}>Spendable now</Text>
+                  <Text style={styles.reserveValStrong}>{reserve.spendable} XLM</Text>
+                </View>
+                <Text style={styles.reserveFoot}>
+                  Stellar holds this to keep the account open. It is returned if the
+                  account is ever closed.
+                </Text>
+              </View>
+            ) : null}
 
             {/* Activity */}
             <View style={styles.activityHead}>
@@ -337,6 +386,33 @@ const createStyles = (colors: ThemeColors) =>
     balance: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 40, marginTop: 6 },
     fiat: { color: colors.textMuted, fontFamily: fontFamily.address, fontSize: 13 },
 
+    reserveCard: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      gap: 6,
+      marginTop: 4,
+    },
+    reserveTitle: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    reserveBody: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      marginBottom: 4,
+    },
+    reserveRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+    reserveKey: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, flexShrink: 1 },
+    reserveVal: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 13 },
+    reserveValStrong: { color: colors.accent, fontFamily: fontFamily.address, fontSize: 13 },
+    reserveFoot: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.body,
+      fontSize: 11,
+      lineHeight: 17,
+      marginTop: 6,
+    },
     actions: { flexDirection: 'row', gap: 10, marginTop: 26 },
     action: {
       flex: 1,
