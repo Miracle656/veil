@@ -14,12 +14,16 @@ import {
   fetchHeldAssets,
   fetchIssuerFlags,
   getAssetControlDisclosure,
-  loadWalletAddress,
   type HeldAsset,
   type RegisteredAsset,
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
 import { getNetworkName } from '../lib/network';
+// The one address resolver, network-aware, as the dashboard uses. The local
+// `loadWalletAddress` this screen used instead read a different AsyncStorage
+// key, which on a passkey wallet holds the raw P-256 public key — 130 hex
+// characters that Horizon was then asked about as though it were an account.
+import { ensureCorrectWalletAddress } from '../lib/walletRepair';
 import {
   enableTrustline,
   removeTrustline,
@@ -90,7 +94,7 @@ export default function AssetsScreen() {
 
   const load = useCallback(async () => {
     try {
-      const address = await loadWalletAddress();
+      const address = await ensureCorrectWalletAddress();
       if (!address) {
         setState({ kind: 'no-wallet' });
         return;

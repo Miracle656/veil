@@ -305,6 +305,15 @@ export function parseHeldAssets(balances: HorizonBalanceLike[]): HeldAsset[] {
 }
 
 /** Reads the active wallet's public key, or `null` when no wallet is stored. */
+/**
+ * @deprecated Use `ensureCorrectWalletAddress()` from lib/walletRepair.
+ *
+ * This reads a raw AsyncStorage key that is not guaranteed to hold a Stellar
+ * address — on a passkey wallet it holds the credential's P-256 public key —
+ * and it is not network-aware, so it cannot answer "which wallet is active"
+ * after a network switch. The Assets screen used it and asked Horizon about a
+ * 130-character hex string for as long as it did.
+ */
 export async function loadWalletAddress(): Promise<string | null> {
   return AsyncStorage.getItem(WALLET_PUBLIC_KEY_KEY);
 }
@@ -362,6 +371,19 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   // holds issued assets as SAC contract storage and needs no trustline at all.
   // So the account to read is the fee payer, which is what `loadHoldings` has
   // been resolving on the dashboard all along.
+  // Refuse anything that is not a Stellar address at all.
+  //
+  // This screen was passing the stored WebAuthn public key — `04` followed by
+  // 128 hex characters — straight through, and Horizon answered with a bare
+  // transport error carrying no name, no status and the message "Unknown". That
+  // read as a network fault for three rounds. A wrong question deserves a
+  // different answer from an unreachable server.
+  if (!StrKey.isValidContract(publicKey) && !StrKey.isValidEd25519PublicKey(publicKey)) {
+    throw new Error(
+      `"${publicKey.slice(0, 8)}…" is not a Stellar address, so there are no assets to read for it.`,
+    );
+  }
+
   let effective = publicKey;
   if (StrKey.isValidContract(publicKey)) {
     const feePayer = await getFeePayerAddress();

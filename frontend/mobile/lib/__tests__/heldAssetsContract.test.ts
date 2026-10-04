@@ -130,6 +130,18 @@ describe('fetchHeldAssets with a contract wallet', () => {
     expect(classicAccountExists()).toBe(true);
   });
 
+  it('refuses a WebAuthn public key instead of asking Horizon about it', async () => {
+    // The exact value found in storage on a passkey wallet: 0x04 followed by
+    // the P-256 X and Y coordinates. It is not an address, and handing it to
+    // Horizon produced a bare "Unknown" that read as a network outage.
+    const passkeyKey =
+      '040cf0b87a01c7b9bc00cb40787a1e023a6e48fddbc134b2692fd9c98bca2e89' +
+      '18f97283d3b0d26d45f86d5cba94e382eb98381ed2ca1ffe5a442da269b24a970c';
+
+    await expect(fetchHeldAssets(passkeyKey)).rejects.toThrow(/not a Stellar address/);
+    expect(mockLoadAccount).not.toHaveBeenCalled();
+  });
+
   it('treats a missing account as an empty portfolio', async () => {
     const notFound = new Error('not found');
     notFound.name = 'NotFoundError';
