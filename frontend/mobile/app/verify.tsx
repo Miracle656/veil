@@ -507,6 +507,7 @@ function NinBoxes({
         maxLength={NIN_LENGTH}
         style={styles.ninInput}
         caretHidden
+        selectionColor="transparent"
         accessibilityLabel="Enter your 11 digit NIN"
         // Never offered to a password manager or a keyboard's suggestion strip.
         autoComplete="off"
@@ -662,12 +663,19 @@ const createStyles = (colors: ThemeColors) =>
     ninBoxFilled: { borderColor: colors.accent },
     ninBoxError: { borderColor: colors.danger },
     ninDigit: { color: colors.textStrong, fontFamily: fontFamily.address, fontSize: 15 },
-    // Present for the keyboard, invisible on screen. Not `display: none`, which
-    // would stop it taking focus at all.
+    // Invisible, but still the thing you tap.
+    //
+    // `color: 'transparent'` was not enough: Android drew the value straight
+    // across the boxes anyway, because the IME renders composing text in its
+    // own colour and ignores the style. `opacity: 0` hides the view itself, and
+    // opacity has no effect on hit testing — a tap still lands here.
+    //
+    // That is also why the first version failed for a different reason: it was
+    // 1x1 and relied on a Pressable calling focus() by ref. At full size the
+    // tap reaches the input directly, so there is nothing left to go wrong.
     ninInput: {
       ...StyleSheet.absoluteFillObject,
-      color: 'transparent',
-      backgroundColor: 'transparent',
+      opacity: 0,
       padding: 0,
     },
 
