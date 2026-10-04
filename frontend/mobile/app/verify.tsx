@@ -23,7 +23,9 @@ import { errorMessage } from '../lib/errorMessage';
 import { CheckIcon, InfoIcon, LockIcon } from '../components/icons';
 import {
   getCustomerRef,
+  loadVerifyDetails,
   provisionCustomer,
+  saveVerifyDetails,
   setNairaVerified,
   submitKyc,
 } from '../lib/onramp';
@@ -86,6 +88,21 @@ export default function VerifyScreen() {
         if (!cancelled) setCustomerRef(ref);
       })
       .catch(() => undefined);
+
+    // Come back with what they typed last time. A rejected NIN is the common
+    // case — Linq matches it against the name, so a middle name or a different
+    // spelling fails a number that is correct — and retyping four fields to try
+    // again is how a fixable mistake becomes an abandoned signup.
+    loadVerifyDetails()
+      .then((d) => {
+        if (cancelled || !d) return;
+        setFirstName(d.firstName);
+        setLastName(d.lastName);
+        setEmail(d.email);
+        setPhone(d.phone);
+      })
+      .catch(() => undefined);
+
     return () => {
       cancelled = true;
     };
@@ -96,11 +113,17 @@ export default function VerifyScreen() {
     firstName.trim() !== '' && lastName.trim() !== '' && email.trim() !== '' && phone.trim() !== '';
 
   const goToNin = useCallback(() => {
+    void saveVerifyDetails({
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      email: email.trim(),
+      phone: phone.trim(),
+    });
     setStage('nin');
     // The digit boxes are a display of one hidden field; focus it so the
     // keyboard is already up when the screen arrives.
     setTimeout(() => ninInput.current?.focus(), 120);
-  }, []);
+  }, [firstName, lastName, email, phone]);
 
   const verify = useCallback(async () => {
     if (!customerRef || nin.length !== NIN_LENGTH) return;
@@ -143,7 +166,11 @@ export default function VerifyScreen() {
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        // 'height' on Android, matching the other naira screens. `undefined`
+        // there means no avoidance at all, so the phone field — the last one on
+        // the screen — sat underneath the keyboard with nothing to scroll.
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={16}
       >
         <ScrollView
           contentContainerStyle={styles.body}
@@ -534,7 +561,13 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
     flex: { flex: 1 },
-    body: { paddingHorizontal: 20, paddingBottom: 40, flexGrow: 1 },
+    body: {
+      paddingHorizontal: 20,
+      paddingTop: 16,
+      // Enough that the last field clears the keyboard once it is up.
+      paddingBottom: 120,
+      flexGrow: 1,
+    },
 
     headerRow: { flexDirection: 'row', alignItems: 'center' },
     stepCount: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 12 },

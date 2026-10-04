@@ -143,6 +143,61 @@ export async function getCustomerRef(): Promise<string | null> {
   return ref;
 }
 
+/**
+ * The contact details from the first verification screen, kept so a second
+ * attempt does not start from an empty form.
+ *
+ * A rejected NIN is the common case — Linq matches it against the name, so a
+ * middle name or a different spelling fails a number that is perfectly correct.
+ * Making someone retype their name, email and phone to try again is how a
+ * fixable mistake turns into an abandoned signup.
+ *
+ * The NIN itself is NEVER here. It is personal data under the NDPA, it is sent
+ * once and kept by nobody, and a stored copy would outlive the reason it was
+ * collected. These four fields are already held by Linq against this customer.
+ */
+const VERIFY_DETAILS_KEY = 'veil_ngn_details';
+
+export interface VerifyDetails {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+}
+
+export async function saveVerifyDetails(details: VerifyDetails): Promise<void> {
+  // The four fields by name, never the object it was handed.
+  //
+  // `JSON.stringify(details)` writes whatever the caller passed, so the only
+  // thing keeping a NIN out of storage would be the type — and a type is a
+  // compile-time promise about a runtime value that arrives from a form. For
+  // this one field that is not enough: it is personal data under the NDPA, and
+  // a stored copy would outlive the reason it was collected.
+  const safe: VerifyDetails = {
+    firstName: details.firstName,
+    lastName: details.lastName,
+    email: details.email,
+    phone: details.phone,
+  };
+  await AsyncStorage.setItem(VERIFY_DETAILS_KEY, JSON.stringify(safe)).catch(() => undefined);
+}
+
+export async function loadVerifyDetails(): Promise<VerifyDetails | null> {
+  const raw = await AsyncStorage.getItem(VERIFY_DETAILS_KEY).catch(() => null);
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw) as Partial<VerifyDetails>;
+    return {
+      firstName: typeof d.firstName === 'string' ? d.firstName : '',
+      lastName: typeof d.lastName === 'string' ? d.lastName : '',
+      email: typeof d.email === 'string' ? d.email : '',
+      phone: typeof d.phone === 'string' ? d.phone : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Whether this device has completed the one-time NIN check. */
 const VERIFIED_KEY = 'veil_ngn_verified';
 
