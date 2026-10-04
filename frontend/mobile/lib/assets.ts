@@ -43,7 +43,7 @@ export interface RegisteredAsset {
   issuerName: string;
   homeDomain?: string;
   network: 'mainnet' | 'testnet' | 'all';
-  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native';
+  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'governance' | 'native';
   reserveXlm?: number;
   sacContractId?: string;
 }
@@ -52,7 +52,42 @@ export const USDY_MAINNET_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
 
+export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2';
+export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
+
 export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
+  EURC: {
+    code: 'EURC',
+    issuer: EURC_MAINNET_ISSUER,
+    name: 'Euro Coin',
+    issuerName: 'Circle',
+    homeDomain: 'circle.com',
+    // Verified 2026-10-04: this issuer's Horizon home_domain is circle.com, the
+    // same domain the USDC issuer publishes. Circle serves no stellar.toml at
+    // that path (404), so the registry pin is the verification, exactly as it
+    // is for USDC.
+    network: 'mainnet',
+    kind: 'stablecoin',
+    reserveXlm: 0.5,
+  },
+  AQUA: {
+    code: 'AQUA',
+    issuer: AQUA_MAINNET_ISSUER,
+    name: 'Aquarius',
+    issuerName: 'Aquarius',
+    homeDomain: 'aqua.network',
+    // Verified 2026-10-04 in both directions: the issuer publishes
+    // home_domain aqua.network, and that domain's stellar.toml declares AQUA
+    // against this exact issuer. The only registry asset that currently
+    // verifies both ways.
+    //
+    // Not a stablecoin — AQUA floats. `fetchPrice` quotes it off the real
+    // AQUA/USDC order book like any other issued asset, so nothing here needs
+    // a hardcoded rate, and it must never get one.
+    network: 'mainnet',
+    kind: 'governance',
+    reserveXlm: 0.5,
+  },
   USDY: {
     code: 'USDY',
     issuer: USDY_MAINNET_ISSUER,
@@ -290,11 +325,30 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   // portfolio screen queried the wrong chain and showed an empty portfolio.
   // Each network's own env overrides still apply (see lib/network.ts).
   const server = new Horizon.Server(getNetwork().horizonUrl);
-  try {
-    const account = await server.loadAccount(publicKey);
-    return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
-  } catch (err) {
-    if (isAccountNotFound(err)) return [];
-    throw err;
+
+  // Retry once, and say what failed.
+  //
+  // Android drops one of the several Horizon calls the app fires on mount with
+  // a bare error whose only readable field is `name: "Unknown"` — so the
+  // trustlines screen rendered the word "Unknown" and nothing else, which told
+  // the user and us precisely nothing. `loadHoldings` has retried around this
+  // for a while; this path never did.
+  let last: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const account = await server.loadAccount(publicKey);
+      return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
+    } catch (err) {
+      // Definitive, not a transport failure: the account simply is not funded.
+      if (isAccountNotFound(err)) return [];
+      last = err;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
+    }
   }
+
+  console.warn(
+    '[assets] loadAccount failed twice:',
+    last instanceof Error ? `${last.name}: ${last.message}` : last,
+  );
+  throw new Error('Could not reach the network to read your assets. Pull to refresh.');
 }
