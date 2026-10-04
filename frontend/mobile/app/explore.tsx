@@ -40,6 +40,16 @@ import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { ASSET_REGISTRY } from '../lib/assets';
+import {
+  AssetsIcon,
+  BankIcon,
+  EarnIcon,
+  HexagonIcon,
+  PoolsIcon,
+  SwapVerticalIcon,
+  YieldIcon,
+  type IconProps,
+} from '../components/icons';
 import { fetchPrice } from '../lib/fetchPrice';
 import { getOnrampRate } from '../lib/onramp';
 import { loadBlendPools, type BlendPool } from '../lib/blend';
@@ -67,7 +77,35 @@ const LEARN = [
   { n: '03', title: 'Shielded pools', hint: 'What “private” does and does not hide' },
 ];
 
-type Market = { code: string; name: string; issuerName: string; price: number | null };
+type AssetKind = 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native';
+type Market = {
+  code: string;
+  name: string;
+  issuerName: string;
+  kind: AssetKind;
+  price: number | null;
+};
+
+/**
+ * One mark per asset kind, from the existing icon set.
+ *
+ * Deliberately not issuer logos. A logo is a trademark and a remote fetch, and
+ * the wrong one on a market row is worse than an honest glyph — particularly
+ * here, where several Stellar issuers are actively impersonating real ones.
+ */
+const KIND_ICON: Record<AssetKind, (p: IconProps) => React.JSX.Element> = {
+  native: HexagonIcon,
+  stablecoin: AssetsIcon,
+  treasury: BankIcon,
+  fund: YieldIcon,
+  equity: YieldIcon,
+};
+
+const APP_ICON: Record<string, (p: IconProps) => React.JSX.Element> = {
+  blend: EarnIcon,
+  aquarius: PoolsIcon,
+  soroswap: SwapVerticalIcon,
+};
 
 export default function ExploreScreen() {
   const router = useRouter();
@@ -96,17 +134,25 @@ export default function ExploreScreen() {
 
     const priced = await Promise.all(
       [
-        { code: 'XLM', name: 'Stellar Lumens', issuerName: 'Native', issuer: null as string | null },
+        {
+          code: 'XLM',
+          name: 'Stellar Lumens',
+          issuerName: 'Native',
+          kind: 'native' as AssetKind,
+          issuer: null as string | null,
+        },
         ...entries.map((a) => ({
           code: a.code,
           name: a.name,
           issuerName: a.issuerName,
+          kind: a.kind as AssetKind,
           issuer: a.issuer as string | null,
         })),
       ].map(async (a) => ({
         code: a.code,
         name: a.name,
         issuerName: a.issuerName,
+        kind: a.kind,
         // Best-effort by design: Lens 404s on a pair nobody trades, and a
         // missing price is shown as missing rather than guessed.
         price: await fetchPrice(a.code, a.issuer).catch(() => null),
@@ -215,7 +261,10 @@ export default function ExploreScreen() {
               {shownMarkets.map((m, i) => (
                 <View key={m.code} style={[styles.row, i > 0 && styles.rowDivided]}>
                   <View style={styles.rowAvatar}>
-                    <Text style={styles.rowInitial}>{m.code.slice(0, 1)}</Text>
+                    {(() => {
+                      const Mark = KIND_ICON[m.kind] ?? AssetsIcon;
+                      return <Mark size={18} color={colors.accent} />;
+                    })()}
                   </View>
                   <View style={styles.rowText}>
                     <Text style={styles.rowLabel}>{m.code}</Text>
@@ -226,6 +275,41 @@ export default function ExploreScreen() {
                   <Text style={styles.rowValue}>{money(m.price)}</Text>
                 </View>
               ))}
+            </View>
+          </View>
+        ) : null}
+
+        {/* Stocks: announced, not listed.
+            `AAPLon` and `NVDAon` do exist on Stellar mainnet, which is the
+            trap. Every issuer of them fails the check this app already applies
+            to every other asset: the real ondo.finance stellar.toml declares
+            exactly one currency, USDY, and none of the stock issuers resolve to
+            a domain Ondo controls. One of them, ondo.dtcc.markets, issues a
+            counterfeit USDY alongside them under its own issuer.
+
+            So there is nothing here to show yet. Listing them by code would be
+            handing someone a forgery on a screen about what to buy. */}
+        {shows('all') ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Stocks</Text>
+            <View style={styles.card}>
+              <View style={styles.row}>
+                <View style={styles.rowAvatar}>
+                  <YieldIcon size={18} color={colors.textMuted} />
+                </View>
+                <View style={styles.rowText}>
+                  <View style={styles.soonLine}>
+                    <Text style={styles.rowLabel}>Tokenised US stocks</Text>
+                    <View style={styles.soonPill}>
+                      <Text style={styles.soonText}>SOON</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.rowHint}>
+                    Own a piece of Apple, paid for from your USDC balance. Viewing
+                    and investing arrive together — not yet available on Stellar.
+                  </Text>
+                </View>
+              </View>
             </View>
           </View>
         ) : null}
@@ -242,7 +326,7 @@ export default function ExploreScreen() {
                   style={({ pressed }) => [styles.row, i > 0 && styles.rowDivided, pressed && styles.pressed]}
                 >
                   <View style={styles.rowAvatar}>
-                    <Text style={styles.rowInitial}>%</Text>
+                    <YieldIcon size={18} color={colors.accent} />
                   </View>
                   <View style={styles.rowText}>
                     <Text style={styles.rowLabel}>{p.name}</Text>
@@ -266,7 +350,10 @@ export default function ExploreScreen() {
                   style={({ pressed }) => [styles.row, i > 0 && styles.rowDivided, pressed && styles.pressed]}
                 >
                   <View style={styles.rowAvatar}>
-                    <Text style={styles.rowInitial}>{a.initials}</Text>
+                    {(() => {
+                      const Mark = APP_ICON[a.key] ?? PoolsIcon;
+                      return <Mark size={18} color={colors.accent} />;
+                    })()}
                   </View>
                   <View style={styles.rowText}>
                     <Text style={styles.rowLabel}>{a.name}</Text>
@@ -410,6 +497,21 @@ const createStyles = (colors: ThemeColors) =>
       fontFamily: fontFamily.body,
       fontSize: 11,
       lineHeight: 17,
+    },
+    soonLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    soonPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceMd,
+    },
+    soonText: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.accent,
+      fontSize: 9,
+      letterSpacing: 0.8,
     },
     pressed: { opacity: 0.7 },
   });
