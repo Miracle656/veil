@@ -21,7 +21,7 @@ export interface VerifiedAsset {
 }
 
 // Verified against mainnet Horizon on 2026-09-24 (issue #795). The SAC is
-// derived from the issuer in assets.test.ts rather than trusted as pasted.
+// derived from the issuer rather than trusted as pasted.
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
 
@@ -38,7 +38,7 @@ const REGISTRY: Record<StellarNetwork, Record<string, VerifiedAsset>> = {
     USDT0: {
       code: 'USDT0',
       issuer: USDT0_MAINNET_ISSUER,
-      sac: USDT0_MAINNET_SAC,
+      sac: new Asset('USDT0', USDT0_MAINNET_ISSUER).contractId(Networks.PUBLIC),
       name: 'USDT0',
       issuerControls: { clawback: true, freeze: true },
     },
