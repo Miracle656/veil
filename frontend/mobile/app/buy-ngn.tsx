@@ -120,6 +120,11 @@ export default function BuyWithNairaScreen() {
   const [status, setStatus] = useState<string>('initiated');
   const [copied, setCopied] = useState<string | null>(null);
 
+  // Set when Linq says this reference has not completed KYC, after the
+  // verification screen believed it had. Terminal on purpose — there is no
+  // in-app route out of it, and pretending otherwise is what loops.
+  const [kycMismatch, setKycMismatch] = useState(false);
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Who we are, to Linq ────────────────────────────────────────────────────
@@ -293,7 +298,28 @@ export default function BuyWithNairaScreen() {
       setStatus(created.status);
       setStep('pay');
     } catch (err) {
-      setError(errorMessage(err));
+      const message = errorMessage(err);
+
+      // Linq is the authority on whether this reference is verified, and this
+      // is where it answers. The verification screen may have waved the user
+      // through on an "already used" NIN, assuming the reference it held was
+      // the verified one. When that assumption is wrong, it is wrong here.
+      //
+      // Do NOT send them back to re-enter the NIN: dedup refuses it, the
+      // screen waves them through again, and this fails again — a loop that
+      // teaches nothing. Say what is actually true instead, and name the
+      // reference, because that is the only thing that identifies the account
+      // to support.
+      if (/not completed kyc|not verified|kyc/i.test(message)) {
+        await AsyncStorage.setItem(
+          CUSTOMER_KEY,
+          JSON.stringify({ customerRef, verified: false }),
+        ).catch(() => undefined);
+        setKycMismatch(true);
+        return;
+      }
+
+      setError(message);
     } finally {
       setBusy(false);
     }
@@ -345,8 +371,27 @@ export default function BuyWithNairaScreen() {
           </View>
         ) : null}
 
+        {kycMismatch ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorText}>
+              This wallet&apos;s customer reference has not completed identity
+              verification.
+            </Text>
+            <Text style={styles.hint}>
+              Your NIN is verified, but against a different reference — most
+              likely one created before this wallet. A NIN can only verify one
+              reference, so it cannot be re-used here, and nothing you can do in
+              the app will change that.
+            </Text>
+            <Text style={styles.hint}>Reference: {customerRef}</Text>
+            <Text style={styles.hint}>
+              Send that reference to support and we will re-bind it.
+            </Text>
+          </View>
+        ) : null}
+
         {/* ── Verify, once ──────────────────────────────────────────────── */}
-        {!mainnetOnly && step === 'verify' && (
+        {!mainnetOnly && !kycMismatch && step === 'verify' && (
           <>
             <View style={styles.card}>
               <Text style={styles.eyebrow}>ONE TIME ONLY</Text>
@@ -403,7 +448,7 @@ export default function BuyWithNairaScreen() {
         )}
 
         {/* ── a1 · amount ───────────────────────────────────────────────── */}
-        {!mainnetOnly && step === 'amount' && (
+        {!mainnetOnly && !kycMismatch && step === 'amount' && (
           <>
             <View style={styles.segment}>
               {(['xlm', 'usdc'] as NairaCoin[]).map((c) => (
@@ -481,7 +526,7 @@ export default function BuyWithNairaScreen() {
         )}
 
         {/* ── a2 · confirm ──────────────────────────────────────────────── */}
-        {!mainnetOnly && step === 'confirm' && (
+        {!mainnetOnly && !kycMismatch && step === 'confirm' && (
           <>
             <View style={styles.card}>
               <Text style={styles.eyebrow}>YOU RECEIVE</Text>
