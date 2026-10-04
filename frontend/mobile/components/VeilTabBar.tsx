@@ -1,6 +1,5 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 
 import { useTheme } from '../hooks/useTheme';
@@ -9,11 +8,12 @@ import { fontFamily } from '../theme/typography';
 import {
   AgentIcon,
   SettingsIcon,
-  SwapVerticalIcon,
+  PlusIcon,
   WalletIcon,
   YieldIcon,
   type IconProps,
 } from './icons';
+import { MoreActionsSheet } from './MoreActionsSheet';
 
 type TabMeta = { label: string; Icon: (p: IconProps) => React.JSX.Element };
 
@@ -44,7 +44,7 @@ const META: Record<string, TabMeta> = {
  * lands dead centre regardless of registration order.
  */
 export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
-  const router = useRouter();
+  const [moreOpen, setMoreOpen] = useState(false);
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // Near-opaque so page content doesn't show through the floating bar.
@@ -70,24 +70,33 @@ export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
   };
 
   return (
-    <View style={styles.wrap} pointerEvents="box-none">
-      <View style={[styles.bar, { backgroundColor: barBg }]}>
-        {renderTab('dashboard')}
-        {renderTab('earn')}
-        {/* Swap is a pushed screen, not a tab, so it is never the focused one —
-            it reads as the action it is. */}
-        <Tab
-          label="Swap"
-          Icon={SwapVerticalIcon}
-          focused={false}
-          colors={colors}
-          styles={styles}
-          onPress={() => router.push('/swap')}
-        />
-        {renderTab('agent')}
-        {renderTab('settings')}
+    <>
+      <View style={styles.wrap} pointerEvents="box-none">
+        <View style={[styles.bar, { backgroundColor: barBg }]}>
+          {renderTab('dashboard')}
+          {renderTab('earn')}
+          {/* Not a destination, and no longer Swap either.
+
+              Swap sat in this slot as though it were one of the places the app
+              goes. It is something you do — and so is browsing dApps, which was
+              buried in Settings, a page about preferences. The slot now opens a
+              sheet holding both, so that list can grow without the bar growing
+              with it. Accent-coloured because it acts rather than navigates. */}
+          <Tab
+            label="More"
+            Icon={PlusIcon}
+            focused={false}
+            tint={colors.accent}
+            colors={colors}
+            styles={styles}
+            onPress={() => setMoreOpen(true)}
+          />
+          {renderTab('agent')}
+          {renderTab('settings')}
+        </View>
       </View>
-    </View>
+      <MoreActionsSheet visible={moreOpen} onClose={() => setMoreOpen(false)} />
+    </>
   );
 }
 
@@ -95,6 +104,7 @@ function Tab({
   label,
   Icon,
   focused,
+  tint,
   colors,
   styles,
   onPress,
@@ -102,11 +112,13 @@ function Tab({
   label: string;
   Icon: (p: IconProps) => React.JSX.Element;
   focused: boolean;
+  /** Overrides the focused/unfocused colour, for the action slot. */
+  tint?: string;
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
   onPress: () => void;
 }) {
-  const color = focused ? colors.accent : colors.textFaint;
+  const color = tint ?? (focused ? colors.accent : colors.textFaint);
   return (
     <Pressable
       onPress={onPress}
