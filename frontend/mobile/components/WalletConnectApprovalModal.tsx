@@ -1,5 +1,5 @@
 import { errorMessage } from '../lib/errorMessage';
-import { TransactionBuilder } from '@stellar/stellar-sdk';
+import { Address, scValToNative, TransactionBuilder } from '@stellar/stellar-sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -23,71 +23,113 @@ import {
 } from '../lib/walletConnect';
 import { extractRequestXdr, isUserRejection } from '../lib/walletConnectHelpers';
 
-type ParsedRequestDetails = {
-  operationType: 'payment' | 'contract' | 'unknown';
-  amount?: string;
+export type ParsedOperation = {
+  type: string;
+  label: string;
   destination?: string;
+  asset?: string;
+  amount?: string;
   contractAddress?: string;
   functionName?: string;
+  arguments: string[];
+  depth: number;
 };
+
+export type ParsedRequestDetails = { operations: ParsedOperation[] };
 
 /**
  * Decode enough of the request for the user to judge it. Everything here is
  * best-effort: a request we cannot decode is presented as an unknown contract
  * interaction to review carefully, never as though it were safe.
  */
-function parseRequestDetails(request: WalletConnectRequest | null): ParsedRequestDetails {
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, (_, item) => {
+      if (typeof item === 'bigint') return item.toString();
+      if (item instanceof Uint8Array) return `0x${Array.from(item).map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+      if (item instanceof Map) return Object.fromEntries(item);
+      return item;
+    });
+  } catch {
+    return String(value);
+  }
+}
+
+function scValText(value: any): string {
+  try {
+    return safeStringify(scValToNative(value));
+  } catch {
+    return value?.toString?.() || 'Unable to decode argument';
+  }
+}
+
+function contractInvocation(invocation: any, depth: number): ParsedOperation[] {
+  if (!invocation) return [];
+  let functionName: string | undefined;
+  let contractAddress: string | undefined;
+  let args: string[] = [];
+  try {
+    const func = invocation.function?.();
+    const contract = func?.contractFn?.() ?? func?.invokeContract?.();
+    contractAddress = contract?.contractAddress?.()?.toString?.();
+    functionName = contract?.functionName?.()?.toString?.();
+    args = (contract?.args?.() || []).map(scValText);
+  } catch {
+    // Keep a visible entry even when an SDK version cannot decode an arm.
+  }
+  const current: ParsedOperation = {
+    type: 'invokeHostFunction',
+    label: depth ? 'Sub-invocation' : 'Contract call',
+    contractAddress,
+    functionName,
+    arguments: args,
+    depth,
+  };
+  let children: ParsedOperation[] = [];
+  try { children = (invocation.subInvocations?.() || []).flatMap((item: any) => contractInvocation(item, depth + 1)); } catch { /* Keep the parent. */ }
+  return [current, ...children];
+}
+
+function hostFunctionOperation(operation: any, depth: number): ParsedOperation {
+  let contractAddress: string | undefined;
+  let functionName: string | undefined;
+  let args: string[] = [];
+  try {
+    const contract = operation.func?.invokeContract?.();
+    contractAddress = Address.fromScAddress(contract.contractAddress()).toString();
+    functionName = contract.functionName().toString();
+    args = (contract.args?.() || []).map(scValText);
+  } catch {
+    // Keep a visible contract entry when an SDK version cannot decode an arm.
+  }
+  return { type: 'invokeHostFunction', label: 'Contract call', contractAddress, functionName, arguments: args, depth };
+}
+
+function parseOperation(operation: any, depth = 0): ParsedOperation[] {
+  const type = String(operation?.type || 'unknown');
+  if (type === 'invokeHostFunction') {
+    let children: ParsedOperation[] = [];
+    try { children = (operation.auth || []).flatMap((entry: any) => contractInvocation(entry.rootInvocation?.(), depth + 1)); } catch { /* Keep the parent. */ }
+    return [hostFunctionOperation(operation, depth), ...children];
+  }
+  const result: ParsedOperation = { type, label: type === 'payment' ? 'Payment' : type, arguments: [], depth };
+  if (typeof operation?.destination === 'string') result.destination = operation.destination;
+  if (typeof operation?.amount === 'string') result.amount = operation.amount;
+  try { result.asset = operation?.asset?.isNative?.() ? 'XLM' : operation?.asset?.getCode?.() || operation?.asset?.toString?.(); } catch { /* Keep asset unknown. */ }
+  return [result];
+}
+
+export function parseRequestDetails(request: WalletConnectRequest | null): ParsedRequestDetails {
   const xdrString = request ? extractRequestXdr(request.params) : null;
-  if (!xdrString) return { operationType: 'unknown' };
+  if (!xdrString) return { operations: [] };
 
   try {
     const tx = TransactionBuilder.fromXDR(xdrString, getNetwork().networkPassphrase);
-    const operation = (tx as any).operations?.[0];
-    if (!operation) return { operationType: 'unknown' };
-
-    if (operation.type === 'payment') {
-      return {
-        operationType: 'payment',
-        amount: typeof operation.amount === 'string' ? operation.amount : undefined,
-        destination: typeof operation.destination === 'string' ? operation.destination : undefined,
-      };
-    }
-
-    if (operation.type === 'invokeHostFunction') {
-      let contractAddress = '';
-      let functionName = '';
-      try {
-        const invokeContract = operation.func?.invokeContract?.();
-        const contractAddressValue = invokeContract?.contractAddress?.();
-        const functionNameValue = invokeContract?.functionName?.();
-        if (contractAddressValue && typeof contractAddressValue.toString === 'function') {
-          contractAddress = contractAddressValue.toString();
-        }
-        if (functionNameValue && typeof functionNameValue.toString === 'function') {
-          functionName = functionNameValue.toString();
-        }
-      } catch {
-        // Fall through to the safe "review carefully" messaging.
-      }
-
-      return {
-        operationType: 'contract',
-        contractAddress: contractAddress || undefined,
-        functionName: functionName || undefined,
-      };
-    }
+    return { operations: ((tx as any).operations || []).flatMap((operation: any) => parseOperation(operation)) };
   } catch {
-    return { operationType: 'unknown' };
+    return { operations: [{ type: 'unknown', label: 'Unknown', arguments: [], depth: 0 }] };
   }
-
-  return { operationType: 'unknown' };
 }
-
-const OPERATION_LABEL: Record<ParsedRequestDetails['operationType'], string> = {
-  payment: 'Payment',
-  contract: 'Contract call',
-  unknown: 'Unknown',
-};
 
 /**
  * The safety gate on WalletConnect: nothing a connected dApp asks for is signed
@@ -184,32 +226,18 @@ export function WalletConnectApprovalModal() {
             </View>
 
             <View style={styles.card}>
-              <Field label="Operation type" value={OPERATION_LABEL[details.operationType]} strong />
-
-              {details.operationType === 'payment' && (
-                <>
-                  <Field label="Amount" value={details.amount || 'Unknown'} />
-                  <Field label="Destination" value={details.destination || 'Unknown'} mono />
-                </>
-              )}
-
-              {details.operationType === 'contract' && (
-                <>
-                  {details.contractAddress && (
-                    <Field label="Contract address" value={details.contractAddress} mono />
-                  )}
-                  {details.functionName ? (
-                    <Field label="Function name" value={details.functionName} />
-                  ) : (
-                    <Text style={styles.warning}>Contract interaction — review carefully</Text>
-                  )}
-                </>
-              )}
-
-              {details.operationType === 'unknown' && (
-                <Text style={styles.warning}>Contract interaction — review carefully</Text>
-              )}
-
+              <Text style={styles.operationCount}>{details.operations.length} operation{details.operations.length === 1 ? '' : 's'}</Text>
+              {details.operations.length ? details.operations.map((operation, index) => (
+                <View key={`${operation.type}-${index}`} style={[styles.operation, operation.depth > 0 && styles.subInvocation]}>
+                  <Field label={operation.label} value={operation.type} strong />
+                  {operation.amount && <Field label="Amount" value={`${operation.amount}${operation.asset ? ` ${operation.asset}` : ''}`} />}
+                  {operation.destination && <Field label="Destination" value={operation.destination} mono />}
+                  {operation.contractAddress && <Field label="Contract" value={operation.contractAddress} mono />}
+                  {operation.functionName && <Field label="Function" value={operation.functionName} />}
+                  {operation.arguments.map((argument, argumentIndex) => <Field key={argumentIndex} label={`Argument ${argumentIndex + 1}`} value={argument} mono />)}
+                  {!operation.amount && !operation.destination && !operation.contractAddress && !operation.functionName && !operation.arguments.length && <Text style={styles.warning}>Review this operation carefully</Text>}
+                </View>
+              )) : <Text style={styles.warning}>Unable to decode operations. Review carefully.</Text>}
               <Field label="Method" value={request.method} mono />
               <Field label="Network" value={getNetwork().displayName} />
             </View>
@@ -323,6 +351,19 @@ const styles = StyleSheet.create({
     borderColor: BORDER_DIM,
     padding: 14,
     marginBottom: 12,
+  },
+  operationCount: {
+    color: MUTED,
+    fontSize: 12,
+    marginBottom: 10,
+  },
+  operation: {
+    marginBottom: 10,
+  },
+  subInvocation: {
+    borderLeftWidth: 1,
+    borderLeftColor: BORDER_DIM,
+    paddingLeft: 12,
   },
   dappRow: {
     flexDirection: 'row',
