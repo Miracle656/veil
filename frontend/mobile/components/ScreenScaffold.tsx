@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, type Href } from 'expo-router';
 
 import { useTheme } from '../hooks/useTheme';
+import { BackIcon } from './icons';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 
@@ -91,24 +92,26 @@ export function ScreenScaffold({
 
   return (
     <SafeAreaView style={styles.root} edges={['top']} testID={testID}>
-      <View style={styles.header}>
-        {hideBack ? (
-          <View style={styles.headerSide} />
-        ) : (
+      {/* The same back control every flow screen uses — a 36pt disc with the
+          BackIcon, not an arrow glyph beside a word.
+
+          The VEIL wordmark that used to sit here is gone. A wordmark belongs
+          where the app begins, and the dashboard already draws its own; on a
+          sub-page it repeated the brand at the top of a screen whose job is to
+          say where you are, and no other screen in the app does it. */}
+      {hideBack ? null : (
+        <View style={styles.header}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={backLabel}
             onPress={handleBack}
             style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-            hitSlop={12}
+            hitSlop={10}
           >
-            <Text style={styles.backChevron}>←</Text>
-            <Text style={styles.backLabel}>{backLabel}</Text>
+            <BackIcon size={22} color={colors.textSecondary} />
           </Pressable>
-        )}
-        <Text style={styles.logo}>VEIL</Text>
-        <View style={styles.headerSide} />
-      </View>
+        </View>
+      )}
 
       {scrollable ? (
         <ScrollView
@@ -175,37 +178,19 @@ const createStyles = (colors: ThemeColors) =>
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
       paddingHorizontal: 20,
-      paddingVertical: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.border,
-    },
-    headerSide: {
-      minWidth: 72,
+      paddingTop: 16,
+      paddingBottom: 4,
     },
     backButton: {
-      flexDirection: 'row',
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: 'center',
-      gap: 6,
-      paddingVertical: 4,
-      minWidth: 72,
-    },
-    backChevron: {
-      color: colors.textPrimary,
-      fontSize: 18,
-      marginTop: -2,
-    },
-    backLabel: {
-      fontFamily: fontFamily.bodyMedium,
-      color: colors.textPrimary,
-      fontSize: 14,
-    },
-    logo: {
-      fontFamily: fontFamily.accent,
-      color: colors.accent,
-      fontSize: 18,
-      letterSpacing: 2,
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
     },
     pressed: { opacity: 0.6 },
     scroll: { flex: 1 },
