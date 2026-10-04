@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, type Href } from 'expo-router';
 
 import { useTheme } from '../hooks/useTheme';
-import { BackIcon } from './icons';
+import { FlowHeader } from './FlowHeader';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 
@@ -84,7 +84,6 @@ export function ScreenScaffold({
   const ContentInner = (
     <>
       {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-      <Text style={styles.title}>{title}</Text>
       {description ? <Text style={styles.description}>{description}</Text> : null}
       {children}
     </>
@@ -92,26 +91,20 @@ export function ScreenScaffold({
 
   return (
     <SafeAreaView style={styles.root} edges={['top']} testID={testID}>
-      {/* The same back control every flow screen uses — a 36pt disc with the
-          BackIcon, not an arrow glyph beside a word.
+      {/* The house header: FlowHeader itself, not an imitation of it.
 
-          The VEIL wordmark that used to sit here is gone. A wordmark belongs
-          where the app begins, and the dashboard already draws its own; on a
-          sub-page it repeated the brand at the top of a screen whose job is to
-          say where you are, and no other screen in the app does it. */}
-      {hideBack ? null : (
-        <View style={styles.header}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={backLabel}
-            onPress={handleBack}
-            style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-            hitSlop={10}
-          >
-            <BackIcon size={22} color={colors.textSecondary} />
-          </Pressable>
-        </View>
-      )}
+          The title belongs beside the back control, which is where Send, Swap,
+          Receive and every other screen put it. This had the back button alone
+          on one row and the title underneath in the body, so a scaffolded page
+          started a line lower than its neighbours and read as a different
+          layout — which it was. */}
+      <View style={styles.header}>
+        {hideBack ? (
+          <Text style={styles.title}>{title}</Text>
+        ) : (
+          <FlowHeader title={title} onBack={handleBack} />
+        )}
+      </View>
 
       {scrollable ? (
         <ScrollView
@@ -182,16 +175,6 @@ const createStyles = (colors: ThemeColors) =>
       paddingTop: 16,
       paddingBottom: 4,
     },
-    backButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceMd,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
     pressed: { opacity: 0.6 },
     scroll: { flex: 1 },
     scrollContent: { flexGrow: 1, paddingBottom: 32 },
@@ -210,7 +193,9 @@ const createStyles = (colors: ThemeColors) =>
     title: {
       fontFamily: fontFamily.heading,
       color: colors.textStrong,
-      fontSize: 28,
+      // 26 to match FlowHeader exactly: on a tab destination this renders in
+      // place of it, and two title sizes for the same role is the drift.
+      fontSize: 26,
     },
     description: {
       fontFamily: fontFamily.body,
