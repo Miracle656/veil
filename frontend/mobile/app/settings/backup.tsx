@@ -9,16 +9,13 @@ import {
   View,
 } from 'react-native';
 
-import { BackupError, BackupTamperError } from '../../lib/backup';
+import { BackupError } from '../../lib/backup';
 import {
   exportBackupToFile,
-  pickBackupFile,
-  restoreFromFile,
   shareBackupFile,
   type BackupExport,
-  type PickedBackupFile,
-  type RestoreResult,
 } from '../../lib/backupFile';
+import { RestoreBackupPanel } from '../../components/RestoreBackupPanel';
 
 /**
  * Anything shorter is not worth the 210k PBKDF2 rounds standing behind it. The
@@ -46,7 +43,7 @@ export default function BackupScreen() {
         />
       </View>
 
-      {mode === 'export' ? <ExportPanel /> : <RestorePanel />}
+      {mode === 'export' ? <ExportPanel /> : <RestoreBackupPanel requireSignerMatch={false} />}
     </ScrollView>
   );
 }
@@ -195,136 +192,6 @@ function ExportPanel() {
 
       {notice && <Text style={styles.notice}>{notice}</Text>}
       {error && <Text style={styles.error}>{error}</Text>}
-    </>
-  );
-}
-
-// ── Restore ──────────────────────────────────────────────────────────────────────
-
-type RestoreStatus = 'idle' | 'decrypting' | 'done';
-
-function RestorePanel() {
-  const [file, setFile] = useState<PickedBackupFile | null>(null);
-  const [passphrase, setPassphrase] = useState('');
-  const [status, setStatus] = useState<RestoreStatus>('idle');
-  const [result, setResult] = useState<RestoreResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tampered, setTampered] = useState(false);
-
-  const canRestore = status !== 'decrypting' && !!file && passphrase.length > 0;
-
-  async function handlePick() {
-    setError(null);
-    setTampered(false);
-    setResult(null);
-    setStatus('idle');
-    try {
-      const picked = await pickBackupFile();
-      if (picked) setFile(picked);
-    } catch {
-      setError('Could not open the file picker.');
-    }
-  }
-
-  async function handleRestore() {
-    if (!canRestore || !file) return;
-    setError(null);
-    setTampered(false);
-    setStatus('decrypting');
-
-    // As on export, PBKDF2 blocks the JS thread — let the spinner paint first.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    try {
-      const restored = await restoreFromFile(file, passphrase);
-      setResult(restored);
-      setStatus('done');
-      setPassphrase('');
-    } catch (err) {
-      setStatus('idle');
-      // A failed authentication tag is the one error the user must not read as
-      // "try again harder" — the file is either not theirs or not intact.
-      setTampered(err instanceof BackupTamperError);
-      setError(describeError(err, 'Could not restore from that file.'));
-    }
-  }
-
-  return (
-    <>
-      <Text style={styles.subtitle}>
-        Import a backup file to restore your wallet on this device.
-      </Text>
-
-      <Pressable
-        style={[styles.button, styles.buttonSecondary]}
-        onPress={handlePick}
-        disabled={status === 'decrypting'}
-        accessibilityRole="button"
-        accessibilityLabel="Choose backup file"
-      >
-        <Text style={styles.buttonLabel}>{file ? 'Choose a different file' : 'Choose file'}</Text>
-      </Pressable>
-
-      {file && <Text style={styles.filename}>{file.name}</Text>}
-
-      <Text style={styles.label}>Backup passphrase</Text>
-      <TextInput
-        style={styles.input}
-        placeholder="The passphrase you sealed it with"
-        placeholderTextColor="#64748b"
-        value={passphrase}
-        onChangeText={setPassphrase}
-        secureTextEntry
-        autoCapitalize="none"
-        autoCorrect={false}
-        editable={status !== 'decrypting'}
-      />
-
-      <Pressable
-        style={[styles.button, !canRestore && styles.buttonDisabled]}
-        onPress={handleRestore}
-        disabled={!canRestore}
-        accessibilityRole="button"
-        accessibilityLabel="Restore wallet from backup"
-      >
-        {status === 'decrypting' ? (
-          <ActivityIndicator color="#f8fafc" />
-        ) : (
-          <Text style={styles.buttonLabel}>Restore wallet</Text>
-        )}
-      </Pressable>
-
-      {status === 'decrypting' && (
-        <Text style={styles.hint}>Checking the passphrase. This takes a few seconds.</Text>
-      )}
-
-      {status === 'done' && result && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Wallet restored</Text>
-          <Text style={styles.address}>{result.metadata.address}</Text>
-          <Text style={styles.cardBody}>
-            {result.metadata.signers.length} signer
-            {result.metadata.signers.length === 1 ? '' : 's'} restored from {result.filename}.
-          </Text>
-          <Text style={styles.cardBody}>
-            To sign transactions from this device, add its passkey as a signer on the wallet. Until
-            then you can view the wallet but not spend from it.
-          </Text>
-        </View>
-      )}
-
-      {error && (
-        <View style={tampered ? styles.errorCard : undefined}>
-          {tampered && <Text style={styles.errorTitle}>This backup did not verify</Text>}
-          <Text style={styles.error}>{error}</Text>
-          {tampered && (
-            <Text style={styles.cardBody}>
-              Either the passphrase is wrong or the file has been altered since it was created.
-              Nothing on this device was changed.
-            </Text>
-          )}
-        </View>
-      )}
     </>
   );
 }
