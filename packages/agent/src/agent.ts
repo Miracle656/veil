@@ -1,13 +1,16 @@
 import {
   anthropicProvider,
+  deepseekProvider,
   openRouterProvider,
   type ChatTurn,
   type LlmProvider,
   type ToolSpec,
 } from './llm.js'
 import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { classifyBalances, describeAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
+import { StrKey } from '@stellar/stellar-sdk'
 
 // ── Agent configuration ──────────────────────────────────────────────────────
 
@@ -16,6 +19,10 @@ export interface AgentConfig {
   anthropicApiKey?: string
   /** OpenRouter API key. When set, free OpenRouter models are used instead of Claude. */
   openRouterApiKey?: string
+  /** DeepSeek API key. When set, DeepSeek model is used instead of Claude/OpenRouter. */
+  deepSeekApiKey?: string
+  /** DeepSeek model ID. Default: deepseek-flash. */
+  deepSeekModel?: string
   /** OpenRouter model ids, in preference order. Default: llm.ts DEFAULT_FREE_MODELS. */
   models?: string[]
   /** A ready-made provider; overrides the keys above. */
@@ -46,12 +53,22 @@ interface ResolvedConfig {
 }
 
 function resolveConfig(config: AgentConfig): ResolvedConfig {
+  let llm: LlmProvider
+  if (config.provider) {
+    llm = config.provider
+  } else if (config.openRouterApiKey) {
+    // Same order as providerFromEnv(). The two selectors disagreeing about
+    // precedence would make an SDK consumer and a deployment pick differently
+    // from the same set of keys.
+    llm = openRouterProvider({ apiKey: config.openRouterApiKey, models: config.models })
+  } else if (config.deepSeekApiKey) {
+    llm = deepseekProvider({ apiKey: config.deepSeekApiKey, model: config.deepSeekModel })
+  } else {
+    llm = anthropicProvider({ apiKey: config.anthropicApiKey, model: config.model })
+  }
+
   return {
-    llm:
-      config.provider ??
-      (config.openRouterApiKey
-        ? openRouterProvider({ apiKey: config.openRouterApiKey, models: config.models })
-        : anthropicProvider({ apiKey: config.anthropicApiKey, model: config.model })),
+    llm,
     wraithUrl: config.wraithUrl ?? '',
     horizonUrl: config.horizonUrl ?? HORIZON_URL,
     sorobanRpcUrl: config.sorobanRpcUrl ?? SOROBAN_RPC_URL,
@@ -97,13 +114,29 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'get_wallet_balance',
-    description: 'Get current XLM and token balances for a wallet address. Free.',
+    description:
+      'Get current XLM and token balances for a wallet address. Free. ' +
+      'The result includes "holdings": every issued asset with its issuer and a status of verified, unverified or unlisted. ' +
+      'Always name the issuer when reporting an issued asset, and report "unverified" holdings as unverified.',
     input_schema: {
       type: 'object' as const,
       properties: {
         address: { type: 'string', description: 'Stellar wallet address (G...)' },
       },
       required: ['address'],
+    },
+  },
+  {
+    name: 'get_asset_info',
+    description:
+      'Look up an asset in Veil\'s verified registry: its verified issuer, and whether it can be frozen or clawed back. ' +
+      'Use this for any "what is USDT0 / USDC" question. Pass "CODE" or "CODE:ISSUER" to check a specific issuer.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        asset: { type: 'string', description: '"USDT0", "USDC" or "CODE:ISSUER"' },
+      },
+      required: ['asset'],
     },
   },
   {
@@ -121,6 +154,21 @@ const tools: ToolSpec[] = [
         amount: { type: 'string', description: 'Amount of from_asset to sell, e.g. "10" (omit if the user did not say)' },
       },
       required: ['from_asset', 'to_asset'],
+    },
+  },
+  {
+    name: 'open_invest',
+    description:
+      'Hand an issued-asset purchase to the wallet Earn screen, filled in with the asset and amount. ' +
+      'The screen handles review and passkey confirmation; never build the purchase transaction yourself.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        asset_code: { type: 'string', description: 'Issued asset code, for example USDY' },
+        asset_issuer: { type: 'string', description: 'The asset issuer public key (G...)' },
+        amount: { type: 'string', description: 'Amount to buy, for example "50"' },
+      },
+      required: ['asset_code', 'asset_issuer', 'amount'],
     },
   },
   {
@@ -218,17 +266,21 @@ ${roleClause}
 You help users:
 - Check their balance and recent transfers
 - Get live prices
+- Explain assets such as USDT0 by their verified issuer
 - Set up swaps (opened in the Swap screen) and payments — the user always approves with their passkey
+- Set up issued-asset investments (opened in the Earn screen) — the user always approves with their passkey
 
 RULES:
 1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
-2. Before a payment executes, ALWAYS call request_user_approval — never skip this.
-3. Use get_price when the user asks about a price or wants to weigh a swap first.
-4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters.
-5. Format amounts clearly: "500 XLM", "47.3 USDC".
-6. If you need a recipient address and the user hasn't provided one, ask before building.
-7. Keep responses concise. Use bullet points for multi-step flows.
-8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.`
+2. For an issued-asset purchase, call open_invest with the exact asset code, issuer, and amount. Never build the purchase yourself; the Earn screen validates and reviews it.
+3. Before a payment executes, ALWAYS call request_user_approval — never skip this.
+4. Use get_price when the user asks about a price or wants to weigh a swap first.
+5. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters.
+6. Format amounts clearly: "500 XLM", "47.3 USDC".
+7. If you need a recipient address and the user hasn't provided one, ask before building.
+8. Keep responses concise. Use bullet points for multi-step flows.
+9. Asset codes are not identities: several issuers publish the same code (eight publish USDT0). When you report or explain an issued asset, name its issuer. Use the "holdings" status from get_wallet_balance: report "unverified" holdings as unverified, with their issuer, and never call them the real asset. Use get_asset_info to say what USDT0 is, and mention that its issuer can freeze a trustline and claw back a balance.
+10. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.`
 }
 
 /**
@@ -261,12 +313,18 @@ export interface AgentResult {
    * payment reaches and has its own review, so the agent hands off to it.
    */
   swapIntent?: SwapIntent
+  investIntent?: InvestIntent
 }
 
 export interface SwapIntent {
   from: string
   to: string
   amount?: string
+}
+
+export interface InvestIntent {
+  asset: { code: string; issuer: string }
+  amount: string
 }
 
 /** Assets the apps' Swap screens offer. */
@@ -289,6 +347,7 @@ export async function runAgent(
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
   let swapIntent: SwapIntent | undefined
+  let investIntent: InvestIntent | undefined
 
   const wraithUrl = urls?.wraithUrl ?? process.env.WRAITH_URL ?? ''
   const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
@@ -375,7 +434,13 @@ export async function runAgent(
         const fpAddress = feePayerAddress ?? (input.address as string)
         const contractAddr = walletAddress?.startsWith('C') ? walletAddress : undefined
         const balances = await getBalances(fpAddress, contractAddr)
-        return JSON.stringify(balances)
+        // Keep the flat balances the model already sees, and add each issued
+        // asset classified by issuer. A code match alone is never "verified".
+        return JSON.stringify({ ...balances, holdings: classifyBalances(balances) })
+      }
+
+      case 'get_asset_info': {
+        return JSON.stringify(describeAsset(String(input.asset ?? '')))
       }
 
       case 'open_swap': {
@@ -390,6 +455,20 @@ export async function runAgent(
         }
         swapIntent = { from, to, ...(amount ? { amount } : {}) }
         return JSON.stringify({ status: 'swap_screen_ready' })
+      }
+
+      case 'open_invest': {
+        const code = String(input.asset_code ?? '').trim().toUpperCase()
+        const issuer = String(input.asset_issuer ?? '').trim()
+        const amount = String(input.amount ?? '').trim()
+        if (!/^[A-Z0-9]{1,12}$/.test(code) || !StrKey.isValidEd25519PublicKey(issuer)) {
+          return JSON.stringify({ error: 'asset_code and a valid asset_issuer are required.' })
+        }
+        if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) {
+          return JSON.stringify({ error: 'amount must be a plain positive number with at most seven decimals.' })
+        }
+        investIntent = { asset: { code, issuer }, amount }
+        return JSON.stringify({ status: 'invest_screen_ready' })
       }
 
       case 'build_payment': {
@@ -452,19 +531,24 @@ export async function runAgent(
       // The work is done — a swap to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
-      if (swapIntent || pendingTxXdr) {
+      if (swapIntent || investIntent || pendingTxXdr) {
         return {
-          response: swapIntent ? 'Your swap is ready in the Swap screen.' : 'Your transaction is ready to review.',
+          response: swapIntent
+            ? 'Your swap is ready in the Swap screen.'
+            : investIntent
+              ? 'Your investment is ready in the Earn screen.'
+              : 'Your transaction is ready to review.',
           pendingTxXdr,
           pendingTxSummary,
           swapIntent,
+          investIntent,
         }
       }
       throw err
     }
   }
 
-  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent }
+  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent, investIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────

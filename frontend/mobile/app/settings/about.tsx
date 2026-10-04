@@ -93,23 +93,23 @@ export default function AboutScreen() {
         ) : update?.state === 'update' ? (
           <>
             <Text style={[styles.status, styles.accent]}>
-              {update.installed === null
-                ? `Build ${update.latest.versionCode} is available`
-                : `Update available — build ${update.latest.versionCode}`}
+              Update available — build {update.latest.versionCode}
             </Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void openExternalUrl(update.latest.url)}
-              style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
-            >
-              <Text style={styles.primaryText}>Download the latest APK</Text>
-            </Pressable>
-            <Text style={styles.hint}>
-              It installs over this one — your wallet and passkey stay as they are.
-            </Text>
+            <DownloadApk url={update.latest.url} styles={styles} />
           </>
         ) : (
-          <Text style={styles.hint}>{update?.reason ?? 'Could not check for updates.'}</Text>
+          // `unknown` still carries the newest release when GitHub answered, so
+          // the download stays reachable. What it must not do is call it an
+          // update, because there is nothing to compare it against.
+          <>
+            <Text style={styles.hint}>{update?.reason ?? 'Could not check for updates.'}</Text>
+            {update?.state === 'unknown' && update.latest && (
+              <>
+                <Text style={styles.hint}>Newest published build: {update.latest.versionCode}</Text>
+                <DownloadApk url={update.latest.url} styles={styles} />
+              </>
+            )}
+          </>
         )}
 
         <Pressable
@@ -178,6 +178,25 @@ export default function AboutScreen() {
       </Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+/**
+ * The download button, shared by the two states that can offer one: a confirmed
+ * update, and a check that could not compare builds but did find a release.
+ */
+function DownloadApk({ url, styles }: { url: string; styles: ReturnType<typeof createStyles> }) {
+  return (
+    <>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => void openExternalUrl(url)}
+        style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+      >
+        <Text style={styles.primaryText}>Download the latest APK</Text>
+      </Pressable>
+      <Text style={styles.hint}>It installs over this one — your wallet and passkey stay as they are.</Text>
+    </>
   );
 }
 

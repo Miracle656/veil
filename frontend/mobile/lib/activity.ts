@@ -14,6 +14,7 @@ import { Asset, Horizon, Keypair, StrKey, rpc as SorobanRpc } from '@stellar/ste
 
 import { getNetwork } from './network';
 import { getSignerSecret } from './walletStore';
+import { calculateAccountReserve } from './reserves';
 
 /** AsyncStorage key holding the active wallet's public key (shared with backupFile). */
 export const WALLET_PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
@@ -60,7 +61,14 @@ export interface DashboardData {
   /** Native XLM balance as a decimal string; '0' when the account isn't funded. */
   xlmBalance: string;
   activity: ActivityRecord[];
+  /** Actual subentries count on the account (trustlines, data entries, signers). */
+  subentries?: number;
+  /** Dynamically derived minimum reserve in XLM. */
+  reserveXlm?: number;
+  /** Explanation of what makes up the locked reserve. */
+  reserveReason?: string;
 }
+
 
 function toRecord(op: HorizonPaymentLike, account: string): ActivityRecord | null {
   const timestamp = Math.floor(new Date(op.created_at).getTime() / 1000);
@@ -134,13 +142,18 @@ export async function fetchDashboardData(publicKey: string): Promise<DashboardDa
     const native = (account.balances as Array<{ asset_type: string; balance: string }>).find(
       (b) => b.asset_type === 'native',
     );
+    const reserveInfo = calculateAccountReserve(account as any);
     return {
       xlmBalance: native?.balance ?? '0',
       activity: mapPayments(
         payments.records as unknown as HorizonPaymentLike[],
         publicKey,
       ),
+      subentries: reserveInfo.subentries,
+      reserveXlm: reserveInfo.totalReserve,
+      reserveReason: reserveInfo.reason,
     };
+
   } catch (err) {
     if (isAccountNotFound(err)) return { xlmBalance: '0', activity: [] };
     throw err;
@@ -207,7 +220,13 @@ async function fetchContractDashboard(contract: string): Promise<DashboardData> 
   const [contractXlm, feePayerData] = await Promise.all([
     fetchContractXlm(contract),
     feePayer
-      ? (async () => {
+      ? (async (): Promise<{
+          xlm: number;
+          activity: ActivityRecord[];
+          subentries?: number;
+          reserveXlm?: number;
+          reserveReason?: string;
+        }> => {
           const server = new Horizon.Server(horizonUrl());
           try {
             const [account, payments] = await Promise.all([
@@ -217,20 +236,34 @@ async function fetchContractDashboard(contract: string): Promise<DashboardData> 
             const native = (account.balances as Array<{ asset_type: string; balance: string }>).find(
               (b) => b.asset_type === 'native',
             );
+            const reserveInfo = calculateAccountReserve(account as any);
             return {
               xlm: Number(native?.balance ?? '0'),
               activity: mapPayments(payments.records as unknown as HorizonPaymentLike[], feePayer),
+              subentries: reserveInfo.subentries,
+              reserveXlm: reserveInfo.totalReserve,
+              reserveReason: reserveInfo.reason,
             };
           } catch (err) {
             if (isAccountNotFound(err)) return { xlm: 0, activity: [] as ActivityRecord[] };
             throw err;
           }
         })()
-      : Promise.resolve({ xlm: 0, activity: [] as ActivityRecord[] }),
+      : Promise.resolve<{
+          xlm: number;
+          activity: ActivityRecord[];
+          subentries?: number;
+          reserveXlm?: number;
+          reserveReason?: string;
+        }>({ xlm: 0, activity: [] as ActivityRecord[] }),
   ]);
 
   return {
     xlmBalance: (contractXlm + feePayerData.xlm).toFixed(7),
     activity: feePayerData.activity,
+    subentries: feePayerData.subentries,
+    reserveXlm: feePayerData.reserveXlm,
+    reserveReason: feePayerData.reserveReason,
   };
 }
+

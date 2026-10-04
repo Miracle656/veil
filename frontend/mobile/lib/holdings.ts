@@ -1,6 +1,7 @@
 import { Horizon, StrKey } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
+import { verifiedAsset } from './assets';
 import { fetchPrice, usdValue } from './fetchPrice';
 import { fetchContractAssetBalance, fetchContractXlm, getFeePayerAddress } from './activity';
 
@@ -15,10 +16,13 @@ export type Holding = {
   native: boolean;
 };
 
-/** Display name for well-known assets; falls back to the code. */
+/**
+ * Display name for native XLM. Issued assets take their name from the verified
+ * registry, and only when the issuer matches — a table keyed by code alone
+ * would name every impostor after the asset it imitates.
+ */
 const ASSET_NAMES: Record<string, string> = {
   XLM: 'Lumens',
-  USDC: 'USD Coin',
 };
 
 function isAccountNotFound(err: unknown): boolean {
@@ -128,7 +132,11 @@ export async function loadHoldings(address: string): Promise<Holding[]> {
       const price = await fetchPrice(r.code, r.issuer);
       return {
         code: r.code,
-        name: ASSET_NAMES[r.code] ?? r.code,
+        // Named from the registry only when the issuer is the registered one,
+        // so an impostor USDT0 is shown as its bare code, never "Tether USD".
+        name: r.native
+          ? ASSET_NAMES['XLM']!
+          : (verifiedAsset(r.code, r.issuer, getNetwork().name)?.name ?? r.code),
         issuer: r.issuer,
         balance: r.balance,
         usd: usdValue(r.balance, price),

@@ -21,9 +21,13 @@ import { sendAssetFromContract, getFeePayerSpendableXlm, getFeePayerXlm, type Fe
 import { useWallet } from '../components/WalletProvider';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
 import { sendPayment } from '../lib/sendPayment';
+import { validateMemoText } from '../lib/memo';
+import { validateMemo } from '../lib/sep7';
 import { truncateAddress } from '../components/ui/AddressChip';
 import { getWalletAddress } from '../lib/walletStore';
 import { loadHoldings, unitPrice, type Holding } from '../lib/holdings';
+import { getNetworkName } from '../lib/network';
+import { isRegistryCode, resolveRequestedAsset } from '../lib/requestedAsset';
 import { ChevronDownIcon, ScanIcon, UsersIcon } from '../components/icons';
 import { TokenIcon } from '../components/TokenIcon';
 import { SuccessAnimation } from '../components/SuccessAnimation';
@@ -58,17 +62,32 @@ export default function SendScreen() {
   const { wallet } = useWallet();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  // Deep links land here prefilled: `to`, `amount`, `asset`, `memo`.
-  const params = useLocalSearchParams<{ to?: string; amount?: string; asset?: string; memo?: string }>();
+  // Deep links land here prefilled: `to`, `amount`, `asset` + `issuer`, `memo` + `memo_type` (#704).
+  const params = useLocalSearchParams<{ to?: string; amount?: string; asset?: string; issuer?: string; memo?: string; memo_type?: string }>();
 
-  const [recipient, setRecipient] = useState(() => firstValue(params.to));
-  const [amount, setAmount] = useState(() => firstValue(params.amount));
-  const [memo, setMemo] = useState(() => firstValue(params.memo));
+  // A link the registry alone refuses (#791) fills in nothing, not even the
+  // address: a half-applied request is how the wrong asset gets paid. A code
+  // the registry does not know waits on holdings, so it is prefilled and
+  // blocked below instead.
+  const [refusedAtOpen] = useState(() => {
+    const code = firstValue(params.asset) || undefined;
+    const issuer = firstValue(params.issuer) || undefined;
+    if (!code && !issuer) return false;
+    if (code && issuer && !isRegistryCode(code)) return false;
+    return !resolveRequestedAsset(code, issuer, getNetworkName()).ok;
+  });
+  const [recipient, setRecipient] = useState(() => (refusedAtOpen ? '' : firstValue(params.to)));
+  const [amount, setAmount] = useState(() => (refusedAtOpen ? '' : firstValue(params.amount)));
+  const [memo, setMemo] = useState(() => (refusedAtOpen ? '' : firstValue(params.memo)));
+  // SEP-7 memo kind (text/id/hash/return, #704): validated against the memo
+  // before submit rather than silently defaulting to text.
+  const [memoType, setMemoType] = useState(() => (refusedAtOpen ? null : firstValue(params.memo_type) || null));
   const [pickerOpen, setPickerOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [assetSheet, setAssetSheet] = useState(false);
 
   const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [holdingsLoaded, setHoldingsLoaded] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
 
   const [step, setStep] = useState<Step>('form');
@@ -97,13 +116,17 @@ export default function SendScreen() {
     let alive = true;
     (async () => {
       const address = await getWalletAddress().catch(() => null);
-      if (!address) return;
+      if (!address) {
+        if (alive) setHoldingsLoaded(true);
+        return;
+      }
       if (address.startsWith('C')) {
         if (alive) setContractAddr(address);
       }
       const hs = await loadHoldings(address).catch(() => [] as Holding[]);
       if (!alive) return;
       setHoldings(hs);
+      setHoldingsLoaded(true);
     })();
     return () => {
       alive = false;
@@ -111,14 +134,48 @@ export default function SendScreen() {
   }, []);
 
   const keyOf = (h: Holding) => `${h.code}:${h.issuer ?? 'native'}`;
-  const preferred = firstValue(params.asset).toUpperCase();
-  const selected =
-    holdings.find((h) => keyOf(h) === selectedKey) ??
-    holdings.find((h) => h.code === preferred) ??
-    holdings.find((h) => h.native) ??
-    holdings[0] ??
-    null;
-  const assetCode = selected?.code || firstValue(params.asset) || 'XLM';
+
+  // The asset a link asked for, resolved to an exact code:issuer or refused
+  // (#791). Never matched on the code alone: that is how an impostor USDT0 —
+  // or, if the real one is not held, plain XLM — gets paid instead.
+  const requestedCode = firstValue(params.asset) || undefined;
+  const requestedIssuer = firstValue(params.issuer) || undefined;
+  const request = useMemo(
+    () =>
+      requestedCode || requestedIssuer
+        ? resolveRequestedAsset(requestedCode, requestedIssuer, getNetworkName(), holdings)
+        : null,
+    [requestedCode, requestedIssuer, holdings],
+  );
+  // For a code outside the registry the answer depends on holdings, so do not
+  // refuse before they have loaded.
+  const requestPending =
+    !!request && !request.ok && !holdingsLoaded && !!requestedCode && !isRegistryCode(requestedCode);
+  const requested = request?.ok ? request.asset : null;
+  const requestedHolding = requested
+    ? holdings.find((h) => h.code === requested.code && h.issuer === requested.issuer)
+    : undefined;
+  // What the link is still blocking, until the user picks an asset themselves.
+  const requestProblem =
+    selectedKey !== null || requestPending
+      ? null
+      : request && !request.ok
+        ? `Payment request refused. ${request.reason}`
+        : requested && holdingsLoaded && !requestedHolding
+          ? `This request is for ${requested.code} issued by ${requested.issuer}, which this wallet does not hold.`
+          : null;
+
+  // A link that asked for an asset gets exactly that asset or nothing; only the
+  // user's own pick overrides it.
+  const fromRequest = !request
+    ? (holdings.find((h) => h.native) ?? holdings[0])
+    : !request.ok
+      ? undefined
+      : requested
+        ? requestedHolding
+        : holdings.find((h) => h.native);
+  const selected = holdings.find((h) => keyOf(h) === selectedKey) ?? fromRequest ?? null;
+  const assetCode = selected?.code || requested?.code || 'XLM';
 
   const trimmed = recipient.trim();
   const recipientValid = isValidDestination(trimmed);
@@ -196,7 +253,8 @@ export default function SendScreen() {
         : classicHeld
       : null;
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
-  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient;
+  const memoError = memo ? (memoType ? validateMemo(memo, memoType) : validateMemoText(memo)) : null;
+  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient && !!selected && !requestProblem && !memoError;
 
   const up = selected ? unitPrice(selected) : null;
   const fiatOfAmount = up !== null && isFinite(amtNum) && amtNum > 0 ? format(amtNum * up) : null;
@@ -217,6 +275,14 @@ export default function SendScreen() {
 
   const handleSend = async () => {
     if (!canSubmit) return;
+    if (memo) {
+      const memoErr = memoType ? validateMemo(memo, memoType) : validateMemoText(memo);
+      if (memoErr) {
+        setError(memoErr);
+        setStep('error');
+        return;
+      }
+    }
     setError(null);
     try {
       setStep('authorizing');
@@ -286,6 +352,7 @@ export default function SendScreen() {
         signer,
         memo,
         nonNative && selected ? { code: selected.code, issuer: selected.issuer } : undefined,
+        memoType || undefined,
       );
       setHash(result.hash);
       setStep('done');
@@ -306,6 +373,7 @@ export default function SendScreen() {
     setRecipient('');
     setAmount('');
     setMemo('');
+    setMemoType(null);
     setStep('form');
     setHash(null);
     setError(null);
@@ -358,7 +426,9 @@ export default function SendScreen() {
             <View>
               <Text style={styles.assetCode}>{assetCode}</Text>
               <Text style={styles.assetSub}>
-                {selected ? `${mask(fmtAmount(selected.balance))} available` : 'Loading…'}
+                {selected
+                  ? `${mask(fmtAmount(selected.balance))} available${selected.issuer ? ` · ${truncateAddress(selected.issuer)}` : ''}`
+                  : holdingsLoaded ? 'Choose an asset' : 'Loading…'}
               </Text>
             </View>
           </View>
@@ -482,7 +552,7 @@ export default function SendScreen() {
           </View>
         </View>
         {showError && (
-          <Text style={styles.errorText}>Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
+          <Text style={styles.errorText} testID="send-recipient-error">Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
         )}
 
         {/* Memo */}
@@ -498,6 +568,11 @@ export default function SendScreen() {
             editable={editable}
           />
         </View>
+        {memoError && (
+          <Text style={styles.errorText} testID="send-memo-error">
+            {memoError}
+          </Text>
+        )}
 
         {/* Fee */}
         <View style={styles.feeRow}>
@@ -505,7 +580,17 @@ export default function SendScreen() {
           <Text style={styles.feeValue}>Sponsored</Text>
         </View>
 
+        {/* The memo is how exchange deposits get credited: show it on the
+            confirmation surface so a scanned SEP-7 memo is seen before submit (#704). */}
+        {memo ? (
+          <View style={styles.feeRow}>
+            <Text style={styles.feeLabel}>Memo</Text>
+            <Text style={styles.feeValue}>{memoType ? `${memo} (${memoType})` : memo}</Text>
+          </View>
+        ) : null}
+
         {step === 'error' && error && <Text style={styles.errorBanner}>{error}</Text>}
+        {requestProblem && <Text style={styles.errorBanner} accessibilityRole="alert">{requestProblem}</Text>}
         {nonNative && (
           <Text style={styles.note}>
             Sending {assetCode} — the recipient needs a {assetCode} trustline, at a classic (G…) address.
@@ -515,16 +600,38 @@ export default function SendScreen() {
         <View style={styles.spacer} />
 
         {busy ? (
-          <View style={[styles.cta, styles.disabled]} testID="send-submit">
+          <View
+            style={[styles.cta, styles.disabled]}
+            testID="send-submit"
+            accessible={true}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: true }}
+            aria-disabled={true}
+          >
             <ActivityIndicator color={colors.onAccent} />
             <Text style={styles.ctaText}>{step === 'authorizing' ? 'Waiting for passkey…' : 'Submitting…'}</Text>
           </View>
         ) : canSubmit ? (
-          <SlideToConfirm label="Slide to send" onConfirm={handleSend} />
+          <SlideToConfirm label="Slide to send" onConfirm={handleSend} testID="send-submit" />
         ) : (
-          <View style={[styles.cta, styles.disabled]} testID="send-submit">
+          <View
+            style={[styles.cta, styles.disabled]}
+            testID="send-submit"
+            accessible={true}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: true }}
+            aria-disabled={true}
+          >
             <Text style={styles.ctaText}>
-              {insufficient ? 'Not enough balance' : step === 'error' ? 'Try again' : 'Enter details to send'}
+              {requestProblem
+                ? 'Choose an asset to send'
+                : !selected
+                  ? 'Choose an asset to send'
+                  : insufficient
+                    ? 'Not enough balance'
+                    : step === 'error'
+                      ? 'Try again'
+                      : 'Enter details to send'}
             </Text>
           </View>
         )}
@@ -547,7 +654,10 @@ export default function SendScreen() {
                   <TokenIcon code={h.code} size={34} />
                   <View style={{ flex: 1 }}>
                     <Text style={styles.assetCode}>{h.code}</Text>
-                    <Text style={styles.assetSub}>{h.name}</Text>
+                    {/* The issuer tells apart two holdings that share a code. */}
+                    <Text style={styles.assetSub}>
+                      {h.issuer ? `${h.name} · ${truncateAddress(h.issuer)}` : h.name}
+                    </Text>
                   </View>
                   <Text style={[styles.sheetBal, isSel && { color: colors.accent }]}>{mask(fmtAmount(h.balance))}</Text>
                 </Pressable>
@@ -557,7 +667,36 @@ export default function SendScreen() {
         </Pressable>
       </Modal>
 
-      <QrScanner visible={scannerOpen} onScan={(address) => { setRecipient(address); setScannerOpen(false); }} onClose={() => setScannerOpen(false)} />
+      {/* Filled from a scanned SEP-7 URI: memo → the memo field, amount →
+          the amount field, and an asset only when it resolves to an exact
+          code:issuer — a scanned code alone never overrides the selection (#704/#791). */}
+      <QrScanner
+        visible={scannerOpen}
+        onScan={(address, details) => {
+          setRecipient(address);
+          if (details?.amount) setAmount(details.amount);
+          // The memo survives scan → review → submit: it lands in the same
+          // field the review row renders and `sendPayment` attaches (#704).
+          if (details?.memo) setMemo(details.memo);
+          if (details?.memoType) setMemoType(details.memoType);
+          if (details?.assetCode) {
+            const scanned = resolveRequestedAsset(
+              details.assetCode,
+              details.assetIssuer,
+              getNetworkName(),
+              holdings,
+            );
+            if (scanned.ok && scanned.asset) {
+              const held = holdings.find(
+                (h) => h.code === scanned.asset!.code && h.issuer === scanned.asset!.issuer,
+              );
+              if (held) setSelectedKey(keyOf(held));
+            }
+          }
+          setScannerOpen(false);
+        }}
+        onClose={() => setScannerOpen(false)}
+      />
       <ContactPicker visible={pickerOpen} onSelect={handleSelectContact} onClose={() => setPickerOpen(false)} />
     </SafeAreaView>
   );

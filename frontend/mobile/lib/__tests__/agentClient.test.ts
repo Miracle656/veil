@@ -1,6 +1,7 @@
 import {
   PRODUCTION_AGENT_URL,
   historyFromMessages,
+  parseInvestIntent,
   parseSwapIntent,
   resolveAgentUrl,
   sendAgentMessage,
@@ -23,6 +24,19 @@ describe('resolveAgentUrl', () => {
     expect(resolveAgentUrl('http://10.0.2.2:3000/api/agent')).toBe('http://10.0.2.2:3000/api/agent');
     expect(resolveAgentUrl('http://agent.example.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
     expect(resolveAgentUrl('not a url')).toBe(PRODUCTION_AGENT_URL);
+  });
+
+  it('treats a private range as an address, not as a name prefix', () => {
+    // `/^10\./` matched the hostname `10.evil.com`, so any remote host whose
+    // name began "10." could be reached over plaintext http.
+    expect(resolveAgentUrl('http://10.evil.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
+    expect(resolveAgentUrl('http://192.168.evil.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
+    expect(resolveAgentUrl('http://10.0.0.1.evil.com/api/agent')).toBe(PRODUCTION_AGENT_URL);
+
+    // Real private addresses still work, so local development is unaffected.
+    expect(resolveAgentUrl('http://192.168.1.5:3000/api/agent')).toBe('http://192.168.1.5:3000/api/agent');
+    expect(resolveAgentUrl('http://10.1.2.3:3000/api/agent')).toBe('http://10.1.2.3:3000/api/agent');
+    expect(resolveAgentUrl('http://localhost:3000/api/agent')).toBe('http://localhost:3000/api/agent');
   });
 });
 
@@ -95,5 +109,22 @@ describe('parseSwapIntent', () => {
     expect(parseSwapIntent({ from: '../settings', to: 'USDC' })).toBeUndefined();
     expect(parseSwapIntent({ from: 'XLM', to: 'USDC', amount: '-1' })).toEqual({ from: 'XLM', to: 'USDC' });
     expect(parseSwapIntent('XLM→USDC')).toBeUndefined();
+  });
+});
+
+describe('parseInvestIntent', () => {
+  const issuer = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+  it('accepts an issuer-pinned investment hand-off', () => {
+    expect(parseInvestIntent({ asset: { code: 'usdy', issuer }, amount: '50' })).toEqual({
+      asset: { code: 'USDY', issuer },
+      amount: '50',
+    });
+  });
+
+  it('drops malformed intents before navigation', () => {
+    expect(parseInvestIntent({ asset: { code: 'USDY', issuer: 'not-an-issuer' }, amount: '50' })).toBeUndefined();
+    expect(parseInvestIntent({ asset: { code: 'USDY' }, amount: '50' })).toBeUndefined();
+    expect(parseInvestIntent({ asset: { code: 'USDY', issuer }, amount: '-1' })).toBeUndefined();
   });
 });

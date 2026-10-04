@@ -41,6 +41,7 @@ const NAV_MAIN: NavItem[] = [
   { href: '/cashout', label: 'Cash out', icon: '⇲' },
   { href: '/earn', label: 'Earn', icon: '◎' },
   { href: '/bills', label: 'Bills & airtime', icon: '▤' },
+  { href: '/dapps', label: 'dApps', icon: '◈' },
   { href: '/agent', label: 'Agent', icon: '✦' },
 ]
 

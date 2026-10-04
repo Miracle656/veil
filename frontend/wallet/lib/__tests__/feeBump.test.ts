@@ -4,6 +4,13 @@ Object.assign(globalThis, { TextEncoder, TextDecoder })
 import { buildSponsoredFeeBumpTransaction } from '../feeBump'
 import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
 
+// `lib/fees` imports one function from the `@veil/sdk` barrel, and that barrel
+// loads the whole SDK core — which reads `Horizon.Server` at module scope. With
+// `@stellar/stellar-sdk` mocked below, `Horizon` is undefined and the suite dies
+// before a single test runs. Stub the one export the chain actually needs; this
+// file is about wrapping a transaction in a fee bump, not about the SDK.
+jest.mock('@veil/sdk', () => ({ inclusionFee: () => '100' }))
+
 jest.mock('@stellar/stellar-sdk', () => {
   const sponsorKeypair = {
     publicKey: jest.fn(() => 'GSPONSOR'),

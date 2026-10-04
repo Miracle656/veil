@@ -9,7 +9,8 @@
  * user can resend; there is no socket to lose when the app is backgrounded.
  */
 
-import type { AgentMessage, SwapIntent } from './agentMessages';
+import { StrKey } from '@stellar/stellar-sdk';
+import type { AgentMessage, InvestIntent, SwapIntent } from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -31,8 +32,12 @@ export function resolveAgentUrl(configured: string | undefined): string {
   if (!url) return PRODUCTION_AGENT_URL;
   try {
     const parsed = new URL(url);
+    // Private ranges must match a literal IPv4 address, not a prefix. `/^10\./`
+    // also matched the hostname `10.evil.com`, which let a remote host be
+    // reached over plaintext HTTP purely by choosing its name.
+    const privateIpv4 = /^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2})$/;
     const local = ['localhost', '127.0.0.1', '10.0.2.2'].includes(parsed.hostname) ||
-      /^(192\.168|10)\./.test(parsed.hostname);
+      privateIpv4.test(parsed.hostname);
     if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && local)) return url;
   } catch {
     // fall through
@@ -54,7 +59,7 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
   const turns: AgentTurn[] = [];
   for (const message of messages) {
     if (message.kind === 'user') turns.push({ role: 'user', content: message.text });
-    else if ((message.kind === 'agent' || message.kind === 'proposal' || message.kind === 'swap') && message.text.trim()) {
+    else if ((message.kind === 'agent' || message.kind === 'proposal' || message.kind === 'swap' || message.kind === 'invest') && message.text.trim()) {
       turns.push({ role: 'assistant', content: message.text });
     }
   }
@@ -66,6 +71,7 @@ export type AgentReply = {
   pendingTxXdr?: string;
   pendingTxSummary?: string;
   swapIntent?: SwapIntent;
+  investIntent?: InvestIntent;
 };
 
 /**
@@ -86,6 +92,19 @@ export function parseSwapIntent(value: unknown): SwapIntent | undefined {
       ? v.amount
       : undefined;
   return { from, to, ...(amount ? { amount } : {}) };
+}
+
+export function parseInvestIntent(value: unknown): InvestIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (!v.asset || typeof v.asset !== 'object') return undefined;
+  const asset = v.asset as Record<string, unknown>;
+  const code = typeof asset.code === 'string' ? asset.code.trim().toUpperCase() : '';
+  const issuer = typeof asset.issuer === 'string' ? asset.issuer.trim() : '';
+  const amount = typeof v.amount === 'string' ? v.amount.trim() : '';
+  if (!/^[A-Z0-9]{1,12}$/.test(code) || !StrKey.isValidEd25519PublicKey(issuer)) return undefined;
+  if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) return undefined;
+  return { asset: { code, issuer }, amount };
 }
 
 export type AgentRequest = {
@@ -124,6 +143,7 @@ export async function sendAgentMessage(
       pendingTxXdr: typeof data.pendingTxXdr === 'string' ? data.pendingTxXdr : undefined,
       pendingTxSummary: typeof data.pendingTxSummary === 'string' ? data.pendingTxSummary : undefined,
       swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
+      investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
     };
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {

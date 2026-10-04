@@ -17,7 +17,7 @@ import {
 } from '../../lib/network';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { NoticeModal } from '../../components/NoticeModal';
-import { getWalletAddress, hasUsableWallet, clearWalletStore } from '../../lib/walletStore';
+import { getWalletAddress, hasUsableWallet } from '../../lib/walletStore';
 import { getFeePayerAddress } from '../../lib/activity';
 import { fundWithFriendbot } from '../../lib/testnetWallet';
 import {
@@ -29,6 +29,7 @@ import {
   setNotifOutgoing,
 } from '../../lib/notificationPrefs';
 import { requestNotificationPermissions } from '../../lib/notifications';
+import { TRUSTLINE_RESERVE_COST_XLM } from '../../lib/reserves';
 
 type Row = {
   key: string;
@@ -82,8 +83,16 @@ export default function SettingsScreen() {
 
   const security: Row[] = [
     { key: 'passkeys', title: 'Passkeys', subtitle: 'Devices registered on this wallet', onPress: () => router.push('/settings/passkeys') },
-    { key: 'recovery', title: 'Recovery', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
+    { key: 'recovery-coverage', title: 'Recovery coverage', subtitle: 'See which ways can restore this wallet', onPress: () => router.push('/settings/recovery') },
+    { key: 'recovery', title: 'Recovery servers', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
     { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
+    { key: 'privacy', title: 'Privacy', subtitle: 'Private payments and crash reporting', onPress: () => router.push('/settings/privacy') },
+    { key: 'dapps', title: 'Connected dApps', subtitle: 'Sites with permission, and revoke them', onPress: () => router.push('/settings/permissions') },
+    // Reset lives on its own screen now, reachable on BOTH networks. It used to
+    // sit in the testnet-only Developer group, which left a mainnet user (real
+    // funds) with no supported way to start over. The danger screen owns the
+    // typed confirmation and the backup-first path.
+    { key: 'danger', title: 'Danger zone', subtitle: 'Reset this device’s wallet', onPress: () => router.push('/settings/danger') },
   ];
 
   // Live notification preferences.
@@ -163,8 +172,17 @@ export default function SettingsScreen() {
       onPress: () => handleNetworkToggle(onTestnet),
       switch: { value: !onTestnet, onChange: (v) => handleNetworkToggle(v) },
     },
+    { key: 'fee-payer', title: 'Fee payer', subtitle: 'The account that pays network fees, and its balance', onPress: () => router.push('/settings/fee-payer') },
+    { key: 'dapps', title: 'Discover dApps', subtitle: 'Browse the Stellar apps Veil can open', onPress: () => router.push('/dapps') },
+    { key: 'trustlines', title: 'Trustlines & reserves', subtitle: `Manage enabled assets and reclaim locked reserves (${TRUSTLINE_RESERVE_COST_XLM} XLM each)`, onPress: () => router.push('/assets') },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
     { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
+    // Plain path, no params: the name lives in AsyncStorage, and a route
+    // parameter would carry it in a URL other apps can read.
+    { key: 'profile', title: 'Profile & AI', subtitle: 'Name, language, and agent personality', onPress: () => router.push('/settings/profile') },
+    // The written boundary for the voice surface (#846). A talking wallet makes
+    // people assume it can pay; this is where they check, and what they find.
+    { key: 'voice', title: 'Voice & assistants', subtitle: 'What the assistant can and can never do', onPress: () => router.push('/settings/voice') },
     { key: 'about', title: 'About', subtitle: 'Version, updates, licences and support', onPress: () => router.push('/settings/about') },
   ];
   // NoticeModal rather than Alert.alert: these report an outcome, and the
@@ -217,22 +235,12 @@ export default function SettingsScreen() {
     });
   };
 
-  // ConfirmModal, not Alert.alert — the component exists precisely to keep a
-  // decision inside Veil's visual language, and it can style a destructive
-  // action as destructive, which the platform dialog cannot.
-  const [resetOpen, setResetOpen] = useState(false);
-  const resetWallet = () => setResetOpen(true);
-  const confirmReset = async () => {
-    setResetOpen(false);
-    await clearWalletStore();
-    router.replace('/welcome');
-  };
-
   const developer: Row[] = [
     // Endpoints, factory contract and per-network config warnings. Diagnostic
     // rather than everyday: the Mainnet switch above is how you actually change
     // network, and this is where you look when it does not behave.
     { key: 'network-details', title: 'Network details', subtitle: 'Endpoints and contract configuration', onPress: () => router.push('/settings/network') },
+    { key: 'prover-spike', title: 'Prover spike', subtitle: 'Compare the SPP WebView and native simulation harnesses', onPress: () => router.push('/prover-spike') },
     {
       key: 'fund',
       title: 'Fund test XLM',
@@ -241,14 +249,6 @@ export default function SettingsScreen() {
         : 'Unavailable on mainnet — Friendbot is testnet only',
       value: 'Testnet',
       onPress: fundTestXlm,
-    },
-    {
-      key: 'reset',
-      title: 'Reset wallet',
-      subtitle: onTestnet
-        ? 'Clear the testnet wallet and start fresh'
-        : 'Clear the MAINNET wallet — real funds',
-      onPress: resetWallet,
     },
   ];
 
@@ -390,27 +390,6 @@ export default function SettingsScreen() {
         message={notice?.message ?? ''}
         tone={notice?.tone ?? 'neutral'}
         onClose={() => setNotice(null)}
-      />
-
-      {/*
-        Names the network it is about to wipe. The copy used to say "testnet"
-        unconditionally, so on mainnet it reassured the user while clearing a
-        real-funds key — the worst direction for a destructive prompt to be
-        wrong in.
-      */}
-      <ConfirmModal
-        isOpen={resetOpen}
-        destructive
-        title={onTestnet ? 'Reset testnet wallet?' : 'Reset your MAINNET wallet?'}
-        message={
-          onTestnet
-            ? "Removes this device's testnet wallet key so you can create a fresh one. Your mainnet wallet is not affected."
-            : 'Removes this device’s MAINNET wallet key. This wallet holds REAL funds, and without a backup they become unreachable. Back up your secret first.'
-        }
-        confirmLabel={onTestnet ? 'Reset' : 'Reset mainnet wallet'}
-        cancelLabel="Cancel"
-        onConfirm={confirmReset}
-        onCancel={() => setResetOpen(false)}
       />
 
       <ConfirmModal

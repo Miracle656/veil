@@ -2,9 +2,27 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   getItem: jest.fn(),
   setItem: jest.fn(),
 }));
-jest.mock('expo-constants', () => ({ __esModule: true, default: { nativeBuildVersion: '7' } }));
+// The installed build number comes from expo-application. It used to be read
+// off expo-constants, which no longer carries it, so every check ran with no
+// installed version at all.
+const mockBuildVersion = jest.fn<string | null, []>();
+jest.mock('expo-application', () => ({
+  __esModule: true,
+  get nativeApplicationVersion() {
+    return '0.1.0';
+  },
+  get nativeBuildVersion() {
+    return mockBuildVersion();
+  },
+}));
 
-import { compareBuilds, pickLatestBuild, versionCodeFromTag, type LatestBuild } from '../appUpdate';
+import {
+  compareBuilds,
+  installedVersionCode,
+  pickLatestBuild,
+  versionCodeFromTag,
+  type LatestBuild,
+} from '../appUpdate';
 
 const release = (tag: string, extra: Record<string, unknown> = {}) => ({
   tag_name: tag,
@@ -67,11 +85,32 @@ describe('compareBuilds', () => {
     expect(compareBuilds(6, latest)).toEqual({ state: 'update', installed: 6, latest });
   });
 
-  it('never claims "up to date" without knowing the installed build', () => {
-    expect(compareBuilds(null, latest).state).toBe('update');
+  it('claims neither answer without knowing the installed build, but keeps the release', () => {
+    // Not `update`: that told every user a newer build existed, which was wrong
+    // whenever the newest published build was the one they were running.
+    const result = compareBuilds(null, latest);
+    expect(result.state).toBe('unknown');
+    expect(result.state === 'unknown' && result.latest).toBe(latest);
   });
 
   it('says unknown when nothing is published to compare with', () => {
     expect(compareBuilds(7, null).state).toBe('unknown');
+  });
+});
+
+describe('installedVersionCode', () => {
+  it('reads the build number the native app reports', () => {
+    mockBuildVersion.mockReturnValue('10');
+    expect(installedVersionCode()).toBe(10);
+  });
+
+  it('is null when there is no native build to ask', () => {
+    mockBuildVersion.mockReturnValue(null);
+    expect(installedVersionCode()).toBeNull();
+  });
+
+  it('ignores a build identifier that is not a whole number', () => {
+    mockBuildVersion.mockReturnValue('1.0.0');
+    expect(installedVersionCode()).toBeNull();
   });
 });
