@@ -15,11 +15,9 @@ import { EyeIcon, EyeOffIcon, PaperPlaneIcon, ReceiveIcon } from './icons';
 const INK = '#0F0F0F';
 const INK_55 = 'rgba(15,15,15,0.55)';
 const INK_60 = 'rgba(15,15,15,0.6)';
-// Header, the 44pt amount, the sub line, and the action row — and nothing more.
-// It went to 240 to fit a reserve note that no longer lives here; with the note
-// gone that height was dead space, since `actions` pins to the bottom with
-// `marginTop: 'auto'` and the gap opens above it.
-const CARD_HEIGHT = 208;
+// Only the loading/error placeholder is a fixed height — it has no content to
+// measure. The real card measures itself; see `faceFront` below.
+const PLACEHOLDER_HEIGHT = 208;
 
 export type SilverBalanceCardProps = {
   /** Native balance string (XLM), or undefined while loading. */
@@ -193,7 +191,7 @@ export function SilverBalanceCard({
     <View style={styles.wrap}>
       <Animated.View
         pointerEvents={flipped ? 'none' : 'auto'}
-        style={[styles.face, { zIndex: flipped ? 0 : 2, elevation: flipped ? 0 : 12, transform: [{ perspective: 1400 }, { rotateY: frontRotate }] }]}
+        style={[styles.faceFront, { zIndex: flipped ? 0 : 2, elevation: flipped ? 0 : 12, transform: [{ perspective: 1400 }, { rotateY: frontRotate }] }]}
       >
         {hasTotal
           ? face('Total balance', format(totalUsd as number), breakdown ?? cryptoText)
@@ -201,7 +199,7 @@ export function SilverBalanceCard({
       </Animated.View>
       <Animated.View
         pointerEvents={flipped ? 'auto' : 'none'}
-        style={[styles.face, { zIndex: flipped ? 2 : 0, elevation: flipped ? 12 : 0, transform: [{ perspective: 1400 }, { rotateY: backRotate }] }]}
+        style={[styles.faceBack, { zIndex: flipped ? 2 : 0, elevation: flipped ? 12 : 0, transform: [{ perspective: 1400 }, { rotateY: backRotate }] }]}
       >
         {hasTotal
           ? face('XLM', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')
@@ -215,9 +213,30 @@ export function SilverBalanceCard({
 const createStyles = () =>
   StyleSheet.create({
     wrap: {
-      height: CARD_HEIGHT,
+      // No fixed height. A number here has to be re-guessed every time the
+      // card's contents change, and when the guess is low `overflow: 'hidden'`
+      // silently eats the bottom padding and clips the Send/Receive row —
+      // which is exactly what 208 did once the action row moved into the flow
+      // and started taking up height of its own.
+      position: 'relative',
     },
-    face: {
+    // The FRONT face sits in normal flow, so the wrapper is exactly as tall as
+    // the card's content — no slack above the buttons, nothing clipped below
+    // them. A rotation does not affect layout, so the height holds while it
+    // flips.
+    faceFront: {
+      borderRadius: 24,
+      padding: 24,
+      overflow: 'hidden',
+      backfaceVisibility: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: 0.5,
+      shadowRadius: 40,
+    },
+    // The BACK face fills whatever the front measured. Both faces are built by
+    // the same `face()` with the same rows, so they cannot disagree on height.
+    faceBack: {
       ...StyleSheet.absoluteFillObject,
       borderRadius: 24,
       padding: 24,
@@ -227,10 +246,9 @@ const createStyles = () =>
       shadowOffset: { width: 0, height: 18 },
       shadowOpacity: 0.5,
       shadowRadius: 40,
-      // elevation is set per-face inline so only the visible face casts a shadow.
     },
     staticFace: {
-      ...StyleSheet.absoluteFillObject,
+      minHeight: PLACEHOLDER_HEIGHT,
       borderRadius: 24,
       padding: 24,
       overflow: 'hidden',
@@ -307,14 +325,18 @@ const createStyles = () =>
       marginTop: 12,
     },
     actions: {
-      // In the flow, pinned to the bottom by `marginTop: 'auto'` — not
-      // absolutely positioned.
+      // In the flow, never absolutely positioned.
       //
       // Absolute meant the buttons floated OVER whatever was above them, so on
       // a funded wallet the reserve note ran underneath them and `overflow:
       // 'hidden'` clipped what stuck out. Nothing about the text was wrong; it
       // had nowhere to go. In the flow the text pushes the buttons down and
       // they can never overlap it.
+      //
+      // `auto` is kept so the row still sinks to the bottom if the card is ever
+      // given a fixed height again. With the card sizing itself there is no
+      // free space for it to claim, so it reads as 0 — which is the point: no
+      // gap to open above the buttons.
       marginTop: 'auto',
       paddingTop: 16,
       flexDirection: 'row',
