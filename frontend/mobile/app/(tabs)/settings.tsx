@@ -393,6 +393,17 @@ export default function SettingsScreen() {
       />
 
       <ConfirmModal
+        isOpen={clearBrowsingOpen}
+        destructive
+        title="Clear browsing data?"
+        message="This will clear WebView cookies, local storage, cache, revoke every origin grant, and end all WalletConnect sessions."
+        confirmLabel="Clear data"
+        cancelLabel="Cancel"
+        onConfirm={confirmClearBrowsing}
+        onCancel={() => setClearBrowsingOpen(false)}
+      />
+
+      <ConfirmModal
         isOpen={switchedTo !== null}
         title={switchedHasWallet ? 'Network switched' : `No wallet on ${switchedTo}`}
         message={
