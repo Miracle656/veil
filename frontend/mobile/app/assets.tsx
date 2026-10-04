@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import { errorMessage } from '../lib/errorMessage';
 import { AssetRow } from '../components/AssetRow';
@@ -69,6 +69,10 @@ export default function AssetsScreen() {
   const [busyCode, setBusyCode] = useState<string | null>(null);
   const [removingAsset, setRemovingAsset] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; tone: 'success' | 'error' } | null>(null);
+  // The page has always advertised a pull-to-refresh it did not have: the old
+  // ScrollView was plain, so the gesture did nothing and the only way to retry
+  // a failed load was to leave the screen and come back.
+  const [refreshing, setRefreshing] = useState(false);
 
   const network = getNetworkName();
 
@@ -116,6 +120,15 @@ export default function AssetsScreen() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await load();
+    } finally {
+      setRefreshing(false);
+    }
   }, [load]);
 
   const held = useMemo(() => {
@@ -343,6 +356,9 @@ export default function AssetsScreen() {
       title="Assets"
       description="Which assets this wallet can hold, and the XLM each one locks."
       testID="assets-screen"
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+      }
     >
       {renderBody()}
     </ScreenScaffold>

@@ -20,9 +20,10 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Horizon } from '@stellar/stellar-sdk';
+import { Horizon, StrKey } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
+import { getFeePayerAddress } from './activity';
 
 /** AsyncStorage key holding the active wallet's public key (shared with backupFile). */
 export const WALLET_PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
@@ -324,6 +325,24 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   // build-time default froze this to testnet Horizon, so on mainnet the
   // portfolio screen queried the wrong chain and showed an empty portfolio.
   // Each network's own env overrides still apply (see lib/network.ts).
+  // A smart wallet's address is a CONTRACT, and Horizon cannot load one — it
+  // only knows classic accounts. Asking it about a C-address fails on every
+  // attempt, which is why this screen showed the bare word "Unknown" on exactly
+  // the wallets it was built for, and kept failing after the retry landed.
+  //
+  // Trustlines are a property of the classic account regardless: a contract
+  // holds issued assets as SAC contract storage and needs no trustline at all.
+  // So the account to read is the fee payer, which is what `loadHoldings` has
+  // been resolving on the dashboard all along.
+  let effective = publicKey;
+  if (StrKey.isValidContract(publicKey)) {
+    const feePayer = await getFeePayerAddress();
+    // No fee payer stored means no classic account exists for this wallet yet,
+    // so there are no trustlines to report — empty, not broken.
+    if (!feePayer) return [];
+    effective = feePayer;
+  }
+
   const server = new Horizon.Server(getNetwork().horizonUrl);
 
   // Retry once, and say what failed.
@@ -336,7 +355,7 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   let last: unknown = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const account = await server.loadAccount(publicKey);
+      const account = await server.loadAccount(effective);
       return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
     } catch (err) {
       // Definitive, not a transport failure: the account simply is not funded.
@@ -350,5 +369,5 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
     '[assets] loadAccount failed twice:',
     last instanceof Error ? `${last.name}: ${last.message}` : last,
   );
-  throw new Error('Could not reach the network to read your assets. Pull to refresh.');
+  throw new Error('Could not reach the network to read your assets.');
 }
