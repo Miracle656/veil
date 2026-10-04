@@ -27,6 +27,38 @@ function fmtAmount(raw: string): string {
  * a token badge, name, on-chain balance, and its value in the user's currency.
  * Mirrors the assets list every consumer wallet shows under the balance.
  */
+/**
+ * Last-known holdings, surviving the remount that unlocking causes.
+ *
+ * The balance card above already does this; the asset list did not, so every
+ * unlock dropped back to skeletons and refetched from nothing even though the
+ * answer had not changed.
+ *
+ * Scoped to the wallet ADDRESS for the same reason the card's is: after a reset
+ * or a new wallet, the previous wallet's assets must never paint under the new
+ * address.
+ */
+const lastKnown: { address: string | null; holdings: Holding[] | null } = {
+  address: null,
+  holdings: null,
+};
+
+export type AssetsView = 'loading' | 'empty' | 'error' | 'list';
+
+/**
+ * Which of the four states the card is in.
+ *
+ * The distinction this exists to protect: `null` holdings means **not known
+ * yet**, and an empty array means **known, and empty**. Collapsing the two is
+ * what put "No assets yet. Fund this wallet to get started." in front of a
+ * funded wallet every time the app unlocked.
+ */
+export function assetsView(holdings: Holding[] | null, loadError: boolean): AssetsView {
+  if (holdings === null) return 'loading';
+  if (holdings.length > 0) return 'list';
+  return loadError ? 'error' : 'empty';
+}
+
 export function AssetsList({
   address,
   fallbackXlm = null,
@@ -44,7 +76,9 @@ export function AssetsList({
   const { mask } = useHiddenAmounts();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [holdings, setHoldings] = useState<Holding[] | null>(null);
+  const [holdings, setHoldings] = useState<Holding[] | null>(() =>
+    address && lastKnown.address === address ? lastKnown.holdings : null,
+  );
   const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
