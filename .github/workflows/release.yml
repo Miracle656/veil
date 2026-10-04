@@ -46,7 +46,7 @@ jobs:
             echo "::group::$pkg"
             (
               cd "$pkg"
-              npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+              npm ci --no-audit --no-fund || { echo "::warning::npm ci failed; falling back to npm install"; npm install --no-audit --no-fund; }
               npm run build --if-present
             )
             echo "::endgroup::"

@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { recordFeePayerSource } from './feePayerSource';
 import { getNetwork } from './network';
 import { evaluatePrf } from './passkey';
 import type { PrfOutcome } from './prfOutcome';
@@ -222,7 +223,7 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
     }
   }
 
-  await setSignerSecret(derived.secret());
+  await Promise.all([setSignerSecret(derived.secret()), recordFeePayerSource(derived.publicKey(), 'prf')]);
   const pubHex = await getPasskeyPublicKey().catch(() => null);
   const pub = pubHex && /^[0-9a-fA-F]{130}$/.test(pubHex) ? new Uint8Array(Buffer.from(pubHex, 'hex')) : null;
   void writeBreadcrumbs(derived.secret(), walletAddress, pub).catch(() => undefined);

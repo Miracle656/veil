@@ -6,6 +6,7 @@
  * dangerous callback schemes).
  */
 
+import { Asset, Networks } from '@stellar/stellar-sdk'
 import {
   buildSep7PayUri,
   parseSep7PayUri,
@@ -151,6 +152,29 @@ describe('round-trip', () => {
     expect(parsed.assetIssuer).toBe(params.assetIssuer)
     expect(parsed.memo).toBe(params.memo)
     expect(parsed.callback).toBe(params.callback)
+  })
+})
+
+describe('USDT0: the issuer is carried end to end (#791)', () => {
+  const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
+
+  it('refuses a request for USDT0 that names no issuer', () => {
+    expect(() => parseSep7PayUri(`${SEP7_SCHEME}pay?destination=${DEST}&asset_code=USDT0`))
+      .toThrow(/asset_issuer is required/)
+    expect(() => buildSep7PayUri({ destination: DEST, assetCode: 'USDT0' })).toThrow(Sep7Error)
+  })
+
+  it('keeps the issuer through build → QR → parse', () => {
+    const uri = buildSep7PayUri({ destination: DEST, amount: '25', assetCode: 'USDT0', assetIssuer: USDT0_ISSUER })
+    expect(uri).toContain(`asset_issuer=${USDT0_ISSUER}`)
+    const parsed = parseSep7QrValue(uri)
+    expect(parsed).toMatchObject({ assetCode: 'USDT0', assetIssuer: USDT0_ISSUER, amount: '25' })
+  })
+
+  it('derives the SAC from code:issuer rather than trusting a pasted one', () => {
+    // Derived, then compared against the value checked on mainnet Horizon.
+    expect(new Asset('USDT0', USDT0_ISSUER).contractId(Networks.PUBLIC))
+      .toBe('CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF')
   })
 })
 

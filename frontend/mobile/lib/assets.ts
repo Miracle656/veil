@@ -1,4 +1,13 @@
 /**
+ * Verified asset registry (V176) mapping short token keys to exact issuer
+ * addresses and metadata.
+ *
+ * A code alone is not an asset: mainnet has eight assets called USDT0 and seven
+ * are impostors. Anything that names, badges, prices or classifies an asset
+ * must go through `verifiedAsset`, which checks the issuer, not just the code.
+ */
+
+/**
  * Portfolio (held-asset) helpers for the mobile wallet — the native counterpart
  * of the web wallet's assets view (`frontend/wallet/app/assets/page.tsx`) and
  * its `parseTrustlines` (`frontend/wallet/lib/trustlines.ts`).
@@ -13,11 +22,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon } from '@stellar/stellar-sdk';
 
+import { getNetwork } from './network';
+
 /** AsyncStorage key holding the active wallet's public key (shared with backupFile). */
 export const WALLET_PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
-
-const HORIZON_URL =
-  process.env['EXPO_PUBLIC_HORIZON_URL']?.trim() || 'https://horizon-testnet.stellar.org';
 
 /** Subset of a Horizon balance entry we depend on. */
 export interface HorizonBalanceLike {
@@ -102,6 +110,11 @@ export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'm
   return asset.issuer;
 }
 
+/**
+ * True when `issuer` is the registered issuer for `code` on `network`. The
+ * USDC branch accepts both Circle's mainnet issuer and the SDF test anchor's,
+ * matching how prices are quoted — same contract as the web wallet.
+ */
 export function isRegisteredIssuer(code: string, issuer: string, network: 'mainnet' | 'testnet' = 'mainnet'): boolean {
   // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
   // for testnet returns null and every branch below becomes unreachable.
@@ -117,6 +130,57 @@ export function isRegisteredIssuer(code: string, issuer: string, network: 'mainn
     return false;
   }
   return asset.issuer === issuer;
+}
+
+/**
+ * Soroban SAC contract IDs for registry assets, per network. Keyed by the
+ * *registered* code, so a contract ID resolved through this map always belongs
+ * to a verified issuer — the whole point of the map. Mainnet values are the
+ * canonical SACs (USDT0's also lives in the registry as `sacContractId`);
+ * testnet's is the SDF anchor's USDC.
+ */
+export const KNOWN_SAC_CONTRACT_IDS: Record<'mainnet' | 'testnet', Record<string, string>> = {
+  mainnet: {
+    USDC: 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75',
+    USDT0: USDT0_MAINNET_SAC,
+  },
+  testnet: {
+    USDC: 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA',
+  },
+};
+
+/**
+ * The Soroban SAC contract ID for a registered asset's issuer, or null when the
+ * code is not registered on that network or its SAC is not pinned here.
+ * Resolved from constants only — no SDK import (the web counterpart of this
+ * module must stay import-free for the parity harness); a new registry entry
+ * needs its SAC added to `KNOWN_SAC_CONTRACT_IDS` (or a `sacContractId` on its
+ * registry entry) rather than deriving one at runtime. Mirrors
+ * `frontend/wallet/lib/assets.ts` — edit both together.
+ */
+export function sacContractIdForCode(code: string, network: 'mainnet' | 'testnet'): string | null {
+  const asset = getRegisteredAsset(code, network);
+  if (!asset) return null;
+  if (asset.sacContractId && network === 'mainnet') return asset.sacContractId;
+  return KNOWN_SAC_CONTRACT_IDS[network][asset.code] ?? null;
+}
+
+/**
+ * The registry entry for an asset, but only when BOTH its code (exactly — codes
+ * are case-sensitive) and its issuer are the registered ones. A code match on
+ * its own is not an asset match: mainnet has eight assets called USDT0 and
+ * seven are impostors, so anything that names or badges an asset goes through
+ * here rather than looking the code up.
+ */
+export function verifiedAsset(
+  code: string,
+  issuer: string | null | undefined,
+  network: 'mainnet' | 'testnet',
+): RegisteredAsset | null {
+  if (!issuer) return null;
+  const registered = ASSET_REGISTRY[code.toUpperCase()];
+  if (!registered || registered.code !== code) return null;
+  return isRegisteredIssuer(code, issuer, network) ? registered : null;
 }
 
 /** A single non-native asset held by the wallet. */
@@ -164,7 +228,11 @@ function isAccountNotFound(err: unknown): boolean {
  * an error; any other failure propagates so the screen can surface it.
  */
 export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
-  const server = new Horizon.Server(HORIZON_URL);
+  // Read at call time from the ACTIVE network, not from a module constant: a
+  // build-time default froze this to testnet Horizon, so on mainnet the
+  // portfolio screen queried the wrong chain and showed an empty portfolio.
+  // Each network's own env overrides still apply (see lib/network.ts).
+  const server = new Horizon.Server(getNetwork().horizonUrl);
   try {
     const account = await server.loadAccount(publicKey);
     return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);

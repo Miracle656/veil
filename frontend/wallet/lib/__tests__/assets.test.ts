@@ -10,6 +10,10 @@ import {
   getAssetIssuer,
   getRegisteredAsset,
   isRegisteredIssuer,
+  getAssetControlDisclosure,
+  fetchAssetDisclosure,
+  fetchIssuerFlags,
+  DISCLOSURE_UNAVAILABLE,
 } from '../assets'
 
 describe('Verified Asset Registry - USDT0 (Issue #787)', () => {
@@ -62,3 +66,96 @@ describe('Verified Asset Registry - USDT0 (Issue #787)', () => {
     }
   })
 })
+
+describe('USDT0 Freeze and Clawback Disclosure (Issue #789)', () => {
+  it('renders disclosure when both revocable and clawback are enabled', () => {
+    const disclosure = getAssetControlDisclosure({
+      auth_revocable: true,
+      auth_clawback_enabled: true,
+    })
+    expect(disclosure).toBe(
+      'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.',
+    )
+  })
+
+  it('renders clawback-only disclosure', () => {
+    const disclosure = getAssetControlDisclosure({
+      auth_clawback_enabled: true,
+      auth_revocable: false,
+    })
+    expect(disclosure).toBe(
+      'The issuer can take this balance back, and this is a property of the asset, not of Veil.',
+    )
+  })
+
+  it('renders revocable-only disclosure', () => {
+    const disclosure = getAssetControlDisclosure({
+      auth_revocable: true,
+      auth_clawback_enabled: false,
+    })
+    expect(disclosure).toBe(
+      'The issuer can freeze this balance, and this is a property of the asset, not of Veil.',
+    )
+  })
+
+  it('returns null when neither flag is set', () => {
+    expect(getAssetControlDisclosure({ auth_revocable: false, auth_clawback_enabled: false })).toBeNull()
+    expect(getAssetControlDisclosure({})).toBeNull()
+    expect(getAssetControlDisclosure(null)).toBeNull()
+    expect(getAssetControlDisclosure(undefined)).toBeNull()
+  })
+
+  it('dynamically fetches flags from Horizon issuer account', async () => {
+    const mockServer = {
+      loadAccount: jest.fn(async (id: string) => {
+        if (id === USDT0_MAINNET_ISSUER) {
+          return {
+            flags: {
+              auth_required: false,
+              auth_revocable: true,
+              auth_clawback_enabled: true,
+            },
+          }
+        }
+        return {
+          flags: {
+            auth_required: false,
+            auth_revocable: false,
+            auth_clawback_enabled: false,
+          },
+        }
+      }),
+    }
+
+    const usdt0Disc = await fetchAssetDisclosure(mockServer, USDT0_MAINNET_ISSUER)
+    expect(usdt0Disc).toBe(
+      'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.',
+    )
+    expect(mockServer.loadAccount).toHaveBeenCalledWith(USDT0_MAINNET_ISSUER)
+
+    // A real (StrKey-valid) USDT0 impostor issuer on mainnet, standing in here
+    // for "some other issuer". The mock hands it clear flags; on live mainnet
+    // this account actually has auth_revocable set, so do not read the null
+    // below as a statement about that issuer.
+    const realImpostor = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
+    const impostorDisc = await fetchAssetDisclosure(mockServer, realImpostor)
+    expect(impostorDisc).toBeNull()
+  })
+
+  it('does not fail open when the issuer account cannot be read', async () => {
+    const deadServer = {
+      loadAccount: jest.fn(async () => {
+        throw new Error('Request failed with status code 429')
+      }),
+    }
+
+    // `null` means "the flags are clear". An unreachable Horizon must not be
+    // indistinguishable from that, or the disclosure vanishes while the Add
+    // trustline button stays live.
+    await expect(fetchAssetDisclosure(deadServer, USDT0_MAINNET_ISSUER)).resolves.toBe(
+      DISCLOSURE_UNAVAILABLE,
+    )
+    await expect(fetchIssuerFlags(deadServer, USDT0_MAINNET_ISSUER)).resolves.toBeNull()
+  })
+})
+

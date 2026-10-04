@@ -1,18 +1,10 @@
 appId: xyz.veil.wallet
 ---
-# Reach the dashboard tab from a wiped install.
+# Reach the dashboard from a wiped install.
 #
-# `app/index.tsx` only routes to /dashboard once a wallet address exists in
-# secure storage, and the placeholder create-wallet screen does not persist one
-# yet (backlog #25). A deep link into the tab group is the way in until it does:
-# `/send` is `(tabs)/send`, so opening it mounts the tab navigator, and the tab
-# bar carries the rest.
-- openLink: "veil://send"
-- extendedWaitUntil:
-    visible:
-      id: "send-screen"
-    timeout: 20000
-- tapOn: "Dashboard"
-- runFlow: skip-tutorial.yaml
-- assertVisible:
-    id: "dashboard-screen"
+# There is no shortcut any more, and none is needed: registration persists a
+# real wallet, so the dashboard is reached the way a user reaches it — onboard,
+# then Continue. (The previous route here deep-linked `/send` purely because it
+# mounted the tab navigator; Send is a root push route now, and `/dashboard` is
+# not in the deep-link forward list, so neither path exists.)
+- runFlow: create-testnet-wallet.yaml

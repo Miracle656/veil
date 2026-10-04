@@ -16,7 +16,8 @@ jest.mock('../context', () => ({
 
 const mockUseVeilContext = useVeilContext as jest.MockedFunction<typeof useVeilContext>;
 
-const FEE_PAYER = 'SFEEPAYERSECRET';
+// A signer callback: the hook forwards it untouched and never sees a secret.
+const FEE_PAYER = { publicKey: 'GFEEPAYER', signTransaction: async (xdr: string) => xdr };
 
 function setWallet(sendPayment: jest.Mock) {
   mockUseVeilContext.mockReturnValue({

@@ -13,5 +13,6 @@ export const FRIENDBOT_URL = isMainnet ? null : 'https://friendbot.stellar.org'
 /** localStorage keys, shared with the other Veil example apps. */
 export const STORAGE = {
   keyId: 'invisible_wallet_key_id',
+  publicKey: 'veil_passkey_public_key',
   feePayerSecret: 'veil_fee_payer_secret',
 } as const

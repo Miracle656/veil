@@ -17,10 +17,8 @@
 import { rejectionFromResult } from './networkErrors';
 import {
   Asset,
-  BASE_FEE,
   Contract,
   Horizon,
-  Memo,
   Operation,
   StrKey,
   TransactionBuilder,
@@ -32,6 +30,9 @@ import {
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
 import { horizonErrorMessage } from './horizonError';
+import { buildStellarMemo, validateMemo } from './sep7';
+import { validateMemoText, MAX_MEMO_TEXT_BYTES, MEMO_EXCEEDS_LIMIT_MESSAGE } from './memo';
+import { assertFeePayerCanCoverFee } from './feePayerCheck';
 
 // All endpoints follow the ACTIVE network — module-level env consts froze
 // these to testnet and sent mainnet payments at testnet Horizon.
@@ -65,6 +66,7 @@ export interface WalletSigner {
 export interface SendValidation {
   recipient?: string;
   amount?: string;
+  memo?: string;
 }
 
 export interface SendResult {
@@ -81,8 +83,8 @@ export function toStroops(amount: string): bigint {
   return BigInt(Math.round(parseFloat(amount) * STROOPS_PER_XLM));
 }
 
-/** Validates a recipient + amount. Returns an empty object when both are valid. */
-export function validateSend(recipient: string, amount: string): SendValidation {
+/** Validates a recipient + amount + optional memo and memoType. Returns an empty object when all are valid. */
+export function validateSend(recipient: string, amount: string, memo?: string, memoType?: string): SendValidation {
   const errors: SendValidation = {};
 
   const to = recipient.trim();
@@ -93,6 +95,13 @@ export function validateSend(recipient: string, amount: string): SendValidation 
   const value = parseFloat(amount);
   if (isNaN(value) || value <= 0) {
     errors.amount = 'Enter an amount greater than zero.';
+  }
+
+  if (memo && memo.trim()) {
+    const memoErr = memoType ? validateMemo(memo, memoType) : validateMemoText(memo);
+    if (memoErr) {
+      errors.memo = memoErr;
+    }
   }
 
   return errors;
@@ -142,13 +151,17 @@ export async function sendPayment(
   signer: WalletSigner,
   memo?: string,
   asset?: { code: string; issuer: string | null },
+  memoType?: string,
 ): Promise<SendResult> {
-  const errors = validateSend(recipient, amount);
+  const errors = validateSend(recipient, amount, memo, memoType);
   if (errors.recipient) throw new Error(errors.recipient);
   if (errors.amount) throw new Error(errors.amount);
+  if (errors.memo) throw new Error(errors.memo);
 
   const to = recipient.trim();
   const memoText = memo?.trim();
+
+  await assertFeePayerCanCoverFee(signer.publicKey);
 
   // Native XLM unless a classic (issued) asset is supplied.
   const sendAsset =
@@ -189,9 +202,11 @@ export async function sendPayment(
           : Operation.createAccount({ destination: to, startingBalance: amount.trim() }),
       )
       .setTimeout(30);
-    // Classic memos: only attach for text that fits the 28-byte limit.
-    if (memoText && new TextEncoder().encode(memoText).length <= 28) {
-      builder.addMemo(Memo.text(memoText));
+    if (memoText) {
+      const stellarMemo = buildStellarMemo(memoText, memoType);
+      if (stellarMemo) {
+        builder.addMemo(stellarMemo);
+      }
     }
     const tx = builder.build();
     signer.sign(tx);

@@ -1,0 +1,85 @@
+name: Asset Registry Online Verification
+
+# Live check of the asset registry against Horizon and each issuer's stellar.toml (#794). It runs daily and
+# on demand, never on the push path, so a third party being down cannot turn a contributor's PR red. The fast
+# offline checks (StrKey, SAC derivation, wallet/mobile parity) are `npm run verify:assets:offline`.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      warn_only:
+        description: 'Run in warn-only mode (do not fail job)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify-assets-live:
+    name: Verify Asset Registry Against Live Network
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      # The verifier imports @stellar/stellar-sdk and toml, which are root dependencies.
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Run live asset verification
+        id: live-verify
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.warn_only }}" = "true" ]; then
+            FLAGS="--warn-only"
+          fi
+          node scripts/verify-assets-online.mjs $FLAGS --diff-file diff.txt 2>&1 | tee summary.txt
+        shell: bash
+
+      - name: Publish Step Summary
+        if: always()
+        run: |
+          echo "## Asset Registry Live Verification Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f summary.txt ]; then
+            cat summary.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
+        shell: bash
+
+      - name: Open or update alert issue on scheduled failure
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # diff.txt is only written for a real verification failure. Without it the job failed because a
+          # third party was unreachable, which is not a registry problem and does not get an issue.
+          if [ ! -f diff.txt ]; then
+            echo "No failure report was produced; not filing an issue."
+            exit 0
+          fi
+
+          # One open issue at a time: a failure that takes days to fix must not file a new issue daily.
+          EXISTING=$(gh issue list --state open --label "area:ci" \
+            --search "Asset registry live verification failed in:title" \
+            --json number --jq '.[0].number // empty')
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create \
+              --title "[ALERT] Asset registry live verification failed against network" \
+              --body-file diff.txt \
+              --label "area:ci,epic:usdt0"
+          else
+            gh issue comment "$EXISTING" --body-file diff.txt
+          fi
+        shell: bash
