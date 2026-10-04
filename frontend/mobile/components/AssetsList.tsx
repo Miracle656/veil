@@ -43,6 +43,12 @@ const lastKnown: { address: string | null; holdings: Holding[] | null } = {
   holdings: null,
 };
 
+/** Keep a load for the next mount. Switching address discards the old one. */
+function remember(address: string, holdings: Holding[]): void {
+  lastKnown.address = address;
+  lastKnown.holdings = holdings;
+}
+
 export type AssetsView = 'loading' | 'empty' | 'error' | 'list';
 
 /**
@@ -82,25 +88,38 @@ export function AssetsList({
   const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
-    if (!address) {
-      setHoldings([]);
-      return;
-    }
+    // No address yet means "not known yet", which is what `null` holdings
+    // already says — so leave the state alone and keep the skeleton up.
+    //
+    // This used to `setHoldings([])`, and an empty array is how this component
+    // asserts that a wallet HAS NOTHING. The dashboard reads the stored address
+    // asynchronously, so for the first frames after an unlock it passes null,
+    // and the card answered a question it had not asked yet: "No assets yet.
+    // Fund this wallet to get started." in front of a funded wallet.
+    if (!address) return;
     try {
-      setHoldings(await loadHoldings(address));
+      const next = await loadHoldings(address);
+      remember(address, next);
+      setHoldings(next);
       setLoadError(false);
     } catch (err) {
       console.warn('[assets] loadHoldings failed:', err instanceof Error ? `${err.name}: ${err.message}` : err);
       // Fall back to the dashboard's own balance figure (fetched through a
       // different, independently-working path) rather than showing nothing.
       if (fallbackXlm) {
-        setHoldings([
+        const fallback: Holding[] = [
           { code: 'XLM', name: 'Lumens', issuer: null, balance: fallbackXlm, usd: fallbackUsd, native: true },
-        ]);
+        ];
+        remember(address, fallback);
+        setHoldings(fallback);
         setLoadError(false);
       } else {
-        setHoldings([]);
+        // Flag the error, but do not overwrite holdings we already have. An
+        // empty array here would replace a correct list with "no assets"
+        // because one refresh could not reach the network — and `assetsView`
+        // keeps showing a stale list over an error for the same reason.
         setLoadError(true);
+        setHoldings((prev) => prev ?? []);
       }
     }
   }, [address, fallbackXlm, fallbackUsd]);
@@ -116,10 +135,15 @@ export function AssetsList({
     }, [load]),
   );
 
+  // One source of truth for which state is on screen, so the loading/empty
+  // distinction lives in a tested function rather than in a chain of ternaries
+  // where `null` and `[]` read the same.
+  const view = assetsView(holdings, loadError);
+
   return (
     <View style={styles.card}>
       <Text style={styles.heading}>Assets</Text>
-      {holdings === null ? (
+      {view === 'loading' ? (
         // Shaped like the rows that replace it — icon, name over code, balance
         // over fiat — so the card keeps its height and nothing jumps on load.
         <View>
@@ -139,12 +163,12 @@ export function AssetsList({
             </View>
           ))}
         </View>
-      ) : holdings.length === 0 ? (
-        <Text style={styles.empty}>
-          {loadError ? "Couldn't load assets — pull to refresh." : 'No assets yet. Fund this wallet to get started.'}
-        </Text>
+      ) : view === 'error' ? (
+        <Text style={styles.empty}>Couldn’t load assets — pull to refresh.</Text>
+      ) : view === 'empty' ? (
+        <Text style={styles.empty}>No assets yet. Fund this wallet to get started.</Text>
       ) : (
-        holdings.map((h, i) => (
+        (holdings ?? []).map((h, i) => (
           <Pressable
             key={`${h.code}-${h.issuer ?? 'native'}`}
             onPress={() => router.push(`/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`)}

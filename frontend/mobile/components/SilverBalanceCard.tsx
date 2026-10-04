@@ -15,10 +15,11 @@ import { EyeIcon, EyeOffIcon, PaperPlaneIcon, ReceiveIcon } from './icons';
 const INK = '#0F0F0F';
 const INK_55 = 'rgba(15,15,15,0.55)';
 const INK_60 = 'rgba(15,15,15,0.6)';
-// Tall enough for the fullest state: header, the 44pt amount, the sub line, the
-// reserve note that a funded account adds, and the action row. At 208 the note
-// had no room and the absolutely-positioned buttons simply covered it.
-const CARD_HEIGHT = 240;
+// Header, the 44pt amount, the sub line, and the action row — and nothing more.
+// It went to 240 to fit a reserve note that no longer lives here; with the note
+// gone that height was dead space, since `actions` pins to the bottom with
+// `marginTop: 'auto'` and the gap opens above it.
+const CARD_HEIGHT = 208;
 
 export type SilverBalanceCardProps = {
   /** Native balance string (XLM), or undefined while loading. */
