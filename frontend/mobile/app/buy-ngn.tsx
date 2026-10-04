@@ -127,6 +127,26 @@ export default function BuyWithNairaScreen() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  /**
+   * Hand the one-time check to `/verify`, which both naira flows share.
+   *
+   * It used to be five stacked inputs on this screen, which meant Airtime
+   * either grew its own copy or — as it did — skipped the rule entirely. A NIN
+   * also deserves a screen of its own, with room to say what it is for and that
+   * we do not keep it; it does not get that sandwiched between a phone number
+   * and a Verify button.
+   *
+   * `replace`, not `push`: there is nothing on this screen worth coming back
+   * to before verification, and /verify sends them here itself when it is done.
+   */
+  const goVerify = useCallback(() => {
+    router.replace({
+      pathname: '/verify',
+      params: { returnTo: '/buy-ngn', label: 'Buy with naira', summary: 'Buying XLM with naira' },
+    });
+  }, [router]);
+
+
   // ── Who we are, to Linq ────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
@@ -137,7 +157,7 @@ export default function BuyWithNairaScreen() {
         try {
           const parsed = JSON.parse(stored) as { customerRef: string; verified: boolean };
           setCustomerRef(parsed.customerRef);
-          if (!parsed.verified) setStep('verify');
+          if (!parsed.verified) goVerify();
           return;
         } catch {
           /* fall through and re-derive */
@@ -149,12 +169,12 @@ export default function BuyWithNairaScreen() {
       const ref = await getCustomerRef().catch(() => null);
       if (cancelled) return;
       setCustomerRef(ref);
-      setStep('verify');
+      goVerify();
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [goVerify]);
 
   // ── Where Linq delivers ───────────────────────────────────────────────────
   useEffect(() => {

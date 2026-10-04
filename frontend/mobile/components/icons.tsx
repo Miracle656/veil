@@ -530,3 +530,14 @@ export function UnshieldIcon({ size, color = 'currentColor', strokeWidth = DEFAU
     </Base>
   );
 }
+
+/** A circled "i" — used beside an explanation, never beside an error. */
+export function InfoIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="12" cy="12" r="9" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M12 11v5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <Path d="M12 8h.01" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </Base>
+  );
+}

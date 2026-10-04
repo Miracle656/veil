@@ -19,7 +19,7 @@ import { useTheme } from '../hooks/useTheme';
 import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { NIGERIAN_BANKS, bankName } from '../lib/nigerianBanks';
+import { NIGERIAN_BANKS, bankName, bankSlug } from '../lib/nigerianBanks';
 import {
   OfframpTimeout,
   OfframpUnavailable,
@@ -42,6 +42,7 @@ import { loadHoldings, type Holding } from '../lib/holdings';
 import { errorMessage } from '../lib/errorMessage';
 import { NotEnoughToSend, spendAsset } from '../lib/spendAsset';
 import { useWallet } from '../components/WalletProvider';
+import { BankMark } from '../components/BankMark';
 
 /** Circle's USDC on mainnet — the only asset Linq's Stellar leg credits. */
 const USDC_MAINNET_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
@@ -596,7 +597,10 @@ export default function CashOutScreen() {
                 // worse, leaving them on screen reads as "still choosing".
                 // The answer stays visible; changing it is one tap away.
                 <View style={styles.bankChosen}>
-                  <Text style={styles.bankName}>{bankName(bankCode)}</Text>
+                  <View style={styles.bankChosenLeft}>
+                    <BankMark name={bankName(bankCode)} slug={bankSlug(bankCode)} size={28} />
+                    <Text style={styles.bankName}>{bankName(bankCode)}</Text>
+                  </View>
                   <Pressable
                     onPress={() => {
                       setBankCode('');
@@ -637,6 +641,7 @@ export default function CashOutScreen() {
                           pressed && styles.pressed,
                         ]}
                       >
+                        <BankMark name={b.name} slug={b.slug} size={32} />
                         <Text style={styles.bankName}>{b.name}</Text>
                       </Pressable>
                     ))}
@@ -983,7 +988,7 @@ const createStyles = (colors: ThemeColors) =>
     bankRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      gap: 12,
       paddingVertical: 13,
     },
     bankRowDivider: { borderTopWidth: 1, borderTopColor: colors.border },
@@ -994,6 +999,7 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'space-between',
       paddingVertical: 14,
     },
+    bankChosenLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
     changeHit: { paddingVertical: 4, paddingHorizontal: 6, marginRight: -6 },
     changeLink: {
       color: colors.accentText,

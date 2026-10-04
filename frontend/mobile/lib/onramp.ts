@@ -143,6 +143,53 @@ export async function getCustomerRef(): Promise<string | null> {
   return ref;
 }
 
+/** Whether this device has completed the one-time NIN check. */
+const VERIFIED_KEY = 'veil_ngn_verified';
+
+/**
+ * Has this person verified yet?
+ *
+ * One answer for every naira flow. Buying and paying a bill are the same
+ * person under the same Nigerian rule, so they cannot each keep their own idea
+ * of whether that rule has been met — airtime did not check at all, and a
+ * person who had never verified could reach Linq's "has not completed KYC"
+ * error by paying a bill, which is a worse way to find out.
+ *
+ * Reads the legacy `{ customerRef, verified }` blob too, so someone who
+ * verified through the buy screen before this key existed is not asked again.
+ * Being asked twice is not merely annoying here: Linq allows one verified
+ * customer per NIN forever, so a second attempt is refused outright.
+ */
+export async function isNairaVerified(): Promise<boolean> {
+  const flag = await AsyncStorage.getItem(VERIFIED_KEY).catch(() => null);
+  if (flag === 'true') return true;
+
+  const legacy = await AsyncStorage.getItem(LEGACY_CUSTOMER_KEY).catch(() => null);
+  if (legacy) {
+    try {
+      const parsed = JSON.parse(legacy) as { verified?: unknown };
+      if (parsed.verified === true) {
+        await AsyncStorage.setItem(VERIFIED_KEY, 'true').catch(() => undefined);
+        return true;
+      }
+    } catch {
+      // Unparseable: treat as unverified rather than guessing.
+    }
+  }
+  return false;
+}
+
+/**
+ * Record the result of the one-time check.
+ *
+ * Only ever called with the answer Linq gave. Never set optimistically: a
+ * device that believes it is verified when Linq disagrees cannot recover, since
+ * the one NIN that would verify it has already been spent.
+ */
+export async function setNairaVerified(verified: boolean): Promise<void> {
+  await AsyncStorage.setItem(VERIFIED_KEY, verified ? 'true' : 'false').catch(() => undefined);
+}
+
 // ─── Customer ────────────────────────────────────────────────────────────────
 
 export interface NairaCustomer {

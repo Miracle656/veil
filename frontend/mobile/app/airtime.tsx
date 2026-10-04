@@ -61,6 +61,7 @@ import { NotEnoughToSend, spendAsset } from '../lib/spendAsset';
 import {
   getBillStatus,
   getCustomerRef,
+  isNairaVerified,
   getOnrampRate,
   payBill,
   type NairaCoin,
@@ -198,6 +199,32 @@ export default function AirtimeScreen() {
   const code = coin.toUpperCase();
   const cost = rate && ngn > 0 ? ngn / rate : 0;
   const phoneDigits = phone.replace(/\D/g, '');
+
+  /**
+   * The one-time NIN check, which this screen never used to ask for.
+   *
+   * Linq refuses a bill from an unverified customer, so the old path let
+   * someone fill in a phone number and an amount, tap through to confirm, and
+   * meet "customer … has not completed KYC" at the moment they expected a
+   * payment — which is the worst place to learn a rule exists. The check now
+   * happens before the summary, and `/verify` is handed enough to bring them
+   * back to exactly this airtime purchase.
+   */
+  const continueFromForm = useCallback(async () => {
+    if (await isNairaVerified()) {
+      setStep('confirm');
+      return;
+    }
+    router.push({
+      pathname: '/verify',
+      params: {
+        returnTo: '/airtime',
+        label: 'Airtime',
+        summary: `Airtime · ₦${ngn.toLocaleString('en-NG')} to ${phone}`,
+      },
+    });
+  }, [router, ngn, phone]);
+
   const phoneValid = phoneDigits.length === 11 && phoneDigits.startsWith('0');
 
   const pay = useCallback(async () => {
@@ -389,7 +416,7 @@ export default function AirtimeScreen() {
             </View>
 
             <Pressable
-              onPress={() => setStep('confirm')}
+              onPress={() => void continueFromForm()}
               disabled={!phoneValid || ngn <= 0 || rateState !== 'ready'}
               style={({ pressed }) => [
                 styles.primaryBtn,
