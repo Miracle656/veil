@@ -5,7 +5,7 @@ import { useRouter, type Href } from 'expo-router';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { GridIcon, SwapVerticalIcon, type IconProps } from './icons';
+import { CloseIcon, GridIcon, SwapVerticalIcon, type IconProps } from './icons';
 
 /**
  * The actions behind the tab bar's `+`.
@@ -140,6 +140,23 @@ export function MoreActionsSheet({
             </Pressable>
           ))}
         </Animated.View>
+
+        {/* The same button, now closing.
+
+            It sits where the bar's + is, at the same size, so opening the sheet
+            reads as the control changing rather than a new one appearing. It
+            lives inside the Modal because the bar itself is behind the backdrop
+            and would be dimmed with everything else. */}
+        <Animated.View style={[styles.closeWrap, { opacity: anim }]} pointerEvents="box-none">
+          <Pressable
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Close menu"
+            style={({ pressed }) => [styles.close, pressed && styles.pressed]}
+          >
+            <CloseIcon size={24} color={colors.onAccent} strokeWidth={2.6} />
+          </Pressable>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -197,6 +214,29 @@ const createStyles = (colors: ThemeColors) =>
       fontFamily: fontFamily.accent,
       fontSize: 10,
       letterSpacing: 0.8,
+    },
+    // Matches the bar's FAB: same 50pt circle, same accent, and sat so the two
+    // occupy the same spot. The bar's own geometry is paddingBottom 24 plus the
+    // pill's padding, with the circle lifted 28 out of it.
+    closeWrap: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 34,
+      alignItems: 'center',
+    },
+    close: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.accent,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.3,
+      shadowRadius: 12,
+      elevation: 8,
     },
     pressed: { opacity: 0.6 },
   });

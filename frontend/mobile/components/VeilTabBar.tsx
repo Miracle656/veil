@@ -75,22 +75,30 @@ export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
         <View style={[styles.bar, { backgroundColor: barBg }]}>
           {renderTab('dashboard')}
           {renderTab('earn')}
-          {/* Not a destination, and no longer Swap either.
+          {/* The action slot: raised, gold, and not a destination.
 
-              Swap sat in this slot as though it were one of the places the app
+              Swap used to sit here as though it were one of the places the app
               goes. It is something you do — and so is browsing dApps, which was
-              buried in Settings, a page about preferences. The slot now opens a
-              sheet holding both, so that list can grow without the bar growing
-              with it. Accent-coloured because it acts rather than navigates. */}
-          <Tab
-            label="More"
-            Icon={PlusIcon}
-            focused={false}
-            tint={colors.accent}
-            colors={colors}
-            styles={styles}
+              buried in Settings, a page about preferences. This opens a sheet
+              holding both, and the list can grow without the bar growing.
+
+              Raised deliberately. The earlier objection to a FAB here was that
+              it gave *Swap* the weight of the app's primary action, which Swap
+              is not. A + makes no such claim: it opens a menu, and lifting it
+              is what tells you it does something rather than goes somewhere. */}
+          <Pressable
             onPress={() => setMoreOpen(true)}
-          />
+            accessibilityRole="button"
+            accessibilityLabel="More actions"
+            style={({ pressed }) => [styles.tab, pressed && styles.pressed]}
+          >
+            <View style={styles.fab}>
+              <PlusIcon size={24} color={colors.onAccent} strokeWidth={2.6} />
+            </View>
+            <Text style={[styles.label, styles.fabLabel]} numberOfLines={1}>
+              More
+            </Text>
+          </Pressable>
           {renderTab('agent')}
           {renderTab('settings')}
         </View>
@@ -179,6 +187,27 @@ const createStyles = (colors: ThemeColors) =>
     },
     labelActive: {
       fontFamily: fontFamily.bodySemiBold,
+    },
+    // Lifted clear of the pill. The bar sets no overflow, so the circle breaks
+    // its top edge instead of being clipped by it.
+    fab: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.accent,
+      marginTop: -28,
+      marginBottom: 2,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.3,
+      shadowRadius: 12,
+      elevation: 8,
+    },
+    fabLabel: {
+      fontFamily: fontFamily.bodySemiBold,
+      color: colors.accent,
     },
     pressed: {
       opacity: 0.6,

@@ -359,6 +359,21 @@ export function EarnIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_S
 }
 
 /** Plus — the universal pay/send action on the tab bar. */
+/** A close cross. Drawn rather than typed, so it has the same stroke weight
+ *  and optical centre as every other icon — `×` as text sits high and thin. */
+export function CloseIcon({ size, color = 'currentColor', strokeWidth = 2.2 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M6 6l12 12M18 6L6 18"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
 export function PlusIcon({ size, color = 'currentColor', strokeWidth = 2.2 }: IconProps) {
   return (
     <Base size={size}>
