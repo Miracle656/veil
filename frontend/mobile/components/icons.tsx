@@ -541,3 +541,13 @@ export function InfoIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_S
     </Base>
   );
 }
+
+/** Magnifier — the search affordance in a filter field. */
+export function SearchIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="11" cy="11" r="7" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M21 21l-4.3-4.3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </Base>
+  );
+}

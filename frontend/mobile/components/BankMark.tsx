@@ -4,7 +4,7 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { bankLogoUrl } from '../lib/nigerianBanks';
+import { bankInitials, bankLogoUrl, type NigerianBank } from '../lib/nigerianBanks';
 
 /**
  * A bank's mark in the payout picker — its logo, or its initial.
@@ -20,27 +20,25 @@ import { bankLogoUrl } from '../lib/nigerianBanks';
  * `lib/nigerianBanks.ts` about why the logo slug is a separate identifier.
  */
 export function BankMark({
-  name,
-  slug,
+  bank,
   size = 32,
 }: {
-  name: string;
-  slug?: string;
+  bank: Pick<NigerianBank, 'name' | 'slug' | 'short' | 'badge'>;
   size?: number;
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [failed, setFailed] = useState(false);
 
-  const uri = bankLogoUrl(slug);
-  const initial = name.trim().charAt(0).toUpperCase() || '?';
+  const uri = bankLogoUrl(bank.slug);
+  const initial = bankInitials(bank);
 
   return (
     <View
       style={[styles.disc, { width: size, height: size, borderRadius: size / 2 }]}
       accessible={false}
     >
-      <Text style={[styles.initial, { fontSize: size * 0.42 }]}>{initial}</Text>
+      <Text style={[styles.initial, { fontSize: size * (initial.length > 1 ? 0.34 : 0.42) }]}>{initial}</Text>
       {uri && !failed ? (
         <Image
           source={{ uri }}

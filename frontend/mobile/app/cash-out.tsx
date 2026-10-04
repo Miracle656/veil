@@ -19,7 +19,13 @@ import { useTheme } from '../hooks/useTheme';
 import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { NIGERIAN_BANKS, bankName, bankSlug } from '../lib/nigerianBanks';
+import {
+  NIGERIAN_BANKS,
+  POPULAR_BANKS,
+  bankName,
+  bankSlug,
+  highlight,
+} from '../lib/nigerianBanks';
 import {
   OfframpTimeout,
   OfframpUnavailable,
@@ -43,6 +49,7 @@ import { errorMessage } from '../lib/errorMessage';
 import { NotEnoughToSend, spendAsset } from '../lib/spendAsset';
 import { useWallet } from '../components/WalletProvider';
 import { BankMark } from '../components/BankMark';
+import { CloseIcon, SearchIcon } from '../components/icons';
 
 /** Circle's USDC on mainnet — the only asset Linq's Stellar leg credits. */
 const USDC_MAINNET_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
@@ -441,9 +448,19 @@ export default function CashOutScreen() {
 
 
   const stepNumber = step === 'amount' ? 1 : step === 'bank' ? 2 : 3;
-  const filteredBanks = NIGERIAN_BANKS.filter((b) =>
-    b.name.toLowerCase().includes(bankQuery.trim().toLowerCase()),
-  );
+  // Searching, as a state rather than a side effect of a non-empty box: it is
+  // what swaps the POPULAR chips for the results panel.
+  const query = bankQuery.trim().toLowerCase();
+  const searching = query !== '';
+  // Matched on the short name too, so typing "kuda" finds "Kuda Microfinance
+  // Bank" and "gt" finds GTBank.
+  const filteredBanks = searching
+    ? NIGERIAN_BANKS.filter(
+        (b) =>
+          b.name.toLowerCase().includes(query) ||
+          (b.short ?? '').toLowerCase().includes(query),
+      )
+    : [];
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -598,7 +615,10 @@ export default function CashOutScreen() {
                 // The answer stays visible; changing it is one tap away.
                 <View style={styles.bankChosen}>
                   <View style={styles.bankChosenLeft}>
-                    <BankMark name={bankName(bankCode)} slug={bankSlug(bankCode)} size={28} />
+                    <BankMark
+                      bank={{ name: bankName(bankCode), slug: bankSlug(bankCode) }}
+                      size={28}
+                    />
                     <Text style={styles.bankName}>{bankName(bankCode)}</Text>
                   </View>
                   <Pressable
@@ -616,36 +636,92 @@ export default function CashOutScreen() {
                 </View>
               ) : (
                 <>
-                  {/* A searchable list, not a wrap of chips. Fifteen banks as
-                      pills is a wall to scan; typing two letters is faster
-                      than reading all of them, and the list scales when more
-                      are added. */}
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={bankQuery}
-                    onChangeText={setBankQuery}
-                    placeholder="Search banks"
-                    placeholderTextColor={colors.textFaint}
-                    accessibilityLabel="Search banks"
-                  />
-                  {bankQuery.trim() === '' ? <Text style={styles.eyebrowSub}>POPULAR</Text> : null}
-                  <View>
-                    {filteredBanks.map((b, i) => (
+                  {/* Six chips, and a search box for the rest.
+                      Almost everyone banks with one of the six, so the common
+                      case is one tap and no typing. Listing all fifteen as rows
+                      made the common case a scan, and listing nothing until you
+                      type made it a guess. */}
+                  <View style={styles.searchRow}>
+                    <SearchIcon size={18} color={colors.textFaint} />
+                    <TextInput
+                      style={styles.searchInput}
+                      value={bankQuery}
+                      onChangeText={setBankQuery}
+                      placeholder="Search banks"
+                      placeholderTextColor={colors.textFaint}
+                      accessibilityLabel="Search banks"
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                    />
+                    {searching ? (
                       <Pressable
-                        key={b.code}
-                        onPress={() => setBankCode(b.code)}
+                        onPress={() => setBankQuery('')}
                         accessibilityRole="button"
-                        style={({ pressed }) => [
-                          styles.bankRow,
-                          i > 0 && styles.bankRowDivider,
-                          pressed && styles.pressed,
-                        ]}
+                        accessibilityLabel="Clear search"
+                        hitSlop={8}
+                        style={({ pressed }) => [styles.clearBtn, pressed && styles.pressed]}
                       >
-                        <BankMark name={b.name} slug={b.slug} size={32} />
-                        <Text style={styles.bankName}>{b.name}</Text>
+                        <CloseIcon size={11} color={colors.textSecondary} strokeWidth={2.4} />
                       </Pressable>
-                    ))}
+                    ) : null}
                   </View>
+
+                  {searching ? (
+                    /* The design floats this over the chips. Here it takes
+                       their place instead — they are mutually exclusive, so
+                       nothing is covered, and an absolutely-positioned panel
+                       inside a ScrollView gets clipped on Android for no gain. */
+                    <View style={styles.results}>
+                      {filteredBanks.length > 0 ? (
+                        filteredBanks.map((b) => (
+                          <Pressable
+                            key={b.code}
+                            onPress={() => {
+                              setBankCode(b.code);
+                              setBankQuery('');
+                            }}
+                            accessibilityRole="button"
+                            accessibilityLabel={b.name}
+                            style={({ pressed }) => [styles.resultRow, pressed && styles.resultOn]}
+                          >
+                            <BankMark bank={b} size={32} />
+                            <Text style={styles.resultName} numberOfLines={1}>
+                              {highlight(b.name, query).map((part, i) => (
+                                <Text key={i} style={part.hit ? styles.resultHit : undefined}>
+                                  {part.text}
+                                </Text>
+                              ))}
+                            </Text>
+                          </Pressable>
+                        ))
+                      ) : (
+                        <Text style={styles.noMatch}>
+                          No bank matches “{bankQuery.trim()}”. Try the short name, like GTBank or
+                          UBA.
+                        </Text>
+                      )}
+                    </View>
+                  ) : (
+                    <>
+                      <Text style={styles.popularEyebrow}>POPULAR</Text>
+                      <View style={styles.chipGrid}>
+                        {POPULAR_BANKS.map((b) => (
+                          <Pressable
+                            key={b.code}
+                            onPress={() => setBankCode(b.code)}
+                            accessibilityRole="button"
+                            accessibilityLabel={b.name}
+                            style={({ pressed }) => [styles.chip, pressed && styles.pressed]}
+                          >
+                            <BankMark bank={b} size={22} />
+                            <Text style={styles.chipLabel} numberOfLines={1}>
+                              {b.short ?? b.name}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </>
+                  )}
                 </>
               )}
             </View>
@@ -983,6 +1059,101 @@ const createStyles = (colors: ThemeColors) =>
       borderBottomWidth: 1,
       borderBottomColor: colors.border,
       paddingVertical: 10,
+    },
+
+    searchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingTop: 10,
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    searchInput: {
+      flex: 1,
+      minWidth: 0,
+      padding: 0,
+      color: colors.textStrong,
+      fontFamily: fontFamily.body,
+      fontSize: 15,
+    },
+    clearBtn: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceMd,
+    },
+
+    // The raised panel from the design, in the chips' place.
+    results: {
+      marginTop: 8,
+      backgroundColor: colors.surfaceRaised,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 6,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: 0.14,
+      shadowRadius: 40,
+      elevation: 6,
+    },
+    resultRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 10,
+      borderRadius: 12,
+    },
+    resultOn: { backgroundColor: colors.surfaceMd },
+    resultName: {
+      flex: 1,
+      minWidth: 0,
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+    },
+    // What you typed, inside the name you were looking for.
+    resultHit: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold },
+    noMatch: {
+      paddingVertical: 14,
+      paddingHorizontal: 10,
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 20,
+    },
+
+    popularEyebrow: {
+      marginTop: 22,
+      color: colors.textFaint,
+      fontFamily: fontFamily.address,
+      fontSize: 12,
+      letterSpacing: 1,
+    },
+    chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+    chip: {
+      // Three to a row, as the design's grid does, minus the two gaps.
+      width: '31.5%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingLeft: 5,
+      paddingRight: 10,
+      paddingVertical: 5,
+      borderRadius: 100,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    chipLabel: {
+      flexShrink: 1,
+      minWidth: 0,
+      color: colors.textPrimary,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
     },
 
     bankRow: {
