@@ -2,12 +2,13 @@ import { errorMessage } from '../lib/errorMessage';
 import { Keypair } from '@stellar/stellar-sdk';
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
+import { BottomSheet } from '../components/BottomSheet';
 import { FlowHeader } from '../components/FlowHeader';
 import { SlideToConfirm } from '../components/SlideToConfirm';
 import { SwapVerticalIcon } from '../components/icons';
@@ -61,7 +62,7 @@ const DEBOUNCE_MS = 600;
 const PRICE_IMPACT_THRESHOLD_PCT = 5.0; // Refuse orders exceeding 5% total impact
 
 export default function SwapScreen() {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // Soroswap is mainnet-only; on testnet we route through the classic DEX.
   // Subscribed: this flag picks the venue — SDEX on testnet, Soroswap on
@@ -742,21 +743,41 @@ export default function SwapScreen() {
       </View>
 
       {/* Token picker */}
-      <Modal visible={picker !== null} transparent animationType="fade" onRequestClose={() => setPicker(null)}>
-        <Pressable style={styles.sheetBackdrop} onPress={() => setPicker(null)}>
-          <Pressable style={[styles.sheet, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }]} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.sheetTitle}>Select token</Text>
-            {TOKENS.map((t) => (
-              <Pressable key={swapAssetKey(t)} style={styles.sheetRow} onPress={() => handleSelect(t)}>
-                <TokenChip token={t} colors={colors} static />
-                <Text style={styles.sheetName}>
-                  {t.issuer ? `${t.name} · ${swapAssetLabel(t, networkName)}` : t.name}
+      <BottomSheet
+        visible={picker !== null}
+        onClose={() => setPicker(null)}
+        closeLabel="Close token picker"
+      >
+        <Text style={styles.sheetTitle}>Select token</Text>
+        {TOKENS.map((t) => (
+          <Pressable
+            key={swapAssetKey(t)}
+            style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
+            accessibilityRole="button"
+            accessibilityLabel={t.name}
+            onPress={() => handleSelect(t)}
+          >
+            <TokenChip token={t} colors={colors} static />
+            {/* Name over issuer, not one run-on line.
+                It used to render `${name} · ${code} · ${issuerName} (G…)` in a
+                row with no flex, so the Text took its natural width and ran off
+                the right edge of the screen — "Ondo US Dollar Yield · USDY ·
+                Ondo Finance (GAJM…DAZ6)" with the issuer hanging past the sheet.
+                The chip beside it already says the code, so saying it again was
+                what made the line too long in the first place. */}
+            <View style={styles.sheetText}>
+              <Text style={styles.sheetName} numberOfLines={1}>
+                {t.name}
+              </Text>
+              {t.issuer ? (
+                <Text style={styles.sheetIssuer} numberOfLines={1}>
+                  {swapAssetLabel(t, networkName)}
                 </Text>
-              </Pressable>
-            ))}
+              ) : null}
+            </View>
           </Pressable>
-        </Pressable>
-      </Modal>
+        ))}
+      </BottomSheet>
     </SafeAreaView>
   );
 }
@@ -812,9 +833,9 @@ const chipStyles = (colors: ThemeColors, accent: boolean) =>
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
-    body: { flex: 1, paddingHorizontal: 28, paddingTop: 20, paddingBottom: 32, gap: 20 },
+    body: { flex: 1, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 32, gap: 20 },
     pairWrap: { position: 'relative', marginTop: 6 },
-    leg: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 18 },
+    leg: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, padding: 20 },
     legTop: { borderTopLeftRadius: 20, borderTopRightRadius: 20, borderBottomLeftRadius: 6, borderBottomRightRadius: 6, marginBottom: 4 },
     legBottom: { borderTopLeftRadius: 6, borderTopRightRadius: 6, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
     legHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
@@ -889,11 +910,14 @@ const createStyles = (colors: ThemeColors) =>
     resultTitle: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 24 },
     resultSub: { color: colors.textSecondary, fontFamily: fontFamily.body, fontSize: 15, marginTop: 4 },
     resultHash: { color: colors.textFaint, fontFamily: fontFamily.address, fontSize: 12, marginTop: 6 },
-    sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-    sheet: { backgroundColor: colors.surfaceMd, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40, gap: 4 },
     sheetTitle: { color: colors.textFaint, fontFamily: fontFamily.bodySemiBold, fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 },
     sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+    sheetRowPressed: { opacity: 0.6 },
+    // flex:1 is what keeps the label inside the sheet; without it the Text sizes
+    // to its content and overflows the screen edge.
+    sheetText: { flex: 1, gap: 2 },
     sheetName: { color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 15 },
+    sheetIssuer: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 11.5 },
     reviewContent: { flex: 1, marginTop: 12 },
     refusalBanner: {
       color: colors.danger,
