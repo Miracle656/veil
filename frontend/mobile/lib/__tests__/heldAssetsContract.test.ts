@@ -94,7 +94,10 @@ describe('fetchHeldAssets with a contract wallet', () => {
     // wrong question". A flat sentence reads the same for both.
     await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/horizon\.example/);
     await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/Unknown/);
-    expect(mockLoadAccount).toHaveBeenCalledTimes(4);
+    // And which account it asked about, shortened — the fact that separates
+    // "Horizon is down" from "we queried the wrong address".
+    await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/GA5Z…KZVN/);
+    expect(mockLoadAccount).toHaveBeenCalledTimes(6);
   });
 
   it('recognises NotFoundError even when it is not an Error instance', async () => {

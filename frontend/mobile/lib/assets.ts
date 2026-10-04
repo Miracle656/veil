@@ -404,11 +404,20 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   // the same sentence whether Horizon is down, the URL is wrong, or the address
   // is one Horizon cannot answer for — and those need different fixes. The
   // screen is the only place most of these are ever observed.
-  const detail = last instanceof Error ? `${last.name}: ${last.message}` : String(last ?? '');
-  console.warn('[assets] loadAccount failed twice for', effective, '—', detail);
+  // Read the fields directly rather than through `instanceof Error`, for the
+  // same Hermes reason `isAccountNotFound` cannot use it.
+  const e = last as { name?: string; message?: string } | null;
+  const detail = [e?.name, e?.message].filter(Boolean).join(': ') || String(last ?? 'no detail');
+
+  // Name the account that was actually queried. Without it this message is the
+  // same whether we asked about the right account, the fee payer, or a contract
+  // address Horizon cannot answer for at all — and telling those apart took
+  // three rounds of screenshots.
+  const which = effective === publicKey ? 'this wallet' : 'the fee payer';
+  const shortId = `${effective.slice(0, 4)}…${effective.slice(-4)}`;
+
+  console.warn(`[assets] loadAccount failed twice for ${effective} (${which}) — ${detail}`);
   throw new Error(
-    `Could not read your assets from ${new URL(getNetwork().horizonUrl).host}` +
-      (detail ? ` (${detail})` : '') +
-      '.',
+    `Could not read ${which} (${shortId}) from ${new URL(getNetwork().horizonUrl).host}. ${detail}`,
   );
 }
