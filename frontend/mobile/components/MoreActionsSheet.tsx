@@ -5,7 +5,7 @@ import { useRouter, type Href } from 'expo-router';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { CloseIcon, GridIcon, SwapVerticalIcon, type IconProps } from './icons';
+import { AssetsIcon, CloseIcon, GridIcon, SwapVerticalIcon, type IconProps } from './icons';
 
 /**
  * The actions behind the tab bar's `+`.
@@ -37,6 +37,13 @@ export const MORE_ACTIONS: MoreAction[] = [
     hint: 'Exchange between tokens',
     Icon: SwapVerticalIcon,
     route: '/swap',
+  },
+  {
+    key: 'explore',
+    label: 'Explore',
+    hint: 'Markets, rates and what Veil can open',
+    Icon: AssetsIcon,
+    route: '/explore',
   },
   {
     key: 'dapps',
