@@ -149,7 +149,32 @@ export default function VerifyScreen() {
       }
     } catch (err) {
       setNin('');
-      setRejection(errorMessage(err));
+      const message = errorMessage(err);
+
+      // "Already used" is not a rejection, and telling someone to check their
+      // eleven digits when the digits are right is the worst answer available.
+      //
+      // Linq allows one verified customer per NIN, forever. So this is the
+      // expected reply for someone who verified before and lost local state —
+      // a reinstall, cleared storage, a network switch — and the one NIN that
+      // would verify them is the one being refused. There is no self-service
+      // way out of that, so treating it as failure strands them here.
+      //
+      // The reference is unchanged in that case, since it is seeded from the
+      // wallet address and a recovered wallet reproduces it. So move on and let
+      // Linq be the authority at order time: if the reference really is
+      // unverified, order creation says so in its own words rather than this
+      // screen guessing.
+      //
+      // This was in `buy-ngn` before verification moved to its own route, and
+      // dropping it on the way is why that screen handled this better.
+      if (/already|duplicate|exists|in use|verified/i.test(message)) {
+        await setNairaVerified(true);
+        setStage('done');
+        return;
+      }
+
+      setRejection(message);
       setStage('rejected');
     } finally {
       setBusy(false);
@@ -571,7 +596,10 @@ const createStyles = (colors: ThemeColors) =>
 
     headerRow: { flexDirection: 'row', alignItems: 'center' },
     stepCount: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 12 },
-    segments: { flexDirection: 'row', gap: 8, marginTop: 4, marginBottom: 20 },
+    // 18 above, as the artboard has it. At 4 the line read as an underline of
+    // the title rather than a separate progress indicator — `FlowHeader` adds
+    // no bottom padding of its own, so this margin is the whole gap.
+    segments: { flexDirection: 'row', gap: 6, marginTop: 18, marginBottom: 24 },
     segment: { flex: 1, height: 2, borderRadius: 1, backgroundColor: colors.border },
     segmentOn: { backgroundColor: colors.accent },
 
