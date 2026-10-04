@@ -30,7 +30,7 @@ jest.mock('../network', () => ({
   getNetworkName: () => 'mainnet',
 }));
 
-import { fetchHeldAssets } from '../assets';
+import { classicAccountExists, fetchHeldAssets } from '../assets';
 
 // A real contract id (USDT0's SAC). StrKey checksums these, so an invented
 // C-address silently fails `isValidContract` and the test passes for the wrong
@@ -95,6 +95,36 @@ describe('fetchHeldAssets with a contract wallet', () => {
     await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/horizon\.example/);
     await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/Unknown/);
     expect(mockLoadAccount).toHaveBeenCalledTimes(4);
+  });
+
+  it('recognises NotFoundError even when it is not an Error instance', async () => {
+    // The shape that actually arrives on device. The stellar-sdk's NotFoundError
+    // extends Error, and a class extending a built-in loses its prototype chain
+    // once Babel has compiled it for Hermes — so `instanceof Error` is false
+    // while `name` is still exactly 'NotFoundError'. Gating on instanceof is why
+    // this screen reported a missing account as a hard failure while the
+    // dashboard, with the same check minus the gate, handled it.
+    const hermesShape = { name: 'NotFoundError', message: 'Resource not found' };
+    mockLoadAccount.mockRejectedValue(hermesShape);
+
+    await expect(fetchHeldAssets(FEE_PAYER)).resolves.toEqual([]);
+    expect(mockLoadAccount).toHaveBeenCalledTimes(1);
+    expect(classicAccountExists()).toBe(false);
+  });
+
+  it('recognises a bare 404 from the HTTP layer', async () => {
+    mockLoadAccount.mockRejectedValue({ response: { status: 404 } });
+
+    await expect(fetchHeldAssets(FEE_PAYER)).resolves.toEqual([]);
+    expect(classicAccountExists()).toBe(false);
+  });
+
+  it('reports the account as existing after a successful read', async () => {
+    mockLoadAccount.mockResolvedValue({ balances: BALANCES });
+
+    await fetchHeldAssets(FEE_PAYER);
+
+    expect(classicAccountExists()).toBe(true);
   });
 
   it('treats a missing account as an empty portfolio', async () => {

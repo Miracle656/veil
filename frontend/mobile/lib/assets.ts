@@ -310,9 +310,23 @@ export async function loadWalletAddress(): Promise<string | null> {
 }
 
 /** A Horizon 404 means the account isn't funded yet — an empty portfolio, not an error. */
+/**
+ * No `instanceof Error` gate, deliberately.
+ *
+ * The stellar-sdk's `NotFoundError` extends `Error`, and a class that extends a
+ * built-in loses its prototype chain once Babel has compiled it for Hermes — so
+ * `err instanceof Error` is FALSE on device for an error whose `name` is exactly
+ * 'NotFoundError'. This function used to require it, which is why the Assets
+ * screen reported "NotFoundError" as a failure for a wallet whose classic
+ * account simply does not exist yet, while the dashboard — whose own copy of
+ * this check in lib/holdings.ts never had the gate — handled the same response
+ * from the same account without complaint.
+ *
+ * Duck-type it: a 404, or something calling itself NotFoundError.
+ */
 function isAccountNotFound(err: unknown): boolean {
-  const status = (err as { response?: { status?: number } })?.response?.status;
-  return status === 404 || (err instanceof Error && err.name === 'NotFoundError');
+  const e = err as { name?: string; response?: { status?: number } };
+  return e?.name === 'NotFoundError' || e?.response?.status === 404;
 }
 
 /**
@@ -320,6 +334,20 @@ function isAccountNotFound(err: unknown): boolean {
  * account (no ledger entry yet) is reported as an empty portfolio rather than
  * an error; any other failure propagates so the screen can surface it.
  */
+/**
+ * Whether the account the trustlines live on exists on the network yet.
+ *
+ * Set by the last `fetchHeldAssets` call. A smart wallet can hold XLM in its
+ * contract with no classic account behind it at all — the dashboard reads that
+ * fine, but a trustline needs the classic account, so the screen has to be able
+ * to say so rather than offering adds that fail.
+ */
+let lastAccountExists = true;
+
+export function classicAccountExists(): boolean {
+  return lastAccountExists;
+}
+
 export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   // Read at call time from the ACTIVE network, not from a module constant: a
   // build-time default froze this to testnet Horizon, so on mainnet the
@@ -339,7 +367,10 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
     const feePayer = await getFeePayerAddress();
     // No fee payer stored means no classic account exists for this wallet yet,
     // so there are no trustlines to report — empty, not broken.
-    if (!feePayer) return [];
+    if (!feePayer) {
+      lastAccountExists = false;
+      return [];
+    }
     effective = feePayer;
   }
 
@@ -356,10 +387,14 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const account = await server.loadAccount(effective);
+      lastAccountExists = true;
       return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
     } catch (err) {
       // Definitive, not a transport failure: the account simply is not funded.
-      if (isAccountNotFound(err)) return [];
+      if (isAccountNotFound(err)) {
+        lastAccountExists = false;
+        return [];
+      }
       last = err;
       if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
     }

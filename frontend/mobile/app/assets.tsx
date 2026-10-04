@@ -10,6 +10,7 @@ import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import {
   ASSET_REGISTRY,
+  classicAccountExists,
   fetchHeldAssets,
   fetchIssuerFlags,
   getAssetControlDisclosure,
@@ -60,6 +61,8 @@ type State =
       prices: Record<string, number | null>;
       xlmBalance: string;
       control: ControlNotes;
+      /** False when no classic account backs this wallet yet. */
+      accountExists: boolean;
     };
 
 export default function AssetsScreen() {
@@ -112,7 +115,14 @@ export default function AssetsScreen() {
       );
 
       const xlmBalance = assets.find((a) => a.code === 'XLM')?.balance ?? '0';
-      setState({ kind: 'ready', assets, prices, xlmBalance, control });
+      setState({
+        kind: 'ready',
+        assets,
+        prices,
+        xlmBalance,
+        control,
+        accountExists: classicAccountExists(),
+      });
     } catch (err) {
       setState({ kind: 'error', message: errorMessage(err) });
     }
@@ -246,7 +256,21 @@ export default function AssetsScreen() {
           </Text>
         ) : null}
 
-        {available.length > 0 ? (
+        {/* A trustline is an entry on the CLASSIC account, and a smart wallet
+            can hold XLM in its contract without one existing yet. Saying so
+            beats listing five assets whose Add button can only fail. */}
+        {!state.accountExists ? (
+          <View style={styles.offer}>
+            <Text style={styles.offerCode}>No classic account yet</Text>
+            <Text style={styles.offerMeta}>
+              Trustlines live on a classic Stellar account, and this wallet does not
+              have one on the network yet. Receive any amount of XLM to that address
+              first — then these assets can be added.
+            </Text>
+          </View>
+        ) : null}
+
+        {state.accountExists && available.length > 0 ? (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Available to add</Text>
             {available.map((asset) => (
