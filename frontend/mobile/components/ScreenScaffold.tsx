@@ -12,6 +12,7 @@ import { useRouter, type Href } from 'expo-router';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
 
 // ── Design tokens (legacy static export kept for back-compat) ─────────────
 // Prefer `useTheme()` in new code; the scaffold itself is now theme-aware.
@@ -175,7 +176,7 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 16,
+      paddingHorizontal: 20,
       paddingVertical: 10,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: colors.border,
@@ -196,38 +197,38 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: -2,
     },
     backLabel: {
+      fontFamily: fontFamily.bodyMedium,
       color: colors.textPrimary,
       fontSize: 14,
-      fontWeight: '500',
     },
     logo: {
+      fontFamily: fontFamily.accent,
       color: colors.accent,
       fontSize: 18,
-      fontWeight: '900',
       letterSpacing: 2,
     },
     pressed: { opacity: 0.6 },
     scroll: { flex: 1 },
     scrollContent: { flexGrow: 1, paddingBottom: 32 },
     body: {
-      paddingHorizontal: 24,
+      paddingHorizontal: 20,
       paddingTop: 20,
       gap: 12,
     },
     eyebrow: {
+      fontFamily: fontFamily.accent,
       color: colors.textMuted,
       fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 1.6,
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
     title: {
+      fontFamily: fontFamily.heading,
       color: colors.textStrong,
-      fontSize: 30,
-      fontWeight: '700',
-      letterSpacing: -0.4,
+      fontSize: 28,
     },
     description: {
+      fontFamily: fontFamily.body,
       color: colors.textMuted,
       fontSize: 14,
       lineHeight: 20,
@@ -251,13 +252,14 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: -4,
     },
     comingSoonLabel: {
+      fontFamily: fontFamily.accent,
       color: colors.accent,
       fontSize: 12,
-      fontWeight: '700',
-      letterSpacing: 1.4,
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
     comingSoonNote: {
+      fontFamily: fontFamily.body,
       color: colors.textMuted,
       fontSize: 12,
     },
@@ -274,12 +276,13 @@ const createStyles = (colors: ThemeColors) =>
     },
     navRowPressed: { opacity: 0.7 },
     navRowLabel: {
+      fontFamily: fontFamily.bodySemiBold,
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '600',
       flex: 1,
     },
     navRowHint: {
+      fontFamily: fontFamily.body,
       color: colors.textMuted,
       fontSize: 12,
       maxWidth: 180,
