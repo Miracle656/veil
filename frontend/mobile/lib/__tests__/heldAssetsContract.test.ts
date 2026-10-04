@@ -84,13 +84,17 @@ describe('fetchHeldAssets with a contract wallet', () => {
     expect(mockLoadAccount).toHaveBeenCalledWith(FEE_PAYER);
   });
 
-  it('retries once before giving up, and does not say "Unknown"', async () => {
+  it('retries once, then names the host and the cause', async () => {
     const bare = new Error('');
     bare.name = 'Unknown';
     mockLoadAccount.mockRejectedValue(bare);
 
-    await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/Could not reach the network/);
-    expect(mockLoadAccount).toHaveBeenCalledTimes(2);
+    // The message must name the host it failed against AND carry the cause, so
+    // a screenshot of it is enough to tell "Horizon is down" from "we asked the
+    // wrong question". A flat sentence reads the same for both.
+    await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/horizon\.example/);
+    await expect(fetchHeldAssets(FEE_PAYER)).rejects.toThrow(/Unknown/);
+    expect(mockLoadAccount).toHaveBeenCalledTimes(4);
   });
 
   it('treats a missing account as an empty portfolio', async () => {

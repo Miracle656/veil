@@ -365,9 +365,15 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
     }
   }
 
-  console.warn(
-    '[assets] loadAccount failed twice:',
-    last instanceof Error ? `${last.name}: ${last.message}` : last,
+  // Carry the cause into the message. A flat "could not reach the network" is
+  // the same sentence whether Horizon is down, the URL is wrong, or the address
+  // is one Horizon cannot answer for — and those need different fixes. The
+  // screen is the only place most of these are ever observed.
+  const detail = last instanceof Error ? `${last.name}: ${last.message}` : String(last ?? '');
+  console.warn('[assets] loadAccount failed twice for', effective, '—', detail);
+  throw new Error(
+    `Could not read your assets from ${new URL(getNetwork().horizonUrl).host}` +
+      (detail ? ` (${detail})` : '') +
+      '.',
   );
-  throw new Error('Could not reach the network to read your assets.');
 }
