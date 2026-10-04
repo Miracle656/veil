@@ -899,9 +899,11 @@ function createStyles(colors: ThemeColors) {
     },
     quickText: { color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 13 },
 
+    // A pill, matching every other primary action and the artboard's
+    // `--pill, 100px`.
     primaryBtn: {
       backgroundColor: colors.accent,
-      borderRadius: 14,
+      borderRadius: 999,
       paddingVertical: 16,
       alignItems: 'center',
     },
@@ -909,7 +911,7 @@ function createStyles(colors: ThemeColors) {
     secondaryBtn: {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      borderRadius: 14,
+      borderRadius: 999,
       paddingVertical: 16,
       alignItems: 'center',
     },

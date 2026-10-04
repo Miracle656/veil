@@ -47,6 +47,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
+import { ContactIcon } from '../components/icons';
+import { pickContactNumber } from '../lib/pickContact';
 import { FlowHeader } from '../components/FlowHeader';
 import { SlideToConfirm } from '../components/SlideToConfirm';
 import { useWallet } from '../components/WalletProvider';
@@ -210,6 +212,17 @@ export default function AirtimeScreen() {
    * happens before the summary, and `/verify` is handed enough to bring them
    * back to exactly this airtime purchase.
    */
+  const chooseContact = useCallback(async () => {
+    const picked = await pickContactNumber();
+    if (picked.ok) {
+      setPhone(picked.phone);
+      setError(null);
+      return;
+    }
+    // A cancel is a decision, not a failure, and gets no message.
+    if (picked.reason !== 'cancelled') setError(picked.message);
+  }, []);
+
   const continueFromForm = useCallback(async () => {
     if (await isNairaVerified()) {
       setStep('confirm');
@@ -343,14 +356,28 @@ export default function AirtimeScreen() {
 
             <View style={styles.field}>
               <Text style={styles.label}>PHONE NUMBER</Text>
-              <TextInput
-                style={styles.input}
-                value={phone}
-                onChangeText={(t) => setPhone(t.replace(/[^\d]/g, '').slice(0, 11))}
-                keyboardType="number-pad"
-                placeholder="0803 512 4471"
-                placeholderTextColor={colors.textMuted}
-              />
+              <View style={styles.phoneRow}>
+                <TextInput
+                  style={styles.phoneInput}
+                  value={phone}
+                  onChangeText={(t) => setPhone(t.replace(/[^\d]/g, '').slice(0, 11))}
+                  keyboardType="number-pad"
+                  placeholder="0803 512 4471"
+                  placeholderTextColor={colors.textMuted}
+                />
+                {/* Nobody remembers the number they are topping up. It is
+                    almost always someone else's, which is the whole reason
+                    this screen exists. */}
+                <Pressable
+                  onPress={() => void chooseContact()}
+                  accessibilityRole="button"
+                  accessibilityLabel="Choose from contacts"
+                  hitSlop={8}
+                  style={({ pressed }) => [styles.contactBtn, pressed && styles.pressed]}
+                >
+                  <ContactIcon size={17} color={colors.textSecondary} />
+                </Pressable>
+              </View>
               {detected ? (
                 <Text style={styles.hint}>
                   {detected} number, detected from {phoneDigits.slice(0, 4)}
@@ -673,6 +700,35 @@ function createStyles(colors: ThemeColors) {
 
     field: { gap: 6 },
     label: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
+    // The artboard draws the number on a single underline with the contact
+    // button on the right, not inside a boxed field.
+    phoneRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingTop: 8,
+      paddingBottom: 10,
+      borderBottomWidth: 1.5,
+      borderBottomColor: colors.accent,
+    },
+    phoneInput: {
+      flex: 1,
+      minWidth: 0,
+      padding: 0,
+      color: colors.textStrong,
+      fontFamily: fontFamily.address,
+      fontSize: 21,
+      letterSpacing: 0.8,
+    },
+    contactBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
     input: {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
@@ -725,12 +781,19 @@ function createStyles(colors: ThemeColors) {
 
     waitRow: { flexDirection: 'row', alignItems: 'center', gap: 10, justifyContent: 'center', paddingVertical: 8 },
 
-    primaryBtn: { backgroundColor: colors.accent, borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+    // A pill, not a rounded rectangle. Every other primary action in the app
+    // is fully rounded, and the artboard's is `--pill, 100px`.
+    primaryBtn: {
+      backgroundColor: colors.accent,
+      borderRadius: 999,
+      paddingVertical: 16,
+      alignItems: 'center',
+    },
     primaryText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
     secondaryBtn: {
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      borderRadius: 14,
+      borderRadius: 999,
       paddingVertical: 16,
       alignItems: 'center',
     },

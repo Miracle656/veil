@@ -551,3 +551,19 @@ export function SearchIcon({ size, color = 'currentColor', strokeWidth = DEFAULT
     </Base>
   );
 }
+
+/** One person — the "pick from contacts" affordance, not the plural UsersIcon. */
+export function ContactIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="12" cy="8" r="4" stroke={color} strokeWidth={strokeWidth} />
+      <Path
+        d="M4 21a8 8 0 0 1 16 0"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Base>
+  );
+}

@@ -137,6 +137,17 @@ const config: ExpoConfig = {
     // Local plugin: static App Shortcuts for the read-only actions.
     ['./plugins/withAndroidShortcuts', { shortcuts: ANDROID_SHORTCUTS }],
     [
+      'expo-contacts',
+      {
+        // Shown in the OS permission prompt on the airtime screen. It says what
+        // we do with the list, because the honest answer is "nothing" — the
+        // number you pick goes into the field you are already filling in, and
+        // the contacts themselves are never copied, stored or sent anywhere.
+        contactsPermission:
+          'Veil can fill in a phone number from your contacts so you do not have to type it. Your contacts are not stored or sent anywhere.',
+      },
+    ],
+    [
       'expo-splash-screen',
       {
         // Light is the base and dark is the variant, matching THEMES in
