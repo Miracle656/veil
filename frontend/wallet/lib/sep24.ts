@@ -27,6 +27,14 @@ export interface AnchorInfo {
   transferServerUrl: string
   webAuthEndpoint: string
   networkPassphrase: string
+  /** The domain the TOML came from. A challenge must name it. */
+  homeDomain: string
+  /**
+   * SEP-10 `SIGNING_KEY`: the account the anchor signs challenges with. Absent
+   * when the anchor publishes none, in which case its challenges cannot be
+   * verified and must not be signed.
+   */
+  signingKey?: string
 }
 
 // ── TOML discovery ────────────────────────────────────────────────────────────
@@ -51,6 +59,8 @@ export async function discoverAnchorInfo(anchorDomain: string): Promise<AnchorIn
     throw new Error(`WEB_AUTH_ENDPOINT not found in ${anchorDomain}/.well-known/stellar.toml`)
   }
 
+  const signingKeyMatch = text.match(/SIGNING_KEY\s*=\s*"([^"]+)"/)
+
   const networkMatch = text.match(/NETWORK_PASSPHRASE\s*=\s*"([^"]+)"/)
   const networkPassphrase = networkMatch ? networkMatch[1] : getNetwork().networkPassphrase
   if (!networkPassphrase) {
@@ -61,6 +71,8 @@ export async function discoverAnchorInfo(anchorDomain: string): Promise<AnchorIn
     transferServerUrl: transferMatch[1].replace(/\/$/, ''),
     webAuthEndpoint:   webAuthMatch[1].replace(/\/$/, ''),
     networkPassphrase,
+    homeDomain: anchorDomain,
+    signingKey: signingKeyMatch ? signingKeyMatch[1].trim() : undefined,
   }
 }
 
@@ -98,10 +110,21 @@ export class Sep10ChallengeError extends Error {
 export function validateSep10Challenge(
   challengeXdr: string,
   networkPassphrase: string,
-  homeDomain?: string,
-  anchorSigningKey?: string,
-  webAuthDomain?: string,
+  /** The domain we fetched the TOML from — never one read out of the challenge. */
+  homeDomain: string,
+  /** The anchor's published SIGNING_KEY — never the challenge's own source. */
+  anchorSigningKey: string,
+  /** Host of the WEB_AUTH_ENDPOINT we called. */
+  webAuthDomain: string,
 ): { tx: Transaction; clientAccountID: string; matchedHomeDomain: string } {
+  if (!homeDomain || !anchorSigningKey || !webAuthDomain) {
+    // Defaulting any of these to a value taken from the challenge would verify
+    // the challenge against its own claims, which is not a check at all.
+    throw new Sep10ChallengeError(
+      'SEP-10 validation needs the anchor home domain, its published SIGNING_KEY and the web auth domain.',
+      'MALFORMED',
+    )
+  }
   let tx: Transaction
   try {
     tx = new Transaction(challengeXdr, networkPassphrase)
@@ -160,16 +183,14 @@ export function validateSep10Challenge(
     )
   }
 
-  const expectedHomeDomain = homeDomain || firstKey.slice(0, -5)
-  const serverAccountID = anchorSigningKey || tx.source
 
   try {
     const readResult = WebAuth.readChallengeTx(
       challengeXdr,
-      serverAccountID,
+      anchorSigningKey,
       networkPassphrase,
-      expectedHomeDomain,
-      webAuthDomain || '',
+      homeDomain,
+      webAuthDomain,
     )
     return readResult
   } catch (err) {
@@ -210,9 +231,9 @@ export function signSep10Challenge(
   challengeXdr: string,
   networkPassphrase: string,
   signerKeypair: Keypair,
-  homeDomain?: string,
-  anchorSigningKey?: string,
-  webAuthDomain?: string,
+  homeDomain: string,
+  anchorSigningKey: string,
+  webAuthDomain: string,
 ): string {
   const { tx } = validateSep10Challenge(
     challengeXdr,
@@ -242,10 +263,18 @@ export async function getSep10Jwt(
   webAuthEndpoint: string,
   account: string,
   networkPassphrase: string,
-  homeDomain?: string,
-  anchorSigningKey?: string,
+  homeDomain: string,
+  anchorSigningKey: string | undefined,
   fetchFn: typeof fetch = fetch,
 ): Promise<string> {
+  // An anchor that publishes no SIGNING_KEY cannot have its challenges checked,
+  // and the challenge below is signed with a passkey assertion over its hash.
+  // Refuse rather than authenticate blind.
+  if (!anchorSigningKey) {
+    throw new Error(
+      `${homeDomain} publishes no SEP-10 SIGNING_KEY, so its sign-in request cannot be verified.`,
+    )
+  }
   // Step 1: fetch challenge
   const challengeRes = await fetchFn(
     `${webAuthEndpoint}?account=${encodeURIComponent(account)}`,
@@ -272,7 +301,7 @@ export async function getSep10Jwt(
 
   const webAuthDomain = webAuthEndpoint.startsWith('http')
     ? new URL(webAuthEndpoint).hostname
-    : undefined
+    : webAuthEndpoint
 
   validateSep10Challenge(
     challengeXdr,

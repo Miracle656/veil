@@ -96,35 +96,48 @@ describe('SEP-10 Security & Validation Rules', () => {
     })
 
     expect(() =>
-      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey()),
+      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey(), homeDomain),
     ).toThrow(Sep10ChallengeError)
+  })
+
+  it('refuses to validate at all when the anchor published no SIGNING_KEY', () => {
+    // The hazard being pinned: an earlier version defaulted the expected server
+    // account to the challenge's own source and the home domain to its own
+    // manage_data name, so an attacker's self-signed challenge verified against
+    // itself. Omitting the values must refuse, never fall back.
+    expect(() =>
+      validateSep10Challenge(makeChallenge(), Networks.TESTNET, homeDomain, '', homeDomain),
+    ).toThrow(/SIGNING_KEY/)
+    expect(() =>
+      validateSep10Challenge(makeChallenge(), Networks.TESTNET, '', serverKp.publicKey(), homeDomain),
+    ).toThrow(/home domain/i)
   })
 
   it('rejects wrong server signature or wrong SIGNING_KEY', () => {
     const challengeXdr = makeChallenge({ server: wrongServerKp })
     expect(() =>
-      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey()),
+      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey(), homeDomain),
     ).toThrow(Sep10ChallengeError)
   })
 
   it('rejects non-zero sequence number', () => {
     const challengeXdr = makeChallenge({ seq: '0' })
     expect(() =>
-      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey()),
+      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey(), homeDomain),
     ).toThrow(Sep10ChallengeError)
   })
 
   it('rejects wrong home domain', () => {
     const challengeXdr = makeChallenge({ domain: 'wrongdomain.org' })
     expect(() =>
-      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey()),
+      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey(), homeDomain),
     ).toThrow(Sep10ChallengeError)
   })
 
   it('rejects expired or missing timeBounds', () => {
     const infiniteXdr = makeChallenge({ timeBounds: 'infinite' })
     expect(() =>
-      validateSep10Challenge(infiniteXdr, Networks.TESTNET, homeDomain, serverKp.publicKey()),
+      validateSep10Challenge(infiniteXdr, Networks.TESTNET, homeDomain, serverKp.publicKey(), homeDomain),
     ).toThrow(Sep10ChallengeError)
   })
 
@@ -159,6 +172,7 @@ describe('SEP-10 Security & Validation Rules', () => {
       clientKp,
       homeDomain,
       serverKp.publicKey(),
+      homeDomain,
     )
     expect(signedXdr).toBeDefined()
     expect(signedXdr).not.toEqual(challengeXdr)
