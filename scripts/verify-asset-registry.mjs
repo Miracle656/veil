@@ -256,16 +256,22 @@ export async function verifyNonNativeAsset(
     );
   }
 
-  const derivedSacContractId = deriveSacContractId(asset);
   const homeDomain = account.home_domain;
+  if (!homeDomain) {
+    return {
+      code: asset.code,
+      issuer: asset.issuer,
+      network: asset.network,
+      homeDomain: null,
+      tomlUrl: null,
+      derivedSacContractId,
+      note: 'issuer has no home_domain; stellar.toml corroboration is unavailable',
+    };
+  }
+
   if (asset.homeDomain && homeDomain !== asset.homeDomain) {
     throw new Error(
       `Issuer ${asset.issuer} for ${asset.code} home_domain mismatch: Horizon returned "${homeDomain}", registry expected "${asset.homeDomain}"`,
-    );
-  }
-  if (!homeDomain) {
-    throw new Error(
-      `Issuer ${asset.issuer} for ${asset.code} has no home_domain set on Horizon`,
     );
   }
 

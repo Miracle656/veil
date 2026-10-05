@@ -32,6 +32,7 @@ import {
   USDT0_MAINNET_ISSUER,
   getRegisteredAsset,
   isRegisteredIssuer,
+  formatAssetLabel,
   fetchAssetDisclosure,
 } from '@/lib/assets'
 import { fetchPrice } from '@/lib/fetchPrice'
@@ -464,7 +465,7 @@ export default function AssetsPage() {
                     {registered ? <RegisteredAssetMark code={line.code} meta={meta} /> : null}
                     <div style={{ minWidth: 0 }}>
                       <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>
-                        {line.code}
+                        {formatAssetLabel(line.code, line.issuer)}
                         {meta && meta.name !== line.code ? (
                           <span style={{ fontWeight: 400, color: 'var(--warm-grey)' }}> · {meta.name}</span>
                         ) : null}
