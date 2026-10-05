@@ -245,6 +245,30 @@ export async function setNairaVerified(verified: boolean): Promise<void> {
   await AsyncStorage.setItem(VERIFIED_KEY, verified ? 'true' : 'false').catch(() => undefined);
 }
 
+/**
+ * Linq says this reference has not completed KYC, after the device believed it
+ * had. Terminal on purpose.
+ *
+ * This is the state where the "already used" shortcut turns out to have been
+ * wrong: verification waved the person through on the assumption that the
+ * reference it held was the verified one, and order creation proves it was not.
+ *
+ * It cannot be fixed by verifying again, and it must not be recorded by simply
+ * clearing the verified flag. That would send them back to `/verify`, where the
+ * NIN is refused as already used, which marks them verified, which fails here
+ * again — a loop that teaches nothing and costs a NIN attempt each time. So it
+ * is its own flag, and the screen that reads it explains rather than retries.
+ */
+const KYC_MISMATCH_KEY = 'veil_ngn_kyc_mismatch';
+
+export async function setNairaKycMismatch(mismatch: boolean): Promise<void> {
+  await AsyncStorage.setItem(KYC_MISMATCH_KEY, mismatch ? 'true' : 'false').catch(() => undefined);
+}
+
+export async function isNairaKycMismatch(): Promise<boolean> {
+  return (await AsyncStorage.getItem(KYC_MISMATCH_KEY).catch(() => null)) === 'true';
+}
+
 // ─── Customer ────────────────────────────────────────────────────────────────
 
 export interface NairaCustomer {

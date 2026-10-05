@@ -43,7 +43,6 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
@@ -56,18 +55,18 @@ import {
   createOnrampOrder,
   getCustomerRef,
   getOnrampRate,
+  isNairaKycMismatch,
+  isNairaVerified,
   getOnrampStatus,
-  provisionCustomer,
   secondsUntil,
-  submitKyc,
+  setNairaKycMismatch,
   type NairaCoin,
   type OnrampOrder,
 } from '../lib/onramp';
 
-type Step = 'verify' | 'amount' | 'confirm' | 'pay' | 'waiting' | 'done' | 'expired';
+type Step = 'amount' | 'confirm' | 'pay' | 'waiting' | 'done' | 'expired';
 
 /** Verification is once per person, so the outcome is remembered. */
-const CUSTOMER_KEY = 'veil_ngn_customer';
 
 const QUICK_AMOUNTS = [2000, 5000, 10000, 20000];
 
@@ -97,14 +96,6 @@ export default function BuyWithNairaScreen() {
   const [busy, setBusy] = useState(false);
 
   const [customerRef, setCustomerRef] = useState<string | null>(null);
-
-  // Verification fields. The NIN is never written to storage or logged — it is
-  // read from this state once, sent, and the field is cleared.
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [nin, setNin] = useState('');
 
   const [coin, setCoin] = useState<NairaCoin>('usdc');
   const [amountNGN, setAmountNGN] = useState('');
@@ -151,25 +142,30 @@ export default function BuyWithNairaScreen() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const stored = await AsyncStorage.getItem(CUSTOMER_KEY).catch(() => null);
-      if (cancelled) return;
-      if (stored) {
-        try {
-          const parsed = JSON.parse(stored) as { customerRef: string; verified: boolean };
-          setCustomerRef(parsed.customerRef);
-          if (!parsed.verified) goVerify();
-          return;
-        } catch {
-          /* fall through and re-derive */
-        }
-      }
-      // One shared accessor, persisted — never re-derived here. Linq allows one
-      // verified customer per NIN, so a reference that drifts is a customer
-      // whose NIN is already spent. See getCustomerRef.
-      const ref = await getCustomerRef().catch(() => null);
+      // One shared question, the same one Airtime asks. This screen used to
+      // read the `veil_ngn_customer` blob directly and look for `verified` on
+      // it — but `/verify` records the result under its own key, so a person
+      // who had just verified arrived here, failed a check against a blob
+      // nothing writes any more, and was sent straight back to the start of
+      // verification. That is a loop with no exit.
+      //
+      // `getCustomerRef` and `isNairaVerified` both still read the legacy blob,
+      // so nobody who verified before this change is asked twice — which
+      // matters, because Linq allows one verified customer per NIN forever.
+      const [ref, verified, mismatch] = await Promise.all([
+        getCustomerRef().catch(() => null),
+        isNairaVerified().catch(() => false),
+        isNairaKycMismatch().catch(() => false),
+      ]);
       if (cancelled) return;
       setCustomerRef(ref);
-      goVerify();
+      // A known mismatch outlives the screen it was found on. Sending someone
+      // in that state to verify again is the loop described in lib/onramp.ts.
+      if (mismatch) {
+        setKycMismatch(true);
+        return;
+      }
+      if (!verified) goVerify();
     })();
     return () => {
       cancelled = true;
@@ -251,51 +247,6 @@ export default function BuyWithNairaScreen() {
   }, []);
 
   // ── Verification: one time, ever ──────────────────────────────────────────
-  const submitVerification = useCallback(async () => {
-    if (!customerRef) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await provisionCustomer({ customerRef, firstName, lastName, email, phone });
-      const result = await submitKyc(customerRef, nin);
-      // Cleared immediately. A NIN is personal data under the NDPA and the
-      // cheapest way to hold it correctly is not to hold it.
-      setNin('');
-      await AsyncStorage.setItem(
-        CUSTOMER_KEY,
-        JSON.stringify({ customerRef, verified: result.verified }),
-      );
-      if (result.verified) setStep('amount');
-      else setError('Verification is still pending. Try again shortly.');
-    } catch (err) {
-      setNin('');
-      const message = errorMessage(err);
-
-      // Linq deduplicates NINs: one verified customer per NIN, forever. So
-      // "already used" is the expected answer for someone who verified before
-      // and lost local state — a reinstall, cleared storage — and treating it
-      // as a failure strands them on this screen with no way forward, because
-      // the one NIN that would verify them is the one being refused.
-      //
-      // The reference is unchanged in that case (it is seeded from the wallet
-      // address, which a recovered wallet reproduces), so they are already
-      // verified against it. Move on and let Linq be the authority at order
-      // time: if the reference really is unverified, order creation says so
-      // with its own message rather than this screen guessing.
-      if (/already|duplicate|exists|in use|verified/i.test(message)) {
-        await AsyncStorage.setItem(
-          CUSTOMER_KEY,
-          JSON.stringify({ customerRef, verified: true }),
-        ).catch(() => undefined);
-        setStep('amount');
-        return;
-      }
-
-      setError(message);
-    } finally {
-      setBusy(false);
-    }
-  }, [customerRef, firstName, lastName, email, phone, nin]);
 
   // ── Create the order ──────────────────────────────────────────────────────
   const getPaymentDetails = useCallback(async () => {
@@ -331,10 +282,11 @@ export default function BuyWithNairaScreen() {
       // reference, because that is the only thing that identifies the account
       // to support.
       if (/not completed kyc|not verified|kyc/i.test(message)) {
-        await AsyncStorage.setItem(
-          CUSTOMER_KEY,
-          JSON.stringify({ customerRef, verified: false }),
-        ).catch(() => undefined);
+        // Its own flag, not `setNairaVerified(false)`. Clearing the verified
+        // flag would send them to /verify on the next visit, where the NIN is
+        // refused as already used, which marks them verified, which fails here
+        // again. The flag below keeps them on the explanation instead.
+        await setNairaKycMismatch(true);
         setKycMismatch(true);
         return;
       }
@@ -411,62 +363,6 @@ export default function BuyWithNairaScreen() {
         ) : null}
 
         {/* ── Verify, once ──────────────────────────────────────────────── */}
-        {!mainnetOnly && !kycMismatch && step === 'verify' && (
-          <>
-            <View style={styles.card}>
-              <Text style={styles.eyebrow}>ONE TIME ONLY</Text>
-              <Text style={styles.question}>Verify your identity</Text>
-              <Text style={styles.hint}>
-                Nigerian rules require this once before your first naira transfer. You will
-                not be asked again.
-              </Text>
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>FIRST NAME</Text>
-              <TextInput style={styles.input} value={firstName} onChangeText={setFirstName} autoCapitalize="words" />
-            </View>
-            <View style={styles.field}>
-              <Text style={styles.label}>LAST NAME</Text>
-              <TextInput style={styles.input} value={lastName} onChangeText={setLastName} autoCapitalize="words" />
-            </View>
-            <View style={styles.field}>
-              <Text style={styles.label}>EMAIL</Text>
-              <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" />
-            </View>
-            <View style={styles.field}>
-              <Text style={styles.label}>PHONE</Text>
-              <TextInput style={styles.input} value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-            </View>
-            <View style={styles.field}>
-              <Text style={styles.label}>NIN</Text>
-              <TextInput
-                style={styles.input}
-                value={nin}
-                onChangeText={(t) => setNin(t.replace(/\D/g, '').slice(0, 11))}
-                keyboardType="number-pad"
-                placeholder="11 digits"
-                placeholderTextColor={colors.textMuted}
-              />
-              <Text style={styles.hint}>
-                Sent straight to our payment partner for the check. Veil does not store it.
-              </Text>
-            </View>
-
-            <Pressable
-              onPress={submitVerification}
-              disabled={busy || nin.length !== 11 || !firstName || !lastName || !email || !phone}
-              style={({ pressed }) => [
-                styles.primaryBtn,
-                (busy || nin.length !== 11 || !firstName || !lastName || !email || !phone) && styles.disabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              {busy ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.primaryText}>Verify</Text>}
-            </Pressable>
-          </>
-        )}
-
         {/* ── a1 · amount ───────────────────────────────────────────────── */}
         {!mainnetOnly && !kycMismatch && step === 'amount' && (
           <>
