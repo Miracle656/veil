@@ -12,6 +12,7 @@ import {
   Account,
   Operation,
   Asset,
+  Transaction,
 } from '@stellar/stellar-sdk';
 import {
   discoverAnchorInfo,
@@ -70,6 +71,7 @@ describe('SEP-10 Mobile Challenge Validation', () => {
   const clientKp = Keypair.random();
   const homeDomain = 'mobileanchor.stellar.org';
   const webAuthEndpoint = 'https://mobileanchor.stellar.org/auth';
+  const WEB_AUTH_DOMAIN = 'mobileanchor.stellar.org';
 
   function makeChallenge({
     seq = '-1',
@@ -122,14 +124,14 @@ describe('SEP-10 Mobile Challenge Validation', () => {
     });
 
     expect(() =>
-      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey()),
+      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey(), WEB_AUTH_DOMAIN),
     ).toThrow(Sep10ChallengeError);
   });
 
   it('rejects non-zero sequence number', () => {
     const challengeXdr = makeChallenge({ seq: '0' });
     expect(() =>
-      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey()),
+      validateSep10Challenge(challengeXdr, Networks.TESTNET, homeDomain, serverKp.publicKey(), WEB_AUTH_DOMAIN),
     ).toThrow(Sep10ChallengeError);
   });
 
@@ -161,8 +163,42 @@ describe('SEP-10 Mobile Challenge Validation', () => {
       clientKp,
       homeDomain,
       serverKp.publicKey(),
+      WEB_AUTH_DOMAIN,
     );
     expect(signedXdr).toBeDefined();
     expect(signedXdr).not.toEqual(challengeXdr);
+  });
+
+  it("keeps the anchor's signature on the challenge it signs", () => {
+    // Rebuilding before signing drops the server signature, and an anchor wants
+    // the challenge back carrying both.
+    const signedXdr = signSep10Challenge(
+      makeChallenge(),
+      Networks.TESTNET,
+      clientKp,
+      homeDomain,
+      serverKp.publicKey(),
+      WEB_AUTH_DOMAIN,
+    );
+    expect(new Transaction(signedXdr, Networks.TESTNET).signatures).toHaveLength(2);
+  });
+
+  it('will not verify a challenge against a key the challenge itself chose', () => {
+    // The hazard being pinned: deriving the expected server account from the
+    // transaction's own source, or the home domain from its own manage_data
+    // name, verifies the challenge against its own claims. An attacker's
+    // self-signed challenge then passes every check.
+    const attacker = Keypair.random();
+    const forged = makeChallenge({ server: attacker, domain: homeDomain });
+
+    expect(() =>
+      validateSep10Challenge(forged, Networks.TESTNET, homeDomain, serverKp.publicKey(), WEB_AUTH_DOMAIN),
+    ).toThrow(Sep10ChallengeError);
+  });
+
+  it('refuses to validate at all when the anchor published no SIGNING_KEY', () => {
+    expect(() =>
+      validateSep10Challenge(makeChallenge(), Networks.TESTNET, homeDomain, '', WEB_AUTH_DOMAIN),
+    ).toThrow(/SIGNING_KEY/);
   });
 });
