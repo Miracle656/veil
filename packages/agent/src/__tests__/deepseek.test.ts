@@ -128,6 +128,57 @@ describe('DeepSeek Provider (Issue #802)', () => {
     })
   })
 
+  /**
+   * The model id that actually goes over the wire.
+   *
+   * Every other test here mocks `globalThis.fetch` and asserts
+   * `provider.label === `deepseek:${DEFAULT_DEEPSEEK_MODEL}``, which compares
+   * the constant with itself and passes for any string. That is how the default
+   * shipped as `deepseek-flash` — a model DeepSeek has never had, close enough
+   * to the real `deepseek-v4-flash` to read correctly — and stayed green.
+   *
+   * These assert the id's shape against DeepSeek's published naming rather than
+   * against our own constant, so a typo or a retired name fails here instead of
+   * on someone's first live call.
+   */
+  describe('the model id sent to DeepSeek', () => {
+    it('is in the request body, not just the label', async () => {
+      const fetchMock = jest.fn(async (_url: unknown, init: any) => {
+        const body = JSON.parse(init.body)
+        expect(body.model).toBe(DEFAULT_DEEPSEEK_MODEL)
+        return reply(200, { choices: [{ message: { content: 'ok' } }] })
+      })
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const provider = deepseekProvider({ apiKey: 'mock-key' })
+      await provider.start('sys', [], 'hi', []).next()
+      expect(fetchMock).toHaveBeenCalled()
+    })
+
+    it('names a model DeepSeek currently serves', () => {
+      // deepseek-v4-pro and deepseek-v4-flash are the current ids. The legacy
+      // deepseek-chat / deepseek-reasoner names were retired on 2026-07-24, so
+      // neither is a valid default any more either.
+      expect(['deepseek-v4-flash', 'deepseek-v4-pro']).toContain(DEFAULT_DEEPSEEK_MODEL)
+    })
+
+    it('is not one of the retired names', () => {
+      expect(['deepseek-chat', 'deepseek-reasoner']).not.toContain(DEFAULT_DEEPSEEK_MODEL)
+    })
+
+    it('honours DEEPSEEK_MODEL when set', async () => {
+      const fetchMock = jest.fn(async (_url: unknown, init: any) => {
+        expect(JSON.parse(init.body).model).toBe('deepseek-v4-pro')
+        return reply(200, { choices: [{ message: { content: 'ok' } }] })
+      })
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+
+      const provider = deepseekProvider({ apiKey: 'mock-key', model: 'deepseek-v4-pro' })
+      await provider.start('sys', [], 'hi', []).next()
+      expect(fetchMock).toHaveBeenCalled()
+    })
+  })
+
   describe('Multi-turn tool calling end to end', () => {
     it('completes a multi-turn tool call through the agent loop with existing tools (open_swap)', async () => {
       let callCount = 0

@@ -342,7 +342,23 @@ async function tryModels(
 
 // ── DeepSeek (OpenAI-compatible chat completions) ────────────────────────────
 
-export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-flash'
+/**
+ * DeepSeek's economical tool-calling model.
+ *
+ * The id matters and is easy to get almost right. DeepSeek's current ids are
+ * `deepseek-v4-pro` and `deepseek-v4-flash`; the older `deepseek-chat` and
+ * `deepseek-reasoner` were retired on 2026-07-24. This default was
+ * `deepseek-flash`, which has never been any of them — close enough to the real
+ * `deepseek-v4-flash` to read correctly and fail on the first live call.
+ *
+ * Nothing caught it because every test here mocks `globalThis.fetch`, so the id
+ * is never sent anywhere, and the provider-label assertions compare the
+ * constant against itself. Those tests pass for any string at all.
+ */
+export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-v4-flash'
+
+/** The larger model, for when quality matters more than cost. */
+export const DEEPSEEK_PRO_MODEL = 'deepseek-v4-pro'
 export const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 
 export function deepseekProvider(options: { apiKey: string; model?: string }): LlmProvider {
