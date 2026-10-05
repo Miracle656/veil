@@ -38,14 +38,16 @@ back to `Keypair.random()`, not the credential-id derivation, and surfaced
 `recoverable: false` to the caller rather than failing silently.
 
 Separately, `frontend/mobile/lib/deriveFeePayer.ts` still exists — the credential-ID HKDF
-derivation ADR 0003 calls C2 — but it is **not called from any live code path** (only
-from its own test). It is exactly the kind of code that looks like a live vulnerability
-when read in isolation (and is documented as one, correctly, in its own `SECURITY`
-comment) but is not reachable from `createPasskeyWallet`, `loginWithPasskey`, or
-`loginWithAddress`. This PR adds `lib/__tests__/passkeyWallet.test.ts`, which pins this
-down as an executable regression check (C2 stated as a test: the credential id alone must
-not reproduce the derived fee payer) rather than something a future refactor could
-silently break.
+derivation ADR 0003 calls C2 — but it is not called for signing on any live path. Its own
+`deriveStoredFeePayer()` is called live (see `frontend/docs/pages/troubleshooting/index.mdx`),
+but only to re-derive the legacy fee payer when `veil_signer_secret` is missing from the
+keychain, not to produce a signer used going forward. It is exactly the kind of code that
+looks like a live vulnerability when read in isolation (and is documented as one,
+correctly, in its own `SECURITY` comment) but is not reachable from `createPasskeyWallet`,
+`loginWithPasskey`, or `loginWithAddress` as the PRF-derived signer. This PR adds
+`lib/__tests__/passkeyWallet.test.ts`, which pins this down as an executable regression
+check (C2 stated as a test: the credential id alone must not reproduce the derived fee
+payer) rather than something a future refactor could silently break.
 
 ## Finding 3 — cross-platform key agreement
 
@@ -95,5 +97,53 @@ What this means concretely:
 Given the above, this PR treats PRF-availability-on-device as **unconfirmed** rather than
 assuming it is universally available: the fallback path (random key, `recoverable: false`)
 is the safety net for whatever fraction of devices do not support it, and nothing in this
-change requires that fraction to be known in advance. `docs/MAINNET_READINESS.md` records
-this precisely rather than rounding it up to "done".
+change requires that fraction to be known in advance. This precisely records that rather
+than rounding it up to "done".
+
+## Mainnet readiness — C2 / C3
+
+| Surface | Status | Notes |
+|---|---|---|
+| Web wallet | Mainnet-safe for C2/C3 | See `docs/adr/0003-fee-payer-key-from-webauthn-prf.md`. PRF-derived fee payer (`'prf-raw'` mode) for new wallets; legacy wallets pinned to their existing derivation so no funded address moves. |
+| Mobile | **Improved, not yet certified mainnet-safe** | See below. |
+| M3 (on-curve pubkey validation) | Tracked separately | Out of scope for this PR — see issue #682's notes. Not addressed here. |
+
+**Before this PR:** `createPasskeyWallet` already attempted PRF-based derivation and fell
+back to a random (not credential-ID-derived) key on failure, but this was undocumented,
+untested at the wallet-creation level, and the dead legacy credential-ID path
+(`lib/deriveFeePayer.ts`) remained in the codebase with no regression test proving it
+stays unreachable as a signer.
+
+**After this PR:**
+
+- `lib/__tests__/passkeyWallet.test.ts` pins down, as executable tests: the fee payer is
+  PRF-derived when PRF succeeds; the credential id alone does not reproduce it (C2); PRF
+  failure produces an explicit `recoverable: false` degrade rather than a silent legacy
+  fallback; and mobile agrees with the web wallet's `'prf-raw'` address for the same PRF
+  output (a shared golden fixture in both test suites).
+- This note records the code-level audit that established the above.
+
+**Still open, and why this is not marked "mainnet-safe" outright:**
+
+1. **PRF availability across real iOS/Android hardware and authenticators is not
+   empirically verified.** The derivation is correct when PRF succeeds, and the fallback
+   is explicit (not silent) when it does not — but which devices actually return `ok`
+   versus `unsupported` has not been measured on physical hardware. See "What could not be
+   verified" above for exactly what is and is not covered.
+2. **The derived secret is persisted in the OS keychain (`lib/walletStore.ts`'s
+   `setSignerSecret`, backed by `lib/storage.ts`'s secure store), not held purely
+   in-memory for the session.** This is a materially different (and, per ADR 0003,
+   milder) exposure than web's pre-fix plaintext `localStorage`, since the keychain is
+   OS-encrypted and not readable from JS/webview context — but it is not the literal
+   "never written to persistent storage, cleared on lock" property the web wallet's
+   `sessionStorage`-only `'prf-raw'`/`'prf-hkdf'` modes provide. Migrating mobile to a
+   pure in-memory/session cache would touch every one of the ~15 call sites that
+   currently read `getSignerSecret()` synchronously-on-mount, and is a larger, riskier
+   change than this PR's scope; it is recorded here as the concrete remaining gap rather
+   than silently accepted as "good enough." **C3 remains open.**
+
+**Recommendation:** mobile is meaningfully closer to mainnet-safe after this PR (PRF
+derivation is now proven correct and regression-tested, and the fallback behavior is
+explicit rather than silent), but a full sign-off should wait on (1) a real-device PRF
+availability pass and (2) a decision on whether the keychain-persistence gap in point 2 is
+acceptable for launch or needs the in-memory-session refactor.

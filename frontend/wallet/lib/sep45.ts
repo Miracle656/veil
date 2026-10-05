@@ -15,10 +15,12 @@
  *     (entry 0 in practice, but this module locates it by its unsigned
  *     signature rather than assuming a position) and one already signed by
  *     the anchor.
- *  2. {@link signSep45Challenge} — sign the wallet's entry with the existing
- *     passkey signer, exactly as any other Soroban authorization entry is
- *     signed (`__check_auth` does not know or care that the invocation is
- *     `web_auth_verify` rather than a transfer).
+ *  2. {@link signSep45Challenge} — validate that the entry actually is an
+ *     unsigned `web_auth_verify` invocation on the anchor's declared
+ *     contract, for this wallet and this home domain, on this wallet's
+ *     network — `__check_auth` does not know or care that the invocation is
+ *     `web_auth_verify` rather than a transfer, so this module has to check
+ *     before signing with the existing passkey signer.
  *  3. {@link submitSep45Challenge} — POST both entries back; the anchor
  *     simulates the invocation and returns `{ token: "<JWT>" }`.
  *
@@ -32,6 +34,9 @@ import {
   xdr,
   hash as stellarHash,
   nativeToScVal,
+  scValToNative,
+  Address,
+  StrKey,
 } from '@stellar/stellar-sdk'
 // @stellar/js-xdr is CommonJS with `__esModule: true` but no `default` export,
 // so a default import resolves to `undefined` under esModuleInterop — a
@@ -39,6 +44,7 @@ import {
 // and stellar-js-xdr.d.ts for the full story).
 import * as jsXdr from '@stellar/js-xdr'
 import type { WebAuthnSignature } from '@veil/sdk'
+import { getNetwork } from './network'
 
 /** XDR codec for the challenge payload: a variable-length array of entries. */
 const AuthEntryArray = new jsXdr.VarArray(xdr.SorobanAuthorizationEntry)
@@ -58,6 +64,8 @@ function encodeAuthEntries(entries: xdr.SorobanAuthorizationEntry[]): string {
 
 export type Sep45ErrorCode =
   | 'INVALID_RESPONSE'
+  | 'INVALID_CHALLENGE'
+  | 'WRONG_NETWORK'
   | 'CHALLENGE_EXPIRED'
   | 'SIGNATURE_REJECTED'
   | 'ANCHOR_ERROR'
@@ -212,6 +220,68 @@ function isUnsignedAddressEntry(entry: xdr.SorobanAuthorizationEntry): boolean {
 }
 
 /**
+ * Verify that the invocation a SEP-45 entry asks the wallet to sign is
+ * actually a `web_auth_verify` call on the anchor's declared web-auth
+ * contract, for this wallet and this home domain — not an arbitrary contract
+ * invocation (e.g. a token `transfer`) dressed up as a login challenge.
+ *
+ * `__check_auth` is invocation-blind: it verifies the WebAuthn signature over
+ * the preimage hash and nothing about what is being authorized. That is
+ * exactly why no new cryptography is needed for SEP-45 — and exactly why this
+ * check has to happen here, before the passkey ceremony runs, rather than
+ * relying on the contract to reject anything.
+ */
+function validateWebAuthInvocation(
+  invocation: xdr.SorobanAuthorizedInvocation,
+  webAuthContractId: string,
+  walletAddress: string,
+  homeDomain: string,
+): void {
+  if (invocation.subInvocations().length !== 0) {
+    throw new Sep45Error(
+      'SEP-45 challenge invocation has sub-invocations; web_auth_verify should never need any',
+      'INVALID_CHALLENGE',
+    )
+  }
+
+  const fn = invocation.function()
+  if (fn.switch().name !== 'sorobanAuthorizedFunctionTypeContractFn') {
+    throw new Sep45Error('SEP-45 challenge invocation is not a contract function call', 'INVALID_CHALLENGE')
+  }
+  const call = fn.contractFn()
+
+  const contractAddress = Address.fromScAddress(call.contractAddress()).toString()
+  if (contractAddress !== webAuthContractId) {
+    throw new Sep45Error(
+      `SEP-45 challenge invokes ${contractAddress}, not the anchor's declared web-auth contract (${webAuthContractId})`,
+      'INVALID_CHALLENGE',
+    )
+  }
+
+  const functionName = call.functionName().toString()
+  if (functionName !== 'web_auth_verify') {
+    throw new Sep45Error(
+      `SEP-45 challenge invokes "${functionName}", not "web_auth_verify" — refusing to sign`,
+      'INVALID_CHALLENGE',
+    )
+  }
+
+  const [account, argHomeDomain] = call.args().map((arg) => scValToNative(arg))
+  if (account !== walletAddress) {
+    throw new Sep45Error(
+      `SEP-45 challenge's "account" argument (${account}) does not match this wallet (${walletAddress})`,
+      'INVALID_CHALLENGE',
+    )
+  }
+  if (argHomeDomain !== homeDomain) {
+    throw new Sep45Error(
+      `SEP-45 challenge's "home_domain" argument (${argHomeDomain}) does not match the requested domain (${homeDomain})`,
+      'INVALID_CHALLENGE',
+    )
+  }
+}
+
+/**
  * Sign the wallet's (unsigned) entry in a SEP-45 challenge with the passkey
  * signer, leaving every already-signed entry (the anchor's) untouched.
  *
@@ -221,29 +291,102 @@ function isUnsignedAddressEntry(entry: xdr.SorobanAuthorizationEntry): boolean {
  * `__check_auth` verifies for every ordinary contract call, so no new
  * cryptography is needed for SEP-45.
  *
+ * `__check_auth` only verifies the signature; it never checks the network,
+ * the signing address, or what is being invoked. An anchor (or a MITM of the
+ * `stellar.toml` fetch that supplies `webAuthForContractsEndpoint`) could
+ * otherwise hand back a "challenge" that invokes a token `transfer` instead
+ * of `web_auth_verify`, so every one of those is validated here — before the
+ * passkey ceremony runs, not after:
+ *  - the network passphrase must match the wallet's configured network;
+ *  - exactly one entry must be unsigned and addressed to `walletAddress`;
+ *  - its invocation must be `web_auth_verify` on `webAuthContractId`, with no
+ *    sub-invocations;
+ *  - its `account` / `home_domain` arguments must match `walletAddress` /
+ *    `homeDomain`.
+ *
  * @param signAuthEntry   The wallet's existing passkey signer. Returns null
  *                        when the user cancels/declines the prompt.
  * @param currentLedger   The current ledger sequence, used to compute a
  *                         deliberate {@link SEP45_SIGNATURE_EXPIRATION_LEDGERS}
  *                         expiration rather than reusing the challenge's `0`.
+ * @param walletAddress   This wallet's own `C…` contract address — the entry
+ *                         addressed to any other account is rejected.
+ * @param webAuthContractId The anchor's web-auth contract id (from its
+ *                         `stellar.toml`), the only contract this will sign
+ *                         an invocation for.
+ * @param homeDomain      The anchor's home domain, as passed to
+ *                         {@link fetchSep45Challenge} — must match the
+ *                         challenge's `home_domain` argument.
  * @throws {Sep45Error} `SIGNATURE_REJECTED` if the passkey ceremony is
- *   cancelled, or `INVALID_RESPONSE` if no unsigned wallet entry is found.
+ *   cancelled; `INVALID_RESPONSE` if no unsigned wallet entry is found;
+ *   `WRONG_NETWORK` if the challenge's network doesn't match the wallet's;
+ *   `INVALID_CHALLENGE` if the invocation doesn't check out.
  */
 export async function signSep45Challenge(
   challenge: Sep45Challenge,
   signAuthEntry: (payload: Uint8Array) => Promise<WebAuthnSignature | null>,
   currentLedger: number,
+  walletAddress: string,
+  webAuthContractId: string,
+  homeDomain: string,
   expirationLedgers: number = SEP45_SIGNATURE_EXPIRATION_LEDGERS,
 ): Promise<xdr.SorobanAuthorizationEntry[]> {
+  if (!Number.isInteger(currentLedger) || currentLedger <= 0) {
+    throw new Sep45Error(`currentLedger must be a positive integer, got ${currentLedger}`, 'INVALID_CHALLENGE')
+  }
+  if (!StrKey.isValidContract(webAuthContractId)) {
+    throw new Sep45Error(`webAuthContractId is not a valid contract address: ${webAuthContractId}`, 'INVALID_CHALLENGE')
+  }
+
+  const expectedNetworkPassphrase = getNetwork().networkPassphrase
+  if (challenge.networkPassphrase !== expectedNetworkPassphrase) {
+    throw new Sep45Error(
+      `SEP-45 challenge is for the wrong network (anchor sent "${challenge.networkPassphrase}", wallet is on "${expectedNetworkPassphrase}") — refusing to sign`,
+      'WRONG_NETWORK',
+    )
+  }
+
+  // Locate the single unsigned entry addressed to this wallet, and validate
+  // its invocation, before running the passkey ceremony or hashing anything.
+  let walletEntryIndex = -1
+  for (let i = 0; i < challenge.entries.length; i++) {
+    const entry = challenge.entries[i]
+    if (!isUnsignedAddressEntry(entry)) continue
+
+    const entryAddress = Address.fromScAddress(entry.credentials().address().address()).toString()
+    if (entryAddress !== walletAddress) {
+      throw new Sep45Error(
+        `SEP-45 challenge contains an unsigned entry addressed to ${entryAddress}, not this wallet (${walletAddress})`,
+        'INVALID_CHALLENGE',
+      )
+    }
+    if (walletEntryIndex !== -1) {
+      throw new Sep45Error(
+        'SEP-45 challenge contains more than one unsigned entry addressed to this wallet',
+        'INVALID_CHALLENGE',
+      )
+    }
+    walletEntryIndex = i
+  }
+  if (walletEntryIndex === -1) {
+    throw new Sep45Error('No unsigned wallet entry found in the SEP-45 challenge', 'INVALID_RESPONSE')
+  }
+
+  validateWebAuthInvocation(
+    challenge.entries[walletEntryIndex].rootInvocation(),
+    webAuthContractId,
+    walletAddress,
+    homeDomain,
+  )
+
   const networkId = Buffer.from(
     (stellarHash as (input: Buffer) => Buffer)(Buffer.from(challenge.networkPassphrase)),
   )
   const signatureExpirationLedger = currentLedger + expirationLedgers
 
-  let signedCount = 0
-  const signed = await Promise.all(
-    challenge.entries.map(async (entry) => {
-      if (!isUnsignedAddressEntry(entry)) return entry // the anchor's own entry — already signed, pass through
+  return Promise.all(
+    challenge.entries.map(async (entry, i) => {
+      if (i !== walletEntryIndex) return entry // the anchor's own entry — already signed, pass through
 
       const addrCred = entry.credentials().address()
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
@@ -263,7 +406,6 @@ export async function signSep45Challenge(
         throw new Sep45Error('The passkey signature was cancelled or rejected', 'SIGNATURE_REJECTED')
       }
 
-      signedCount += 1
       const sigVec = xdr.ScVal.scvVec([
         nativeToScVal(sig.publicKey, { type: 'bytes' }),
         nativeToScVal(sig.authData, { type: 'bytes' }),
@@ -284,12 +426,6 @@ export async function signSep45Challenge(
       })
     }),
   )
-
-  if (signedCount === 0) {
-    throw new Sep45Error('No unsigned wallet entry found in the SEP-45 challenge', 'INVALID_RESPONSE')
-  }
-
-  return signed
 }
 
 // ── Submission ───────────────────────────────────────────────────────────────

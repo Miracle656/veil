@@ -29,7 +29,7 @@ Object.defineProperty(globalThis, 'crypto', {
 })
 Object.assign(globalThis, { TextEncoder, TextDecoder })
 
-import { Address, Keypair, xdr } from '@stellar/stellar-sdk'
+import { Address, Keypair, xdr, nativeToScVal } from '@stellar/stellar-sdk'
 import * as jsXdr from '@stellar/js-xdr'
 import type { WebAuthnSignature } from '@veil/sdk'
 import {
@@ -53,12 +53,15 @@ function encodeEntries(entries: xdr.SorobanAuthorizationEntry[]): string {
   return writer.finalize().toString('base64')
 }
 
-/** Build one SorobanAuthorizationEntry for `web_auth_verify`, signed or not. */
+const HOME_DOMAIN = 'testanchor.stellar.org'
+
+/** Build one SorobanAuthorizationEntry for a contract call, signed or not. */
 function authEntry(
   account: string,
   nonce: string,
   signature: xdr.ScVal,
   signatureExpirationLedger = 0,
+  opts: { contract?: string; functionName?: string; args?: xdr.ScVal[]; subInvocations?: xdr.SorobanAuthorizedInvocation[] } = {},
 ): xdr.SorobanAuthorizationEntry {
   const address = new Address(account).toScAddress()
   const credentials = xdr.SorobanCredentials.sorobanCredentialsAddress(
@@ -72,19 +75,23 @@ function authEntry(
   const rootInvocation = new xdr.SorobanAuthorizedInvocation({
     function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
       new xdr.InvokeContractArgs({
-        contractAddress: new Address(ANCHOR_CONTRACT).toScAddress(),
-        functionName: 'web_auth_verify',
-        args: [],
+        contractAddress: new Address(opts.contract ?? ANCHOR_CONTRACT).toScAddress(),
+        functionName: opts.functionName ?? 'web_auth_verify',
+        args: opts.args ?? [nativeToScVal(account, { type: 'address' }), nativeToScVal(HOME_DOMAIN, { type: 'string' })],
       }),
     ),
-    subInvocations: [],
+    subInvocations: opts.subInvocations ?? [],
   })
   return new xdr.SorobanAuthorizationEntry({ credentials, rootInvocation })
 }
 
 /** A two-entry challenge shaped like the SDF test anchor's real response. */
-function buildChallenge(wallet: string, anchorSigner: string): xdr.SorobanAuthorizationEntry[] {
-  const walletEntry = authEntry(wallet, '1', xdr.ScVal.scvVoid(), 0) // unsigned
+function buildChallenge(
+  wallet: string,
+  anchorSigner: string,
+  walletEntryOpts: Parameters<typeof authEntry>[4] = {},
+): xdr.SorobanAuthorizationEntry[] {
+  const walletEntry = authEntry(wallet, '1', xdr.ScVal.scvVoid(), 0, walletEntryOpts) // unsigned
   const anchorSig = xdr.ScVal.scvVec([xdr.ScVal.scvBytes(Buffer.alloc(64, 1))])
   const anchorEntry = authEntry(anchorSigner, '2', anchorSig, 4_314_260) // already signed
   return [walletEntry, anchorEntry]
@@ -92,6 +99,11 @@ function buildChallenge(wallet: string, anchorSigner: string): xdr.SorobanAuthor
 
 const WALLET = Keypair.random().publicKey()
 const ANCHOR_SIGNER = Keypair.random().publicKey()
+
+/** Default `(walletAddress, webAuthContractId, homeDomain)` args for `signSep45Challenge`, matching `buildChallenge`'s shape. */
+function signArgs() {
+  return [WALLET, ANCHOR_CONTRACT, HOME_DOMAIN] as const
+}
 
 function fakeSignature(): WebAuthnSignature {
   return {
@@ -246,15 +258,15 @@ describe('fetchSep45Challenge', () => {
 })
 
 describe('signSep45Challenge', () => {
-  function makeChallenge(): Sep45Challenge {
-    return { entries: buildChallenge(WALLET, ANCHOR_SIGNER), networkPassphrase: NETWORK_PASSPHRASE }
+  function makeChallenge(walletEntryOpts: Parameters<typeof authEntry>[4] = {}): Sep45Challenge {
+    return { entries: buildChallenge(WALLET, ANCHOR_SIGNER, walletEntryOpts), networkPassphrase: NETWORK_PASSPHRASE }
   }
 
   it('signs only the unsigned wallet entry and leaves the anchor entry untouched', async () => {
     const challenge = makeChallenge()
     const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
 
-    const signed = await signSep45Challenge(challenge, signAuthEntry, 1000)
+    const signed = await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
 
     expect(signAuthEntry).toHaveBeenCalledTimes(1) // only the wallet's entry needed signing
     expect(signed).toHaveLength(2)
@@ -273,7 +285,7 @@ describe('signSep45Challenge', () => {
     const challenge = makeChallenge()
     const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
 
-    const [signedWallet] = await signSep45Challenge(challenge, signAuthEntry, 500, 10)
+    const [signedWallet] = await signSep45Challenge(challenge, signAuthEntry, 500, WALLET, ANCHOR_CONTRACT, HOME_DOMAIN, 10)
 
     expect(signedWallet.credentials().address().signatureExpirationLedger()).toBe(510)
   })
@@ -283,7 +295,7 @@ describe('signSep45Challenge', () => {
     const signAuthEntry = jest.fn().mockResolvedValue(null)
 
     try {
-      await signSep45Challenge(challenge, signAuthEntry, 1000)
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
       throw new Error('expected signSep45Challenge to throw')
     } catch (err) {
       expect((err as Sep45Error).code).toBe('SIGNATURE_REJECTED')
@@ -299,10 +311,140 @@ describe('signSep45Challenge', () => {
     const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
 
     try {
-      await signSep45Challenge(challenge, signAuthEntry, 1000)
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
       throw new Error('expected signSep45Challenge to throw')
     } catch (err) {
       expect((err as Sep45Error).code).toBe('INVALID_RESPONSE')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws WRONG_NETWORK when the challenge passphrase does not match the wallet network', async () => {
+    const challenge: Sep45Challenge = {
+      entries: buildChallenge(WALLET, ANCHOR_SIGNER),
+      networkPassphrase: 'Public Global Stellar Network ; September 2015', // mainnet, wallet is on testnet
+    }
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    try {
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
+      throw new Error('expected signSep45Challenge to throw')
+    } catch (err) {
+      expect((err as Sep45Error).code).toBe('WRONG_NETWORK')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws INVALID_CHALLENGE when the unsigned entry is addressed to someone else', async () => {
+    const otherAccount = Keypair.random().publicKey()
+    const challenge: Sep45Challenge = {
+      entries: buildChallenge(otherAccount, ANCHOR_SIGNER),
+      networkPassphrase: NETWORK_PASSPHRASE,
+    }
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    try {
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
+      throw new Error('expected signSep45Challenge to throw')
+    } catch (err) {
+      expect((err as Sep45Error).code).toBe('INVALID_CHALLENGE')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws INVALID_CHALLENGE when the invocation calls transfer instead of web_auth_verify', async () => {
+    const challenge = makeChallenge({ functionName: 'transfer' })
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    try {
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
+      throw new Error('expected signSep45Challenge to throw')
+    } catch (err) {
+      expect((err as Sep45Error).code).toBe('INVALID_CHALLENGE')
+      expect((err as Sep45Error).message).toContain('transfer')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws INVALID_CHALLENGE when the invocation targets a different contract', async () => {
+    const otherContract = Address.contract(Buffer.alloc(32, 7)).toString()
+    const challenge = makeChallenge({ contract: otherContract })
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    try {
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
+      throw new Error('expected signSep45Challenge to throw')
+    } catch (err) {
+      expect((err as Sep45Error).code).toBe('INVALID_CHALLENGE')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws INVALID_CHALLENGE when the invocation has sub-invocations', async () => {
+    const subInvocation = new xdr.SorobanAuthorizedInvocation({
+      function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+        new xdr.InvokeContractArgs({
+          contractAddress: new Address(ANCHOR_CONTRACT).toScAddress(),
+          functionName: 'transfer',
+          args: [],
+        }),
+      ),
+      subInvocations: [],
+    })
+    const challenge = makeChallenge({ subInvocations: [subInvocation] })
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    try {
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
+      throw new Error('expected signSep45Challenge to throw')
+    } catch (err) {
+      expect((err as Sep45Error).code).toBe('INVALID_CHALLENGE')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws INVALID_CHALLENGE when the "account" argument does not match the wallet', async () => {
+    const otherAccount = Keypair.random().publicKey()
+    const challenge = makeChallenge({
+      args: [nativeToScVal(otherAccount, { type: 'address' }), nativeToScVal(HOME_DOMAIN, { type: 'string' })],
+    })
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    try {
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
+      throw new Error('expected signSep45Challenge to throw')
+    } catch (err) {
+      expect((err as Sep45Error).code).toBe('INVALID_CHALLENGE')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws INVALID_CHALLENGE when the "home_domain" argument does not match the requested domain', async () => {
+    const challenge = makeChallenge({
+      args: [nativeToScVal(WALLET, { type: 'address' }), nativeToScVal('evil.example', { type: 'string' })],
+    })
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    try {
+      await signSep45Challenge(challenge, signAuthEntry, 1000, ...signArgs())
+      throw new Error('expected signSep45Challenge to throw')
+    } catch (err) {
+      expect((err as Sep45Error).code).toBe('INVALID_CHALLENGE')
+    }
+    expect(signAuthEntry).not.toHaveBeenCalled()
+  })
+
+  it('throws INVALID_CHALLENGE when currentLedger is not a positive integer', async () => {
+    const challenge = makeChallenge()
+    const signAuthEntry = jest.fn().mockResolvedValue(fakeSignature())
+
+    for (const bad of [0, -1, 1.5]) {
+      try {
+        await signSep45Challenge(challenge, signAuthEntry, bad, ...signArgs())
+        throw new Error('expected signSep45Challenge to throw')
+      } catch (err) {
+        expect((err as Sep45Error).code).toBe('INVALID_CHALLENGE')
+      }
     }
     expect(signAuthEntry).not.toHaveBeenCalled()
   })
@@ -444,7 +586,7 @@ describe('SEP-45 JWT used in place of the SEP-10 token (issue #683 acceptance cr
     const challenge = await fetchSep45Challenge(WEB_AUTH_ENDPOINT, WALLET, 'testanchor.stellar.org')
 
     // 2. The wallet signs its entry with the existing passkey signer.
-    const signed = await signSep45Challenge(challenge, async () => fakeSignature(), 1_000_000)
+    const signed = await signSep45Challenge(challenge, async () => fakeSignature(), 1_000_000, ...signArgs())
 
     // 3. Anchor verifies and returns a JWT — same shape as a SEP-10 token.
     fetchMock.mockResolvedValueOnce({
