@@ -316,14 +316,9 @@ function Row({
   // A live row is a button; a "soon" row is a listing. The two looked identical
   // and behaved identically — neither did anything — so the whole drawer read
   // as decoration. `BillService` has carried a `route` the entire time.
-  const Wrapper = onPick ? Pressable : View;
-  return (
-    <Wrapper
-      onPress={onPick}
-      accessibilityRole={onPick ? 'button' : undefined}
-      style={({ pressed }: { pressed?: boolean }) => [styles.row, pressed && styles.pressed]}
-      accessibilityLabel={`${service.label}${soon ? ', coming soon' : ''}`}
-    >
+  const label = `${service.label}${soon ? ', coming soon' : ''}`;
+  const inner = (
+    <>
       <View style={[styles.rowIcon, soon && styles.rowIconSoon]}>
         <service.Icon size={18} color={soon ? colors.textMuted : colors.textPrimary} />
       </View>
@@ -338,7 +333,33 @@ function Row({
           <Text style={styles.badgeText}>SOON</Text>
         </View>
       ) : null}
-    </Wrapper>
+    </>
+  );
+
+  // Written out twice rather than through one `Wrapper` component, because the
+  // two take different `style` types and sharing one JSX node meant passing a
+  // FUNCTION style to a View. Only Pressable resolves those, so on every "soon"
+  // row `styles.row` was dropped entirely — the icon, the text and the badge
+  // fell into the default column layout with the badge stretched edge to edge.
+  // A View that silently ignores an unsupported style prop gives no warning,
+  // which is why it looked like a layout bug rather than a type one.
+  if (!onPick) {
+    return (
+      <View style={styles.row} accessibilityLabel={label}>
+        {inner}
+      </View>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={onPick}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+    >
+      {inner}
+    </Pressable>
   );
 }
 
