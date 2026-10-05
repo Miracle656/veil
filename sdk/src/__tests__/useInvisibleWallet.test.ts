@@ -452,6 +452,8 @@ describe('useInvisibleWallet', () => {
 
   // ── deploy() ───────────────────────────────────────────────────────────────
 
+  // NOTE: these cases deliberately use the DEPRECATED secret/Keypair inputs to
+  // cover the migration path; the callback path is covered in signer.test.ts.
   describe('deploy()', () => {
     it('builds a single-operation Soroban deploy transaction when sponsored', async () => {
       const { result } = renderHook(() => useInvisibleWallet({

@@ -1,5 +1,8 @@
 # Veil QR Point of Sale
 
+> [!WARNING]
+> **Demonstration only — not production-safe**: Payment verification runs entirely client-side by polling Horizon directly from the browser without backend confirmation or webhook validation. Anyone with network access can intercept or spoof client state. Production point-of-sale systems must verify payments and transaction memos on an authoritative backend server.
+
 A tablet-friendly merchant terminal: enter an amount, show a **SEP-7 `pay` QR**,
 and watch for the on-chain payment — the customer scans it with their Veil
 wallet and the screen flips to **Paid!**.

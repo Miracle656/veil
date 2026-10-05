@@ -234,11 +234,12 @@ export function getOrderStatus(orderId: string): Promise<OfframpStatus> {
  * form while real money was already on its way to Linq. The order id is enough
  * to recover everything: the backend holds the rest.
  */
-const ACTIVE_ORDER_KEY = 'veil_offramp_active_order';
+/** AsyncStorage key holding the in-flight cash-out order. Wallet-derived: cleared on reset. */
+export const OFFRAMP_ACTIVE_ORDER_KEY = 'veil_offramp_active_order';
 
 export async function rememberActiveOrder(orderId: string): Promise<void> {
   try {
-    await AsyncStorage.setItem(ACTIVE_ORDER_KEY, orderId);
+    await AsyncStorage.setItem(OFFRAMP_ACTIVE_ORDER_KEY, orderId);
   } catch {
     // Losing the pointer is survivable — the order still settles server-side —
     // so this must never take the creation flow down with it.
@@ -247,7 +248,7 @@ export async function rememberActiveOrder(orderId: string): Promise<void> {
 
 export async function activeOrderId(): Promise<string | null> {
   try {
-    return await AsyncStorage.getItem(ACTIVE_ORDER_KEY);
+    return await AsyncStorage.getItem(OFFRAMP_ACTIVE_ORDER_KEY);
   } catch {
     return null;
   }
@@ -255,7 +256,7 @@ export async function activeOrderId(): Promise<string | null> {
 
 export async function forgetActiveOrder(): Promise<void> {
   try {
-    await AsyncStorage.removeItem(ACTIVE_ORDER_KEY);
+    await AsyncStorage.removeItem(OFFRAMP_ACTIVE_ORDER_KEY);
   } catch {
     // ignore
   }
@@ -273,7 +274,8 @@ export async function forgetActiveOrder(): Promise<void> {
  * Addresses only, no amounts or bank details: enough to label a row, and
  * nothing that would turn the device into a record of who was paid.
  */
-const DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses';
+/** AsyncStorage key holding deposit addresses sent to. Wallet-derived: cleared on reset. */
+export const OFFRAMP_DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses';
 
 export async function rememberDepositAddress(address: string): Promise<void> {
   try {
@@ -282,7 +284,7 @@ export async function rememberDepositAddress(address: string): Promise<void> {
     // Bounded: a wallet that offramps often should not grow this forever, and
     // the oldest entries are the least likely to still be on screen.
     const next = [address, ...known].slice(0, 50);
-    await AsyncStorage.setItem(DEPOSIT_ADDRESSES_KEY, JSON.stringify(next));
+    await AsyncStorage.setItem(OFFRAMP_DEPOSIT_ADDRESSES_KEY, JSON.stringify(next));
   } catch {
     // Labelling is a nicety; never let it fail an order.
   }
@@ -290,7 +292,7 @@ export async function rememberDepositAddress(address: string): Promise<void> {
 
 export async function knownDepositAddresses(): Promise<string[]> {
   try {
-    const raw = await AsyncStorage.getItem(DEPOSIT_ADDRESSES_KEY);
+    const raw = await AsyncStorage.getItem(OFFRAMP_DEPOSIT_ADDRESSES_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === 'string') : [];
   } catch {

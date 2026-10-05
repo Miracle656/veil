@@ -259,7 +259,8 @@ The agent has access to these tools via Claude's tool-use API:
 |---|---|---|
 | `get_price` | Live SDEX + AMM prices and swap routes | x402 micropayment |
 | `get_transfer_history` | Recent Soroban + classic transfers | x402 micropayment |
-| `get_wallet_balance` | XLM + token balances (fee-payer + contract) | Free |
+| `get_wallet_balance` | XLM + token balances (fee-payer + contract); each issued asset is classified `verified`, `unverified` (registered code, different issuer) or `unlisted` | Free |
+| `get_asset_info` | Verified issuer of an asset (USDT0, USDC) and whether its issuer can freeze or claw back | Free |
 | `build_swap` | Build a path payment (unsigned XDR) | Free |
 | `build_payment` | Build a payment transaction (unsigned XDR) | Free |
 | `request_user_approval` | Send transaction to frontend for passkey approval | Free |

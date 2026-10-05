@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { parseQrValue } from '@/lib/sep7'
+
 interface QrScannerProps {
   onScan: (address: string) => void
   onClose: () => void
@@ -21,6 +23,11 @@ declare const BarcodeDetector: {
 
 export function isValidStellarAddress(addr: string): boolean {
   return (addr.startsWith('G') || addr.startsWith('C')) && addr.length === 56
+}
+
+export function isRecognizedQrValue(raw: string): boolean {
+  const trimmed = raw.trim()
+  return isValidStellarAddress(trimmed) || parseQrValue(trimmed) !== null
 }
 
 export function QrScanner({ onScan, onClose }: QrScannerProps) {
@@ -66,11 +73,11 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
           try {
             const codes = await detector.detect(video)
             for (const code of codes) {
-              const addr = code.rawValue.trim()
-              if (isValidStellarAddress(addr)) {
-                setAnnouncement(`QR code recognized. Address: ${addr}`)
+              const val = code.rawValue.trim()
+              if (isRecognizedQrValue(val)) {
+                setAnnouncement('QR code recognized.')
                 stop()
-                onScan(addr)
+                onScan(val)
                 return
               }
             }
@@ -99,13 +106,13 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
 
   function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const addr = manualAddress.trim()
-    if (!isValidStellarAddress(addr)) {
-      setManualError('Enter a valid Stellar address (G... or C..., 56 characters).')
+    const val = manualAddress.trim()
+    if (!isRecognizedQrValue(val)) {
+      setManualError('Enter a valid Stellar address (G... or C..., 56 characters) or SEP-7 URI.')
       return
     }
     setManualError(null)
-    onScan(addr)
+    onScan(val)
   }
 
   const dialog = (
@@ -201,7 +208,7 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
             marginTop: '0.875rem', fontSize: '0.75rem',
             color: 'rgba(246,247,248,0.35)', textAlign: 'center',
           }}>
-            Point camera at a Stellar address QR code (G... or C...)
+            Point camera at a Stellar address QR code (G... or C...) or payment request
           </p>
         )}
 

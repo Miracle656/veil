@@ -51,7 +51,7 @@ export function Label({
   children: ReactNode
   className?: string
 }) {
-  return <div className={`font-anton text-xs uppercase tracking-[0.08em] text-[rgba(246,247,248,0.4)] ${className}`}>{children}</div>
+  return <div className={`font-anton text-xs uppercase tracking-[0.08em] text-[rgba(246,247,248,0.7)] ${className}`}>{children}</div>
 }
 
 /** Inconsolata value display for balances, addresses, and transaction amounts. */
@@ -170,7 +170,7 @@ export function SectionLabel({
     gold: 'text-gold',
     teal: 'text-teal',
     lilac: 'text-lilac',
-    dim: 'text-[rgba(246,247,248,0.4)]',
+    dim: 'text-[rgba(246,247,248,0.7)]',
   } as const
   return (
     <div
@@ -339,7 +339,7 @@ export function StatCard({
       <DisplayNumber size={44} tone={tone === 'teal' ? 'teal' : 'default'} className="mt-[14px]">
         {value}
       </DisplayNumber>
-      {sub ? <div className="font-mono text-[13px] text-[rgba(246,247,248,0.5)] mt-[10px]">{sub}</div> : null}
+      {sub ? <div className="font-mono text-[13px] text-[rgba(246,247,248,0.7)] mt-[10px]">{sub}</div> : null}
     </>
   )
   // The teal variant is the tinted "earned" card; gold sits on the plain
@@ -367,13 +367,16 @@ export function ListRow({
   last?: boolean
   className?: string
 }) {
-  return (
-    <div
-      onClick={onClick}
-      className={`flex justify-between items-center py-4 ${
-        last ? '' : 'border-b border-[rgba(255,255,255,0.06)]'
-      } ${onClick ? 'cursor-pointer' : ''} ${className}`}
-    >
+  const classes = `flex justify-between items-center py-4 ${
+    last ? '' : 'border-b border-[rgba(255,255,255,0.06)]'
+  } ${onClick ? 'cursor-pointer w-full text-left bg-transparent' : ''} ${className}`
+
+  return onClick ? (
+    <button type="button" onClick={onClick} className={classes}>
+      {children}
+    </button>
+  ) : (
+    <div className={classes}>
       {children}
     </div>
   )
@@ -473,7 +476,7 @@ export function SilverBalanceCard({
       <div className="relative flex justify-between items-start">
         <div
           className="text-[11px] font-bold uppercase whitespace-nowrap"
-          style={{ letterSpacing: '0.14em', color: 'rgba(15,15,15,0.55)' }}
+          style={{ letterSpacing: '0.14em', color: 'rgba(15,15,15,0.75)' }}
         >
           {label}
         </div>
@@ -522,7 +525,7 @@ export function Mono({
 }) {
   return (
     <span
-      className={`font-mono text-[rgba(246,247,248,0.45)] whitespace-nowrap ${className}`}
+      className={`font-mono text-[rgba(246,247,248,0.7)] whitespace-nowrap ${className}`}
       style={{ fontSize: size }}
     >
       {children}
