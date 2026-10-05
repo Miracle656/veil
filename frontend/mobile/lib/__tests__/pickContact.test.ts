@@ -1,4 +1,9 @@
-import { toLocalNigerianNumber } from '../pickContact';
+import { pickContactNumber, toLocalNigerianNumber } from '../pickContact';
+
+// Stand in for a build compiled without expo-contacts. jest.mock is hoisted
+// above the import regardless of where it is written, so this reads in the
+// right order without tripping import/first.
+jest.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
 
 /**
  * Turning what is actually saved in someone's phone into what the bill API
@@ -44,5 +49,27 @@ describe('toLocalNigerianNumber', () => {
   it('does not mistake a landline-length string for a mobile', () => {
     // 10 digits starting with 0 is not the dropped-zero case, and is not 11.
     expect(toLocalNigerianNumber('0123456789')).toBeNull();
+  });
+});
+
+/**
+ * A build without the native module must answer, not crash.
+ *
+ * The first version required `expo-contacts` inside a `try`, which is not
+ * enough: the require resolves, and the module's own top-level code throws from
+ * `requireNativeModule('ExpoContacts')`. Metro reports that to the global
+ * handler as well as to the caller, so a red box appeared on a tap even though
+ * the catch had run. Probing with `requireOptionalNativeModule` first means the
+ * wrapper is never loaded on a build that cannot support it.
+ */
+describe('on a build without ExpoContacts', () => {
+  it('reports unavailable instead of throwing', async () => {
+    const picked = await pickContactNumber();
+    expect(picked.ok).toBe(false);
+    if (!picked.ok) {
+      expect(picked.reason).toBe('unavailable');
+      // And says something the user can act on, rather than a module name.
+      expect(picked.message).toMatch(/type the number/i);
+    }
   });
 });
