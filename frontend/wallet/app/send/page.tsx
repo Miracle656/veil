@@ -94,6 +94,8 @@ export default function SendPage() {
    */
   const memoIsText = !memoType || String(memoType).toUpperCase().replace(/^MEMO_/, '') === 'TEXT'
   const memoLengthError = memoIsText ? validateMemoText(memo) : null
+  /** What the memo field shows: the first reason the memo cannot be sent, if any. */
+  const memoFieldError = memo ? validateMemo(memo, memoType) : null
 
   /**
    * Prefill from the query string, so another screen can hand off a payment it
@@ -686,10 +688,16 @@ export default function SendPage() {
                 placeholder="Add a note for the recipient"
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
+                aria-invalid={memoFieldError ? true : undefined}
+                aria-describedby={memoFieldError ? 'send-memo-error' : undefined}
               />
-              {memo && validateMemo(memo, memoType) && (
-                <p style={{ fontSize: '0.75rem', color: '#e5484d', marginTop: '0.375rem', lineHeight: 1.4 }}>
-                  {validateMemo(memo, memoType)}
+              {memoFieldError && (
+                <p
+                  id="send-memo-error"
+                  role="alert"
+                  style={{ fontSize: '0.75rem', color: '#e5484d', marginTop: '0.375rem', lineHeight: 1.4 }}
+                >
+                  {memoFieldError}
                 </p>
               )}
             </div>
