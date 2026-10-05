@@ -1,0 +1,92 @@
+name: SPP Config Drift Check
+
+# Compares the SPP testnet config pinned in frontend/wallet/lib/privacy/config.ts with upstream's
+# deployments.json. The comparison is frontend/wallet/lib/privacy/drift.ts, run through jest
+# (__tests__/drift.live.test.ts); drift.test.ts covers that same code, so what runs here is what is tested.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    inputs:
+      warn_only:
+        description: 'Run in warn-only mode (do not fail job on drift)'
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - 'frontend/wallet/lib/privacy/**'
+      - '.github/workflows/spp-drift.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-drift:
+    name: Check SPP Upstream Config Drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '20'
+
+      - name: Install wallet dependencies
+        working-directory: frontend/wallet
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci
+
+      - name: Run SPP drift check
+        id: drift-check
+        working-directory: frontend/wallet
+        env:
+          SPP_DRIFT_LIVE: '1'
+          SPP_DRIFT_REPORT: ${{ github.workspace }}/diff.txt
+          SPP_DRIFT_WARN_ONLY: ${{ (github.event_name == 'pull_request' || inputs.warn_only) && '1' || '0' }}
+        run: |
+          npx jest lib/privacy/__tests__/drift.live.test.ts 2>&1 | tee "$GITHUB_WORKSPACE/summary.txt"
+        shell: bash
+
+      - name: Publish Step Summary
+        if: always()
+        run: |
+          echo "## Stellar Private Payments (SPP) Drift Check" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f summary.txt ]; then
+            cat summary.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
+        shell: bash
+
+      - name: Open or update alert issue on scheduled drift
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # diff.txt is only written when drift was actually found. Without it the job failed for
+          # another reason (for example upstream unreachable), which is not drift.
+          if [ ! -f diff.txt ]; then
+            echo "No drift report was produced; not filing an issue."
+            exit 0
+          fi
+
+          # One open issue at a time: a drift that takes days to act on must not file a new issue daily.
+          EXISTING=$(gh issue list --state open --label "epic:privacy" \
+            --search "Pinned SPP configuration drifted in:title" \
+            --json number --jq '.[0].number // empty')
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create \
+              --title "[ALERT] Pinned SPP configuration drifted from upstream" \
+              --body-file diff.txt \
+              --label "area:ci,epic:privacy"
+          else
+            gh issue comment "$EXISTING" --body-file diff.txt
+          fi
+        shell: bash

@@ -2,6 +2,7 @@ import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
+import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Pressable,
@@ -24,10 +25,8 @@ import {
 } from '../lib/sep24';
 import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 
-// Falls back to env so the screen can be exercised against a testnet anchor
-// before a wallet exists on the device.
 const FALLBACK_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
-const DEFAULT_ANCHOR_DOMAIN = process.env['EXPO_PUBLIC_SEP24_ANCHOR_DOMAIN']?.trim() || 'testanchor.stellar.org';
+const DEFAULT_ANCHOR_DOMAIN = process.env['EXPO_PUBLIC_SEP24_ANCHOR_DOMAIN']?.trim() || '';
 
 /**
  * Authenticate with the anchor if it advertises a SEP-10 endpoint.
@@ -59,6 +58,7 @@ type Step = 'form' | 'connecting' | 'pending' | 'success' | 'error';
 const POLL_INTERVAL_MS = 5_000;
 
 export default function BuyScreen() {
+  const router = useRouter();
   const [anchorDomain, setAnchorDomain] = useState(DEFAULT_ANCHOR_DOMAIN);
   const [assetCode, setAssetCode] = useState('XLM');
   const [amount, setAmount] = useState('');
@@ -294,6 +294,21 @@ export default function BuyScreen() {
         </Pressable>
       </View>
 
+      {/* USDY Explainer Card */}
+      <View style={styles.rwaCard}>
+        <Text style={styles.rwaTag}>TOKENIZED US TREASURIES</Text>
+        <Text style={styles.rwaTitle}>USDY (Ondo US Dollar Yield)</Text>
+        <Text style={styles.rwaDesc}>
+          Understand what USDY is, how its value accrues, and its key risks before swapping or buying.
+        </Text>
+        <Pressable
+          style={styles.rwaButton}
+          onPress={() => router.push('/token/usdy' as any)}
+        >
+          <Text style={styles.rwaButtonText}>Learn what USDY is →</Text>
+        </Pressable>
+      </View>
+
       {step === 'error' && error && <Text style={styles.error}>{error}</Text>}
     </ScrollView>
   );
@@ -418,5 +433,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#450a0a',
     borderRadius: 8,
     padding: 10,
+  },
+  rwaCard: {
+    backgroundColor: 'rgba(253, 218, 36, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(253, 218, 36, 0.25)',
+    borderRadius: 12,
+    padding: 16,
+    gap: 6,
+    marginTop: 8,
+  },
+  rwaTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FDDA24',
+    letterSpacing: 0.8,
+  },
+  rwaTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  rwaDesc: {
+    fontSize: 13,
+    color: '#94a3b8',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  rwaButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+  },
+  rwaButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FDDA24',
   },
 });

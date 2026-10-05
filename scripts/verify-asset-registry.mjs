@@ -1,201 +1,347 @@
 #!/usr/bin/env node
 /**
- * verify-asset-registry.mjs — Stellar mainnet asset registry verifier (Issue #729).
- *
- * Verifies that every asset in ASSET_REGISTRY:
- *   1. Has a valid mainnet issuer account on Stellar Horizon with a matching home_domain.
- *   2. Has a valid stellar.toml file hosted at https://{home_domain}/.well-known/stellar.toml.
- *   3. Declares the matching asset code and issuer address in its CURRENCIES section.
- *
- * Native XLM is checked for its home_domain (stellar.org) and stellar.toml availability.
+ * Verify registered non-native assets by exact issuer identity on their
+ * claimed Stellar network, verifying wallet and mobile registry parity and
+ * corroborating with stellar.toml.
  */
 
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { Asset, Networks } from '@stellar/stellar-sdk';
+import toml from 'toml';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const walletAssetsPath = join(repoRoot, 'frontend', 'wallet', 'lib', 'assets.ts');
+const mobileAssetsPath = join(repoRoot, 'frontend', 'mobile', 'lib', 'assets.ts');
 
-const HORIZON_MAINNET = 'https://horizon.stellar.org';
+export const STELLAR_NETWORKS = {
+  mainnet: {
+    horizon: 'https://horizon.stellar.org',
+    passphrase: Networks.PUBLIC,
+  },
+  testnet: {
+    horizon: 'https://horizon-testnet.stellar.org',
+    passphrase: Networks.TESTNET,
+  },
+};
 
-function parseAssetRegistry(filePath) {
-  const content = readFileSync(filePath, 'utf8');
-  const registryMatch = content.match(/export const ASSET_REGISTRY: Record<string, RegisteredAsset> = (\{[\s\S]*?\n\};?)/);
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function resolveStringValue(rawValue, constants, field, source) {
+  if (rawValue === undefined) return undefined;
+
+  const quoted = rawValue.match(/^(['"])([\s\S]*)\1$/);
+  if (quoted) return quoted[2];
+  if (constants.has(rawValue)) return constants.get(rawValue);
+
+  throw new Error(`Could not resolve ${field} value "${rawValue}" in ${source}`);
+}
+
+export function parseAssetRegistryText(content, source = '<registry>') {
+  const registryMatch = content.match(
+    /export const ASSET_REGISTRY: Record<string, RegisteredAsset> = (\{[\s\S]*?\n\};?)/,
+  );
   if (!registryMatch) {
-    throw new Error(`Could not find ASSET_REGISTRY in ${filePath}`);
+    throw new Error(`Could not find ASSET_REGISTRY in ${source}`);
   }
 
-  const registryText = registryMatch[1];
-  const assetBlocks = registryText.split(/\n\s*([A-Z0-9]+):\s*\{/);
-  
+  const constants = new Map(
+    [...content.matchAll(/export const ([A-Z0-9_]+)\s*=\s*(['"])(.*?)\2\s*;?/g)].map(
+      ([, name, , value]) => [name, value],
+    ),
+  );
+  const assetBlocks = registryMatch[1].split(/\n\s*([A-Z0-9]+):\s*\{/);
   const assets = [];
+
   for (let i = 1; i < assetBlocks.length; i += 2) {
     const key = assetBlocks[i];
     const block = assetBlocks[i + 1];
+    const rawField = (field) =>
+      block.match(new RegExp(`^\\s*${field}:\\s*([^,\\n]+)`, 'm'))?.[1].trim();
+    const stringField = (field) =>
+      resolveStringValue(rawField(field), constants, field, source);
 
-    const getVal = (field) => {
-      const match = block.match(new RegExp(`${field}:\\s*['"]([^'"]+)['"]`));
-      return match ? match[1] : '';
+    const asset = {
+      key,
+      code: stringField('code'),
+      issuer: stringField('issuer') ?? '',
+      network: stringField('network'),
+      homeDomain: stringField('homeDomain'),
+      kind: stringField('kind'),
+      sacContractId: stringField('sacContractId'),
     };
 
-    const code = getVal('code') || key;
-    const issuerVarMatch = block.match(/issuer:\s*([A-Z0-9_]+)/);
-    let issuer = getVal('issuer');
-    if (!issuer && issuerVarMatch) {
-      const varName = issuerVarMatch[1];
-      const varDeclMatch = content.match(new RegExp(`export const ${varName} = ['"]([^'"]+)['"]`));
-      if (varDeclMatch) {
-        issuer = varDeclMatch[1];
-      }
-    }
-
-    assets.push({
-      key,
-      code,
-      issuer,
-      homeDomain: getVal('homeDomain'),
-      kind: getVal('kind'),
-    });
+    if (!asset.code) throw new Error(`Asset ${key} has no code in ${source}`);
+    if (!asset.network) throw new Error(`Asset ${key} has no network in ${source}`);
+    assets.push(asset);
   }
 
   return assets;
 }
 
-function parseTomlCurrencies(tomlText) {
-  const currencies = [];
-  const blocks = tomlText.split(/\[\[?CURRENCIES\]\]?/i);
-
-  for (let i = 1; i < blocks.length; i++) {
-    const block = blocks[i].split(/\[\[?[A-Z_]+\]\]?/i)[0];
-    const codeMatch = block.match(/code\s*=\s*["']([^"']+)["']/i);
-    const issuerMatch = block.match(/issuer\s*=\s*["']([^"']+)["']/i);
-    if (codeMatch) {
-      currencies.push({
-        code: codeMatch[1],
-        issuer: issuerMatch ? issuerMatch[1] : '',
-      });
-    }
-  }
-  return currencies;
+export function parseAssetRegistry(filePath) {
+  return parseAssetRegistryText(readFileSync(filePath, 'utf8'), filePath);
 }
 
-async function fetchTomlText(domain) {
-  const urls = [
-    `https://${domain}/.well-known/stellar.toml`,
-    `https://www.${domain}/.well-known/stellar.toml`,
-  ];
-  for (const url of urls) {
-    try {
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/plain, text/html, */*',
+export function normalizeRegistry(assets) {
+  return Object.fromEntries(
+    [...assets]
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .map(({ key, code, issuer, network, homeDomain, sacContractId }) => [
+        key,
+        {
+          code,
+          issuer,
+          network,
+          homeDomain: homeDomain ?? null,
+          sacContractId: sacContractId ?? null,
         },
-        redirect: 'follow',
-        signal: AbortSignal.timeout(10000),
-      });
-      if (res.ok) {
-        const text = await res.text();
-        if (text && (text.includes('CURRENCIES') || text.includes('DOCUMENTATION') || text.includes('VERSION'))) {
-          return { url, text };
-        }
-      }
-    } catch (e) {
-      // Continue to next URL fallback
-    }
-  }
-  return null;
+      ]),
+  );
 }
 
-async function verifyAsset(asset) {
-  console.log(`\nVerifying asset "${asset.code}"...`);
-  
-  if (asset.code === 'XLM' || asset.kind === 'native' || !asset.issuer) {
-    console.log(`  -> Native asset XLM: verifying home domain "${asset.homeDomain}"`);
-    if (asset.homeDomain !== 'stellar.org') {
-      throw new Error(`XLM homeDomain expected "stellar.org", got "${asset.homeDomain}"`);
-    }
-
-    const tomlData = await fetchTomlText(asset.homeDomain);
-    if (!tomlData) {
-      throw new Error(`Failed to fetch stellar.toml for ${asset.homeDomain}`);
-    }
-    console.log(`  ✓ XLM stellar.toml reachable at ${tomlData.url}`);
-    return;
-  }
-
-  // 1. Fetch Horizon account
-  const accountUrl = `${HORIZON_MAINNET}/accounts/${asset.issuer}`;
-  const accountRes = await fetch(accountUrl, { signal: AbortSignal.timeout(10000) });
-  if (!accountRes.ok) {
-    throw new Error(`Issuer account ${asset.issuer} not found on Horizon mainnet (status ${accountRes.status})`);
-  }
-
-  const accountData = await accountRes.json();
-  const homeDomain = accountData.home_domain;
-
-  if (!homeDomain) {
-    throw new Error(`Issuer account ${asset.issuer} has no home_domain set on Stellar Horizon.`);
-  }
-
-  if (homeDomain !== asset.homeDomain) {
+export function assertRegistryParity(walletAssets, mobileAssets) {
+  const wallet = normalizeRegistry(walletAssets);
+  const mobile = normalizeRegistry(mobileAssets);
+  if (JSON.stringify(wallet) !== JSON.stringify(mobile)) {
     throw new Error(
-      `Issuer account ${asset.issuer} home_domain mismatch: Horizon reports "${homeDomain}", registry expected "${asset.homeDomain}"`
+      `Wallet and mobile asset registries differ.\nWallet: ${JSON.stringify(wallet, null, 2)}\nMobile: ${JSON.stringify(mobile, null, 2)}`,
+    );
+  }
+  return wallet;
+}
+
+export function parseTomlCurrencies(tomlText) {
+  let parsed;
+  try {
+    parsed = toml.parse(tomlText);
+  } catch (error) {
+    throw new Error(`stellar.toml could not be parsed: ${errorMessage(error)}`);
+  }
+
+  if (!Array.isArray(parsed.CURRENCIES) || parsed.CURRENCIES.length === 0) {
+    throw new Error('stellar.toml has no CURRENCIES entries');
+  }
+  return parsed.CURRENCIES;
+}
+
+export function hasExactTomlCurrency(currencies, asset) {
+  return currencies.some(
+    (currency) => currency?.code === asset.code && (currency?.issuer === asset.issuer || !currency?.issuer),
+  );
+}
+
+export function deriveSacContractId(asset) {
+  if (!asset.sacContractId) return null;
+  const network = STELLAR_NETWORKS[asset.network];
+  if (!network) {
+    throw new Error(
+      `Cannot derive SAC for ${asset.code}:${asset.issuer}: unsupported network "${asset.network}"`,
     );
   }
 
-  console.log(`  ✓ Horizon issuer account home_domain matches: "${homeDomain}"`);
+  const derived = new Asset(asset.code, asset.issuer).contractId(network.passphrase);
+  if (derived !== asset.sacContractId) {
+    throw new Error(
+      `SAC mismatch for ${asset.code}:${asset.issuer} on ${asset.network}: derived ${derived}, registry has ${asset.sacContractId}`,
+    );
+  }
+  return derived;
+}
 
-  // 2. Fetch stellar.toml
-  const tomlData = await fetchTomlText(homeDomain);
-  if (!tomlData) {
-    console.log(`  ✓ Horizon issuer account verified for domain "${homeDomain}"`);
-    return;
+export async function fetchTomlText(
+  domain,
+  {
+    fetchImpl = fetch,
+    timeoutMs = 10_000,
+    createTimeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
+  } = {},
+) {
+  const url = `https://${domain}/.well-known/stellar.toml`;
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      headers: {
+        Accept: 'text/plain',
+        'User-Agent': 'Veil asset registry verifier',
+      },
+      redirect: 'follow',
+      signal: createTimeoutSignal(timeoutMs),
+    });
+  } catch (error) {
+    throw new Error(
+      `Failed to fetch stellar.toml for declared home_domain ${domain}: ${errorMessage(error)}`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch stellar.toml for declared home_domain ${domain}: HTTP ${response.status}`,
+    );
+  }
+
+  try {
+    return { url, text: await response.text() };
+  } catch (error) {
+    throw new Error(
+      `Failed to read stellar.toml for declared home_domain ${domain}: ${errorMessage(error)}`,
+    );
+  }
+}
+
+export async function loadHorizonAccount(
+  asset,
+  {
+    fetchImpl = fetch,
+    timeoutMs = 10_000,
+    createTimeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
+  } = {},
+) {
+  const network = STELLAR_NETWORKS[asset.network];
+  if (!network) {
+    throw new Error(
+      `Asset ${asset.code}:${asset.issuer} claims unsupported network "${asset.network}"`,
+    );
+  }
+
+  const url = `${network.horizon}/accounts/${asset.issuer}`;
+  let response;
+  try {
+    response = await fetchImpl(url, { signal: createTimeoutSignal(timeoutMs) });
+  } catch (error) {
+    throw new Error(
+      `Failed to load issuer ${asset.issuer} for ${asset.code} from Horizon ${asset.network}: ${errorMessage(error)}`,
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      `Issuer ${asset.issuer} for ${asset.code} does not exist on ${asset.network} (Horizon HTTP ${response.status})`,
+    );
+  }
+
+  try {
+    return await response.json();
+  } catch (error) {
+    throw new Error(
+      `Invalid Horizon response for issuer ${asset.issuer} on ${asset.network}: ${errorMessage(error)}`,
+    );
+  }
+}
+
+export async function verifyNonNativeAsset(
+  asset,
+  {
+    loadAccount = (entry) => loadHorizonAccount(entry),
+    fetchToml = (domain) => fetchTomlText(domain),
+  } = {},
+) {
+  if (!STELLAR_NETWORKS[asset.network]) {
+    throw new Error(
+      `Asset ${asset.code}:${asset.issuer} claims unsupported network "${asset.network}"`,
+    );
+  }
+  if (!asset.issuer) {
+    throw new Error(`Non-native asset ${asset.code} has no pinned issuer`);
+  }
+
+  const account = await loadAccount(asset);
+  if (!account || account.account_id !== asset.issuer) {
+    throw new Error(
+      `Issuer identity mismatch for ${asset.code} on ${asset.network}: registry pins "${asset.issuer}", Horizon returned "${account?.account_id ?? 'no account_id'}"`,
+    );
+  }
+
+  const derivedSacContractId = deriveSacContractId(asset);
+  const homeDomain = account.home_domain;
+  if (asset.homeDomain && homeDomain !== asset.homeDomain) {
+    throw new Error(
+      `Issuer ${asset.issuer} for ${asset.code} home_domain mismatch: Horizon returned "${homeDomain}", registry expected "${asset.homeDomain}"`,
+    );
+  }
+  if (!homeDomain) {
+    throw new Error(
+      `Issuer ${asset.issuer} for ${asset.code} has no home_domain set on Horizon`,
+    );
+  }
+
+  const tomlData = await fetchToml(homeDomain);
+  if (!tomlData || typeof tomlData.text !== 'string') {
+    throw new Error(
+      `Failed to fetch stellar.toml from declared home_domain "${homeDomain}" for ${asset.code}:${asset.issuer}`,
+    );
   }
 
   const currencies = parseTomlCurrencies(tomlData.text);
-  const matched = currencies.some(
-    (c) => c.code.toUpperCase() === asset.code.toUpperCase() && (c.issuer === asset.issuer || !c.issuer)
-  );
-
-  if (!matched && currencies.length > 0) {
+  if (!hasExactTomlCurrency(currencies, asset)) {
     throw new Error(
-      `stellar.toml at ${tomlData.url} does not declare currency matching code "${asset.code}" and issuer "${asset.issuer}"`
+      `stellar.toml at ${tomlData.url ?? homeDomain} does not contain exact currency pair ${asset.code}:${asset.issuer}`,
     );
   }
 
-  console.log(`  ✓ stellar.toml at ${tomlData.url} verified currency pair ${asset.code}:${asset.issuer}`);
+  return {
+    code: asset.code,
+    issuer: asset.issuer,
+    network: asset.network,
+    homeDomain,
+    tomlUrl: tomlData.url ?? `https://${homeDomain}/.well-known/stellar.toml`,
+    derivedSacContractId,
+    note: `stellar.toml corroborates exact pair ${asset.code}:${asset.issuer}`,
+  };
 }
 
-async function main() {
-  console.log('--- Verifying Asset Registry Against Stellar Mainnet ---');
-  let errors = 0;
-
+export async function verifyAssetResult(asset, dependencies = {}) {
   try {
-    const assets = parseAssetRegistry(walletAssetsPath);
-    console.log(`Parsed ${assets.length} assets from ${walletAssetsPath}: ${assets.map((a) => a.code).join(', ')}`);
-
-    for (const asset of assets) {
-      try {
-        await verifyAsset(asset);
-      } catch (err) {
-        console.error(`  ✕ ERROR verifying ${asset.code}: ${err.message}`);
-        errors++;
-      }
-    }
-
-    if (errors > 0) {
-      console.error(`\nFAILED: ${errors} asset registry verification error(s) found.`);
-      process.exit(1);
-    }
-
-    console.log('\nSUCCESS: All asset registry entries verified against Stellar mainnet.');
-    process.exit(0);
-  } catch (err) {
-    console.error(`\nFATAL ERROR: ${err.message}`);
-    process.exit(1);
+    return { ok: true, value: await verifyNonNativeAsset(asset, dependencies) };
+  } catch (error) {
+    return { ok: false, error };
   }
 }
 
-main();
+export async function main() {
+  console.log('--- Verifying Asset Registry by Exact Issuer Identity ---');
+
+  try {
+    const walletAssets = parseAssetRegistry(walletAssetsPath);
+    const mobileAssets = parseAssetRegistry(mobileAssetsPath);
+    assertRegistryParity(walletAssets, mobileAssets);
+    console.log(
+      `Registry parity verified for wallet and mobile: ${walletAssets.map((asset) => asset.code).join(', ')}`,
+    );
+
+    let errors = 0;
+    for (const asset of walletAssets.filter((entry) => entry.kind !== 'native')) {
+      const result = await verifyAssetResult(asset);
+      if (!result.ok) {
+        console.error(`  ✕ ${asset.code}:${asset.issuer} — ${errorMessage(result.error)}`);
+        errors += 1;
+        continue;
+      }
+
+      console.log(
+        `  ✓ ${asset.code}:${asset.issuer} verified on ${asset.network} — ${result.value.note}`,
+      );
+    }
+
+    if (errors > 0) {
+      console.error(`FAILED: ${errors} asset registry verification error(s) found.`);
+      return 1;
+    }
+
+    console.log('SUCCESS: All non-native registry entries verified by exact issuer identity.');
+    return 0;
+  } catch (error) {
+    console.error(`FATAL ERROR: ${errorMessage(error)}`);
+    return 1;
+  }
+}
+
+const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
+if (import.meta.url === invokedPath) {
+  process.exitCode = await main();
+}
+

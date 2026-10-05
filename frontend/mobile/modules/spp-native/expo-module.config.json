@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["xyz.veil.wallet.spp.SppNativeModule"]
+  }
+}

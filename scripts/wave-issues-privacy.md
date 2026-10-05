@@ -9,7 +9,22 @@
 Put these at the top of each issue's Background, or link to this section:
 
 - **Integrate, don't build.** Veil uses Nethermind/SDF **Stellar Private Payments (SPP)**: npm `stellar-private-payments` (web, WASM) and the Rust SDK in `sdk/native` of `NethermindEth/stellar-private-payments`. No circuits, trusted setup or pool contracts of our own.
-- **Canonical pools only.** Use the pools in SPP's `deployments/testnet/deployments.json` (XLM pool `CD2W5LUR…XZ4L` with a block-list policy; EURC pool `CBMRWHTP…NUVS` with allow- and block-list). A Veil-only pool would hide far less.
+- **Canonical pools only, and every address must be traceable to upstream.** Take every contract id from SPP's `deployments/testnet/deployments.json` — never retype one from a doc, a chat message or another issue. Pinning the values into a config module is fine and is what V131 does; what makes it fine is that it names the upstream commit it was pinned from, and a test asserts the values. A Veil-only pool would hide far less.
+- **Every address must pass `StrKey.isValidContract` / `StrKey.isValidEd25519PublicKey`.** This gets checked in review. The rule exists because three PRs in this batch shipped invented ids while citing upstream as the source — see `frontend/wallet/lib/privacy/config.ts` for how to do it properly.
+
+  Verified against upstream on 2026-09-24, for reference only — read them from the file, do not paste these:
+
+  | key | id |
+  |---|---|
+  | `public_key_registry` | `CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZDDLCMNPWXIH4` |
+  | `verifiers.B` | `CD34JHLNB7AYASRLOTMT6EECBKFMOS356PPP5RPXRO5Y5EA5Y4DIXGTV` |
+  | `verifiers.B_gvk_T` | `CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2UPTZIEO7BI32RKRTPFCUF2FMV` |
+  | `asp_membership` | `CAUPZISOB4GWTH22MVKA6MRWJMQRTLUMIGUSBFNJEF32Z6WEY3RFOKGC` |
+  | `asp_non_membership` | `CAFLZKGO3KYKNOBPCVT3APFEWMUBRDBF4EVYK65E6O653WYMX4XH4QYJ` |
+  | pool 0 (XLM, blocklist) | `CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT` |
+  | pool 1 (XLM, blocklist, `gvkMode: traceable`) | `CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4YPL3PYIN42` |
+
+  **Both testnet pools are native XLM** (same `tokenContractId`). There is no EURC pool; an earlier version of these rules said there was.
 - **Testnet only, behind a flag.** SPP is an unaudited developer preview, "not yet approved for mainnet". Nothing in this batch may enable privacy on mainnet.
 - **Keys never leave the device.** No server sees a private key, a note, or the signature the keys are derived from.
 - **Fees are sponsored**, like every other Veil transaction. Measured cost: ~0.0174 XLM per private transaction, at most 82.5M of mainnet's 400M instructions.

@@ -226,14 +226,36 @@ export function nativePrfEvaluator(credentialId: string): (salt: Uint8Array) => 
 }
 
 /**
+ * A discovered assertion: one pic-and-tap passkey gesture, plus the pieces of
+ * the resulting WebAuthn assertion that let a caller verify the credential's
+ * public key against a candidate set (the assertion itself never reveals it)
+ * and the PRF output for the requested salt, which is null when the credential
+ * or its manager has no PRF.
+ */
+export type DiscoveredPasskey = {
+  /** The picked credential's id (base64url). */
+  credentialId: string;
+  /** Raw P-256 ECDSA signature (64 bytes, r‖s, low-S). */
+  signature: Uint8Array;
+  /** The authenticator's signed statement (RP hash at bytes 0..31). */
+  authData: Uint8Array;
+  /** The caller's challenge, origin and type, as the authenticator saw them. */
+  clientDataJSON: Uint8Array;
+  /** PRF output for the requested salt, or null when unavailable. */
+  prf: Uint8Array | null;
+};
+
+/**
  * Discoverable assertion + PRF in ONE user gesture: no allowCredentials, so the
  * platform sheet lists every passkey for the relying party and the user picks.
- * Returns the chosen credential id and the PRF output for `salt` — the two
- * facts "sign in with passkey" needs to re-derive the wallet on a fresh device.
+ * Returns the chosen credential id, the assertion pieces (signature / authData /
+ * clientDataJSON), and the PRF output for `salt` — the facts "sign in with
+ * passkey" needs to re-derive the wallet on a fresh device. PRF stays optional:
+ * a manager without it returns `prf: null`, it never makes the gesture fail.
  */
 export async function discoverWithPrf(
   salt: Uint8Array,
-): Promise<{ credentialId: string; prf: Uint8Array | null } | null> {
+): Promise<DiscoveredPasskey | null> {
   try {
     const assertion = await passkeys().get({
       challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
@@ -246,7 +268,13 @@ export async function discoverWithPrf(
     const credentialId = (assertion as { id?: string; rawId?: string }).id
       ?? (assertion as { id?: string; rawId?: string }).rawId;
     if (!credentialId) return null;
-    return { credentialId, prf: parsePrfOutput(assertion) };
+    return {
+      credentialId,
+      signature: derToRawSignature(base64UrlToUint8Array(assertion.response.signature)),
+      authData: base64UrlToUint8Array(assertion.response.authenticatorData),
+      clientDataJSON: base64UrlToUint8Array(assertion.response.clientDataJSON),
+      prf: parsePrfOutput(assertion),
+    };
   } catch (error: unknown) {
     if (isUserRejection(error)) return null;
     throw error;

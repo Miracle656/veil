@@ -14,6 +14,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   VEIL_BUILD_IMAGE: rust:1.85.0-bookworm@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e
 
@@ -23,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source (first build)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Acceptance: CI fails if the build drifts from the committed hash.
       - name: Build & verify against committed hashes
@@ -35,7 +38,7 @@ jobs:
       # Acceptance: second build starts from a clean checkout and an empty target/
       # with zero shared state from the first build.
       - name: Clean checkout (independent second build)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: clean-rebuild
           clean: true

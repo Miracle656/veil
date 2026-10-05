@@ -7,6 +7,7 @@
     "prebuild": "node scripts/generate-sitemap.mjs",
     "build": "next build",
     "postbuild": "pagefind --site .next/static --output-path public/pagefind || true",
+    "test": "node scripts/verify-invest-docs.mjs",
     "start": "next start"
   },
   "dependencies": {
