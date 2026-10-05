@@ -1,4 +1,4 @@
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { createPasskeyWallet } from '../passkeyWallet';
 import { evaluatePrf } from '../passkey';
 import { getNetwork } from '../network';
@@ -38,7 +38,7 @@ jest.mock('../walletStore', () => ({
 const mockPrf = evaluatePrf as jest.MockedFunction<typeof evaluatePrf>;
 const mockNetwork = getNetwork as jest.MockedFunction<typeof getNetwork>;
 
-const WALLET_ADDRESS = 'C' + 'B'.repeat(55);
+const WALLET_ADDRESS = StrKey.encodeContract(Buffer.alloc(32, 7));
 const register = jest.fn(async () => ({
   walletAddress: WALLET_ADDRESS,
   publicKeyBytes: new Uint8Array(64).fill(1),
@@ -98,6 +98,38 @@ describe('createPasskeyWallet PRF checking before commit', () => {
 
       expect(setWalletAddress).toHaveBeenCalledWith(WALLET_ADDRESS);
       expect(setSignerSecret).toHaveBeenCalled();
+    }
+  });
+
+  it('reuses the same fallback fee-payer on repeated commit calls', async () => {
+    mockPrf.mockResolvedValue({ outcome: 'ok', output: null });
+
+    const result = await createPasskeyWallet({ register });
+
+    expect(result.status).toBe('unsupported');
+    if (result.status === 'unsupported') {
+      await result.commit();
+      const firstSecret = (setSignerSecret as jest.Mock).mock.calls[0][0];
+
+      await result.commit();
+      const secondSecret = (setSignerSecret as jest.Mock).mock.calls[1][0];
+
+      expect(firstSecret).toBe(secondSecret);
+    }
+  });
+
+  it('uses explicitly passed feePayer keypair on commit', async () => {
+    mockPrf.mockResolvedValue({ outcome: 'ok', output: null });
+
+    const result = await createPasskeyWallet({ register });
+
+    expect(result.status).toBe('unsupported');
+    if (result.status === 'unsupported') {
+      const customKeypair = Keypair.random();
+      const committed = await result.commit(customKeypair);
+
+      expect(committed.recoverable).toBe(true);
+      expect(setSignerSecret).toHaveBeenCalledWith(customKeypair.secret());
     }
   });
 

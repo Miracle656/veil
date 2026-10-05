@@ -8,7 +8,7 @@
  * would abandon is on chain.
  */
 
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, StrKey } from '@stellar/stellar-sdk';
 
 import { recreatePasskeyWallet } from '../passkeyWallet';
 import { evaluatePrf } from '../passkey';
@@ -49,7 +49,7 @@ const mockNetwork = getNetwork as jest.MockedFunction<typeof getNetwork>;
 const mockSecret = getSignerSecret as jest.MockedFunction<typeof getSignerSecret>;
 
 const OLD = Keypair.random();
-const NEW_ADDRESS = 'C' + 'A'.repeat(55);
+const NEW_ADDRESS = StrKey.encodeContract(Buffer.alloc(32, 1));
 
 /** A fresh passkey, i.e. a different wallet address. */
 const register = jest.fn(async () => ({ walletAddress: NEW_ADDRESS }));

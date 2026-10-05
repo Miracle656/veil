@@ -1,3 +1,5 @@
+import { Keypair } from '@stellar/stellar-sdk';
+import { Buffer } from 'buffer';
 import { errorMessage } from '../lib/errorMessage';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
@@ -14,9 +16,11 @@ import {
   createPasskeyWallet,
   recreatePasskeyWallet,
   retryRecoveryBinding,
+  FEE_PAYER_PRF_SALT,
   type PasskeyWalletResult,
   type RecoveryRetry,
 } from '../lib/passkeyWallet';
+import { evaluatePrf } from '../lib/passkey';
 import { getNetwork } from '../lib/network';
 import { useWallet } from '../components/WalletProvider';
 
@@ -119,6 +123,29 @@ export default function CreateWallet() {
     }
   }
 
+  async function retryBindingPrecommit() {
+    if (!pendingPrf?.keyId) return;
+    setBinding(true);
+    setError(null);
+    try {
+      const res = await evaluatePrf(pendingPrf.keyId, FEE_PAYER_PRF_SALT);
+      if (res.outcome === 'ok' && res.output) {
+        const fp = Keypair.fromRawEd25519Seed(Buffer.from(res.output.subarray(0, 32)));
+        const w = await pendingPrf.commit(fp);
+        setResult(w);
+        setStatus('created');
+        setPendingPrf(null);
+      } else {
+        const newIssue = res.outcome === 'ok' ? 'unsupported' : res.outcome;
+        setPendingPrf((prev) => (prev ? { ...prev, issue: newIssue } : prev));
+      }
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBinding(false);
+    }
+  }
+
   async function run(fn: () => Promise<CreatedWallet>) {
     setStatus('busy');
     setError(null);
@@ -137,23 +164,39 @@ export default function CreateWallet() {
         <View style={styles.body}>
           <FlowHeader title="Passkey check" />
           <View style={styles.doneCard}>
-            <Text style={styles.doneTitle}>Passkey recovery unsupported</Text>
+            <Text style={styles.doneTitle}>{recoveryTitle(pendingPrf.issue)}</Text>
             <Text style={[styles.fund, { color: colors.danger }]}>
               {recoveryMessage(pendingPrf.issue)}
             </Text>
-            <Pressable
-              testID="create-wallet-recreate-precommit"
-              accessibilityRole="button"
-              disabled={recreating || committingPending}
-              onPress={recreate}
-              style={({ pressed }) => [styles.ctaSecondary, (recreating || committingPending) && styles.disabled, pressed && styles.pressed]}
-            >
-              {recreating ? (
-                <ActivityIndicator color={colors.textPrimary} />
-              ) : (
-                <Text style={styles.ctaSecondaryText}>Use a different passkey</Text>
-              )}
-            </Pressable>
+            {pendingPrf.issue === 'unsupported' ? (
+              <Pressable
+                testID="create-wallet-recreate-precommit"
+                accessibilityRole="button"
+                disabled={recreating || committingPending}
+                onPress={recreate}
+                style={({ pressed }) => [styles.ctaSecondary, (recreating || committingPending) && styles.disabled, pressed && styles.pressed]}
+              >
+                {recreating ? (
+                  <ActivityIndicator color={colors.textPrimary} />
+                ) : (
+                  <Text style={styles.ctaSecondaryText}>Use a different passkey</Text>
+                )}
+              </Pressable>
+            ) : pendingPrf.issue !== 'funded' ? (
+              <Pressable
+                testID="create-wallet-retry-recovery-precommit"
+                accessibilityRole="button"
+                disabled={binding || recreating || committingPending}
+                onPress={retryBindingPrecommit}
+                style={({ pressed }) => [styles.ctaSecondary, (binding || recreating || committingPending) && styles.disabled, pressed && styles.pressed]}
+              >
+                {binding ? (
+                  <ActivityIndicator color={colors.textPrimary} />
+                ) : (
+                  <Text style={styles.ctaSecondaryText}>Try setting up recovery again</Text>
+                )}
+              </Pressable>
+            ) : null}
             <Pressable
               testID="create-wallet-save-backup-precommit"
               accessibilityRole="button"
@@ -163,6 +206,8 @@ export default function CreateWallet() {
                 try {
                   const w = await pendingPrf.commit();
                   setResult(w);
+                  setStatus('created');
+                  setPendingPrf(null);
                   router.push('/settings/backup');
                 } catch (e) {
                   setError(errorMessage(e));
@@ -187,6 +232,7 @@ export default function CreateWallet() {
                 const w = await pendingPrf.commit();
                 setResult(w);
                 setStatus('created');
+                setPendingPrf(null);
               } catch (e) {
                 setError(errorMessage(e));
               } finally {
@@ -381,6 +427,21 @@ export default function CreateWallet() {
       </View>
     </SafeAreaView>
   );
+}
+
+function recoveryTitle(issue: 'unsupported' | 'cancelled' | 'failed' | 'funded'): string {
+  switch (issue) {
+    case 'unsupported':
+      return 'Passkey recovery unsupported';
+    case 'cancelled':
+      return 'Passkey prompt cancelled';
+    case 'failed':
+      return 'Passkey recovery failed';
+    case 'funded':
+      return 'Recovery unavailable';
+    default:
+      return 'Passkey recovery failed';
+  }
 }
 
 /**

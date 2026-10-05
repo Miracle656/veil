@@ -22,7 +22,7 @@ import type { CreatedWallet } from './testnetWallet';
  * Domain-separated PRF salt for the fee-payer key. Matches the SDK's
  * `FEE_PAYER_PRF_SALT` so the passkey → fee-payer mapping is stable.
  */
-const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
 
 /** SDK storage key holding the WebAuthn credential id (see useInvisibleWallet). */
 const SDK_KEY_ID = 'invisible_wallet_key_id';
@@ -64,7 +64,7 @@ export type PasskeyWalletResult =
       publicKeyBytes?: Uint8Array;
       keyId: string | null;
       issue: Exclude<PrfOutcome, 'ok'>;
-      commit: () => Promise<CreatedWallet>;
+      commit: (feePayer?: Keypair | null) => Promise<CreatedWallet>;
     };
 
 /**
@@ -105,9 +105,11 @@ export async function createPasskeyWallet(
     }
   }
 
-  const doCommit = async (fp: Keypair | null): Promise<CreatedWallet> => {
-    const recoverable = fp !== null;
-    const finalFeePayer = fp ?? Keypair.random();
+  const fallbackFeePayer = Keypair.random();
+
+  const doCommit = async (fp?: Keypair | null): Promise<CreatedWallet> => {
+    const finalFeePayer = fp ?? feePayer ?? fallbackFeePayer;
+    const recoverable = finalFeePayer !== fallbackFeePayer;
 
     // Friendbot only exists on testnet; on mainnet this returns false at once.
     const funded = await fundWithFriendbot(finalFeePayer.publicKey());
@@ -138,7 +140,7 @@ export async function createPasskeyWallet(
     publicKeyBytes: publicKeyBytes ?? undefined,
     keyId,
     issue,
-    commit: () => doCommit(null),
+    commit: (fp?: Keypair | null) => doCommit(fp),
   };
 }
 
