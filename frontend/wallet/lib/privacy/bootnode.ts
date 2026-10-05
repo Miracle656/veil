@@ -70,12 +70,26 @@ export interface BootnodeStatus {
   usingFallback: boolean;
   /** Human-readable reason string, or null when the primary is healthy. */
   reason: string | null;
+  /**
+   * Why the fallback is in use, which is not the same question as whether it is.
+   *
+   * `unconfigured` is the project's current, documented state: Veil's own
+   * bootnode (`services/spp-bootnode/`, docs/SPP_BOOTNODE.md) is not deployed,
+   * so Nethermind's public one is the intended source. That is a deployment
+   * note, not a fault, and a banner about it on every page teaches people to
+   * ignore banners.
+   *
+   * `unreachable` means a bootnode we DID configure stopped answering. That is a
+   * real degradation and worth telling someone about.
+   */
+  kind: 'healthy' | 'unconfigured' | 'unreachable';
 }
 
 let _lastStatus: BootnodeStatus = {
   url: FALLBACK_BOOTNODE_URL,
   usingFallback: false,
   reason: null,
+  kind: 'healthy',
 };
 
 /**
@@ -140,7 +154,7 @@ export async function resolveBootnodeWithFallback(
       resolvedAt: Date.now(),
     };
     cache.set(cacheKey, entry);
-    _lastStatus = { url: fallback, usingFallback: true, reason: entry.reason };
+    _lastStatus = { url: fallback, usingFallback: true, reason: entry.reason, kind: 'unconfigured' };
     console.warn(`[privacy] ${entry.reason}`);
     return fallback;
   }
@@ -156,7 +170,7 @@ export async function resolveBootnodeWithFallback(
       resolvedAt: Date.now(),
     };
     cache.set(cacheKey, entry);
-    _lastStatus = { url: primary, usingFallback: false, reason: null };
+    _lastStatus = { url: primary, usingFallback: false, reason: null, kind: 'healthy' };
     return primary;
   }
 
@@ -171,7 +185,7 @@ export async function resolveBootnodeWithFallback(
     resolvedAt: Date.now(),
   };
   cache.set(cacheKey, entry);
-  _lastStatus = { url: fallback, usingFallback: true, reason };
+  _lastStatus = { url: fallback, usingFallback: true, reason, kind: 'unreachable' };
   return fallback;
 }
 
@@ -182,7 +196,7 @@ export async function resolveBootnodeWithFallback(
 export function invalidateBootnodeCache(primary: string | null = null): void {
   if (primary === null) {
     cache.clear();
-    _lastStatus = { url: '', usingFallback: false, reason: null };
+    _lastStatus = { url: '', usingFallback: false, reason: null, kind: 'healthy' };
     return;
   }
   cache.delete(primary);
