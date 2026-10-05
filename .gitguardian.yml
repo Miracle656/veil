@@ -29,4 +29,10 @@ secret_scans:
     - frontend/mobile/lib/privacy/__tests__/config.test.ts
     - frontend/wallet/lib/privacy/config.ts
     - frontend/wallet/lib/privacy/__tests__/config.test.ts
+    - frontend/wallet/lib/__tests__/anchorDirectory.test.ts
+    - frontend/wallet/lib/__tests__/feeBump.test.ts
+    - frontend/wallet/lib/__tests__/issuerKeysValid.test.ts
+    - frontend/wallet/lib/__tests__/sep10.test.ts
+    - frontend/wallet/components/__tests__/AnchorDirectoryModal.test.ts
+    - frontend/wallet/tests/sep10.test.ts
     - .github/workflows/ci.yml

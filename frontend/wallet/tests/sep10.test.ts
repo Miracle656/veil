@@ -69,8 +69,9 @@ function buildChallenge({
     // Primary manage_data op — key is "<home_domain> auth" per the spec.
     const key = manageDataKey ?? `${homeDomain} auth`
     // Value: 48 bytes of random nonce (spec requirement).
-    const nonce = Buffer.alloc(48)
-    for (let i = 0; i < 48; i++) nonce[i] = i // deterministic for fixtures
+    const raw = Buffer.alloc(48)
+    for (let i = 0; i < 48; i++) raw[i] = i
+    const nonce = raw.toString('base64')
 
     builder.addOperation(
       Operation.manageData({
@@ -225,8 +226,9 @@ describe('signSep10Challenge', () => {
     function buildMultiOpChallenge(): string {
       const nowSec  = Math.floor(Date.now() / 1000)
       const account = new Account(ANCHOR_C_KP.publicKey(), '-1')
-      const nonce   = Buffer.alloc(48)
-      for (let i = 0; i < 48; i++) nonce[i] = i
+      const raw = Buffer.alloc(48)
+      for (let i = 0; i < 48; i++) raw[i] = i
+      const nonce = raw.toString('base64')
 
       const tx = new TransactionBuilder(account, {
         fee:              '100',
@@ -242,8 +244,8 @@ describe('signSep10Challenge', () => {
         )
         .addOperation(
           Operation.manageData({
-            name:   'client_domain auth',
-            value:  nonce,
+            name:   'client_domain',
+            value:  Buffer.from('mywallet.com'),
             source: USER_KP.publicKey(),
           }),
         )
@@ -267,7 +269,7 @@ describe('signSep10Challenge', () => {
       const mdOps = tx.operations.filter(op => op.type === 'manageData')
       expect(mdOps).toHaveLength(2)
       expect((mdOps[0] as Operation.ManageData).name).toBe(`${HOME_DOMAIN} auth`)
-      expect((mdOps[1] as Operation.ManageData).name).toBe('client_domain auth')
+      expect((mdOps[1] as Operation.ManageData).name).toBe('client_domain')
     })
 
     it('the user hint is present in signatures', () => {
