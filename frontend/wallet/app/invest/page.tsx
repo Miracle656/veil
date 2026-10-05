@@ -101,12 +101,28 @@ export default function InvestPage() {
         const userKp = Keypair.fromSecret(signerSecret)
         const webAuthEndpoint = anchorInfo.webAuthEndpoint
 
+        // An anchor that declares a different network than the wallet is on is
+        // refused here rather than reconciled: the TOML is the anchor's claim,
+        // and `network` is where this wallet's money actually is.
+        if (anchorInfo.networkPassphrase && anchorInfo.networkPassphrase !== network.networkPassphrase) {
+          throw new Error(
+            `${anchorInfo.homeDomain} serves a different Stellar network than this wallet is on.`,
+          )
+        }
+
         let jwt: string | undefined = undefined
         if (webAuthEndpoint) {
+          if (!anchorInfo.signingKey) {
+            throw new Error(
+              `${anchorInfo.homeDomain} publishes no SEP-10 SIGNING_KEY, so its challenges cannot be verified.`,
+            )
+          }
           jwt = await authenticateSep10({
             webAuthEndpoint,
             account: accountAddress,
-            networkPassphrase: anchorInfo.networkPassphrase || network.networkPassphrase,
+            networkPassphrase: network.networkPassphrase,
+            signingKey: anchorInfo.signingKey,
+            homeDomain: anchorInfo.homeDomain,
             signerKeypair: userKp,
           })
         }

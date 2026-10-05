@@ -32,7 +32,7 @@ import {
     hash as stellarHash,
 } from '@stellar/stellar-sdk';
 
-const HorizonServer = Horizon?.Server ?? Horizon;
+const HorizonServer = Horizon.Server;
 import {
     bufferToHex,
     hexToUint8Array,

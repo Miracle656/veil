@@ -7,12 +7,9 @@
 
 import {
   Keypair,
-  Networks,
-  Operation,
   StrKey,
   StellarToml,
-  Transaction,
-  TransactionBuilder,
+  WebAuth,
 } from '@stellar/stellar-sdk'
 
 // ── Verified Asset Registry (Pinning Known Assets) ────────────────────────────
@@ -86,6 +83,12 @@ export interface DiscoveredAnchorInfo {
   webAuthEndpoint?: string
   kycServer?: string
   networkPassphrase?: string
+  /**
+   * SEP-10 `SIGNING_KEY`: the account the anchor signs its challenges with.
+   * Without it there is nothing to check a challenge's signature against, so an
+   * anchor that omits it cannot be authenticated with — only browsed.
+   */
+  signingKey?: string
   accounts: string[]
   currencies: DiscoveredCurrency[]
 }
@@ -250,6 +253,15 @@ export async function parseAnchorToml(tomlText: string, domain: string): Promise
   const rawNetwork = getTomlField(parsed, 'NETWORK_PASSPHRASE')
   const networkPassphrase = typeof rawNetwork === 'string' ? rawNetwork : undefined
 
+  // Only accept a SIGNING_KEY that is actually an address. A malformed one must
+  // read as "this anchor cannot be authenticated with", never as a key that
+  // later fails open somewhere further down.
+  const rawSigningKey = getTomlField(parsed, 'SIGNING_KEY')
+  const signingKey =
+    typeof rawSigningKey === 'string' && isValidStellarPublicKey(rawSigningKey.trim())
+      ? rawSigningKey.trim()
+      : undefined
+
   // Declared accounts / issuers in TOML
   const accounts: string[] = []
   const rawAccountsField = getTomlField(parsed, 'ACCOUNTS') ?? getTomlField(parsed, 'ISSUERS')
@@ -352,6 +364,7 @@ export async function parseAnchorToml(tomlText: string, domain: string): Promise
     webAuthEndpoint,
     kycServer,
     networkPassphrase,
+    signingKey,
     accounts,
     currencies,
   }
@@ -431,22 +444,62 @@ export function registerDiscoveredAsset(
 export interface Sep10AuthOptions {
   webAuthEndpoint: string
   account: string
-  networkPassphrase?: string
+  /**
+   * The network WE are on. Required, and never defaulted: a default would mean
+   * a wallet on mainnet silently signing a testnet challenge, or the reverse.
+   */
+  networkPassphrase: string
+  /** The anchor's `SIGNING_KEY`, from its own stellar.toml. */
+  signingKey: string
+  /** The domain the TOML was fetched from, which the challenge must name. */
+  homeDomain: string
   signerKeypair: Keypair
   fetchFn?: typeof fetch
 }
 
 /**
- * Authenticate against a testnet/mainnet anchor via SEP-10 using user's key.
- * Enforces zero data leakage: ONLY the challenge signature is sent to the anchor.
+ * Authenticate against an anchor via SEP-10.
+ *
+ * The thing this function is really protecting is the signature at the end of
+ * it. A SEP-10 challenge is an unsubmittable transaction the client signs to
+ * prove it holds an account; but it arrives from a domain the user typed into a
+ * search box, and whatever is signed here is signed with the user's real key. A
+ * challenge carrying `[manageData(...), payment(... -> attacker)]` is a drained
+ * wallet if the only check is that SOME operation is a manage_data.
+ *
+ * So the challenge goes through `WebAuth.readChallengeTx`, which is the SDK's
+ * implementation of SEP-10's own "Verify the challenge transaction" list: every
+ * operation is a manage_data, the source is the server account, the sequence is
+ * 0, the time bounds are current, the transaction is signed by the key the
+ * anchor publishes, and the home domain and web auth domain are the ones we
+ * asked. It throws rather than returning a transaction when any of that fails.
+ *
+ * Zero data leakage is unchanged: the only thing sent to the anchor is the
+ * countersigned challenge.
  */
 export async function authenticateSep10({
   webAuthEndpoint,
   account,
-  networkPassphrase = Networks.TESTNET,
+  networkPassphrase,
+  signingKey,
+  homeDomain,
   signerKeypair,
   fetchFn = fetch,
 }: Sep10AuthOptions): Promise<string> {
+  if (!signingKey) {
+    throw new Error(
+      `Anchor ${homeDomain} publishes no SEP-10 SIGNING_KEY, so its challenges cannot be verified.`,
+    )
+  }
+
+  // The domain the challenge must name as its web auth domain, per SEP-10.
+  let webAuthDomain: string
+  try {
+    webAuthDomain = new URL(webAuthEndpoint).host
+  } catch {
+    throw new Error(`Anchor ${homeDomain} declares an unusable WEB_AUTH_ENDPOINT.`)
+  }
+
   // 1. Fetch challenge
   const challengeUrl = `${webAuthEndpoint}?account=${encodeURIComponent(account)}`
   const challengeRes = await fetchFn(challengeUrl, { signal: AbortSignal.timeout(10_000) })
@@ -464,37 +517,39 @@ export async function authenticateSep10({
     throw new Error('Anchor challenge response missing transaction XDR')
   }
 
-  const effectivePassphrase = network_passphrase || networkPassphrase
+  // The response may state a network, and it is checked against ours rather
+  // than used instead of it. Letting the response choose is how a testnet flow
+  // produces a signature that is valid on mainnet.
+  if (network_passphrase && network_passphrase !== networkPassphrase) {
+    throw new Error(
+      `Anchor ${homeDomain} answered for a different Stellar network than this wallet is on.`,
+    )
+  }
 
-  // 2. Parse & sign challenge
-  let tx: Transaction
+  // 2. Verify the challenge against SEP-10's own rules, then sign it.
+  let read: ReturnType<typeof WebAuth.readChallengeTx>
   try {
-    tx = new Transaction(challengeXdr, effectivePassphrase)
+    read = WebAuth.readChallengeTx(
+      challengeXdr,
+      signingKey,
+      networkPassphrase,
+      homeDomain,
+      webAuthDomain,
+    )
   } catch (err) {
-    throw new Error(`Failed to parse SEP-10 challenge XDR: ${(err as Error).message}`)
+    throw new Error(`Rejected the SEP-10 challenge from ${homeDomain}: ${(err as Error).message}`)
   }
 
-  // SEP-10 validation checks
-  const manageDataOps = tx.operations.filter(
-    (op): op is Operation.ManageData => op.type === 'manageData',
-  )
-  if (manageDataOps.length === 0) {
-    throw new Error('SEP-10 challenge must contain at least one manage_data operation')
+  // The challenge must be about the account we asked about, not another one.
+  if (read.clientAccountID !== account) {
+    throw new Error(`Anchor ${homeDomain} issued a challenge for a different account.`)
   }
 
-  if (!tx.timeBounds) {
-    throw new Error('SEP-10 challenge must have timeBounds set')
-  }
-
-  const nowSec = Math.floor(Date.now() / 1000)
-  const maxTime = Number(tx.timeBounds.maxTime)
-  if (maxTime > 0 && nowSec > maxTime) {
-    throw new Error(`SEP-10 challenge has expired (maxTime=${maxTime}, now=${nowSec})`)
-  }
-
-  const rebuilt = TransactionBuilder.cloneFrom(tx).build()
-  rebuilt.sign(signerKeypair)
-  const signedXdr = rebuilt.toXDR()
+  // Sign the transaction we verified, NOT a rebuild of it. `cloneFrom(tx).build()`
+  // produces an unsigned copy, which drops the anchor's own signature — and
+  // SEP-10 requires the challenge to come back carrying both.
+  read.tx.sign(signerKeypair)
+  const signedXdr = read.tx.toXDR()
 
   // 3. Post back ONLY transaction XDR for JWT (zero user data transmitted)
   const tokenRes = await fetchFn(webAuthEndpoint, {
