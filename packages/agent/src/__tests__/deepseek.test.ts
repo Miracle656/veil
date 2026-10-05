@@ -133,13 +133,20 @@ describe('DeepSeek Provider (Issue #802)', () => {
    *
    * Every other test here mocks `globalThis.fetch` and asserts
    * `provider.label === `deepseek:${DEFAULT_DEEPSEEK_MODEL}``, which compares
-   * the constant with itself and passes for any string. That is how the default
-   * shipped as `deepseek-flash` — a model DeepSeek has never had, close enough
-   * to the real `deepseek-v4-flash` to read correctly — and stayed green.
+   * the constant with itself and passes for any string at all. So nothing here
+   * has ever checked that the id we send is one DeepSeek serves.
    *
-   * These assert the id's shape against DeepSeek's published naming rather than
-   * against our own constant, so a typo or a retired name fails here instead of
-   * on someone's first live call.
+   * These check it where a unit test can: that the id reaches the request body
+   * rather than only the label, and that it is one of the ids `GET /models`
+   * returned when last verified against the live API (2026-10-05):
+   *
+   *     deepseek-flash    DeepSeek-V4.1-Flash
+   *     deepseek-v4-pro   DeepSeek-V4-Pro
+   *
+   * The published docs describe these as `deepseek-v4-flash` / `deepseek-v4-pro`,
+   * which is why the list is pinned to what the API answered rather than to what
+   * the docs say. `deepseek-v4-flash` does resolve, but its completion reports
+   * `"model": "deepseek-flash"` — an alias, not the canonical id.
    */
   describe('the model id sent to DeepSeek', () => {
     it('is in the request body, not just the label', async () => {
@@ -155,15 +162,8 @@ describe('DeepSeek Provider (Issue #802)', () => {
       expect(fetchMock).toHaveBeenCalled()
     })
 
-    it('names a model DeepSeek currently serves', () => {
-      // deepseek-v4-pro and deepseek-v4-flash are the current ids. The legacy
-      // deepseek-chat / deepseek-reasoner names were retired on 2026-07-24, so
-      // neither is a valid default any more either.
-      expect(['deepseek-v4-flash', 'deepseek-v4-pro']).toContain(DEFAULT_DEEPSEEK_MODEL)
-    })
-
-    it('is not one of the retired names', () => {
-      expect(['deepseek-chat', 'deepseek-reasoner']).not.toContain(DEFAULT_DEEPSEEK_MODEL)
+    it('names a model DeepSeek serves', () => {
+      expect(['deepseek-flash', 'deepseek-v4-pro']).toContain(DEFAULT_DEEPSEEK_MODEL)
     })
 
     it('honours DEEPSEEK_MODEL when set', async () => {

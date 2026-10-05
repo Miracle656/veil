@@ -21,7 +21,7 @@ export interface AgentConfig {
   openRouterApiKey?: string
   /** DeepSeek API key. When set, DeepSeek model is used instead of Claude/OpenRouter. */
   deepSeekApiKey?: string
-  /** DeepSeek model ID. Default: deepseek-v4-flash. */
+  /** DeepSeek model ID. Default: deepseek-flash. */
   deepSeekModel?: string
   /** OpenRouter model ids, in preference order. Default: llm.ts DEFAULT_FREE_MODELS. */
   models?: string[]
