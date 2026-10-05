@@ -120,6 +120,11 @@ export async function createPasskeyWallet(
     await Promise.all([
       setWalletAddress(walletAddress),
       setSignerSecret(finalFeePayer.secret()),
+      // Whether this wallet can be recovered from the passkey alone. Settings
+      // and the recovery screens read it back through `getFeePayerInfo()`, and
+      // deferring the commit dropped this call — leaving `source: 'unknown'`,
+      // which reads as "we have no idea" rather than "random, not recoverable".
+      recordFeePayerSource(finalFeePayer.publicKey(), recoverable ? 'prf' : 'random'),
       keyId && publicKeyBytes
         ? setPasskeyCredential(keyId, toHex(publicKeyBytes))
         : keyId

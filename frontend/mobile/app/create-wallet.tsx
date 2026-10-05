@@ -182,7 +182,7 @@ export default function CreateWallet() {
                   <Text style={styles.ctaSecondaryText}>Use a different passkey</Text>
                 )}
               </Pressable>
-            ) : pendingPrf.issue !== 'funded' ? (
+            ) : (
               <Pressable
                 testID="create-wallet-retry-recovery-precommit"
                 accessibilityRole="button"
@@ -196,7 +196,7 @@ export default function CreateWallet() {
                   <Text style={styles.ctaSecondaryText}>Try setting up recovery again</Text>
                 )}
               </Pressable>
-            ) : null}
+            )}
             <Pressable
               testID="create-wallet-save-backup-precommit"
               accessibilityRole="button"
