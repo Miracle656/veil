@@ -1,0 +1,36 @@
+{
+  "$comment": "The source of truth for the collection. scripts/build-nft-metadata.mjs reads this and writes metadata/NN.json from it, so edit here and rebuild rather than editing a token file by hand. `canvaMediaId` is where the concept art currently lives; it is NOT the mint image — see README.md.",
+  "collection": {
+    "name": "Veil Masquerade",
+    "symbol": "VMASQ",
+    "size": 20,
+    "description": "Twenty cloth figures for Veil, a Stellar passkey wallet. Each is the same masquerade-inspired form — a crowned mask over layered, patterned cloth falling to an uneven hem — varied across five traits. No faces: where a figure is open, it is cloth removed rather than features drawn on.",
+    "externalUrl": "https://useveilapp.xyz"
+  },
+  "traitTypes": ["Crown", "Aperture", "Ornament", "Palette", "Hem"],
+  "$comment_traits": "Crown and Ornament are IDENTITY: near enough one per token, which is what makes each figure itself. Aperture, Palette and Hem are shared, so they are the only ones where a count means anything — a rarity line drawn from a trait that is unique by construction would read as significant and say nothing.",
+  "identityTraits": ["Crown", "Ornament"],
+  "rarityTraits": ["Aperture", "Palette", "Hem"],
+  "tokens": [
+    { "id": 1,  "crown": "Plume",          "aperture": "Twin slits",  "ornament": "Chevrons",            "palette": "Lilac",        "hem": "Beaded fringe",      "canvaMediaId": "MAHXPqo2Eyc" },
+    { "id": 2,  "crown": "Horns",          "aperture": "Slot",        "ornament": "Diamonds",            "palette": "Gold",         "hem": "Scalloped",          "canvaMediaId": "MAHXPmqzBDY" },
+    { "id": 3,  "crown": "Beaded dome",    "aperture": "Woven band",  "ornament": "Zigzag",              "palette": "Bone",         "hem": "Pointed",            "canvaMediaId": "MAHXPvFUx3w" },
+    { "id": 4,  "crown": "Flat cap",       "aperture": "Slot",        "ornament": "Concentric squares",  "palette": "Teal",         "hem": "Ragged",             "canvaMediaId": "MAHXPtdQFcI" },
+    { "id": 5,  "crown": "Crescent",       "aperture": "Twin slits",  "ornament": "Dotted grid",         "palette": "Gold + lilac", "hem": "Straight",           "canvaMediaId": "MAHXPpvgH4w" },
+    { "id": 6,  "crown": "Fan",            "aperture": "Woven band",  "ornament": "Basketweave",         "palette": "Gold",         "hem": "Long fringe",        "canvaMediaId": "MAHXPiuZ2LM" },
+    { "id": 7,  "crown": "Spikes",         "aperture": "Slot",        "ornament": "Stripes",             "palette": "Bone + teal",  "hem": "Scalloped",          "canvaMediaId": "MAHXPp5mwvg" },
+    { "id": 8,  "crown": "Triple finial",  "aperture": "Twin slits",  "ornament": "Triangles",           "palette": "Lilac",        "hem": "Ragged",             "canvaMediaId": "MAHXPoXBS8w" },
+    { "id": 9,  "crown": "Discs",          "aperture": "None",        "ornament": "Chevrons",            "palette": "Teal",         "hem": "Beaded fringe",      "canvaMediaId": "MAHXPgc7eb0" },
+    { "id": 10, "crown": "Antlers",        "aperture": "Slot",        "ornament": "Diamonds and dots",   "palette": "Gold",         "hem": "Pointed",            "canvaMediaId": "MAHXPrcpoC4" },
+    { "id": 11, "crown": "Beaded cap",     "aperture": "Woven band",  "ornament": "Nested chevrons",     "palette": "Bone + lilac", "hem": "Layered",            "canvaMediaId": "MAHXPvrhqBI" },
+    { "id": 12, "crown": "Plume and beads","aperture": "Twin slits",  "ornament": "Lightning",           "palette": "Gold + teal",  "hem": "Beaded fringe",      "canvaMediaId": "MAHXPjak9Iw" },
+    { "id": 13, "crown": "Coins",          "aperture": "Slot",        "ornament": "Checkerboard",        "palette": "Lilac",        "hem": "Scalloped",          "canvaMediaId": "MAHXPkUrBBE" },
+    { "id": 14, "crown": "Feather crest",  "aperture": "Woven band",  "ornament": "Waves",               "palette": "Bone + teal",  "hem": "Ragged",             "canvaMediaId": "MAHXPtsVs5s" },
+    { "id": 15, "crown": "Pyramid",        "aperture": "Twin slits",  "ornament": "Lattice",             "palette": "Gold",         "hem": "Straight",           "canvaMediaId": "MAHXPgPU510" },
+    { "id": 16, "crown": "Loops",          "aperture": "Slot",        "ornament": "Spirals",             "palette": "Lilac",        "hem": "Pointed fringe",     "canvaMediaId": "MAHXPvE_ig4" },
+    { "id": 17, "crown": "Comb crest",     "aperture": "Woven band",  "ornament": "Arrows",              "palette": "Bone",         "hem": "Pointed",            "canvaMediaId": "MAHXPr8C22A" },
+    { "id": 18, "crown": "Beaded veil",    "aperture": "Twin slits",  "ornament": "Stars",               "palette": "Gold + teal",  "hem": "Layered",            "canvaMediaId": "MAHXPoxCaI4" },
+    { "id": 19, "crown": "Twin horns",     "aperture": "Slot",        "ornament": "Herringbone",         "palette": "Bone + lilac", "hem": "Scalloped",          "canvaMediaId": "MAHXPi8QBNM" },
+    { "id": 20, "crown": "Halo",           "aperture": "Woven band",  "ornament": "Concentric circles",  "palette": "Gold",         "hem": "Long fringe",        "canvaMediaId": "MAHXPkOJqrM" }
+  ]
+}
