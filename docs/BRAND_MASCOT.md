@@ -1,6 +1,7 @@
 # Veil mascot — direction
 
-_Written 2026-10-03. A direction, not a decision. Nothing here has been drawn yet._
+_Written 2026-10-03. Round one drawn 2026-10-06 — see **Round one** at the end.
+The direction below stands; three of its four open questions are now settled._
 
 ## Start from what exists
 
@@ -78,8 +79,63 @@ Before this goes anywhere public — app icon, store listing, marketing — it s
 be run past someone Nigerian whose judgement on this is trusted. That is cheaper
 to do now than after it ships on an icon.
 
+## Round one — drawn 2026-10-06
+
+Silhouette studies: <https://claude.ai/artifact/THHzrRWB9brFQ1UpFb1tUx> (private).
+Five artboards — the 22px test, the derivation, a hem x taper matrix, the
+aperture options, and a picker showing each in the real dashboard header.
+
+### What the drawing found
+
+**The mark already contains the figure.** The three bars' outer corners sit at
+(22,32) (74,32) / (28,50) (68,50) / (34,68) (62,68). A straight edge from
+(74,32) to (62,68) passes through all three: half-width 26, 20, 14 — the mark's
+52, 40 and 28, exactly. Dome that and close it with a hem and the figure is the
+mark's own outline, with no proportion invented. The taper constraint above is
+satisfied by construction rather than by eye.
+
+That is a sharper claim than "keep the taper" was. An earlier draft anchored the
+shoulders at y=36 and missed the middle bar by two pixels — at which point the
+figure is merely mark-*like*, which is much weaker. `mascotGeometry.ts` pins all
+three widths in a test so it cannot drift back.
+
+**The fade does not survive being shrunk.** At 22px the hem at 0.22 opacity on
+near-black is effectively invisible, so the faded figure reads shorter and
+rounder than the solid one — a different silhouette depending on the size it is
+drawn at, which is the one thing a mark cannot do. The mark itself escapes this
+because three detached bars still read as three bars however faint the last one
+is; a continuous body simply loses its hem. **So the figure is solid below 32px
+and fades above it.** That rule was not in the original direction and belongs in
+it.
+
+### Settled
+
+| Question | Decision |
+| --- | --- |
+| Taper | Logo-exact — the edge through all three bar corners |
+| Hem | At y=68, where the mark's own last bar ends |
+| Small sizes | Solid under 32px; the 1.0 / 0.5 / 0.22 fade above |
+
+### Open
+
+**The aperture.** Four candidates, all cloth *removed* rather than features
+added: none, two slits, one slot, a woven band of three. The picker board shows
+each at header size. This one is taste, and it carries the cultural weight, so
+it is not a decision to make from outside.
+
+### Built, deliberately unwired
+
+- `frontend/wallet/lib/mascotGeometry.ts` and
+  `frontend/mobile/lib/mascotGeometry.ts` — the shape, byte-identical, with a
+  parity test
+- `frontend/wallet/components/ui/VeilMascot.tsx` and
+  `frontend/mobile/components/VeilMascot.tsx` — `aperture` is a prop, so all
+  four render without another branch
+
+**Nothing user-facing imports either component.** The caution above still holds:
+a read from someone Nigerian whose judgement is trusted comes before an app
+icon, a store listing or marketing, and it is cheaper now than after it ships.
+
 ## Next step
 
-Silhouette studies before anything else: hem length, taper rate, with and
-without any suggestion of eyes, rendered at 22px and large on `#0F0F0F`. The
-22px test is what kills most mascots, so it should come first rather than last.
+Pick an aperture. Then the sway-and-settle motion study, and the read.
