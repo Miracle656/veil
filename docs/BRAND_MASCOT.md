@@ -1,7 +1,8 @@
 # Veil mascot — direction
 
-_Written 2026-10-03. Round one drawn 2026-10-06 — see **Round one** at the end.
-The direction below stands; three of its four open questions are now settled._
+_Written 2026-10-03. Drawn 2026-10-06, twice — see **Round one** and **Round
+two** at the end. The direction below stands; the shape is settled, the aperture
+is not._
 
 ## Start from what exists
 
@@ -136,6 +137,58 @@ it is not a decision to make from outside.
 a read from someone Nigerian whose judgement is trusted comes before an app
 icon, a store listing or marketing, and it is cheaper now than after it ships.
 
+## Round two — the first figure was a lightbulb
+
+Round one derived the outline from the mark's corners and domed over the top.
+Mathematically faithful, and it read as a **lightbulb**. The geometry was not
+wrong; a single convex curve simply is not fabric, whatever it is derived from.
+Worth writing down, because the derivation felt like enough and was not.
+
+Two changes fixed it, and both are load-bearing:
+
+- **The widest point is the shoulder, not the head.** The crown is 28 across —
+  the hem's width — and the cloth spreads out from it to the mark's full 52 at
+  y=32. A figure whose head is its widest part is a bulb.
+- **The hem is uneven.** Three scallops rather than one smooth belly. A smooth
+  edge reads as a solid object; a broken one reads as cloth hanging.
+
+Three candidates went up: hooded, peaked, layered. Hooded and layered both
+landed — and they turned out not to be alternatives.
+
+### Hooded and layered are one figure
+
+The layered version is the hooded outline with two seams cut **across** it,
+not three shapes stacked beside each other. The bands run the full width of the
+box and are clipped to the outline, so their union is exactly the silhouette:
+the detailed figure cannot grow a different edge from the plain one, however the
+seams are redrawn. The seams are scalloped like the hem, and carry the mark's
+own 1.0 / 0.5 / 0.22.
+
+So there is one figure with two levels of detail, which is what this doc already
+asked for — silhouette first, details only above about 64px:
+
+| Size | What it draws |
+| --- | --- |
+| under 64px | one solid shape |
+| 64px and up | the same outline, seamed |
+
+That replaces round one's solid-under-32px rule, for the same reason: a mark
+that gains and loses parts as it is resized is not one mark.
+
+### Still settled from round one
+
+The falling edge runs (74,32) to (62,68) and passes through all three bar
+widths exactly — 52 at y32, 40 at y50, 28 at y68. Tested, so it cannot drift.
+
+### Still open
+
+**The aperture.** Now to be judged against the hooded crown, which is 26 across
+at y=17 and 20 at y=12 — far less room than the bulb had. The four options are
+re-placed against it and the test measures the crown's own curve rather than
+extrapolating the body's taper, which would have passed an opening hanging off
+the edge.
+
 ## Next step
 
-Pick an aperture. Then the sway-and-settle motion study, and the read.
+Pick an aperture against the hooded crown. Then the sway-and-settle motion
+study, and the read.

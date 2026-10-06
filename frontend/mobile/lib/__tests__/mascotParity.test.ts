@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
-import { MASCOT_BODY, MASCOT_SOLID_BELOW, usesFade } from '../mascotGeometry';
+import { MASCOT_BODY, MASCOT_LAYERED_FROM, isLayered } from '../mascotGeometry';
 
 /**
  * The mascot's geometry must be the same file on both clients.
@@ -46,11 +46,12 @@ describe('mascot geometry parity', () => {
 
   it('still draws the taper off the mark, on this side', () => {
     // Cheap guard that the copy is the real module and not an empty stub. The
-    // shoulders sit at y=32 — the mark's own top-bar corner — so this catches a
-    // copy that silently reverted to an earlier anchoring.
+    // shoulders sit at y=32 — the mark's own top-bar corner — and the crown is
+    // narrower than them, which is what stops the figure reading as a bulb.
     expect(MASCOT_BODY).toContain('M22 32');
     expect(MASCOT_BODY).toContain('L62 68');
-    expect(MASCOT_SOLID_BELOW).toBe(32);
-    expect(usesFade(22)).toBe(false);
+    expect(MASCOT_BODY).toContain('C34 13 40 8 48 8');
+    expect(MASCOT_LAYERED_FROM).toBe(64);
+    expect(isLayered(22)).toBe(false);
   });
 });
