@@ -71,21 +71,64 @@ The build refuses to treat a trait as rarity-bearing if every token's value is
 unique, because a "1 of 20" drawn from a trait that is unique by construction
 reads as significant and says nothing.
 
+## Rights: what you can and cannot do with the current images
+
+**You can sell AI-generated art.** It is not prohibited, and Canva Pro grants
+commercial rights to what it generates. These twenty came through Veil's own
+Canva account, so that account's plan terms govern them — check those before
+anything is listed, since they beat any summary written here.
+
+**The constraint is exclusivity, not legality, and it only bites for a
+collection.** Two things combine:
+
+- Copyright offices generally do not grant copyright to work without meaningful
+  human authorship, so there may be nothing to stop a third party using the same
+  image.
+- Canva grants commercial *use* without granting *exclusive* rights.
+
+For a landing page or a social post, neither matters. For a collectible whose
+value rests on "there are only twenty of these", it is the gap between what a
+buyer assumes and what can actually be delivered.
+
+So the practical split:
+
+| Use | These images |
+| --- | --- |
+| Brand art, marketing, onboarding, concept work | fine as they are |
+| A collection sold on the promise of scarcity | commission the final art |
+
+Commissioned work-for-hire, with copyright assigned in the contract, is the
+usual way to end up owning the set outright. The twenty concepts are a good
+brief for that, and nothing in this directory has to change when the art does:
+`traits.json` stays, and only the `image` URLs move.
+
+Minting these as they stand is a legitimate choice too. The downside is narrow
+and specific — you cannot promise exclusivity — and plenty of collections do not
+trade on that at all. It should be a decision rather than an oversight, which is
+the only reason it is written down here.
+
+*None of the above is legal advice, and it differs between Nigeria and the US.*
+
+## Drawing on Egungun and Mmanwu
+
+`docs/BRAND_MASCOT.md` asks for a read from someone Nigerian whose judgement is
+trusted before the figure reaches anything public, and twenty masked ceremonial
+figures sold as collectibles is further past that line than an abstract gold
+silhouette was.
+
+That is a recommendation, not a rule, and the call belongs to whoever is
+shipping it. Commissioning the final art from a Nigerian illustrator is one way
+to answer both this and the rights question at once; it is not the only way, and
+it is not a precondition anyone else gets to impose.
+
 ## What is missing before this can be minted
 
-1. **Final art.** The images are AI-generated concepts at preview resolution.
-   For a collection that is distributed or sold, commission the real artwork —
-   and given it draws on Egungun and Mmanwu, commission it from a Nigerian
-   illustrator. That is the right cultural call and it gives clean ownership,
-   which matters for a store listing and for anything resold.
-2. **A cultural read.** `docs/BRAND_MASCOT.md` asks for one before the figure
-   reaches anything public. Twenty masked ceremonial figures as collectibles is
-   well past that line, and the read belongs *before* minting, not before
-   marketing.
-3. **Hosting.** `image` is `ipfs://REPLACE_WITH_COLLECTION_CID/NN.png` — a
+1. **Final art**, if the collection is sold on scarcity — see *Rights* above.
+   The images are AI-generated concepts at preview resolution either way.
+2. **Hosting.** `image` is `ipfs://REPLACE_WITH_COLLECTION_CID/NN.png` — a
    deliberate placeholder, not a guessed URL. Metadata that points at a
    plausible-looking address nobody has uploaded to is worse than metadata that
    admits it is unfinished, because the first kind mints.
-4. **A contract.** Veil's wallet reads CAP-46 tokens. Nothing in this directory
+3. **A contract.** Veil's wallet reads CAP-46 tokens. Nothing in this directory
    assumes a particular contract; the metadata is what any of them would point
    at.
