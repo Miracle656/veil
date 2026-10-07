@@ -299,19 +299,19 @@ export function verifyRevisedTransaction(originalXdr: string, revisedXdr: string
 
     // The account on the hook for the whole transaction must not change.
     if (
-      originalTx.sourceAccount().toXDR('base64') !== revisedTx.sourceAccount().toXDR('base64')
+      originalTx.sourceAccount.toXDR('base64') !== revisedTx.sourceAccount.toXDR('base64')
     ) {
       return false;
     }
 
     // A changed memo can redirect a payment at an exchange without altering
     // any operation, so it is part of the user's intent.
-    if (originalTx.memo().toXDR('base64') !== revisedTx.memo().toXDR('base64')) {
+    if (originalTx.memo.toXDR('base64') !== revisedTx.memo.toXDR('base64')) {
       return false;
     }
 
-    const originalOps = originalTx.operations().map((op) => op.toXDR('base64'));
-    const revisedOps = revisedTx.operations().map((op) => op.toXDR('base64'));
+    const originalOps = originalTx.operations.map((op) => op.toXDR('base64'));
+    const revisedOps = revisedTx.operations.map((op) => op.toXDR('base64'));
 
     // A revision that drops operations is not a revision.
     if (revisedOps.length < originalOps.length) return false;
@@ -339,13 +339,13 @@ export function verifyRevisedTransaction(originalXdr: string, revisedXdr: string
  */
 function innerTransaction(envelopeXdr: string): xdr.Transaction | null {
   const envelope = xdr.TransactionEnvelope.fromXDR(envelopeXdr, 'base64');
-  switch (envelope.switch().name) {
+  switch (envelope.type) {
     case 'envelopeTypeTx':
-      return envelope.v1().tx();
-    case 'envelopeTypeTxFeeBump': {
-      const inner = envelope.feeBump().tx().innerTx();
-      return inner.switch().name === 'envelopeTypeTx' ? inner.v1().tx() : null;
-    }
+      return envelope.v1.tx;
+    // sdk 17 types the fee-bump inner as envelopeTypeTx alone, so a v0 inner
+    // fails to decode and is refused by the caller's catch rather than waved through.
+    case 'envelopeTypeTxFeeBump':
+      return envelope.feeBump.tx.innerTx.v1.tx;
     default:
       return null;
   }

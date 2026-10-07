@@ -450,7 +450,11 @@ export async function fetchWalletSigners(
   // get_signers returns Map<u32, BytesN<65>>; read the XDR directly rather than
   // through scValToNative, whose output shape varies by SDK version.
   try {
-    return retval.map()?.map((entry) => new Uint8Array(entry.val().bytes())) ?? [];
+    if (retval.type !== 'scvMap') throw new Error('no signer map');
+    return (retval.map ?? []).map((entry) => {
+      if (entry.val.type !== 'scvBytes') throw new Error('bad signer entry');
+      return new Uint8Array(entry.val.bytes.toBytes());
+    });
   } catch {
     throw new Error('That contract does not look like a Veil wallet: it has no signer map.');
   }

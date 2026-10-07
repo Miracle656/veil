@@ -5,7 +5,8 @@ const expoPreset = require('jest-expo/jest-preset');
  *
  * `jest-expo` supplies the React Native transform, module mocks, and test
  * environment. The only change is the transform allow-list: `@noble/ciphers`,
- * `@noble/hashes` and the `@walletconnect` packages ship ESM only, and Jest
+ * `@noble/hashes`, the `@walletconnect` packages, and — since stellar-sdk 17 —
+ * `@exodus/bytes`, `uint8array-extras`, and `smol-toml` ship ESM only, and Jest
  * cannot `require` them untransformed. Metro handles them natively, so this
  * affects tests alone. `@walletconnect` is on the list because `walletStore`
  * imports the WalletConnect session-key constant from its owner; that already
@@ -21,7 +22,7 @@ module.exports = {
   modulePaths: ['<rootDir>/node_modules'],
   transformIgnorePatterns: expoPreset.transformIgnorePatterns.map((pattern) =>
     pattern.startsWith('/node_modules/(?!(')
-      ? pattern.replace('(?!(', '(?!(@noble|@walletconnect|')
+      ? pattern.replace('(?!(', '(?!(@noble|@exodus|uint8array-extras|smol-toml|@walletconnect|')
       : pattern
   ),
   moduleNameMapper: {

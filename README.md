@@ -231,7 +231,7 @@ All transactions built by the agent are returned unsigned to the frontend, where
 | -------------- | ----------------------------------------------------------------- |
 | Smart contract | Rust, Soroban SDK, p256 crate (ECDSA), sha2                       |
 | Authentication | WebAuthn / FIDO2 (ES256 / P-256)                                  |
-| Client SDK     | TypeScript, React hooks, @stellar/stellar-sdk v15, Web Crypto API |
+| Client SDK     | TypeScript, React hooks, @stellar/stellar-sdk v17, Web Crypto API |
 | Wallet app     | Next.js 14 App Router, next-pwa                                   |
 | AI Agent       | Node.js, Claude claude-sonnet-4-6, Anthropic SDK, WebSocket       |
 | Price oracle   | Fastify, Prisma, Postgres (Supabase), x402 micropayments          |

@@ -56,7 +56,7 @@ describe('TransactionSigner callback path', () => {
 
     expect(seen).toEqual([[tx.toXDR(), PASSPHRASE]]);
     expect(signed.signatures).toHaveLength(1);
-    expect(kp.verify(signed.hash(), signed.signatures[0].signature())).toBe(true);
+    expect(kp.verify(signed.hash(), signed.signatures[0].signature)).toBe(true);
     expect(warn).not.toHaveBeenCalled(); // the callback path is not deprecated
     warn.mockRestore();
   });
@@ -98,7 +98,7 @@ describe('TransactionSigner callback path', () => {
     );
     expect(out.toXDR()).toBeTruthy();
     expect((out as any).feeSource).toBe(sponsor.publicKey());
-    expect(sponsor.verify(out.hash(), out.signatures[0].signature())).toBe(true);
+    expect(sponsor.verify(out.hash(), out.signatures[0].signature)).toBe(true);
   });
 });
 
@@ -115,7 +115,7 @@ describe('deprecated Keypair / secret inputs', () => {
     const b = (await signForSubmission(buildTx(kp.publicKey()), kp, config())) as Transaction;
     const c = (await signForSubmission(buildTx(kp.publicKey()), kp.secret(), config())) as Transaction;
 
-    expect(kp.verify(a.hash(), a.signatures[0].signature())).toBe(true);
+    expect(kp.verify(a.hash(), a.signatures[0].signature)).toBe(true);
     expect(b.signatures).toHaveLength(1);
     expect(c.signatures).toHaveLength(1);
     const messages = warn.mock.calls.map((c) => String(c[0]));

@@ -66,6 +66,25 @@ const nextConfig = {
     ];
   },
   webpack: (config) => {
+    // When webpack compiles SDK source files from ../../sdk/src/ (or the agent
+    // source from ../../packages/), it resolves node_modules going up from those
+    // directories and misses the wallet's node_modules. Prepend it for requests
+    // issued from our own code so imports like @stellar/stellar-sdk resolve
+    // regardless of the importer's path.
+    //
+    // Dependencies are deliberately excluded: a global prepend would also force
+    // them onto the wallet's single hoisted copy, and they cannot all share one —
+    // @blend-capital/blend-sdk is built for stellar-sdk 16 (it constructs
+    // xdr.UInt128Parts, which protocol 23's XDR dropped) and @scure/bip39 needs
+    // @noble/hashes 1.x while stellar-sdk 17 needs 2.x. Both install their own
+    // nested copy, which plain node-style resolution up from their own folder
+    // finds.
+    config.module.rules.push({
+      issuer: { not: /[\\/]node_modules[\\/]/ },
+      resolve: {
+        modules: [path.resolve(__dirname, 'node_modules'), 'node_modules'],
+      },
+    })
     // When webpack compiles SDK source files from ../../sdk/src/, it resolves
     // node_modules going up from that directory and misses the wallet's
     // node_modules. Prepend wallet's node_modules so imports like
