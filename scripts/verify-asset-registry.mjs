@@ -256,6 +256,10 @@ export async function verifyNonNativeAsset(
     );
   }
 
+  // Restored: #892 moved this declaration and the merge dropped it while
+  // keeping both usages below, so every asset that got past the home_domain
+  // check died on a ReferenceError rather than being verified.
+  const derivedSacContractId = deriveSacContractId(asset);
   const homeDomain = account.home_domain;
   if (!homeDomain) {
     return {
