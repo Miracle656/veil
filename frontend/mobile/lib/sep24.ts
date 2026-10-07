@@ -9,7 +9,7 @@
  * `localStorage`, `sessionStorage`, WebAuthn). Where the web version signs
  * the SEP-10 challenge with a passkey stored in browser storage, this module
  * takes an injectable `signChallenge` async function instead — same pattern
- * as `executeBulkPayout(rows, submitBatch)` in `lib/bulkPayout.ts`. Mobile has
+ * as `executeRowByRow(rows, sendRow)` in `lib/bulkPayout.ts`. Mobile has
  * no signing infra ported yet, so screens pass a stub today.
  */
 
