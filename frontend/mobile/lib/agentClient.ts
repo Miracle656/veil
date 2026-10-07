@@ -115,16 +115,20 @@ export function parseInvestIntent(value: unknown): InvestIntent | undefined {
 
   if (!code || !issuer) return undefined;
 
-  const amount =
-    typeof v.amount === 'string' && /^\d+(\.\d{1,7})?$/.test(v.amount) && Number(v.amount) > 0
-      ? v.amount
-      : undefined;
+  // A hand-off without a usable amount is dropped, not trimmed down to one
+  // without an amount. The agent has already told the user it is ready to buy a
+  // specific quantity; opening the screen with that quantity missing, or with a
+  // negative one silently discarded, changes what was agreed. This also matches
+  // the web twin `app/earn/prefill.ts`, which refuses the same inputs — the two
+  // disagreeing is how one hand-off behaves differently per client.
+  const amount = typeof v.amount === 'string' ? v.amount.trim() : '';
+  if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) return undefined;
   const quoteCurrency =
     typeof v.quoteCurrency === 'string' && /^[A-Z0-9]{1,12}$/.test(v.quoteCurrency)
       ? v.quoteCurrency
       : undefined;
 
-  return { code, issuer, ...(amount ? { amount } : {}), ...(quoteCurrency ? { quoteCurrency } : {}), asset: { code, issuer } };
+  return { code, issuer, amount, ...(quoteCurrency ? { quoteCurrency } : {}), asset: { code, issuer } };
 }
 
 export type AgentRequest = {
