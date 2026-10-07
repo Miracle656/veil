@@ -1,3 +1,7 @@
+jest.mock('expo-router', () => ({
+  useRouter: () => ({ push: jest.fn() }),
+}));
+
 import { QUICK_ACTIONS, QuickActionItem } from "../QuickActions";
 
 describe("QuickActions component definitions", () => {
