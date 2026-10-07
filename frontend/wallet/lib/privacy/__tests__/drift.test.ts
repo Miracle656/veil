@@ -21,8 +21,12 @@ Object.assign(globalThis, { TextEncoder, TextDecoder })
 import { SPP_NETWORKS, type SppNetworkConfig } from '../config'
 import {
   compareSppDeployments,
+  compareSppSdkFreshness,
   formatDriftDiff,
   checkSppDrift,
+  checkSppSdkFreshness,
+  SPP_SDK_PACKAGE,
+  type SppSdkFreshness,
   type UpstreamDeploymentsJson,
   type UpstreamPool,
 } from '../drift'
@@ -383,5 +387,118 @@ describe('checkSppDrift', () => {
     } finally {
       SPP_NETWORKS.testnet = saved
     }
+  })
+})
+
+/**
+ * SDK freshness.
+ *
+ * The address check and this one answer different questions. Addresses matching
+ * says the app is pointed at the right contracts; this says a proof it builds
+ * could be accepted by them. On 2026-10-05 the first was green and the second
+ * would have been red for a month.
+ */
+describe('compareSppSdkFreshness', () => {
+  const fresh: SppSdkFreshness = {
+    latestVersion: '0.2.0',
+    latestPublishedAt: '2026-10-06T09:00:00.000Z',
+    circuitKeysUpdatedAt: '2026-10-05T10:00:37Z',
+  }
+
+  it('passes when the published SDK is newer than the circuit keys', () => {
+    expect(compareSppSdkFreshness(fresh)).toBeNull()
+  })
+
+  it('passes when they are simultaneous, since that is the release of that commit', () => {
+    expect(
+      compareSppSdkFreshness({
+        ...fresh,
+        latestPublishedAt: '2026-10-05T10:00:37Z',
+        circuitKeysUpdatedAt: '2026-10-05T10:00:37Z',
+      }),
+    ).toBeNull()
+  })
+
+  it('reports the real 2026-10-05 case, with how far behind it is', () => {
+    const drift = compareSppSdkFreshness({
+      latestVersion: '0.1.0',
+      latestPublishedAt: '2026-09-03T10:47:26.525Z',
+      circuitKeysUpdatedAt: '2026-10-05T10:00:37Z',
+    })
+
+    expect(drift).not.toBeNull()
+    expect(drift!.key).toBe('sdk.proverKeysPredateCircuits')
+    expect(drift!.pinnedValue).toContain(`${SPP_SDK_PACKAGE}@0.1.0`)
+    expect(drift!.upstreamValue).toContain('31 day(s)')
+  })
+
+  it('reports an unreadable date instead of answering "all good"', () => {
+    const drift = compareSppSdkFreshness({ ...fresh, latestPublishedAt: 'not-a-date' })
+    expect(drift).not.toBeNull()
+    expect(drift!.key).toBe('sdk.freshness')
+  })
+})
+
+describe('checkSppSdkFreshness', () => {
+  const registry = (version: string, published: string) => ({
+    'dist-tags': { latest: version },
+    time: { [version]: published },
+  })
+
+  /** A fetch that answers npm and GitHub from the same handler. */
+  function fetchWith(npmBody: unknown, commitsBody: unknown): typeof fetch {
+    return jest.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => (String(url).includes('registry.npmjs.org') ? npmBody : commitsBody),
+    })) as unknown as typeof fetch
+  }
+
+  it('is in sync when npm is ahead of the circuit keys', async () => {
+    const result = await checkSppSdkFreshness(
+      fetchWith(registry('0.2.0', '2026-10-06T09:00:00Z'), [
+        { commit: { author: { date: '2026-10-05T10:00:37Z' } } },
+      ]),
+    )
+    expect(result.status).toBe('in-sync')
+  })
+
+  it('reports stale, and says what it means for the flows', async () => {
+    const result = await checkSppSdkFreshness(
+      fetchWith(registry('0.1.0', '2026-09-03T10:47:26.525Z'), [
+        { commit: { author: { date: '2026-10-05T10:00:37Z' } } },
+      ]),
+    )
+
+    expect(result.status).toBe('sdk-stale')
+    if (result.status !== 'sdk-stale') return
+    expect(result.freshness.latestVersion).toBe('0.1.0')
+    expect(result.summary).toMatch(/cannot succeed/)
+    // Names whose problem it is, so the issue it files is actionable.
+    expect(result.summary).toMatch(/NethermindEth\/stellar-private-payments/)
+  })
+
+  it('is unreachable, not stale, when npm has no latest version', async () => {
+    const result = await checkSppSdkFreshness(
+      fetchWith({ 'dist-tags': {} }, [{ commit: { author: { date: '2026-10-05T10:00:37Z' } } }]),
+    )
+    expect(result.status).toBe('upstream-unreachable')
+  })
+
+  it('is unreachable, not stale, when GitHub returns no commits', async () => {
+    const result = await checkSppSdkFreshness(
+      fetchWith(registry('0.1.0', '2026-09-03T10:47:26.525Z'), []),
+    )
+    expect(result.status).toBe('upstream-unreachable')
+  })
+
+  it('does not throw when the network is down', async () => {
+    const failing = jest.fn(async () => {
+      throw new Error('getaddrinfo ENOTFOUND registry.npmjs.org')
+    }) as unknown as typeof fetch
+
+    const result = await checkSppSdkFreshness(failing)
+    expect(result.status).toBe('upstream-unreachable')
   })
 })

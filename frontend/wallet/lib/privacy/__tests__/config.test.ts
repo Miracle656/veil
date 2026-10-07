@@ -17,6 +17,9 @@ Object.defineProperty(globalThis, 'crypto', {
 })
 Object.assign(globalThis, { TextEncoder, TextDecoder })
 
+// Below the polyfills on purpose: Babel keeps these requires in source order,
+// and the SDK reads crypto/TextEncoder while it is being imported.
+import { StrKey } from '@stellar/stellar-sdk'
 import { getNetworkName } from '../../network'
 import {
   SPP_NETWORKS,
@@ -72,13 +75,42 @@ describe('per-network SPP config', () => {
     expect(getSppConfig('mainnet')).toBeNull()
   })
 
-  it('matches the pinned deployments.json contract IDs on testnet', () => {
-    expect(getSppConfig('testnet')).toMatchObject({
-      aspMembership: 'CAUPZISOB4GWTH22MVKA6MRWJMQRTLUMIGUSBFNJEF32Z6WEY3RFOKGC',
-      aspNonMembership: 'CAFLZKGO3KYKNOBPCVT3APFEWMUBRDBF4EVYK65E6O653WYMX4XH4QYJ',
-      publicKeyRegistry: 'CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZDDLCMNPWXIH4',
-      bootnodeUrl: 'https://bootnode.dev-nethermind.xyz',
-    })
+  /**
+   * These assert the SHAPE of the pinned config, never its values.
+   *
+   * SPP redeploys testnet often — three times since August, most recently for a
+   * change to the sparse Merkle tree depth — and every address changes when it
+   * does. A test that re-types the addresses only ever says "config.ts contains
+   * what config.ts contains", and it turns each redeploy into a three-file edit
+   * where one of the three is busywork.
+   *
+   * The values are verified where they can actually be wrong: `drift.live.test.ts`
+   * compares them against Nethermind's own deployments.json. What is worth
+   * checking here is what that cannot catch — a malformed address, a duplicated
+   * pool, a pool missing its policy.
+   */
+  it('pins well-formed contract and account IDs on testnet', () => {
+    const config = getSppConfig('testnet')
+    expect(config).not.toBeNull()
+
+    for (const [field, value] of [
+      ['aspMembership', config!.aspMembership],
+      ['aspNonMembership', config!.aspNonMembership],
+      ['publicKeyRegistry', config!.publicKeyRegistry],
+      ['verifiers.standard', config!.verifiers.standard],
+      ['verifiers.traceable', config!.verifiers.traceable],
+    ] as const) {
+      expect(`${field}:${StrKey.isValidContract(value)}`).toBe(`${field}:true`)
+    }
+
+    for (const [field, value] of [
+      ['deployer', config!.deployer],
+      ['admin', config!.admin],
+    ] as const) {
+      expect(`${field}:${StrKey.isValidEd25519PublicKey(value)}`).toBe(`${field}:true`)
+    }
+
+    expect(config!.bootnodeUrl).toMatch(/^https:\/\//)
   })
 
   it('uses Veil’s configured archive URL when supplied', () => {
@@ -86,31 +118,36 @@ describe('per-network SPP config', () => {
     expect(getSppBootnodeUrl('')).toBe('https://bootnode.dev-nethermind.xyz')
   })
 
-  it('matches the pinned deployments.json verifiers on testnet', () => {
-    expect(getSppConfig('testnet')?.verifiers).toEqual({
-      standard: 'CD34JHLNB7AYASRLOTMT6EECBKFMOS356PPP5RPXRO5Y5EA5Y4DIXGTV',
-      traceable: 'CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2UPTZIEO7BI32RKRTPFCUF2FMV',
-    })
+  it('keeps the two verifiers distinct', () => {
+    // One proves a standard withdrawal, the other a traceable one. The same id
+    // in both would mean one of them was pasted over the other, and the pool
+    // whose anonymity guarantee differs would quietly stop differing.
+    const verifiers = getSppConfig('testnet')!.verifiers
+    expect(verifiers.standard).not.toBe(verifiers.traceable)
   })
 
-  it('matches the pinned deployments.json pools on testnet', () => {
-    expect(getSppConfig('testnet')?.pools).toEqual([
-      {
-        id: 'CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT',
-        deploymentLedger: 4831618,
-        tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
-        policyFlags: ['blocklist'],
-        assetKind: 'native',
-      },
-      {
-        id: 'CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4YPL3PYIN42',
-        deploymentLedger: 4831623,
-        tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
-        policyFlags: ['blocklist'],
-        assetKind: 'native',
-        gvkMode: 'traceable',
-      },
-    ])
+  it('pins usable pools, each distinct', () => {
+    const pools = getSppConfig('testnet')!.pools
+    expect(pools.length).toBeGreaterThan(0)
+
+    for (const pool of pools) {
+      expect(`${pool.id}:${StrKey.isValidContract(pool.id)}`).toBe(`${pool.id}:true`)
+      expect(StrKey.isValidContract(pool.tokenContractId)).toBe(true)
+      expect(pool.policyFlags.length).toBeGreaterThan(0)
+      expect(pool.deploymentLedger).toBeGreaterThan(0)
+      expect(pool.assetKind).toBe('native')
+    }
+
+    // A duplicated id would silently halve the pools on offer.
+    expect(new Set(pools.map((pool) => pool.id)).size).toBe(pools.length)
+  })
+
+  it('marks exactly one pool traceable', () => {
+    // Traceable means a global view key can see into it. If every pool carried
+    // one, "private" would mean nothing; if none did, the traceable flow would
+    // have no pool to use.
+    const traceable = getSppConfig('testnet')!.pools.filter((pool) => pool.gvkMode === 'traceable')
+    expect(traceable).toHaveLength(1)
   })
 })
 

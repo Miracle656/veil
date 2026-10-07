@@ -220,6 +220,150 @@ export function compareSppDeployments(
 }
 
 /**
+ * Is the newest published SDK older than the proving keys the pools now verify against?
+ *
+ * Address drift is only half of "does privacy work". The other half is that a
+ * Groth16 proof is made with a *proving key* and checked against a *verifying
+ * key*, and the two are generated together from one circuit. Change the circuit
+ * and both are regenerated; a proof from the old pair cannot verify against the
+ * new one, which is the whole point of the scheme rather than a bug in it.
+ *
+ * Upstream regenerates `deployments/testnet/circuit_keys/` and redeploys the
+ * verifiers in the same commit, but republishing the npm package is a separate
+ * act that can lag — on 2026-10-05 it had lagged by a month and 22 commits,
+ * while this file's address check stayed green the whole time. Config in sync
+ * does not mean privacy works.
+ *
+ * Compares the *latest published* version rather than whatever is installed: if
+ * even the newest release predates the circuit keys, there is no version anyone
+ * could install that would work, which is the actionable fact.
+ */
+export const SPP_SDK_PACKAGE = 'stellar-private-payments'
+
+export const SPP_NPM_REGISTRY_URL = `https://registry.npmjs.org/${SPP_SDK_PACKAGE}`
+
+/** Commits touching the generated proving/verifying keys, newest first. */
+export const SPP_CIRCUIT_KEYS_COMMITS_URL =
+  'https://api.github.com/repos/NethermindEth/stellar-private-payments/commits' +
+  '?path=deployments/testnet/circuit_keys&per_page=1'
+
+export interface SppSdkFreshness {
+  /** Newest version on npm. */
+  latestVersion: string
+  /** When npm published it (ISO 8601). */
+  latestPublishedAt: string
+  /** When upstream last regenerated the circuit keys (ISO 8601). */
+  circuitKeysUpdatedAt: string
+}
+
+export type SppSdkCheck =
+  | { status: 'in-sync'; freshness: SppSdkFreshness }
+  | { status: 'sdk-stale'; freshness: SppSdkFreshness; drift: SppDriftEntry; summary: string }
+  | { status: 'upstream-unreachable'; error: string }
+
+/**
+ * A drift entry when the published SDK predates the circuit keys, else null.
+ *
+ * Equal timestamps pass: a package published in the same second as the commit
+ * is the release *of* that commit, and treating that as stale would make the
+ * check impossible to satisfy.
+ */
+export function compareSppSdkFreshness(freshness: SppSdkFreshness): SppDriftEntry | null {
+  const published = Date.parse(freshness.latestPublishedAt)
+  const keys = Date.parse(freshness.circuitKeysUpdatedAt)
+
+  // An unparseable date is reported rather than silently treated as fresh: a
+  // check that cannot read its inputs must not answer "all good".
+  if (Number.isNaN(published) || Number.isNaN(keys)) {
+    return {
+      key: 'sdk.freshness',
+      pinnedValue: `npm ${freshness.latestVersion} published ${freshness.latestPublishedAt}`,
+      upstreamValue: `circuit keys updated ${freshness.circuitKeysUpdatedAt} (unreadable date)`,
+    }
+  }
+
+  if (published >= keys) return null
+
+  const days = Math.floor((keys - published) / 86_400_000)
+  return {
+    key: 'sdk.proverKeysPredateCircuits',
+    pinnedValue: `npm ${SPP_SDK_PACKAGE}@${freshness.latestVersion}, published ${freshness.latestPublishedAt}`,
+    upstreamValue: `circuit keys regenerated ${freshness.circuitKeysUpdatedAt} — ${days} day(s) newer than any published SDK`,
+  }
+}
+
+/** Renders the stale-SDK finding, with what it means for the app. */
+export function formatSdkStaleness(drift: SppDriftEntry): string {
+  return [
+    'SPP SDK is older than the deployed circuits:',
+    '========================================================================',
+    `- ${drift.key}:`,
+    `    newest published: ${drift.pinnedValue}`,
+    `    upstream:         ${drift.upstreamValue}`,
+    '========================================================================',
+    'Proofs built by the published SDK use proving keys that no longer pair with',
+    'the verifying keys in the deployed verifier contracts, so shield / private',
+    'send / unshield cannot succeed however correct the pinned addresses are.',
+    '',
+    'Action: this one is upstream to fix — ask NethermindEth/stellar-private-payments',
+    'to republish the npm package for the current deployment. Until then, treat the',
+    'privacy flows as non-functional on testnet rather than merely untested.',
+  ].join('\n')
+}
+
+/**
+ * Fetches npm and GitHub, and reports whether the published SDK can work at all.
+ *
+ * Deliberately separate from {@link checkSppDrift}: an npm or GitHub outage must
+ * not be able to mask address drift, and vice versa.
+ */
+export async function checkSppSdkFreshness(
+  fetchFn: typeof fetch = globalThis.fetch,
+  timeoutMs = 15_000,
+): Promise<SppSdkCheck> {
+  const getJson = async (url: string): Promise<unknown> => {
+    const res = await fetchFn(url, {
+      headers: { Accept: 'application/json' },
+      signal: timeoutSignal(timeoutMs),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} from ${url}`)
+    return res.json()
+  }
+
+  let freshness: SppSdkFreshness
+  try {
+    const registry = (await getJson(SPP_NPM_REGISTRY_URL)) as {
+      'dist-tags'?: { latest?: string }
+      time?: Record<string, string>
+    }
+    const latestVersion = registry['dist-tags']?.latest
+    const latestPublishedAt = latestVersion ? registry.time?.[latestVersion] : undefined
+    if (!latestVersion || !latestPublishedAt) {
+      return { status: 'upstream-unreachable', error: `npm returned no latest version for ${SPP_SDK_PACKAGE}` }
+    }
+
+    const commits = (await getJson(SPP_CIRCUIT_KEYS_COMMITS_URL)) as Array<{
+      commit?: { author?: { date?: string }; committer?: { date?: string } }
+    }>
+    const circuitKeysUpdatedAt = commits?.[0]?.commit?.author?.date ?? commits?.[0]?.commit?.committer?.date
+    if (!circuitKeysUpdatedAt) {
+      return { status: 'upstream-unreachable', error: 'GitHub returned no commits for the circuit-keys path' }
+    }
+
+    freshness = { latestVersion, latestPublishedAt, circuitKeysUpdatedAt }
+  } catch (err) {
+    return {
+      status: 'upstream-unreachable',
+      error: `Could not read SDK freshness: ${err instanceof Error ? err.message : String(err)}`,
+    }
+  }
+
+  const drift = compareSppSdkFreshness(freshness)
+  if (!drift) return { status: 'in-sync', freshness }
+  return { status: 'sdk-stale', freshness, drift, summary: formatSdkStaleness(drift) }
+}
+
+/**
  * Formats a list of drift entries into a readable diff summary.
  */
 export function formatDriftDiff(drifts: SppDriftEntry[]): string {

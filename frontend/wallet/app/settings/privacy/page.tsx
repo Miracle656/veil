@@ -147,6 +147,34 @@ export default function PrivacySettingsPage() {
               </div>
               <ArrowRight size={18} color="var(--teal)" />
             </button>
+
+            <button
+              type="button"
+              onClick={() => router.push('/privacy/unshield')}
+              className="card"
+              style={{
+                textAlign: 'left',
+                cursor: 'pointer',
+                width: '100%',
+                marginTop: '0.75rem',
+                border: '1px solid var(--border-dim)',
+                background: 'var(--surface)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '1rem 1.25rem',
+              }}
+            >
+              <div>
+                <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--off-white)' }}>
+                  Unshield Funds
+                </p>
+                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                  Move shielded XLM back out to a public address — visible on-chain
+                </p>
+              </div>
+              <ArrowRight size={18} color="var(--teal)" />
+            </button>
           </>
         )}
       </div>
