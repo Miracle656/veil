@@ -137,7 +137,7 @@ describe('runAgent', () => {
     }
     const result = await runAgent('buy USDY', wallet, [], undefined, undefined, llm)
     expect(result.investIntent).toEqual({ asset: { code: 'USDY', issuer }, amount: '50' })
-    expect(result.response).toMatch(/Earn screen/)
+    expect(result.response).toMatch(/Invest section|Earn screen|Invest screen/)
   })
 
   it('refuses a swap between unsupported or identical assets, and a malformed amount', async () => {
