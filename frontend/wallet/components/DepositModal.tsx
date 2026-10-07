@@ -107,7 +107,13 @@ export function DepositModal({ mode, walletAddress, onClose }: Props) {
       transferServerRef.current = info.transferServerUrl
 
       // 2. SEP-10 auth — passkey signs the challenge transaction
-      const jwt = await getSep10Jwt(info.webAuthEndpoint, walletAddress, info.networkPassphrase)
+      const jwt = await getSep10Jwt(
+        info.webAuthEndpoint,
+        walletAddress,
+        info.networkPassphrase,
+        info.homeDomain,
+        info.signingKey,
+      )
       jwtRef.current = jwt
 
       // 3. Initiate interactive flow

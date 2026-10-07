@@ -483,25 +483,28 @@ function SwapHandoff({ intent }: { intent: { from: string; to: string; amount?: 
 }
 
 /**
- * Invest hand-off to the Invest/Earn screen.
+ * Invest hand-off to the Earn/Invest section.
  */
 function InvestHandoff({ intent }: { intent: import('../../lib/agentMessages').InvestIntent }) {
   const router = useRouter();
   return (
     <View style={{ marginTop: 10 }}>
       <Button
-        label={`Open Invest · Buy ${intent.amount ? `${intent.amount} ` : ''}${intent.code}`}
-        onPress={() =>
+label="Open Earn Section"
+        onPress={() => {
+          const code = intent.code ?? intent.asset?.code ?? '';
+          const issuer = intent.issuer ?? intent.asset?.issuer ?? '';
+          const amount = intent.amount ?? '';
           router.push({
             pathname: '/earn',
             params: {
-              code: intent.code,
-              issuer: intent.issuer,
-              ...(intent.amount ? { amount: intent.amount } : {}),
+              ...(code ? { code, asset: code } : {}),
+              ...(issuer ? { issuer } : {}),
+              ...(amount ? { amount } : {}),
               ...(intent.quoteCurrency ? { quoteCurrency: intent.quoteCurrency } : {}),
             },
-          })
-        }
+          });
+        }}
       />
     </View>
   );

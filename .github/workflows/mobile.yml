@@ -31,8 +31,8 @@ jobs:
       run:
         working-directory: frontend/mobile
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
           cache: npm
@@ -40,7 +40,7 @@ jobs:
       # frontend/mobile is not a workspace member and keeps its own lockfile, so
       # a plain install inside the directory is enough. `npm install` is the
       # fallback for the window after a dependency bump lands ahead of the lock.
-      - run: npm ci || npm install
+      - run: npm ci || { echo "::warning::npm ci failed; falling back to npm install"; npm install; }
       - name: Typecheck
         run: npm run typecheck
       - name: Lint

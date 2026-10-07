@@ -32,7 +32,7 @@ import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 // shipped (testnet), which is the same defect that previously derived a wallet
 // address against the wrong network and stranded real funds.
 const DEFAULT_ANCHOR =
-  process.env['EXPO_PUBLIC_SEP24_ANCHORS']?.split(',')[0]?.trim() || 'testanchor.stellar.org';
+  process.env['EXPO_PUBLIC_SEP24_ANCHORS']?.split(',')[0]?.trim() || '';
 
 const POLL_INTERVAL_MS = 4_000;
 
@@ -143,12 +143,28 @@ export default function WithdrawScreen() {
       }
       const signerKeypair = Keypair.fromSecret(secret);
 
+      // An anchor that publishes no SIGNING_KEY cannot have its challenges
+      // checked, and an unchecked challenge is signed with this device's real
+      // key. Refuse rather than authenticate blind.
+      if (!info.signingKey) {
+        throw new Error(
+          `${info.homeDomain} publishes no SEP-10 SIGNING_KEY, so its sign-in request cannot be verified.`,
+        );
+      }
+
       const jwt = await getSep10Jwt(
         info.webAuthEndpoint,
         account,
         info.networkPassphrase,
         async (params) =>
-          signSep10Challenge(params.challengeXdr, params.networkPassphrase, signerKeypair),
+          signSep10Challenge(
+            params.challengeXdr,
+            params.networkPassphrase,
+            signerKeypair,
+            info.homeDomain,
+            info.signingKey!,
+            new URL(info.webAuthEndpoint).host,
+          ),
       );
       jwtRef.current = jwt;
 

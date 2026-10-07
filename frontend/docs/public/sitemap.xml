@@ -14,7 +14,9 @@
   <url><loc>https://docs.useveilapp.xyz/guides/networks</loc></url>
   <url><loc>https://docs.useveilapp.xyz/guides/wallet-features</loc></url>
   <url><loc>https://docs.useveilapp.xyz/guides/when-not-veil</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/invest</loc></url>
   <url><loc>https://docs.useveilapp.xyz/local-dev</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/privacy</loc></url>
   <url><loc>https://docs.useveilapp.xyz/research/reserve-tax</loc></url>
   <url><loc>https://docs.useveilapp.xyz/sdk-errors</loc></url>
   <url><loc>https://docs.useveilapp.xyz/sdk-reference</loc></url>
@@ -23,4 +25,5 @@
   <url><loc>https://docs.useveilapp.xyz/threat-model</loc></url>
   <url><loc>https://docs.useveilapp.xyz/troubleshooting</loc></url>
   <url><loc>https://docs.useveilapp.xyz/troubleshooting/passkeys</loc></url>
+  <url><loc>https://docs.useveilapp.xyz/voice</loc></url>
 </urlset>

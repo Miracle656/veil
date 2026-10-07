@@ -7,24 +7,41 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch: {}   # allow manual trigger for debugging
 
+permissions:
+  contents: read
+
 jobs:
   testnet-smoke:
     name: Stellar testnet — deploy wallet, fund, send, verify
     runs-on: ubuntu-latest
+    permissions:
+      # Open GitHub issue on failure (github-script).
+      contents: read
+      issues: write
     # Skip on dependabot branches so dependency PRs don't trigger a burner-key spend
     if: ${{ !startsWith(github.head_ref, 'dependabot/') }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '20'
 
       # ── Install the Stellar CLI (used for friendbot funding) ───────────────
       - name: Install Stellar CLI
         run: |
-          curl -sSL https://raw.githubusercontent.com/stellar/stellar-cli/main/install.sh | bash
+          stellar_version='28.0.0'
+          stellar_archive="stellar-cli-${stellar_version}-x86_64-unknown-linux-gnu.tar.gz"
+          stellar_url="https://github.com/stellar/stellar-cli/releases/download/v${stellar_version}/${stellar_archive}"
+          stellar_sha256='207544486734fccb4df1afc4a7745478f9f1e21688b2f9506f0ef36f60ce3fdc'
+          stellar_tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "$stellar_tmp_dir"' EXIT
+          curl -fsSL "$stellar_url" -o "$stellar_tmp_dir/$stellar_archive"
+          echo "$stellar_sha256  $stellar_tmp_dir/$stellar_archive" | sha256sum --check --status
+          mkdir -p "$HOME/.stellar/bin"
+          tar -xzf "$stellar_tmp_dir/$stellar_archive" -C "$stellar_tmp_dir"
+          install -m 0755 "$stellar_tmp_dir/stellar" "$HOME/.stellar/bin/stellar"
           echo "$HOME/.stellar/bin" >> "$GITHUB_PATH"
 
       # ── Install Node dependencies (stellar-sdk for smoke script) ──────────
@@ -35,35 +52,105 @@ jobs:
       - name: Generate burner keypair
         id: keygen
         run: |
+          set -euo pipefail
+          # The secret lands in GITHUB_OUTPUT because the send step needs it
+          # (SENDER_SECRET below). Register it as a mask first so it is redacted
+          # everywhere the runner would otherwise echo it.
           node -e "
             const { Keypair } = require('@stellar/stellar-sdk');
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> \$GITHUB_OUTPUT
+          " > keypair.txt
+          echo "::add-mask::$(sed -n 's/^secret=//p' keypair.txt)"
+          cat keypair.txt >> "$GITHUB_OUTPUT"
+          rm -f keypair.txt
+
+      # ── Sanity-check the keypair outputs ──────────────────────────────────
+      # The nightly run failed for months with `curl` exit 22 because the
+      # keypair steps wrote to an escaped `\$GITHUB_OUTPUT`, so the public key
+      # arrived empty and Friendbot answered 400 to `?addr=`. Fail here with a
+      # readable message instead of a bare curl exit code.
+      - name: Assert the burner keypair was captured
+        run: |
+          set -euo pipefail
+          pub='${{ steps.keygen.outputs.public }}'
+          if [ -z "$pub" ]; then
+            echo "::error::the burner public key output is empty — GITHUB_OUTPUT was not written"
+            exit 1
+          fi
+          echo "burner public key: $pub"
 
       # ── Fund with Friendbot ───────────────────────────────────────────────
       - name: Fund burner account via Friendbot
         run: |
-          curl -sf "https://friendbot.stellar.org?addr=${{ steps.keygen.outputs.public }}" \
-            -o friendbot_response.json
-          cat friendbot_response.json
+          set -euo pipefail
+          url="https://friendbot.stellar.org?addr=${{ steps.keygen.outputs.public }}"
+          # Friendbot is a public service: retry the transient answers (429/5xx)
+          # instead of failing the nightly on a hiccup, and print the body on a
+          # real failure so the reason is visible in the log.
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o friendbot_response.json -w '%{http_code}' --max-time 60 "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "funded on attempt $attempt (HTTP $code)"
+              cat friendbot_response.json
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code"
+            cat friendbot_response.json 2>/dev/null || true
+            case "$code" in
+              429|500|502|503|504|000) sleep $((attempt * 5)) ;;
+              *) echo "::error::Friendbot rejected the request with HTTP $code"; exit 1 ;;
+            esac
+          done
+          echo "::error::Friendbot did not fund the account after 5 attempts"
+          exit 1
 
       # ── Create a second burner account (recipient) ────────────────────────
       - name: Generate recipient keypair
         id: recipient
         run: |
+          set -euo pipefail
+          # The secret lands in GITHUB_OUTPUT because the send step needs it
+          # (SENDER_SECRET below). Register it as a mask first so it is redacted
+          # everywhere the runner would otherwise echo it.
           node -e "
             const { Keypair } = require('@stellar/stellar-sdk');
             const kp = Keypair.random();
             console.log('public=' + kp.publicKey());
             console.log('secret=' + kp.secret());
-          " >> \$GITHUB_OUTPUT
+          " > keypair.txt
+          echo "::add-mask::$(sed -n 's/^secret=//p' keypair.txt)"
+          cat keypair.txt >> "$GITHUB_OUTPUT"
+          rm -f keypair.txt
+
+      - name: Assert the recipient keypair was captured
+        run: |
+          set -euo pipefail
+          pub='${{ steps.recipient.outputs.public }}'
+          if [ -z "$pub" ]; then
+            echo "::error::the recipient public key output is empty — GITHUB_OUTPUT was not written"
+            exit 1
+          fi
+          echo "recipient public key: $pub"
 
       - name: Fund recipient via Friendbot
         run: |
-          curl -sf "https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}" \
-            -o friendbot_recipient.json
+          set -euo pipefail
+          url="https://friendbot.stellar.org?addr=${{ steps.recipient.outputs.public }}"
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o friendbot_recipient.json -w '%{http_code}' --max-time 60 "$url" || true)
+            if [ "$code" = "200" ]; then
+              echo "recipient funded on attempt $attempt"
+              exit 0
+            fi
+            case "$code" in
+              429|500|502|503|504|000) echo "attempt $attempt: HTTP $code"; sleep $((attempt * 5)) ;;
+              *) echo "::error::Friendbot rejected the recipient with HTTP $code"; cat friendbot_recipient.json || true; exit 1 ;;
+            esac
+          done
+          echo "::error::Friendbot did not fund the recipient after 5 attempts"
+          exit 1
 
       # ── Send a 1 XLM payment and verify it landed on Horizon ─────────────
       - name: Send payment and verify via Horizon
@@ -150,7 +237,7 @@ jobs:
       # Option B — Open a GitHub issue on failure (always available, no extra secret).
       - name: Open GitHub issue on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const title = `Nightly testnet smoke test failed — ${new Date().toISOString().slice(0, 10)}`;

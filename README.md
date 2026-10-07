@@ -146,7 +146,7 @@ veil/
 │   └── factory/                   # Factory contract — deploys wallet instances
 │       ├── src/
 │       │   ├── lib.rs             # init(wasm_hash) + deploy(pubkey, rp_id, origin)
-│       │   ├── storage.rs         # WasmHash + Deployed(salt) keys
+│       │   ├── storage.rs         # WasmHash/Admin (instance) + Deployed(salt) markers (persistent)
 │       │   └── validation.rs      # P-256 public key validation
 │       └── Cargo.toml
 ├── sdk/
@@ -154,6 +154,7 @@ veil/
 │   │   ├── core.ts                # Framework-agnostic wallet core — register, deploy, login, signAuthEntry, sendPayment, addSigner, removeSigner, setGuardian, initiateRecovery, completeRecovery
 │   │   ├── useInvisibleWallet.ts  # React hook — binds the core to useSyncExternalStore
 │   │   ├── vue/                   # Vue 3 composable — binds the same core to refs (invisible-wallet-sdk/vue)
+│   │   ├── angular/               # Angular DI service + provideVeil — standalone-compatible (invisible-wallet-sdk/angular)
 │   │   ├── webauthn.ts            # WebAuthn provider interface + web/browser implementation
 │   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkey) — Metro auto-resolves
 │   │   ├── utils.ts               # Crypto utilities (DER→raw, pubkey extraction, SHA256, computeWalletAddress)
@@ -215,7 +216,8 @@ Claude-powered AI agent embedded in the Veil wallet. Connects via WebSocket. Too
 | Tool                    | Description                                                       |
 | ----------------------- | ----------------------------------------------------------------- |
 | `get_price`             | Fetches live SDEX/AMM price via Lens (x402 auto-paid)             |
-| `get_wallet_balance`    | Fetches XLM + token balances via Horizon                          |
+| `get_wallet_balance`    | Fetches XLM + token balances via Horizon; issued assets are classified verified / unverified / unlisted by issuer |
+| `get_asset_info`        | Verified issuer (and clawback/freeze properties) for USDT0 / USDC |
 | `get_transfer_history`  | Fetches transfer history via Wraith + Horizon payments            |
 | `build_swap`            | Builds unsigned path payment XDR (auto-adds trustline if missing) |
 | `build_payment`         | Builds unsigned payment XDR                                       |
@@ -430,9 +432,9 @@ const wallet = createWalletStore({
 
 // $wallet reactively reflects { address, isDeployed, isPending, error }
 await wallet.register('alice');
-await wallet.deploy(feePayerSecret);
+await wallet.deploy(feePayerSigner); // a TransactionSigner, see sdk/README.md
 const sig = await wallet.signAuthEntry(signaturePayload);
-await wallet.sendPayment(feePayerSecret, to, amountInStroops);
+await wallet.sendPayment(feePayerSigner, to, amountInStroops);
 ```
 
 The store binds the same `InvisibleWalletCore` the React hook and the Vue
@@ -476,6 +478,56 @@ See [`sdk/src/solid`](sdk/src/solid) for the adapter and
 [`examples/solid`](examples/solid) for a Vite starter covering register,
 dashboard and send.
 
+### With Angular
+
+Configure the wallet once at bootstrap with `provideVeil` — standalone-component
+compatible:
+
+```ts
+import { bootstrapApplication } from '@angular/platform-browser';
+import { provideVeil } from 'invisible-wallet-sdk/angular';
+
+bootstrapApplication(AppComponent, {
+  providers: [
+    provideVeil({
+      factoryAddress: FACTORY_CONTRACT_ID,
+      rpcUrl: 'https://soroban-testnet.stellar.org',
+      networkPassphrase: Networks.TESTNET,
+    }),
+  ],
+});
+```
+
+Components and services then inject the DI singleton:
+
+```ts
+import { Component, inject } from '@angular/core';
+import { VeilService } from 'invisible-wallet-sdk/angular';
+
+@Component({
+  standalone: true,
+  template: `
+    @if (wallet.address(); as address) {
+      <p>Wallet: {{ address }}</p>
+    } @else {
+      <button (click)="wallet.register('alice')">Create wallet</button>
+    }
+  `,
+})
+export class WalletComponent {
+  readonly wallet = inject(VeilService);
+}
+```
+
+State arrives as signals — `wallet.address()`, `wallet.isPending()`, etc. — over
+the same `InvisibleWalletCore` every other adapter binds, so the actions are
+identical across all five. Standalone apps use `provideVeil`; NgModule-based
+apps import `VeilModule.forRoot(config)`.
+
+See [`sdk/src/angular`](sdk/src/angular) for the adapter and
+[`examples/angular`](examples/angular) for a standalone starter covering
+register, login and send.
+
 ### Without a framework
 
 ```js
@@ -490,7 +542,7 @@ const wallet = createInvisibleWallet({
 
 // Register a passkey and deploy a wallet contract
 const { walletAddress } = await wallet.register('alice');
-await wallet.deploy(feePayerKeypair);
+await wallet.deploy(feePayerSigner); // a TransactionSigner, see sdk/README.md
 
 // Sign a Soroban authorization entry
 const sig = await wallet.signAuthEntry(signaturePayload);

@@ -13,7 +13,8 @@
  * no signing infra ported yet, so screens pass a stub today.
  */
 
-import { Networks, Transaction, TransactionBuilder, type Keypair } from '@stellar/stellar-sdk';
+import { Transaction, type Keypair, WebAuth, type Operation } from '@stellar/stellar-sdk';
+import { getNetwork } from './network';
 
 // ── Anchor config ────────────────────────────────────────────────────────────
 
@@ -21,6 +22,14 @@ export interface AnchorInfo {
   transferServerUrl: string;
   webAuthEndpoint: string;
   networkPassphrase: string;
+  /** The domain the TOML came from. A challenge must name it. */
+  homeDomain: string;
+  /**
+   * SEP-10 `SIGNING_KEY`: the account the anchor signs challenges with. Absent
+   * when the anchor publishes none, in which case its challenges cannot be
+   * verified and must not be signed.
+   */
+  signingKey?: string;
 }
 
 // ── TOML discovery ───────────────────────────────────────────────────────────
@@ -46,13 +55,20 @@ export async function discoverAnchorInfo(anchorDomain: string): Promise<AnchorIn
     throw new Error(`WEB_AUTH_ENDPOINT not found in ${anchorDomain}/.well-known/stellar.toml`);
   }
 
+  const signingKeyMatch = text.match(/SIGNING_KEY\s*=\s*"([^"]+)"/);
+
   const networkMatch = text.match(/NETWORK_PASSPHRASE\s*=\s*"([^"]+)"/);
-  const networkPassphrase = networkMatch ? networkMatch[1] : Networks.TESTNET;
+  const networkPassphrase = networkMatch ? networkMatch[1] : getNetwork().networkPassphrase;
+  if (!networkPassphrase) {
+    throw new Error(`No network passphrase is configured for ${getNetwork().displayName}.`);
+  }
 
   return {
     transferServerUrl: transferMatch[1].replace(/\/$/, ''),
     webAuthEndpoint: webAuthMatch[1].replace(/\/$/, ''),
     networkPassphrase,
+    homeDomain: anchorDomain,
+    signingKey: signingKeyMatch ? signingKeyMatch[1].trim() : undefined,
   };
 }
 
@@ -75,21 +91,26 @@ export class Sep10ChallengeError extends Error {
 }
 
 /**
- * Validate and sign a SEP-10 challenge transaction with a classic Stellar keypair.
- *
- * SEP-10 rules enforced:
- *  - The transaction MUST contain at least one `manage_data` operation.
- *  - The `manage_data` key MUST end with " auth" (the standard anchor suffix).
- *  - The transaction MUST have `timeBounds` set (minTime / maxTime).
- *  - `maxTime` MUST be in the future (challenge not expired).
- *
- * @throws {Sep10ChallengeError} if any SEP-10 validation rule is violated.
+ * Validate a SEP-10 challenge transaction using standard SDK WebAuth rules.
  */
-export function signSep10Challenge(
+export function validateSep10Challenge(
   challengeXdr: string,
   networkPassphrase: string,
-  signerKeypair: Keypair
-): string {
+  /** The domain we fetched the TOML from — never one read out of the challenge. */
+  homeDomain: string,
+  /** The anchor's published SIGNING_KEY — never the challenge's own source. */
+  anchorSigningKey: string,
+  /** Host of the WEB_AUTH_ENDPOINT we called. */
+  webAuthDomain: string
+): { tx: Transaction; clientAccountID: string; matchedHomeDomain: string } {
+  if (!homeDomain || !anchorSigningKey || !webAuthDomain) {
+    // Defaulting any of these to something taken from the challenge would mean
+    // verifying the challenge against its own claims, which is not a check.
+    throw new Sep10ChallengeError(
+      'SEP-10 validation needs the anchor home domain, its published SIGNING_KEY and the web auth domain.',
+      'MALFORMED'
+    );
+  }
   let tx: Transaction;
   try {
     tx = new Transaction(challengeXdr, networkPassphrase);
@@ -97,7 +118,18 @@ export function signSep10Challenge(
     throw new Sep10ChallengeError(`Failed to parse challenge XDR: ${(err as Error).message}`, 'MALFORMED');
   }
 
-  const manageDataOps = tx.operations.filter((op) => op.type === 'manageData');
+  if (tx.sequence !== '0') {
+    throw new Sep10ChallengeError('SEP-10 challenge sequence number must be zero', 'MALFORMED');
+  }
+
+  if (!tx.operations.every((op) => op.type === 'manageData')) {
+    throw new Sep10ChallengeError(
+      'SEP-10 challenge must contain only manage_data operations',
+      'MISSING_MANAGE_DATA'
+    );
+  }
+
+  const manageDataOps = tx.operations.filter((op): op is Operation.ManageData => op.type === 'manageData');
   if (manageDataOps.length === 0) {
     throw new Sep10ChallengeError(
       'SEP-10 challenge must contain at least one manage_data operation',
@@ -105,7 +137,7 @@ export function signSep10Challenge(
     );
   }
 
-  const firstKey = (manageDataOps[0] as { name: string }).name;
+  const firstKey = manageDataOps[0].name;
   if (!firstKey.endsWith(' auth')) {
     throw new Sep10ChallengeError(
       `manage_data key "${firstKey}" does not follow the "<home_domain> auth" SEP-10 convention`,
@@ -126,9 +158,63 @@ export function signSep10Challenge(
     );
   }
 
-  const rebuilt = TransactionBuilder.cloneFrom(tx).build();
-  rebuilt.sign(signerKeypair);
-  return rebuilt.toXDR();
+  try {
+    const readResult = WebAuth.readChallengeTx(
+      challengeXdr,
+      anchorSigningKey,
+      networkPassphrase,
+      homeDomain,
+      webAuthDomain
+    );
+    return readResult;
+  } catch (err) {
+    if (err instanceof Sep10ChallengeError) throw err;
+    const msg = (err as Error).message || String(err);
+    if (msg.includes('expired') || msg.includes('timebounds')) {
+      throw new Sep10ChallengeError(msg, 'EXPIRED');
+    } else if (msg.includes('home domain') || msg.includes('homeDomains')) {
+      throw new Sep10ChallengeError(msg, 'INVALID_HOME_DOMAIN');
+    } else if (msg.includes('manageData') || msg.includes('operation') || msg.includes('sequence')) {
+      throw new Sep10ChallengeError(msg, 'MISSING_MANAGE_DATA');
+    }
+    throw new Sep10ChallengeError(msg, 'MALFORMED');
+  }
+}
+
+/**
+ * Validate and sign a SEP-10 challenge transaction with a classic Stellar keypair.
+ *
+ * SEP-10 rules enforced:
+ *  - Sequence number MUST be 0.
+ *  - All operations MUST be manage_data.
+ *  - The `manage_data` key MUST end with " auth" (the standard anchor suffix).
+ *  - The transaction MUST have `timeBounds` set (minTime / maxTime).
+ *  - `maxTime` MUST be in the future (challenge not expired).
+ *  - Standard Stellar SDK WebAuth validation.
+ *
+ * @throws {Sep10ChallengeError} if any SEP-10 validation rule is violated.
+ */
+export function signSep10Challenge(
+  challengeXdr: string,
+  networkPassphrase: string,
+  signerKeypair: Keypair,
+  homeDomain: string,
+  anchorSigningKey: string,
+  webAuthDomain: string
+): string {
+  const { tx } = validateSep10Challenge(
+    challengeXdr,
+    networkPassphrase,
+    homeDomain,
+    anchorSigningKey,
+    webAuthDomain
+  );
+
+  // Sign the verified transaction, not a rebuild of it: `cloneFrom(tx).build()`
+  // returns an unsigned copy, which drops the anchor's signature, and SEP-10
+  // wants the challenge back carrying both.
+  tx.sign(signerKeypair);
+  return tx.toXDR();
 }
 
 // ── SEP-10 Web Auth ──────────────────────────────────────────────────────────
@@ -169,11 +255,15 @@ export async function getSep10Jwt(
     network_passphrase?: string;
   };
 
-  const effectivePassphrase = network_passphrase ?? networkPassphrase;
+  if (network_passphrase && network_passphrase !== networkPassphrase) {
+    throw new Error(
+      `Anchor returned network_passphrase "${network_passphrase}" which differs from expected "${networkPassphrase}"`
+    );
+  }
 
   const signedXdr = await signChallenge({
     challengeXdr,
-    networkPassphrase: effectivePassphrase,
+    networkPassphrase,
     account,
   });
 

@@ -4,12 +4,12 @@ import { fetchContractAssetBalance, getFeePayerAddress } from './activity';
 import { getFeePayerXlm, sendAssetFromContract } from './contractSpend';
 import { deployWalletIfNeeded, type DeployFn } from './deployWallet';
 import { planDeposit } from './depositPlan';
-import { feeBidXlm } from './fees';
 import { getNetwork } from './network';
 import { requirePasskey } from './passkey';
 import { sendPayment } from './sendPayment';
 import { requireSigner } from './signer';
 import { getWalletAddress } from './walletStore';
+import { assertFeePayerCanCoverFee, feePayerMinimumXlm, FeePayerShort } from './feePayerCheck';
 
 /**
  * Send an asset, choosing the source the way the send screen does.
@@ -28,14 +28,6 @@ import { getWalletAddress } from './walletStore';
  */
 
 /**
- * XLM a spending account must have above its reserve to submit one
- * transaction: the fee bid, plus room for a Soroban resource fee.
- */
-function feeHeadroomXlm(): number {
-  return feeBidXlm() + 0.01;
-}
-
-/**
  * The wallet as a whole holds less than the amount. Carries what it does hold,
  * so a screen can offer to send that instead.
  */
@@ -50,15 +42,7 @@ export class NotEnoughToSend extends Error {
   }
 }
 
-/** The spending account cannot pay the network fee, whatever it is sending. */
-export class NeedsXlmForFee extends Error {
-  constructor(readonly spendingAddress: string) {
-    super(
-      `Your spending account needs a little XLM to pay the network fee. Send about 0.1 XLM to ${spendingAddress} and try again.`,
-    );
-    this.name = 'NeedsXlmForFee';
-  }
-}
+// Removed NeedsXlmForFee (now handled by feePayerCheck)
 
 function fmt(n: number): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 7 });
@@ -102,11 +86,7 @@ export async function spendAsset(params: {
   // cannot cover the fee bid above its reserve, the network refuses with
   // tx_insufficient_balance, which reads as "not enough USDC" to anyone
   // holding plenty. Say what is actually missing, before building anything.
-  // A failed read (all zeros) is unknown, not empty: let the network decide.
-  const xlm = await getFeePayerXlm();
-  const xlmKnown = xlm.balance > 0 || xlm.reserve > 0;
-  const freeXlm = xlmKnown ? xlm.balance - xlm.reserve : Number.POSITIVE_INFINITY;
-  if (freeXlm < feeHeadroomXlm()) throw new NeedsXlmForFee(feePayer);
+  await assertFeePayerCanCoverFee(feePayer);
 
   const inWallet = contract ? await fetchContractAssetBalance(contract, asset) : 0;
 
@@ -146,8 +126,14 @@ export async function spendAsset(params: {
       throw new NotEnoughToSend(plan.available, amountNumber, code);
     }
     if (plan.kind === 'move' && contract) {
-      // Two transactions from the spending account now, so two fees.
-      if (freeXlm < 2 * feeHeadroomXlm()) throw new NeedsXlmForFee(feePayer);
+      // Two transactions from the spending account now, so two fees. The check
+      // above cleared one; raise the bar and reuse the same typed error, so a
+      // screen handles this the same way it handles the single-fee case.
+      const xlm = await getFeePayerXlm();
+      const xlmKnown = xlm.balance > 0 || xlm.reserve > 0;
+      const freeXlm = xlmKnown ? xlm.balance - xlm.reserve : Number.POSITIVE_INFINITY;
+      const neededForTwo = 2 * feePayerMinimumXlm();
+      if (freeXlm < neededForTwo) throw new FeePayerShort(feePayer, freeXlm, neededForTwo);
       await deployWalletIfNeeded(deploy, contract);
       await sendAssetFromContract(contract, feePayer, plan.amount, asset);
       passkeyShown = true;

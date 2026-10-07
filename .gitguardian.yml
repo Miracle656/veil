@@ -1,9 +1,38 @@
-# GitGuardian configuration
-# Allowlist for testnet public values (NEXT_PUBLIC_* are browser-exposed constants)
-
-matches:
-  - name: Testnet Contract ID
-    match: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
-    reason: Public testnet contract address (NEXT_PUBLIC_FACTORY_CONTRACT_ID)
-    ignore_on:
-      - path: .github/workflows/ci.yml
+# GitGuardian allowlist (.gitguardian.yaml schema, version 2)
+#
+# These paths hold public, non-credential values that the secret scanner flags
+# as false positives:
+#   - Stellar Soroban contract IDs pinned from NethermindEth/stellar-private-
+#     payments deployments.json (commit 91ba67d659cb50a66ecba7ba42e27f8e686117f4,
+#     V131 privacy config). Deployed testnet contracts, not secrets; they cannot
+#     be rotated and MUST appear verbatim in the pin tests that assert config
+#     drift.
+#   - The well-known public Stellar network passphrase (Networks.PUBLIC /
+#     Networks.TESTNET), a published constant.
+#
+# `ignored_paths` is the recognized allowlist key. The previous file used a
+# policy-style `matches:`/`ignore_on:` body under this allowlist filename, which
+# the scanner does not parse — so nothing was ever suppressed.
+#
+# Each entry is a single file that holds those pinned values, never a directory
+# glob. `frontend/*/lib/privacy/**` would also silence `client.ts`, which
+# handles the fee-payer keypair, and an allowlist that covers signing code is
+# worth less than no allowlist at all.
+#
+# Note this file only governs ggshield (local hooks, CLI). The GitGuardian
+# GitHub App check is configured on their dashboard and is not affected by it.
+version: 2
+secret_scans:
+  ignored_paths:
+    - examples/sveltekit/src/lib/network.ts
+    - frontend/mobile/lib/privacy/config.ts
+    - frontend/mobile/lib/privacy/__tests__/config.test.ts
+    - frontend/wallet/lib/privacy/config.ts
+    - frontend/wallet/lib/privacy/__tests__/config.test.ts
+    - frontend/wallet/lib/__tests__/anchorDirectory.test.ts
+    - frontend/wallet/lib/__tests__/feeBump.test.ts
+    - frontend/wallet/lib/__tests__/issuerKeysValid.test.ts
+    - frontend/wallet/lib/__tests__/sep10.test.ts
+    - frontend/wallet/components/__tests__/AnchorDirectoryModal.test.ts
+    - frontend/wallet/tests/sep10.test.ts
+    - .github/workflows/ci.yml

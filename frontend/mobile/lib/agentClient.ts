@@ -9,7 +9,8 @@
  * user can resend; there is no socket to lose when the app is backgrounded.
  */
 
-import type { AgentMessage, SwapIntent, InvestIntent } from './agentMessages';
+import { StrKey } from '@stellar/stellar-sdk';
+import type { AgentMessage, InvestIntent, SwapIntent } from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -31,8 +32,12 @@ export function resolveAgentUrl(configured: string | undefined): string {
   if (!url) return PRODUCTION_AGENT_URL;
   try {
     const parsed = new URL(url);
+    // Private ranges must match a literal IPv4 address, not a prefix. `/^10\./`
+    // also matched the hostname `10.evil.com`, which let a remote host be
+    // reached over plaintext HTTP purely by choosing its name.
+    const privateIpv4 = /^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2})$/;
     const local = ['localhost', '127.0.0.1', '10.0.2.2'].includes(parsed.hostname) ||
-      /^(192\.168|10)\./.test(parsed.hostname);
+      privateIpv4.test(parsed.hostname);
     if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && local)) return url;
   } catch {
     // fall through
@@ -54,13 +59,7 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
   const turns: AgentTurn[] = [];
   for (const message of messages) {
     if (message.kind === 'user') turns.push({ role: 'user', content: message.text });
-    else if (
-      (message.kind === 'agent' ||
-        message.kind === 'proposal' ||
-        message.kind === 'swap' ||
-        message.kind === 'invest') &&
-      message.text.trim()
-    ) {
+    else if ((message.kind === 'agent' || message.kind === 'proposal' || message.kind === 'swap' || message.kind === 'invest') && message.text.trim()) {
       turns.push({ role: 'assistant', content: message.text });
     }
   }
@@ -101,9 +100,21 @@ export function parseSwapIntent(value: unknown): SwapIntent | undefined {
 export function parseInvestIntent(value: unknown): InvestIntent | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const v = value as Record<string, unknown>;
-  const code = typeof v.code === 'string' && /^[A-Z0-9]{1,12}$/.test(v.code) ? v.code : undefined;
-  const issuer = typeof v.issuer === 'string' && /^G[A-Z2-7]{55}$/.test(v.issuer) ? v.issuer : undefined;
+  let code = typeof v.code === 'string' && /^[A-Z0-9]{1,12}$/.test(v.code) ? v.code : undefined;
+  let issuer = typeof v.issuer === 'string' && StrKey.isValidEd25519PublicKey(v.issuer) ? v.issuer : undefined;
+
+  if (v.asset && typeof v.asset === 'object') {
+    const asset = v.asset as Record<string, unknown>;
+    if (!code && typeof asset.code === 'string' && /^[A-Z0-9]{1,12}$/.test(asset.code.trim().toUpperCase())) {
+      code = asset.code.trim().toUpperCase();
+    }
+    if (!issuer && typeof asset.issuer === 'string' && StrKey.isValidEd25519PublicKey(asset.issuer.trim())) {
+      issuer = asset.issuer.trim();
+    }
+  }
+
   if (!code || !issuer) return undefined;
+
   const amount =
     typeof v.amount === 'string' && /^\d+(\.\d{1,7})?$/.test(v.amount) && Number(v.amount) > 0
       ? v.amount
@@ -112,7 +123,8 @@ export function parseInvestIntent(value: unknown): InvestIntent | undefined {
     typeof v.quoteCurrency === 'string' && /^[A-Z0-9]{1,12}$/.test(v.quoteCurrency)
       ? v.quoteCurrency
       : undefined;
-  return { code, issuer, ...(amount ? { amount } : {}), ...(quoteCurrency ? { quoteCurrency } : {}) };
+
+  return { code, issuer, ...(amount ? { amount } : {}), ...(quoteCurrency ? { quoteCurrency } : {}), asset: { code, issuer } };
 }
 
 export type AgentRequest = {

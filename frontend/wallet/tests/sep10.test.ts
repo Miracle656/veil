@@ -69,8 +69,9 @@ function buildChallenge({
     // Primary manage_data op — key is "<home_domain> auth" per the spec.
     const key = manageDataKey ?? `${homeDomain} auth`
     // Value: 48 bytes of random nonce (spec requirement).
-    const nonce = Buffer.alloc(48)
-    for (let i = 0; i < 48; i++) nonce[i] = i // deterministic for fixtures
+    const raw = Buffer.alloc(48)
+    for (let i = 0; i < 48; i++) raw[i] = i
+    const nonce = raw.toString('base64')
 
     builder.addOperation(
       Operation.manageData({
@@ -127,7 +128,7 @@ describe('signSep10Challenge', () => {
         homeDomain:      HOME_DOMAIN,
       })
 
-      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)
 
       // Must parse without throwing
       expect(() => new Transaction(signedXdr, PASSPHRASE)).not.toThrow()
@@ -144,7 +145,7 @@ describe('signSep10Challenge', () => {
       const original = new Transaction(challengeXdr, PASSPHRASE)
       const origSigCount = original.signatures.length
 
-      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)
       const signed    = new Transaction(signedXdr, PASSPHRASE)
 
       // cloneFrom resets signatures on the rebuilt tx, then we add one
@@ -165,7 +166,7 @@ describe('signSep10Challenge', () => {
         homeDomain:      HOME_DOMAIN,
       })
 
-      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)
       const tx = new Transaction(signedXdr, PASSPHRASE)
 
       const mdOp = tx.operations.find(op => op.type === 'manageData') as
@@ -190,7 +191,7 @@ describe('signSep10Challenge', () => {
         homeDomain:      HOME_DOMAIN,
       })
 
-      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_B_KP.publicKey(), HOME_DOMAIN)
       const tx = new Transaction(signedXdr, PASSPHRASE)
 
       expect(tx.signatures).toHaveLength(1)
@@ -205,7 +206,7 @@ describe('signSep10Challenge', () => {
         homeDomain:      HOME_DOMAIN,
       })
 
-      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_B_KP.publicKey(), HOME_DOMAIN)
 
       // The envelopes must differ because a new signature was added
       expect(signedXdr).not.toBe(challengeXdr)
@@ -225,8 +226,9 @@ describe('signSep10Challenge', () => {
     function buildMultiOpChallenge(): string {
       const nowSec  = Math.floor(Date.now() / 1000)
       const account = new Account(ANCHOR_C_KP.publicKey(), '-1')
-      const nonce   = Buffer.alloc(48)
-      for (let i = 0; i < 48; i++) nonce[i] = i
+      const raw = Buffer.alloc(48)
+      for (let i = 0; i < 48; i++) raw[i] = i
+      const nonce = raw.toString('base64')
 
       const tx = new TransactionBuilder(account, {
         fee:              '100',
@@ -242,8 +244,8 @@ describe('signSep10Challenge', () => {
         )
         .addOperation(
           Operation.manageData({
-            name:   'client_domain auth',
-            value:  nonce,
+            name:   'client_domain',
+            value:  Buffer.from('mywallet.com'),
             source: USER_KP.publicKey(),
           }),
         )
@@ -255,24 +257,24 @@ describe('signSep10Challenge', () => {
 
     it('signs a multi-op challenge without error', () => {
       const challengeXdr = buildMultiOpChallenge()
-      const signedXdr    = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr    = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_C_KP.publicKey(), HOME_DOMAIN)
       expect(() => new Transaction(signedXdr, PASSPHRASE)).not.toThrow()
     })
 
     it('preserves both manage_data operations in the signed envelope', () => {
       const challengeXdr = buildMultiOpChallenge()
-      const signedXdr    = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr    = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_C_KP.publicKey(), HOME_DOMAIN)
       const tx           = new Transaction(signedXdr, PASSPHRASE)
 
       const mdOps = tx.operations.filter(op => op.type === 'manageData')
       expect(mdOps).toHaveLength(2)
       expect((mdOps[0] as Operation.ManageData).name).toBe(`${HOME_DOMAIN} auth`)
-      expect((mdOps[1] as Operation.ManageData).name).toBe('client_domain auth')
+      expect((mdOps[1] as Operation.ManageData).name).toBe('client_domain')
     })
 
     it('the user hint is present in signatures', () => {
       const challengeXdr = buildMultiOpChallenge()
-      const signedXdr    = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP)
+      const signedXdr    = signSep10Challenge(challengeXdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_C_KP.publicKey(), HOME_DOMAIN)
       const tx           = new Transaction(signedXdr, PASSPHRASE)
 
       const expectedHint = Buffer.from(USER_KP.rawPublicKey().slice(28)).toString('hex')
@@ -288,11 +290,11 @@ describe('signSep10Challenge', () => {
 
     it('throws Sep10ChallengeError(MALFORMED) for garbage XDR', () => {
       expect(() =>
-        signSep10Challenge('not-valid-xdr!!', PASSPHRASE, USER_KP),
+        signSep10Challenge('not-valid-xdr!!', PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN),
       ).toThrow(Sep10ChallengeError)
 
       try {
-        signSep10Challenge('not-valid-xdr!!', PASSPHRASE, USER_KP)
+        signSep10Challenge('not-valid-xdr!!', PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)
       } catch (err) {
         expect(err).toBeInstanceOf(Sep10ChallengeError)
         expect((err as Sep10ChallengeError).code).toBe('MALFORMED')
@@ -309,10 +311,10 @@ describe('signSep10Challenge', () => {
         omitManageData:  true,
       })
 
-      expect(() => signSep10Challenge(xdr, PASSPHRASE, USER_KP)).toThrow(Sep10ChallengeError)
+      expect(() => signSep10Challenge(xdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)).toThrow(Sep10ChallengeError)
 
       try {
-        signSep10Challenge(xdr, PASSPHRASE, USER_KP)
+        signSep10Challenge(xdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)
       } catch (err) {
         expect((err as Sep10ChallengeError).code).toBe('MISSING_MANAGE_DATA')
       }
@@ -328,7 +330,7 @@ describe('signSep10Challenge', () => {
       })
 
       try {
-        signSep10Challenge(xdr, PASSPHRASE, USER_KP)
+        signSep10Challenge(xdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)
         fail('Expected Sep10ChallengeError to be thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(Sep10ChallengeError)
@@ -347,7 +349,7 @@ describe('signSep10Challenge', () => {
       })
 
       try {
-        signSep10Challenge(xdr, PASSPHRASE, USER_KP)
+        signSep10Challenge(xdr, PASSPHRASE, USER_KP, HOME_DOMAIN, ANCHOR_A_KP.publicKey(), HOME_DOMAIN)
         fail('Expected Sep10ChallengeError to be thrown')
       } catch (err) {
         expect(err).toBeInstanceOf(Sep10ChallengeError)
