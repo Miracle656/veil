@@ -592,10 +592,10 @@ describe('SEP-45 JWT used in place of the SEP-10 token (issue #683 acceptance cr
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ token: 'sep45.jwt.for-c-account' }),
+      json: async () => ({ token: 'mock-sep45-token' }),
     })
     const jwt = await submitSep45Challenge(WEB_AUTH_ENDPOINT, signed)
-    expect(jwt).toBe('sep45.jwt.for-c-account')
+    expect(jwt).toBe('mock-sep45-token')
 
     // 4. That JWT authenticates a real SEP-24 call — `initiateDeposit` takes any
     //    bearer JWT and never distinguishes SEP-10 from SEP-45, so passing this

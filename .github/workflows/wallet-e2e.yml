@@ -3,15 +3,15 @@ name: Wallet E2E Tests
 on:
   pull_request:
     paths:
-      - 'frontend/wallet/**'
-      - 'sdk/**'
-      - '.github/workflows/wallet-e2e.yml'
+      - "frontend/wallet/**"
+      - "sdk/**"
+      - ".github/workflows/wallet-e2e.yml"
   push:
     branches:
       - main
     paths:
-      - 'frontend/wallet/**'
-      - 'sdk/**'
+      - "frontend/wallet/**"
+      - "sdk/**"
 
 permissions:
   # The PR comment step posts a comment on a pull request. That needs
@@ -36,6 +36,10 @@ jobs:
       # "invalid version byte. expected 16, got undefined" and every
       # wallet-creation test fails. Same public testnet address ci.yml uses.
       NEXT_PUBLIC_FACTORY_CONTRACT_ID: CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA
+      # middleware.js adds https://logos.example to connect-src only when this
+      # is set, so e2e/issuer-metadata.spec.ts can fetch its stubbed logo host.
+      # Set job-wide so the build and the server both see it.
+      VEIL_E2E: "1"
 
     steps:
       - name: Checkout code
@@ -44,8 +48,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: frontend/wallet/package-lock.json
 
       - name: Install dependencies
@@ -104,14 +108,14 @@ jobs:
           script: |
             const fs = require('fs');
             const comment = `## ❌ E2E Tests Failed
-            
+
             Playwright tests failed. Check the uploaded artifacts for:
             - Screenshots of failures
             - Trace files for debugging
             - Full test report
-            
+
             [View workflow run](${context.payload.repository.html_url}/actions/runs/${context.runId})`;
-            
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,

@@ -12,6 +12,7 @@ import {
   USDY_MAINNET_ISSUER,
   USDT0_MAINNET_ISSUER,
   getRegisteredAsset,
+  verifiedAsset,
   type HeldAsset,
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
@@ -41,6 +42,7 @@ export default function AssetsScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [state, setState] = useState<State>({ kind: 'loading' });
+  const [showUnverified, setShowUnverified] = useState(false);
   const [enablingUsdy, setEnablingUsdy] = useState(false);
   const [enablingUsdt0, setEnablingUsdt0] = useState(false);
   const [usdt0ActionMessage, setUsdt0ActionMessage] = useState<string | null>(null);
@@ -178,8 +180,8 @@ export default function AssetsScreen() {
     );
   }, [state]);
 
-  const usdyRegistered = getRegisteredAsset('USDY');
-  const usdt0Registered = getRegisteredAsset('USDT0');
+  const usdyRegistered = getRegisteredAsset('USDY', getNetworkName());
+  const usdt0Registered = getRegisteredAsset('USDT0', getNetworkName());
 
   const onMainnet = getNetworkName() === 'mainnet';
 
@@ -187,6 +189,57 @@ export default function AssetsScreen() {
     if (state.kind !== 'ready') return null;
     return calculateSpendableAfterTrustline(state.xlmBalance, 1);
   }, [state]);
+
+  const verifiedAssets = state.kind === 'ready'
+    ? state.assets.filter((asset) => verifiedAsset(asset.code, asset.issuer, getNetworkName()) !== null)
+    : [];
+  const unverifiedAssets = state.kind === 'ready'
+    ? state.assets.filter((asset) => verifiedAsset(asset.code, asset.issuer, getNetworkName()) === null)
+    : [];
+
+  const renderAsset = (asset: HeldAsset) => {
+    const key = `${asset.code}:${asset.issuer}`;
+    const price = state.kind === 'ready' ? state.prices[key] ?? null : null;
+    const val = usdValue(asset.balance, price);
+    const formattedVal = formatUsd(val);
+    const isNonNative = asset.code !== 'XLM';
+    const canRemove = isNonNative && Number(asset.balance) === 0;
+    const isRemoving = removingAsset === asset.code;
+
+    return (
+      <View key={key} style={styles.assetCard}>
+        <AssetRow
+          asset={asset}
+          usdValueFormatted={formattedVal !== '—' ? formattedVal : undefined}
+        />
+        {isNonNative && (
+          <View style={styles.trustlineFooter}>
+            <Text style={styles.reserveTag}>Locked reserve: {TRUSTLINE_RESERVE_COST_XLM} XLM</Text>
+            {canRemove ? (
+              <Pressable
+                onPress={() => void handleRemoveTrustline(asset.code)}
+                disabled={isRemoving}
+                style={({ pressed }) => [
+                  styles.removeButton,
+                  pressed && styles.buttonPressed,
+                ]}
+              >
+                {isRemoving ? (
+                  <ActivityIndicator size="small" color={colors.danger} />
+                ) : (
+                  <Text style={styles.removeButtonText}>Remove &amp; Reclaim {TRUSTLINE_RESERVE_COST_XLM} XLM</Text>
+                )}
+              </Pressable>
+            ) : (
+              <Text style={styles.refusalNote}>
+                Non-zero balance: transfer funds out to reclaim reserve
+              </Text>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
@@ -297,49 +350,23 @@ export default function AssetsScreen() {
           </Text>
         ) : (
           <View style={styles.list}>
-            {state.assets.map((asset) => {
-              const key = `${asset.code}:${asset.issuer}`;
-              const price = state.prices[key] ?? null;
-              const val = usdValue(asset.balance, price);
-              const formattedVal = formatUsd(val);
-              const isNonNative = asset.code !== 'XLM';
-              const canRemove = isNonNative && Number(asset.balance) === 0;
-              const isRemoving = removingAsset === asset.code;
-
-              return (
-                <View key={key} style={styles.assetCard}>
-                  <AssetRow
-                    asset={asset}
-                    usdValueFormatted={formattedVal !== '—' ? formattedVal : undefined}
-                  />
-                  {isNonNative && (
-                    <View style={styles.trustlineFooter}>
-                      <Text style={styles.reserveTag}>Locked reserve: {TRUSTLINE_RESERVE_COST_XLM} XLM</Text>
-                      {canRemove ? (
-                        <Pressable
-                          onPress={() => void handleRemoveTrustline(asset.code)}
-                          disabled={isRemoving}
-                          style={({ pressed }) => [
-                            styles.removeButton,
-                            pressed && styles.buttonPressed,
-                          ]}
-                        >
-                          {isRemoving ? (
-                            <ActivityIndicator size="small" color={colors.danger} />
-                          ) : (
-                            <Text style={styles.removeButtonText}>Remove &amp; Reclaim {TRUSTLINE_RESERVE_COST_XLM} XLM</Text>
-                          )}
-                        </Pressable>
-                      ) : (
-                        <Text style={styles.refusalNote}>
-                          Non-zero balance: transfer funds out to reclaim reserve
-                        </Text>
-                      )}
-                    </View>
-                  )}
-                </View>
-              );
-            })}
+            <Text style={styles.sectionHeading}>Verified</Text>
+            {verifiedAssets.map(renderAsset)}
+            {unverifiedAssets.length > 0 && (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showUnverified }}
+                  onPress={() => setShowUnverified((visible) => !visible)}
+                  style={styles.sectionToggle}
+                >
+                  <Text style={styles.sectionHeading}>
+                    Unverified ({unverifiedAssets.length}) {showUnverified ? '−' : '+'}
+                  </Text>
+                </Pressable>
+                {showUnverified && unverifiedAssets.map(renderAsset)}
+              </>
+            )}
           </View>
         ))}
     </ScrollView>
@@ -503,6 +530,19 @@ const createStyles = (colors: ThemeColors) =>
     },
     list: {
       gap: 8,
+    },
+    sectionHeading: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+      paddingTop: 8,
+    },
+    sectionToggle: {
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      marginTop: 4,
     },
     muted: {
       color: colors.textMuted,

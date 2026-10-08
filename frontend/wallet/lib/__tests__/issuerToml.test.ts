@@ -138,12 +138,17 @@ describe('acceptIssuerLogo', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects a logo redirected off https', async () => {
-    const fetchImpl = jest.fn(async () =>
-      Object.assign(response(3, { length: '3' }), { redirected: true, url: 'http://cdn.example/logo.png' }),
-    )
-    await expect(acceptIssuerLogo('USDC', USDC.issuer, direct, fetchImpl)).resolves.toBeNull()
-    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  it('retries a logo redirected off https through the wallet route', async () => {
+    const fetchImpl = jest.fn(async (url: RequestInfo | URL) => {
+      if (String(url) === direct) {
+        return Object.assign(response(3, { length: '3' }), { redirected: true, url: 'http://cdn.example/logo.png' })
+      }
+      return response(3, { length: '3' })
+    })
+    await expect(acceptIssuerLogo('USDC', USDC.issuer, direct, fetchImpl)).resolves.toBe(LOGO)
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    const proxied = new URL(String(fetchImpl.mock.calls[1][0]), 'https://wallet.example')
+    expect(proxied.pathname).toBe(ISSUER_LOGO_PROXY_PATH)
   })
 
   it('keeps a logo redirected to another https url', async () => {

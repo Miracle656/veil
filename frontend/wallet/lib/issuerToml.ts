@@ -255,8 +255,13 @@ async function fetchImageDataUrl(
     return { dataUrl: null, unreachable: true }
   }
   try {
-    // Redirects are followed, but a hop off HTTPS rejects the logo.
-    if (response.redirected && !isHttpsImageUrl(response.url)) return { dataUrl: null, unreachable: false }
+    // A CORS-blocked or mixed-content redirect is not a usable logo; the app
+    // has to retry through the wallet route instead of silently accepting the
+    // null result.
+    if (response.type === 'opaque' || response.type === 'opaqueredirect') {
+      return { dataUrl: null, unreachable: true }
+    }
+    if (response.redirected && !isHttpsImageUrl(response.url)) return { dataUrl: null, unreachable: true }
     const image = await readBoundedImage(response, maxBytes)
     // Rendering these exact bytes avoids a second, unchecked image download.
     return { dataUrl: image ? await toDataUrl(image) : null, unreachable: false }

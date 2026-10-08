@@ -11,6 +11,7 @@ import {
   parseHeldAssets,
   USDT0_MAINNET_ISSUER,
   type HorizonBalanceLike,
+  verifiedAsset,
 } from '../assets';
 
 const USDC = {
@@ -166,6 +167,31 @@ describe('Hold USDT0 in mobile: trustline, balance and impostor check (Issue #79
     expect(fakeAsset?.balance).toBe('9999999.1234567');
   });
 
+  describe('USDY impersonation in mobile holdings', () => {
+    const fakeIssuer = 'GCOUNTERFEITISSUERADDRESS0000000000000000000000000000000000000';
+
+    it('keeps real and impostor USDY separate and identifies the registered issuer', () => {
+      const held = parseHeldAssets([
+        {
+          asset_type: 'credit_alphanum4',
+          asset_code: 'USDY',
+          asset_issuer: 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6',
+          balance: '12.5',
+        },
+        {
+          asset_type: 'credit_alphanum4',
+          asset_code: 'USDY',
+          asset_issuer: fakeIssuer,
+          balance: '99',
+        },
+      ]);
+
+      expect(held).toHaveLength(2);
+      expect(verifiedAsset(held[0].code, held[0].issuer, 'mainnet')?.issuerName).toBe('Ondo Finance');
+      expect(verifiedAsset(held[1].code, held[1].issuer, 'mainnet')).toBeNull();
+      expect(getRegisteredAsset(held[1].code)?.issuerName).toBe('Ondo Finance');
+    });
+  });
   it('identifies genuine USDT0 and does not treat fake USDT0 as registered asset', () => {
     expect(isRegisteredIssuer('USDT0', REAL_USDT0_ISSUER, 'mainnet')).toBe(true);
     expect(isRegisteredIssuer('USDT0', FAKE_USDT0_ISSUER, 'mainnet')).toBe(false);
@@ -175,4 +201,3 @@ describe('Hold USDT0 in mobile: trustline, balance and impostor check (Issue #79
     expect(reg?.issuerName).toBe('Tether');
   });
 });
-
