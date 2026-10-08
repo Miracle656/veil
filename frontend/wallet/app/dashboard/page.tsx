@@ -32,6 +32,7 @@ import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule }
 import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { QRCodeCanvas } from 'qrcode.react'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
@@ -136,6 +137,7 @@ function DashboardPageContent() {
   const [fundingError, setFundingError]   = useState<string | null>(null)
   const [copied, setCopied]               = useState(false)
   const [hasFeePayerKey, setHasFeePayerKey] = useState(true)
+  const [feePayerFunding, setFeePayerFunding] = useState<{ address: string; balance: number; required: number } | null>(null)
   const [agentBadge, setAgentBadge]         = useState(false)
   const [contractXlm, setContractXlm]       = useState(() => cachedContractXlm ?? 0)
   const [isSweeping, setIsSweeping]         = useState(false)
@@ -313,6 +315,8 @@ function DashboardPageContent() {
 
     // Track whether fee-payer exists so we can show a recovery banner
     setHasFeePayerKey(!!signerPublicKey)
+    const requiredFeePayerXlm = 1.01
+    setFeePayerFunding(signerPublicKey ? { address: signerPublicKey, balance: 0, required: requiredFeePayerXlm } : null)
 
     let feePayerXlm = 0
     let otherAssets: WalletAsset[] = []
@@ -342,6 +346,7 @@ function DashboardPageContent() {
         horizonNextRef.current = paymentsPage.records.length >= 20 ? paymentsPage.next : null
         txRecords = mapHorizonOps(paymentsPage.records as HorizonOp[], signerPublicKey)
       } catch { /* not yet funded */ }
+      setFeePayerFunding({ address: signerPublicKey, balance: feePayerXlm, required: requiredFeePayerXlm })
     }
 
     // ── 3. Wraith: incoming SAC transfers to the wallet contract ────────────
@@ -783,6 +788,25 @@ function DashboardPageContent() {
             {fundingError && (
               <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginTop: '0.625rem' }}>{fundingError}</p>
             )}
+          </div>
+        )}
+
+        {!loading && feePayerFunding && feePayerFunding.balance < feePayerFunding.required && (
+          <div style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem', background: 'var(--surface-md)', border: '1px solid var(--border-dim)', borderRadius: '12px', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <QRCodeCanvas value={feePayerFunding.address} size={72} bgColor="#ffffff" fgColor="#111111" includeMargin />
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', marginBottom: '0.375rem', fontWeight: 500 }}>Fee-payer needs funding</p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.65)', marginBottom: '0.5rem', lineHeight: 1.5 }}>
+                Send at least {feePayerFunding.required.toFixed(2)} XLM to this G... account. It pays network fees; it is separate from your wallet balance.
+              </p>
+              <button
+                className="btn-secondary"
+                onClick={() => void navigator.clipboard?.writeText(feePayerFunding.address)}
+                style={{ fontSize: '0.75rem', padding: '0.4rem 0.75rem', width: 'auto' }}
+              >
+                Copy {feePayerFunding.address.slice(0, 6)}…{feePayerFunding.address.slice(-4)}
+              </button>
+            </div>
           </div>
         )}
 
