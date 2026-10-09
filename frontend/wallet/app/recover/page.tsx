@@ -1,17 +1,15 @@
 'use client'
 
 import { NetworkSwitcher } from '@/components/NetworkSwitcher'
-import { inclusionFee } from '@/lib/fees'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { VeilMark } from '@/components/ui/VeilMark'
-import { derToRawSignature, bufferToHex, hexToUint8Array } from '@veil/utils'
-import { ensureFeePayer, resetFeePayer } from '@/lib/feePayer'
+import { bufferToHex } from '@veil/utils'
+import { matchWebAuthnSigner, recoverWalletByAddress } from '@veil/sdk/recovery/signerVerification'
+import { establishRecoveredFeePayer } from '@/lib/feePayer'
 import { getNetwork } from '@/lib/network'
-import {
-  rpc as SorobanRpc, Contract, TransactionBuilder, BASE_FEE,
-  Account, Keypair, scValToNative,
-} from '@stellar/stellar-sdk'
+import { FEE_PAYER_PRF_SALT } from '@veil/prf'
+import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import { deriveP256KeyPair } from '@/lib/recovery'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
@@ -29,7 +27,7 @@ export default function RecoverPage() {
 
   async function handleRecover() {
     const walletAddress = walletInput.trim()
-    if (!walletAddress.startsWith('C') || walletAddress.length !== 56) {
+    if (!StrKey.isValidContract(walletAddress)) {
       setError('Enter a valid C... wallet address.')
       return
     }
@@ -38,121 +36,48 @@ export default function RecoverPage() {
     setStep('authenticating')
 
     try {
-      const server = new SorobanRpc.Server(network.rpcUrl)
-
-      // ── 1. Fetch on-chain signers ────────────────────────────────────────
-      const dummyKp      = Keypair.random()
-      const sourceAcct   = new Account(dummyKp.publicKey(), '0')
-      const walletContract = new Contract(walletAddress)
-
-      const tx = new TransactionBuilder(sourceAcct, {
-        fee: inclusionFee(),
+      const assertionRef = { value: null as PublicKeyCredential | null }
+      const recovered = await recoverWalletByAddress(walletAddress, {
+        rpcUrl: network.rpcUrl,
         networkPassphrase: network.networkPassphrase,
-      })
-        .addOperation(walletContract.call('get_signers'))
-        .setTimeout(30)
-        .build()
-
-      const sim = await server.simulateTransaction(tx)
-      if (SorobanRpc.Api.isSimulationError(sim)) {
-        throw new Error(`Could not read this wallet on ${network.displayName}. A wallet exists on one network only — if it was created on the other, switch above and try again.`)
-      }
-
-      const simResult  = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
-      if (!simResult) throw new Error('No result from contract simulation.')
-
-      // Parse the XDR ScVal directly — avoids scValToNative runtime differences
-      // get_signers returns Map<u32, BytesN<65>> → SCV_MAP of (SCV_U32, SCV_BYTES) entries
-      let publicKeys: Uint8Array[] = []
-      try {
-        const entries = simResult.retval.map() as Array<{ val: () => { bytes: () => Buffer } }>
-        publicKeys = entries.map(e => new Uint8Array(e.val().bytes()))
-      } catch {
-        // Fallback: scValToNative handles all possible return shapes
-        const raw = scValToNative(simResult.retval)
-        if (Array.isArray(raw)) {
-          publicKeys = raw as Uint8Array[]
-        } else if (raw instanceof Map) {
-          publicKeys = Array.from((raw as Map<number, Uint8Array>).values())
-        } else {
-          publicKeys = Object.values(raw as Record<string, Uint8Array>)
-        }
-      }
-      if (publicKeys.length === 0) throw new Error('No signers found on this wallet.')
-
-      // ── 2. Discoverable passkey assertion ────────────────────────────────
-      // Empty allowCredentials lets the OS show ALL available passkeys so
-      // the user can pick the right one even on a new device.
-      const challenge = crypto.getRandomValues(new Uint8Array(32))
-      const assertion = await navigator.credentials.get({
-        publicKey: {
-          challenge,
-          allowCredentials: [],
-          userVerification: 'required',
+        authenticate: async (signers) => {
+          assertionRef.value = await navigator.credentials.get({
+            publicKey: {
+              challenge: crypto.getRandomValues(new Uint8Array(32)),
+              allowCredentials: [],
+              userVerification: 'required',
+              extensions: { prf: { eval: { first: FEE_PAYER_PRF_SALT.buffer.slice(0) } } } as AuthenticationExtensionsClientInputs,
+            },
+          }) as PublicKeyCredential | null
+          if (!assertionRef.value) throw new Error('Passkey prompt was cancelled.')
+          const response = assertionRef.value.response as AuthenticatorAssertionResponse
+          return matchWebAuthnSigner(signers, {
+            authenticatorData: response.authenticatorData,
+            clientDataJSON: response.clientDataJSON,
+            signature: response.signature,
+          })
         },
-      }) as PublicKeyCredential | null
-
+      })
+      const assertion = assertionRef.value
       if (!assertion) throw new Error('Passkey prompt was cancelled.')
+      const matchedHex = recovered.publicKey
+      const prfResult = (assertion.getClientExtensionResults() as {
+        prf?: { results?: { first?: ArrayBuffer | ArrayBufferView } }
+      }).prf?.results?.first
+      const prf = prfResult
+        ? new Uint8Array(prfResult instanceof ArrayBuffer
+          ? prfResult
+          : prfResult.buffer.slice(prfResult.byteOffset, prfResult.byteOffset + prfResult.byteLength))
+        : null
 
-      const response      = assertion.response as AuthenticatorAssertionResponse
-      const authData      = new Uint8Array(response.authenticatorData)
-      const clientDataJSON = new Uint8Array(response.clientDataJSON)
-      const sigDer        = new Uint8Array(response.signature)
-      const rawSig        = derToRawSignature(sigDer.buffer.slice(sigDer.byteOffset, sigDer.byteOffset + sigDer.byteLength) as ArrayBuffer)
-
-      // ── 3. Verify signature against each on-chain public key ─────────────
-      // WebAuthn signed: SHA-256(authData || SHA-256(clientDataJSON))
-      // SubtleCrypto ECDSA hashes internally so we pass authData || SHA-256(clientDataJSON)
-      const clientDataHash = new Uint8Array(
-        await crypto.subtle.digest('SHA-256', clientDataJSON.buffer as ArrayBuffer)
-      )
-      const message = new Uint8Array([...authData, ...clientDataHash])
-
-      let matchedHex: string | null = null
-
-      for (const pubKeyBytes of publicKeys) {
-        try {
-          const cryptoKey = await crypto.subtle.importKey(
-            'raw',
-            pubKeyBytes.buffer as ArrayBuffer,
-            { name: 'ECDSA', namedCurve: 'P-256' },
-            false,
-            ['verify']
-          )
-          const valid = await crypto.subtle.verify(
-            { name: 'ECDSA', hash: { name: 'SHA-256' } },
-            cryptoKey,
-            rawSig.buffer as ArrayBuffer,
-            message.buffer as ArrayBuffer
-          )
-          if (valid) {
-            matchedHex = bufferToHex(pubKeyBytes)
-            break
-          }
-        } catch {
-          // Try next key
-        }
-      }
-
-      if (!matchedHex) {
-        throw new Error(
-          'This passkey does not match any signer on this wallet. Make sure you are using the correct passkey and wallet address.'
-        )
-      }
+      // Preserve any existing fee-payer instead of deleting it on recovery.
+      await establishRecoveredFeePayer(prf, assertion.id)
 
       // ── 4. Restore localStorage + session ────────────────────────────────
-      walletLocal.setItem('invisible_wallet_address',    walletAddress)
+      walletLocal.setItem('invisible_wallet_address',    recovered.address)
       walletLocal.setItem('invisible_wallet_key_id',     assertion.id)
       walletLocal.setItem('invisible_wallet_public_key', matchedHex)
-      walletSession.setItem('invisible_wallet_address', walletAddress)
-
-      // Re-establish the fee-payer for the recovered wallet. Using the same
-      // credential reconstructs the same key: a PRF-capable credential yields the
-      // PRF-derived fee-payer, a legacy one the credential-ID derivation —
-      // matching whichever mode the wallet was created with (ADR 0003). Clear any
-      // stale state from a prior wallet on this device first.
-      resetFeePayer()
-      await ensureFeePayer()
+      walletSession.setItem('invisible_wallet_address', recovered.address)
 
       setStep('done')
       setTimeout(() => router.push('/dashboard'), 800)
@@ -170,7 +95,7 @@ export default function RecoverPage() {
 
   async function handlePaperRecover() {
     const walletAddress = walletInput.trim()
-    if (!walletAddress.startsWith('C') || walletAddress.length !== 56) {
+    if (!StrKey.isValidContract(walletAddress)) {
       setError('Enter a valid C... wallet address.')
       return
     }
@@ -184,65 +109,26 @@ export default function RecoverPage() {
     setStep('authenticating')
 
     try {
-      const server = new SorobanRpc.Server(network.rpcUrl)
-      const dummyKp      = Keypair.random()
-      const sourceAcct   = new Account(dummyKp.publicKey(), '0')
-      const walletContract = new Contract(walletAddress)
-
-      const tx = new TransactionBuilder(sourceAcct, {
-        fee: inclusionFee(),
-        networkPassphrase: network.networkPassphrase,
-      })
-        .addOperation(walletContract.call('get_signers'))
-        .setTimeout(30)
-        .build()
-
-      const sim = await server.simulateTransaction(tx)
-      if (SorobanRpc.Api.isSimulationError(sim)) {
-        throw new Error(`Could not read this wallet on ${network.displayName}. A wallet exists on one network only — if it was created on the other, switch above and try again.`)
-      }
-
-      const simResult  = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
-      if (!simResult) throw new Error('No result from contract simulation.')
-
-      let publicKeys: Uint8Array[] = []
-      try {
-        const entries = simResult.retval.map() as Array<{ val: () => { bytes: () => Buffer } }>
-        publicKeys = entries.map(e => new Uint8Array(e.val().bytes()))
-      } catch {
-        const raw = scValToNative(simResult.retval)
-        if (Array.isArray(raw)) {
-          publicKeys = raw as Uint8Array[]
-        } else if (raw instanceof Map) {
-          publicKeys = Array.from((raw as Map<number, Uint8Array>).values())
-        } else {
-          publicKeys = Object.values(raw as Record<string, Uint8Array>)
-        }
-      }
-      if (publicKeys.length === 0) throw new Error('No signers found on this wallet.')
-
       // Derive keypair from paper phrase
       const { publicKey, privateKey } = deriveP256KeyPair(mnemonic)
       const matchedHex = bufferToHex(publicKey)
+      const recovered = await recoverWalletByAddress(walletAddress, {
+        rpcUrl: network.rpcUrl,
+        networkPassphrase: network.networkPassphrase,
+        authenticate: async () => matchedHex,
+      })
 
-      const isMatched = publicKeys.some(pubKeyBytes => bufferToHex(pubKeyBytes) === matchedHex)
-      if (!isMatched) {
-        throw new Error('This recovery phrase public key does not match any registered signer on this wallet.')
-      }
+      // Preserve any existing fee-payer instead of overwriting it on recovery.
+      const feePayerSeed = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(mnemonic))
+      const recoveredFeePayer = Keypair.fromRawEd25519Seed(Buffer.from(new Uint8Array(feePayerSeed).slice(0, 32)))
+      await establishRecoveredFeePayer(null, 'recovery', false, recoveredFeePayer)
 
       // Store in storage
-      walletLocal.setItem('invisible_wallet_address',    walletAddress)
+      walletLocal.setItem('invisible_wallet_address',    recovered.address)
       walletLocal.setItem('invisible_wallet_key_id',     'recovery')
       walletLocal.setItem('invisible_wallet_public_key', matchedHex)
-      walletSession.setItem('invisible_wallet_address', walletAddress)
+      walletSession.setItem('invisible_wallet_address', recovered.address)
       walletSession.setItem('invisible_wallet_recovery_private_key', bufferToHex(privateKey))
-
-      // Derive deterministic fee-payer from the mnemonic seed
-      const seed = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(mnemonic))
-      const derivedFeePayer = Keypair.fromRawEd25519Seed(Buffer.from(new Uint8Array(seed).slice(0, 32)))
-      walletLocal.setItem('veil_signer_secret', derivedFeePayer.secret())
-      walletLocal.setItem('veil_signer_public_key', derivedFeePayer.publicKey())
-      walletSession.setItem('veil_signer_secret', derivedFeePayer.secret())
 
       setStep('done')
       setTimeout(() => router.push('/dashboard'), 800)

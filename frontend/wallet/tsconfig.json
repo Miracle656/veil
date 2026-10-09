@@ -33,6 +33,9 @@
       "@veil/sdk": [
         "../../sdk/src/index"
       ],
+      "@veil/sdk/recovery/signerVerification": [
+        "../../sdk/src/recovery/signerVerification"
+      ],
       "@veil/agent-core": [
         "../../packages/agent/src/handler"
       ],

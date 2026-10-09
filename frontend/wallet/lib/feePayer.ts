@@ -46,6 +46,13 @@ const DIAGNOSTICS = 'veil_feepayer_diagnostics'
  */
 export type FeePayerMode = 'prf-raw' | 'prf-hkdf' | 'legacy'
 
+export class FeePayerConflictError extends Error {
+  constructor() {
+    super('A fee-payer for a different wallet is already stored in this browser.')
+    this.name = 'FeePayerConflictError'
+  }
+}
+
 /** Outcome of one candidate's on-chain existence probe (see {@link pickFundedCandidate}). */
 export type FeePayerProbeStatus = 'exists' | 'not-found' | 'network-error' | 'not-probed'
 
@@ -287,6 +294,74 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
   })
 
   return chosen.kp
+}
+
+/** Reuse a fee-payer if present; otherwise preserve a pinned derivation mode. */
+export async function establishRecoveredFeePayer(
+  prf?: Uint8Array | null,
+  recoveredCredentialId?: string,
+  replaceExisting = false,
+  recoveredKeypair?: Keypair,
+): Promise<Keypair> {
+  const existing = peekFeePayerSecret()
+  if (existing) {
+    const storedCredentialId = walletLocal.getItem(KEY_ID)
+    if (!replaceExisting) {
+      if (!storedCredentialId || !recoveredCredentialId || storedCredentialId !== recoveredCredentialId) {
+        throw new FeePayerConflictError()
+      }
+      const keypair = Keypair.fromSecret(existing)
+      cached = keypair
+      return keypair
+    }
+    resetFeePayer()
+  }
+
+  const credentialId = recoveredCredentialId ?? walletLocal.getItem(KEY_ID)
+  const pinned = getFeePayerMode()
+  let mode: FeePayerMode
+  let keypair: Keypair
+
+  if (recoveredKeypair) {
+    mode = 'legacy'
+    keypair = recoveredKeypair
+  } else if (pinned === 'prf-raw' && prf && prf.length >= 32) {
+    mode = 'prf-raw'
+    keypair = Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32)))
+  } else if (pinned === 'prf-hkdf' && prf && prf.length >= 32) {
+    mode = 'prf-hkdf'
+    const seed = await deriveFeePayerSeedFromPrf(prf)
+    keypair = Keypair.fromRawEd25519Seed(Buffer.from(seed))
+  } else if (pinned === 'legacy' && credentialId) {
+    mode = 'legacy'
+    keypair = await deriveFeePayerKeypair(credentialId)
+  } else if (!pinned && prf && prf.length >= 32) {
+    mode = 'prf-raw'
+    keypair = Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32)))
+  } else if (!pinned) {
+    mode = 'legacy'
+    keypair = Keypair.random()
+  } else {
+    throw new Error('The existing fee-payer cannot be re-established without its original passkey secret.')
+  }
+
+  cached = keypair
+  cachedDiagnostics = {
+    at: new Date().toISOString(),
+    prfAttempted: !!prf,
+    prfOutcome: prf ? 'success' : null,
+    probed: false,
+    candidates: [{ mode, publicKey: keypair.publicKey(), status: 'not-probed' }],
+    chosenMode: mode,
+    chosenPublicKey: keypair.publicKey(),
+  }
+  localStorage.setItem(MODE, mode)
+  walletSession.setItem(SECRET, keypair.secret())
+  walletSession.setItem(PUBKEY, keypair.publicKey())
+  walletLocal.setItem(PUBKEY, keypair.publicKey())
+  if (mode === 'legacy') walletLocal.setItem(SECRET, keypair.secret())
+  setDiagnostics(cachedDiagnostics)
+  return keypair
 }
 
 /** Cache + persist a diagnostics record (sessionStorage — metadata only, no secret). */
