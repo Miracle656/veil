@@ -4,6 +4,9 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { discoverPasskeyAssertion, discoverWithPrf, nativePrfEvaluator } from './passkey';
+import { recoverWalletByAddress, matchWebAuthnSigner } from '../../../sdk/src/recovery/signerVerification';
+import { getNetwork, getNetworkName } from './network';
 import { recordFeePayerSource } from './feePayerSource';
 import { getNetworkName } from './network';
 import { discoverWithPrf, nativePrfEvaluator, type DiscoveredPasskey } from './passkey';
@@ -141,6 +144,52 @@ export async function loginWithPasskey(): Promise<LoginResult> {
   return { address: crumbs.walletAddress, source: 'recovered' };
 }
 
+/** Recover by a supplied wallet address using the shared validate/resolve/verify sequence. */
+export async function loginWithAddress(address: string): Promise<LoginResult> {
+  const pickedRef = { value: null as Awaited<ReturnType<typeof discoverPasskeyAssertion>> };
+  const network = getNetwork();
+  const result = await recoverWalletByAddress(address, {
+    rpcUrl: network.rpcUrl,
+    networkPassphrase: network.networkPassphrase,
+    authenticate: async (signers) => {
+      pickedRef.value = await discoverPasskeyAssertion(FEE_PAYER_PRF_SALT);
+      if (!pickedRef.value) throw new Error('Passkey prompt was cancelled.');
+      return matchWebAuthnSigner(signers, pickedRef.value);
+    },
+  });
+  const picked = pickedRef.value;
+  if (!picked) throw new Error('Passkey sign-in was cancelled.');
+
+  const networkSuffix = getNetworkName() === 'mainnet' ? '_mainnet' : '';
+  const [existingSecret, existingAddress, existingSdkAddress] = await Promise.all([
+    getSignerSecret().catch(() => null),
+    getWalletAddress().catch(() => null),
+    AsyncStorage.getItem(`${SDK_ADDRESS}${networkSuffix}`).catch(() => null),
+  ]);
+  if ((existingAddress || existingSdkAddress) && !existingSecret && (!picked.prf || picked.prf.length < 32)) {
+    throw new Error('This device has an existing wallet but its fee-payer key is missing. Sign in with the original passkey on a PRF-capable device or restore the fee-payer before continuing.');
+  }
+  const feePayer = existingSecret
+    ? Keypair.fromSecret(existingSecret)
+    : picked.prf && picked.prf.length >= 32
+      ? Keypair.fromRawEd25519Seed(Buffer.from(picked.prf.subarray(0, 32)))
+      : Keypair.random();
+  const publicKeyHex = result.publicKey.toLowerCase();
+
+  await Promise.all([
+    setWalletAddress(result.address),
+    setSignerSecret(feePayer.secret()),
+    setPasskeyCredential(picked.credentialId, publicKeyHex),
+  ]);
+  await AsyncStorage.multiSet([
+    [`${SDK_ADDRESS}${networkSuffix}`, result.address],
+    [`${SDK_KEY_ID}${networkSuffix}`, picked.credentialId],
+    [`${SDK_PUBLIC_KEY}${networkSuffix}`, publicKeyHex],
+  ]);
+  void writeBreadcrumbs(feePayer.secret(), result.address, new Uint8Array(Buffer.from(publicKeyHex, 'hex')))
+    .catch(() => undefined);
+
+  return { address: result.address, source: 'recovered' };
 /**
  * Sign in to a wallet the user knows only by its C-address.
  *

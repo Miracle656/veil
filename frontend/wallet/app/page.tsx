@@ -166,6 +166,9 @@ export default function OnboardingPage() {
               <button id="onboarding-recover" className="btn-ghost" onClick={() => router.push('/recover')}>
                 Recover existing wallet
               </button>
+              <button id="onboarding-sign-in" className="btn-ghost" onClick={() => router.push('/sign-in')}>
+                Sign in with wallet address or backup
+              </button>
               {error && (
                 <p style={{ fontSize: '0.8125rem', color: 'var(--teal)', textAlign: 'center', marginTop: '0.5rem' }}>
                   {error}

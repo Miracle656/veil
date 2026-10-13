@@ -22,6 +22,8 @@ import { Keypair } from '@stellar/stellar-sdk'
 import type { PrfEvaluator } from '@veil/prf'
 import {
   ensureFeePayer,
+  establishRecoveredFeePayer,
+  FeePayerConflictError,
   peekFeePayerSecret,
   getFeePayerMode,
   clearFeePayer,
@@ -120,6 +122,70 @@ describe('pre-existing wallet stays legacy (no address move)', () => {
 
     expect(prfCalled).toBe(false)
     expect(kp!.secret()).toBe(legacy.secret())
+  })
+
+  it('reuses an existing fee-payer during address recovery', async () => {
+    const fundedKey = Keypair.random()
+    localStorage.setItem(KEY_ID, CRED)
+    localStorage.setItem(SECRET, fundedKey.secret())
+    localStorage.setItem('veil_feepayer_mode', 'prf-raw')
+
+    const recovered = await establishRecoveredFeePayer(null, CRED)
+
+    expect(recovered.secret()).toBe(fundedKey.secret())
+    expect(getFeePayerMode()).toBe('prf-raw')
+    expect(localStorage.getItem(SECRET)).toBe(fundedKey.secret())
+  })
+
+  it('refuses to replace a fee-payer bound to a different passkey and preserves it', async () => {
+    const fundedKey = Keypair.random()
+    localStorage.setItem(KEY_ID, CRED)
+    localStorage.setItem(SECRET, fundedKey.secret())
+    localStorage.setItem('veil_feepayer_mode', 'legacy')
+
+    await expect(establishRecoveredFeePayer(null, 'REPLACEMENT_CREDENTIAL'))
+      .rejects.toBeInstanceOf(FeePayerConflictError)
+    expect(localStorage.getItem(SECRET)).toBe(fundedKey.secret())
+  })
+
+  it('refuses to reuse an unbound fee-payer when recovering another wallet', async () => {
+    const fundedKey = Keypair.random()
+    localStorage.setItem(SECRET, fundedKey.secret())
+
+    await expect(establishRecoveredFeePayer(null, CRED))
+      .rejects.toBeInstanceOf(FeePayerConflictError)
+    expect(localStorage.getItem(SECRET)).toBe(fundedKey.secret())
+  })
+
+  it('replaces an existing fee-payer only when explicitly requested', async () => {
+    const fundedKey = Keypair.random()
+    localStorage.setItem(KEY_ID, CRED)
+    localStorage.setItem(SECRET, fundedKey.secret())
+    localStorage.setItem('veil_feepayer_mode', 'legacy')
+
+    const recovered = await establishRecoveredFeePayer(null, 'REPLACEMENT_CREDENTIAL', true)
+    expect(recovered.secret()).not.toBe(fundedKey.secret())
+    expect(localStorage.getItem(SECRET)).toBe(recovered.secret())
+  })
+
+  it('creates a random legacy key only when no fee-payer exists', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+
+    const recovered = await establishRecoveredFeePayer(null)
+
+    expect(recovered).toBeInstanceOf(Keypair)
+    expect(getFeePayerMode()).toBe('legacy')
+    expect(localStorage.getItem(SECRET)).toBe(recovered.secret())
+  })
+
+  it('preserves the deterministic fee-payer supplied by paper recovery', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const recoveredKey = Keypair.random()
+
+    const result = await establishRecoveredFeePayer(null, 'recovery', false, recoveredKey)
+
+    expect(result.secret()).toBe(recoveredKey.secret())
+    expect(localStorage.getItem(SECRET)).toBe(recoveredKey.secret())
   })
 })
 

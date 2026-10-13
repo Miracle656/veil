@@ -17,6 +17,9 @@ const expoPreset = require('jest-expo/jest-preset');
  */
 module.exports = {
   ...expoPreset,
+  // Shared SDK source is imported from the sibling package, so resolve its
+  // runtime dependencies from this app's plain npm install.
+  modulePaths: ['<rootDir>/node_modules'],
   setupFiles: [...expoPreset.setupFiles, '<rootDir>/jest.setup.js'],
   modulePaths: ['<rootDir>/node_modules'],
   transformIgnorePatterns: expoPreset.transformIgnorePatterns.map((pattern) =>

@@ -53,6 +53,16 @@ export type {
 } from './sep8';
 export * from './webauthn/attestation';
 export * from './recovery/sep30';
+export {
+    recoverWalletByAddress,
+    resolveWalletSigners,
+    InvalidWalletAddressError,
+    WalletContractNotFoundError,
+    WalletRecoveryNetworkError,
+    PasskeyNotRegisteredError,
+    NotVeilWalletError,
+} from './recovery/signerVerification';
+export type { AddressRecoveryDependencies, RegisteredSigner, WebAuthnAssertion } from './recovery/signerVerification';
 export * from './crypto/prf';
 export * from './signMessage';
 export * from './bulkPayout';

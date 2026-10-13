@@ -17,6 +17,11 @@
       "react-native": "./src/vanilla.ts",
       "default": "./dist/vanilla.js"
     },
+    "./recovery/signerVerification": {
+      "types": "./dist/recovery/signerVerification.d.ts",
+      "react-native": "./src/recovery/signerVerification.ts",
+      "default": "./dist/recovery/signerVerification.js"
+    },
     "./react": {
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"

@@ -31,6 +31,7 @@ export default function LoginScreen() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [walletAddress, setWalletAddress] = useState('');
   const [showAddress, setShowAddress] = useState(false);
   const [address, setAddress] = useState('');
 
@@ -52,6 +53,8 @@ export default function LoginScreen() {
     setBusy(true);
     setError(null);
     try {
+      await loginWithAddress(walletAddress);
+      router.replace('/dashboard');
       const result = await loginWithAddress(address);
       router.replace('/dashboard');
       void result;
@@ -93,6 +96,28 @@ export default function LoginScreen() {
             )}
           </Pressable>
         )}
+
+        <TextInput
+          testID="login-address-input"
+          accessibilityLabel="Wallet contract address"
+          value={walletAddress}
+          onChangeText={setWalletAddress}
+          placeholder="C... wallet address"
+          placeholderTextColor={colors.textFaint}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          editable={!busy}
+          style={styles.addressInput}
+        />
+        <Pressable
+          testID="login-address-button"
+          accessibilityRole="button"
+          disabled={busy || !walletAddress.trim()}
+          onPress={handleAddressLogin}
+          style={({ pressed }) => [styles.ctaSecondary, busy && styles.disabled, pressed && styles.pressed]}
+        >
+          {busy ? <ActivityIndicator color={colors.accent} /> : <Text style={styles.ctaSecondaryText}>Sign in with address</Text>}
+        </Pressable>
 
         <Pressable
           testID="login-address-toggle"
@@ -178,6 +203,27 @@ const createStyles = (colors: ThemeColors) =>
     disabled: { opacity: 0.5 },
     pressed: { opacity: 0.85 },
     ctaText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    addressInput: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.address,
+      fontSize: 13,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceMd,
+      borderRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      marginTop: 18,
+    },
+    ctaSecondary: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.accent,
+      borderRadius: 100,
+      paddingVertical: 15,
+    },
+    ctaSecondaryText: { color: colors.accent, fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
     card: {
       backgroundColor: colors.surface,
       borderWidth: 1,
