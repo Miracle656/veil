@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
+import Link from 'next/link'
 import { getNetwork } from '@/lib/network'
 
 export interface TxRecord {
@@ -12,6 +13,7 @@ export interface TxRecord {
   timestamp: number
   hash?: string
   memo?: string
+  isPrivate?: boolean
   // swap-specific
   destAmount?: string
   destAsset?: string
@@ -99,15 +101,43 @@ export function TxDetailSheet({ tx, onClose }: TxDetailSheetProps) {
               href={`https://stellar.expert/explorer/${getNetwork().name === 'mainnet' ? 'public' : 'testnet'}/tx/${tx.hash}`}
             />
           )}
+          {tx.isPrivate && (
+            <DetailRow
+              label="Privacy"
+              value="Private (SPP Shielded)"
+            />
+          )}
         </div>
 
-        <button
-          className="btn-ghost"
-          onClick={onClose}
-          style={{ marginTop: '1.75rem', width: '100%' }}
-        >
-          Close
-        </button>
+        <div style={{ marginTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <Link
+            href={`/privacy/disclose?txId=${encodeURIComponent(tx.id)}&amount=${encodeURIComponent(tx.amount)}&asset=${encodeURIComponent(tx.asset)}&counterparty=${encodeURIComponent(tx.counterparty)}&timestamp=${tx.timestamp}&hash=${encodeURIComponent(tx.hash || '')}${tx.memo ? `&memo=${encodeURIComponent(tx.memo)}` : ''}`}
+            onClick={onClose}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              textDecoration: 'none',
+              padding: '0.75rem 1rem',
+              borderRadius: '9999px',
+              fontWeight: 600,
+              fontSize: '0.875rem',
+              background: 'linear-gradient(135deg, #fdda24 0%, #f3c82a 100%)',
+              color: '#0a1220',
+            }}
+          >
+            <span>🛡️</span> Prove this payment (Selective disclosure) →
+          </Link>
+
+          <button
+            className="btn-ghost"
+            onClick={onClose}
+            style={{ width: '100%' }}
+          >
+            Close
+          </button>
+        </div>
       </div>
     </>
   )
