@@ -110,7 +110,7 @@
     "@playwright/test": "^1.61.1",
     "@size-limit/preset-small-lib": "^12.1.0",
     "@storybook/addon-essentials": "^8.6.0",
-    "@storybook/react": "^8.6.0",
+    "@storybook/react": "^10.6.1",
     "@storybook/react-vite": "^8.6.0",
     "@stryker-mutator/core": "^8.7.0",
     "@stryker-mutator/jest-runner": "^8.7.0",
