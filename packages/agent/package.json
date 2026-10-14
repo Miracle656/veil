@@ -34,7 +34,7 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.113.0",
-    "@soroswap/sdk": "^0.4.0",
+    "@soroswap/sdk": "^0.5.0",
     "@stellar/stellar-sdk": "^16.1.0",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
