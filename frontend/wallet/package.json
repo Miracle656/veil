@@ -19,7 +19,7 @@
     "@blend-capital/blend-sdk": "^3.3.0",
     "@reown/walletkit": "^1.6.0",
     "@scure/bip39": "^1.6.0",
-    "@sentry/nextjs": "^8.0.0",
+    "@sentry/nextjs": "^11.6.0",
     "@soroswap/sdk": "^0.4.0",
     "@stellar/js-xdr": "^3.1.2",
     "@stellar/stellar-sdk": "^14.6.1",
