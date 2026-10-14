@@ -70,7 +70,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0"
+    "@stellar/stellar-sdk": "^17.2.1"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
