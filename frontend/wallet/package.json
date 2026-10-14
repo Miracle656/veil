@@ -15,7 +15,7 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.113.0",
+    "@anthropic-ai/sdk": "^0.133.0",
     "@blend-capital/blend-sdk": "^3.3.0",
     "@reown/walletkit": "^1.6.0",
     "@scure/bip39": "^1.6.0",
