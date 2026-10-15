@@ -1,8 +1,16 @@
 name: SPP Config Drift Check
 
-# Compares the SPP testnet config pinned in frontend/wallet/lib/privacy/config.ts with upstream's
-# deployments.json. The comparison is frontend/wallet/lib/privacy/drift.ts, run through jest
+# Two checks, both in frontend/wallet/lib/privacy/drift.ts and both run through jest
 # (__tests__/drift.live.test.ts); drift.test.ts covers that same code, so what runs here is what is tested.
+#
+#   1. Addresses - does the config pinned in lib/privacy/config.ts match upstream's deployments.json?
+#   2. SDK - is the newest published `stellar-private-payments` older than the circuit keys the
+#      deployed verifiers were built from?
+#
+# The second exists because the first went green through a month in which privacy could not have
+# worked: a Groth16 proof is made with a proving key and checked against a verifying key, the two are
+# generated together from one circuit, and npm lagged the redeploy by 22 commits. Correct addresses
+# do not mean a proof would be accepted.
 
 on:
   schedule:
@@ -49,6 +57,7 @@ jobs:
         env:
           SPP_DRIFT_LIVE: '1'
           SPP_DRIFT_REPORT: ${{ github.workspace }}/diff.txt
+          SPP_SDK_REPORT: ${{ github.workspace }}/sdk.txt
           SPP_DRIFT_WARN_ONLY: ${{ (github.event_name == 'pull_request' || inputs.warn_only) && '1' || '0' }}
         run: |
           npx jest lib/privacy/__tests__/drift.live.test.ts 2>&1 | tee "$GITHUB_WORKSPACE/summary.txt"
@@ -69,24 +78,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # diff.txt is only written when drift was actually found. Without it the job failed for
-          # another reason (for example upstream unreachable), which is not drift.
-          if [ ! -f diff.txt ]; then
+          # A report file is only written when that specific finding occurred. Without either, the
+          # job failed for another reason (upstream unreachable, say), which is not drift.
+          if [ ! -f diff.txt ] && [ ! -f sdk.txt ]; then
             echo "No drift report was produced; not filing an issue."
             exit 0
           fi
 
-          # One open issue at a time: a drift that takes days to act on must not file a new issue daily.
-          EXISTING=$(gh issue list --state open --label "epic:privacy" \
-            --search "Pinned SPP configuration drifted in:title" \
-            --json number --jq '.[0].number // empty')
+          # Separate issues: the address drift is ours to fix in one file, the stale SDK is upstream's
+          # to republish. Filing them together would bury a fix we can make under one we cannot.
+          file_or_comment() {
+            title="$1"
+            body="$2"
+            # One open issue at a time per finding: something that takes days to resolve must not
+            # file a new issue every morning.
+            existing=$(gh issue list --state open --label "epic:privacy" \
+              --search "$title in:title" --json number --jq '.[0].number // empty')
+            if [ -z "$existing" ]; then
+              gh issue create --title "[ALERT] $title" --body-file "$body" --label "area:ci,epic:privacy"
+            else
+              gh issue comment "$existing" --body-file "$body"
+            fi
+          }
 
-          if [ -z "$EXISTING" ]; then
-            gh issue create \
-              --title "[ALERT] Pinned SPP configuration drifted from upstream" \
-              --body-file diff.txt \
-              --label "area:ci,epic:privacy"
-          else
-            gh issue comment "$EXISTING" --body-file diff.txt
+          if [ -f diff.txt ]; then
+            file_or_comment "Pinned SPP configuration drifted from upstream" diff.txt
+          fi
+          if [ -f sdk.txt ]; then
+            file_or_comment "Published SPP SDK is older than the deployed circuits" sdk.txt
           fi
         shell: bash

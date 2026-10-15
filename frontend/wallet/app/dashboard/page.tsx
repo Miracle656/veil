@@ -1,4 +1,5 @@
 'use client'
+import { isNonSafariIOS } from '@/lib/iosBrowser'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 export const dynamic = 'force-dynamic'
@@ -151,6 +152,9 @@ function DashboardPageContent() {
   // PRF downgrade: surfaced as a dismissible banner (issue #629).
   const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
   const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
+  // Only used to pick a sentence in the banner below — never to decide whether
+  // to attempt PRF, which is always attempted and judged on its real outcome.
+  const [suggestSafari, setSuggestSafari]                 = useState(false)
   // #711: true when this wallet's privacy keys cannot be re-derived from a
   // passkey elsewhere — the private-balance card warns before anything shields.
   const privacyRecoveryUnsupported = usePrivacyRecoveryNotice()
@@ -262,6 +266,7 @@ function DashboardPageContent() {
       // After the fee-payer is established, check whether a silent PRF→legacy
       // downgrade occurred (issue #629). Show a banner if so.
       setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
+      setSuggestSafari(isNonSafariIOS())
     })
   }, [router])
 
@@ -797,7 +802,7 @@ function DashboardPageContent() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
-                Fee payer: PRF unavailable on this device
+                Gas account: this browser can&apos;t derive the preferred one
               </p>
               <button
                 id="dashboard-prf-downgrade-dismiss"
@@ -809,7 +814,7 @@ function DashboardPageContent() {
               </button>
             </div>
             <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
-              This wallet requested a WebAuthn PRF result but the authenticator didn&apos;t provide one. It fell back to the legacy fee payer, which will look like a different wallet on a PRF-capable device. If this is unexpected, copy the diagnostics in Settings → Fee Payer and share them.
+              Your wallet address is unaffected — it comes from the passkey itself, not from this. What changed is the account that pays network fees: this browser gave no WebAuthn PRF result, so an older derivation was used. Every device still derives that one too and prefers whichever account actually holds a balance, so once this one is funded it stays yours.{suggestSafari ? ' On iPhone and iPad only Safari offers PRF — open this page in Safari before funding anything if you would rather have the preferred derivation.' : ' Safari on iOS 18.4 or later supports PRF, if you would rather have the preferred derivation.'}
             </p>
             <button
               id="dashboard-prf-downgrade-details"

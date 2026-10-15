@@ -87,6 +87,14 @@ export default function CashOutPage() {
 
   const [order, setOrder] = useState<OfframpOrder | null>(null)
   const [createdAt, setCreatedAt] = useState<number | null>(null)
+  /**
+   * Held, not regenerated per click. The backend refuses to generate this on
+   * purpose — a new key on a retry is how one order becomes two and both get
+   * paid for — so a retry of the SAME order has to carry the same key. Cleared
+   * whenever the user goes back to change the amount or the bank, because that
+   * is a different order.
+   */
+  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null)
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const [status, setStatus] = useState('initiated')
   const [copied, setCopied] = useState(false)
@@ -212,17 +220,26 @@ export default function CashOutPage() {
       if (!verified) throw new Error('Verify the bank account first.')
       if (!feePayer) throw new Error('This browser has no classic account to refund to.')
 
+      // Kept across retries of this same order, and only this one.
+      const key = idempotencyKey ?? crypto.randomUUID()
+      if (!idempotencyKey) setIdempotencyKey(key)
+
       const created = await createOrder({
         amountNGN: ngn,
         bankAccount: verified.accountNumber,
         bankCode: verified.bankCode,
         bankName: verified.bankName || bankName(verified.bankCode),
         accountName: verified.accountName,
+        // The wallet placing the order. Required, and previously not sent at
+        // all — which is why every web cash-out failed validation.
+        walletAddress: feePayer,
         refundAddress: feePayer,
+        idempotencyKey: key,
       })
       setOrder(created)
       setStatus(created.status)
       setCreatedAt(Date.now())
+      setIdempotencyKey(null)
       rememberActiveOrder(created.id)
       // So activity can call this "Cashed out" instead of "Sent".
       rememberDepositAddress(created.walletAddress)
@@ -430,7 +447,7 @@ export default function CashOutPage() {
             </div>
 
             <button
-              onClick={() => setStep('bank')}
+              onClick={() => { setIdempotencyKey(null); setStep('bank') }}
               disabled={!(ngn > 0) || rate === null}
               style={ngn > 0 && rate !== null ? { ...primary, marginTop: '1.75rem' } : { ...primaryOff, marginTop: '1.75rem' }}
             >
@@ -519,7 +536,7 @@ export default function CashOutPage() {
             ) : null}
 
             <div style={{ display: 'flex', gap: 10, marginTop: '1.75rem' }}>
-              <button onClick={() => setStep('amount')} style={secondary}>
+              <button onClick={() => { setIdempotencyKey(null); setStep('amount') }} style={secondary}>
                 Back
               </button>
               <button
@@ -553,7 +570,7 @@ export default function CashOutPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 10, marginTop: '1.75rem' }}>
-              <button onClick={() => setStep('bank')} style={secondary} disabled={busy}>
+              <button onClick={() => { setIdempotencyKey(null); setStep('bank') }} style={secondary} disabled={busy}>
                 Back
               </button>
               <button onClick={handleCreateOrder} disabled={busy} style={{ ...primary, flex: 1 }}>

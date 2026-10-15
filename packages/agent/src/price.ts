@@ -25,8 +25,8 @@ export interface ResolvedAsset {
 }
 
 /**
- * Accepts XLM, a registered asset code, or an explicit CODE:ISSUER pair.
- * Anything else is refused: a bare code like "EURC" names no particular
+ * Accepts XLM, a registered asset code on the active network, or an explicit
+ * CODE:ISSUER pair. Anything else is refused: a bare unrecognized code names no particular
  * asset on Stellar, where anyone can issue one with that code.
  */
 export function resolveAsset(input: string): ResolvedAsset {

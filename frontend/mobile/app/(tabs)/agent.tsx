@@ -139,6 +139,16 @@ export default function AgentScreen() {
         return;
       }
 
+      if (reply.investIntent) {
+        appendMessage({
+          id: nextMessageId('invest'),
+          kind: 'invest',
+          text: reply.response,
+          intent: reply.investIntent,
+        });
+        return;
+      }
+
       if (!reply.pendingTxXdr) {
         appendMessage({ id: nextMessageId('agent'), kind: 'agent', text: reply.response });
         return;
@@ -437,6 +447,16 @@ function MessageRow({
           </View>
         </View>
       );
+
+    case 'invest':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <InvestHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
   }
 }
 
@@ -457,6 +477,34 @@ function SwapHandoff({ intent }: { intent: { from: string; to: string; amount?: 
             params: { from: intent.from, to: intent.to, ...(intent.amount ? { amount: intent.amount } : {}) },
           })
         }
+      />
+    </View>
+  );
+}
+
+/**
+ * Invest hand-off to the Earn/Invest section.
+ */
+function InvestHandoff({ intent }: { intent: import('../../lib/agentMessages').InvestIntent }) {
+  const router = useRouter();
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Button
+label="Open Earn Section"
+        onPress={() => {
+          const code = intent.code ?? intent.asset?.code ?? '';
+          const issuer = intent.issuer ?? intent.asset?.issuer ?? '';
+          const amount = intent.amount ?? '';
+          router.push({
+            pathname: '/earn',
+            params: {
+              ...(code ? { code, asset: code } : {}),
+              ...(issuer ? { issuer } : {}),
+              ...(amount ? { amount } : {}),
+              ...(intent.quoteCurrency ? { quoteCurrency: intent.quoteCurrency } : {}),
+            },
+          });
+        }}
       />
     </View>
   );

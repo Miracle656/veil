@@ -45,7 +45,22 @@ export default function PasskeysPage() {
       setLoadState('ready')
     } catch (e) {
       console.error('Failed to fetch signers', e)
-      setLoadState(e instanceof Error ? e.message : 'Could not read the passkeys on this wallet.')
+      // A wallet that has never spent has no contract to read, and the node
+      // says so in whatever words it likes. Recognising that here as well as in
+      // `getDeploymentState` is deliberate belt-and-braces: the alternative is
+      // a Soroban HostError rendered verbatim on a settings screen, which is
+      // what a tester actually saw.
+      const message = e instanceof Error ? e.message : String(e)
+      if (/missingvalue|non-existing value|not found|404/i.test(message)) {
+        setSigners([])
+        setLoadState('undeployed')
+        return
+      }
+      setLoadState(
+        e instanceof Error && e.message.length < 120
+          ? e.message
+          : 'Could not read the passkeys on this wallet.',
+      )
     }
   }, [wallet.getSigners])
 

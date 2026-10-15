@@ -2,6 +2,7 @@
 
 import { useActivityFeed } from '@/lib/activityFeed'
 import { inclusionFee } from '@/lib/fees'
+import { maxSendable as libMaxSendable } from '@/lib/sendable'
 import { Nav, PageHeader } from '@/components/ui/primitives'
 import { Shield } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
@@ -11,6 +12,7 @@ import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation, Memo,
   Contract, rpc as SorobanRpc, nativeToScVal, Horizon,
 } from '@stellar/stellar-sdk'
+import { fetchPlatformFee } from '@/lib/platformFee'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
 import { ContactPicker } from '@/components/ContactPicker'
@@ -24,6 +26,8 @@ import { buildStellarMemo, validateMemo } from '@/lib/sep7'
 import { getRegisteredAsset } from '@/lib/assets'
 import { buildSep7Memo, type Sep7MemoType } from '@/lib/sep7'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { horizonErrorMessage } from '@/lib/horizonError'
+import { spendableNativeXlm } from '@/lib/reserves'
 import { validateMemoText } from '@/lib/memo'
 
 import { getNativeAssetContractId, getNetwork, getNetworkName } from '@/lib/network'
@@ -42,18 +46,22 @@ interface WalletAsset {
   contractId: string | null
   /** Decimal string from Horizon. '0' when the account could not be loaded. */
   balance: string
+  /**
+   * What the network will actually let go of: the balance less the reserve it
+   * locks. Only XLM has one, so for issued assets this equals the balance. Held
+   * separately from `balance` because both are true and the screen needs each —
+   * the balance is what the account holds, this is what it can send.
+   */
+  spendable?: string
 }
 
 function assetKey(a: WalletAsset): string {
   return a.issuer ? `${a.code}:${a.issuer}` : a.code
 }
 
-/** Spendable amount: native XLM keeps the base reserve + a fee cushion. */
+/** The page's assets carry the reserve-adjusted figure; the arithmetic lives in lib. */
 function maxSendable(asset: WalletAsset): number {
-  const bal = parseFloat(asset.balance)
-  if (!Number.isFinite(bal)) return 0
-  if (asset.code === 'XLM' && !asset.issuer) return Math.max(0, bal - 1.5)
-  return Math.max(0, bal)
+  return libMaxSendable(asset, inclusionFee())
 }
 
 /** An issuer as the review screen names it: who, when registered, then the full account. */
@@ -176,7 +184,16 @@ export default function SendPage() {
     server.loadAccount(signerPublicKey).then(account => {
       const list: WalletAsset[] = account.balances.map(b => {
         if (b.asset_type === 'native') {
-          return { code: 'XLM', issuer: null, contractId: getNativeAssetContractId(), balance: b.balance }
+          // The reserve depends on how many trustlines, offers and data entries
+          // this account holds, so it can only be known here, with the account
+          // in hand.
+          return {
+            code: 'XLM',
+            issuer: null,
+            contractId: getNativeAssetContractId(),
+            balance: b.balance,
+            spendable: spendableNativeXlm(account),
+          }
         }
         const issued = b as { asset_code: string; asset_issuer: string; balance: string }
         const asset  = new Asset(issued.asset_code, issued.asset_issuer)
@@ -367,6 +384,52 @@ export default function SendPage() {
           // without it, exchange deposits arrive uncredited.
           .addMemo(memo.trim() ? buildStellarMemo(memo, memoType) ?? Memo.none() : Memo.none())
           .setTimeout(30)
+
+        // The Veil fee, appended after the user's own payment so theirs applies
+        // first — if the balance only covers one of them, the one they asked for
+        // is the one that happens, and the whole transaction fails rather than
+        // taking a fee for a payment that did not go out.
+        //
+        // Only on this branch. The Soroban path below is a single `transfer`
+        // invocation, and a Stellar transaction may carry at most one Soroban
+        // operation, so there is nowhere to put a second payment there.
+        //
+        // Affordability is checked before the op is added rather than after the
+        // submission fails: `tx_insufficient_balance` on a send the user could
+        // afford, caused by a fee they never asked for, is the worst outcome
+        // available. Unaffordable means no fee, not a blocked payment.
+        const feeAsset = selectedAsset?.issuer ? selectedAsset.code : 'XLM'
+        const platformFee = await fetchPlatformFee(feeAsset, Number(amount))
+        if (platformFee) {
+          const held = account.balances.find((b) =>
+            platformFee.assetIssuer === null
+              ? b.asset_type === 'native'
+              : 'asset_code' in b
+                && b.asset_code === platformFee.assetCode
+                && 'asset_issuer' in b
+                && b.asset_issuer === platformFee.assetIssuer,
+          )
+          // XLM is not spendable down to zero: the network locks 1 XLM for the
+          // account plus 0.5 for every trustline it holds, and a transaction
+          // that would breach that is rejected outright with
+          // `tx_insufficient_balance`. Comparing against the raw balance is how
+          // a fee nobody asked for kills the payment they did — exactly what
+          // the note above says must not happen. Issued assets have no reserve,
+          // so for those the balance is the balance.
+          const available = platformFee.assetIssuer === null
+            ? Number(spendableNativeXlm(account))
+            : held ? Number(held.balance) : 0
+          if (available >= Number(amount) + Number(platformFee.amount)) {
+            builder.addOperation(Operation.payment({
+              destination: platformFee.destination,
+              asset: platformFee.assetIssuer
+                ? new Asset(platformFee.assetCode, platformFee.assetIssuer)
+                : Asset.native(),
+              amount: platformFee.amount,
+            }))
+          }
+        }
+
         const tx = builder.build()
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
@@ -416,7 +479,10 @@ export default function SendPage() {
 
       setStep('done')
     } catch (err: unknown) {
-      setErrorMsg(passkeyErrorMessage(err))
+      // Horizon first: it rejects every failed transaction with a 400, so the
+      // only thing `passkeyErrorMessage` could say about one was "Request
+      // failed with status code 400". The reason is in the response body.
+      setErrorMsg(horizonErrorMessage(err) ?? passkeyErrorMessage(err))
       setStep('error')
     } finally {
       endTx()
@@ -506,7 +572,9 @@ export default function SendPage() {
                       <span style={{ fontSize: 15, fontWeight: 600 }}>{selectedAsset?.code ?? '—'}</span>
                       <span className="vw-meta">
                         {selectedAsset
-                          ? `${parseFloat(selectedAsset.balance).toFixed(4)} available${selectedAsset.issuer ? ` · ${shortIssuer(selectedAsset.issuer)}` : ''}`
+                          // "Available" said the balance, which for XLM is not
+                          // available: part of it is locked as the reserve.
+                          ? `${maxSendable(selectedAsset).toFixed(4)} available${selectedAsset.issuer ? ` · ${shortIssuer(selectedAsset.issuer)}` : ''}`
                           : 'Loading…'}
                       </span>
                     </span>
@@ -561,6 +629,11 @@ export default function SendPage() {
                 <div className="vw-amountfoot">
                   <span className="vw-amountbal">
                     {selectedAsset ? `Balance ${parseFloat(selectedAsset.balance).toFixed(2)} ${selectedAsset.code}` : ''}
+                    {selectedAsset && parseFloat(selectedAsset.balance) - maxSendable(selectedAsset) > 0.00001
+                      // Naming the locked part, because otherwise the two
+                      // numbers on this screen simply disagree.
+                      ? ` · ${(parseFloat(selectedAsset.balance) - maxSendable(selectedAsset)).toFixed(2)} reserved`
+                      : ''}
                   </span>
                   <span className="vw-chips">
                     {[0.25, 0.5, 0.75].map((f) => (
@@ -570,7 +643,10 @@ export default function SendPage() {
                         className="vw-amountchip"
                         onClick={() => {
                           if (!selectedAsset) return
-                          const bal = parseFloat(selectedAsset.balance)
+                          // A share of what can be sent, not a share of what
+                          // is held: 75% of a balance that is 70% reserve is a
+                          // transaction the network refuses.
+                          const bal = maxSendable(selectedAsset)
                           if (!Number.isFinite(bal)) return
                           setAmount((Math.floor(bal * f * 1e7) / 1e7).toString())
                         }}

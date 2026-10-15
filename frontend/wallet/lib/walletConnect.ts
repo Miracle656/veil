@@ -19,6 +19,7 @@ import {
   Operation,
 } from '@stellar/stellar-sdk'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { walletContractErrorMessage } from './walletContractError'
 
 async function getWalletNonce(
   rpc: SorobanRpc.Server,
@@ -336,6 +337,15 @@ async function signXdrPayload(
 
   const sim2 = await rpc.simulateTransaction(signedTx)
   if (SorobanRpc.Api.isSimulationError(sim2)) {
+    // Name the wallet-contract failure when we can. The raw HostError is two
+    // thousand characters of diagnostic log with `Error(Contract, #N)` buried in
+    // it, and #9 in particular means "retrying will never work" — the opposite
+    // of what a generic auth message implies.
+    const named = walletContractErrorMessage(sim2.error)
+    if (named) {
+      console.warn('[soroban] re-simulation failed:', sim2.error)
+      throw new Error(named)
+    }
     throw new Error(`Re-simulation (enforce mode) failed: ${sim2.error}`)
   }
 

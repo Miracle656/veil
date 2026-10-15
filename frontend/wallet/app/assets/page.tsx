@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Horizon, Keypair } from '@stellar/stellar-sdk'
 
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { getNetwork } from '@/lib/network'
+import { getNetwork, getUsdcIssuer } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import {
   buildChangeTrustTx,
@@ -276,6 +276,10 @@ export default function AssetsPage() {
   }, [manualCode, manualIssuer])
 
   const busy = status.kind === 'busy'
+  // The issuer the rest of the app already uses, rather than a constant typed
+  // here — it is network-aware, so this card is correct on testnet too.
+  const usdcIssuer = getUsdcIssuer()
+  const hasUsdc = hasTrustline(balances, 'USDC', usdcIssuer)
   const hasUsdy = hasTrustline(balances, 'USDY', USDY_MAINNET_ISSUER)
   const hasUsdt0 = hasTrustline(balances, 'USDT0', USDT0_MAINNET_ISSUER)
   const usdyImpact = calculateSpendableAfterTrustline(spendableXlm, 1)
@@ -321,6 +325,41 @@ export default function AssetsPage() {
           >
             <p style={{ fontSize: '0.875rem', color: 'var(--off-white)' }}>{status.message}</p>
           </div>
+        )}
+
+        {/* USDC first, and with a button at all.
+
+            This page offered one-click trustlines for USDY and USDT0 and
+            nothing for USDC — the asset cash-out settles in, the one the
+            platform fee is denominated in, and the one a Nigerian user actually
+            wants. It was reachable only by typing a 56-character issuer into
+            the manual form at the bottom, which nobody has memorised: in
+            practice that means pasting an address from a search result, which
+            is exactly how someone ends up trusting a counterfeit USDC. */}
+        {!hasUsdc && !loading && (
+          <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(38,111,214,0.3)', background: 'rgba(38,111,214,0.05)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <RegisteredAssetMark code="USDC" meta={issuerMeta[`USDC:${usdcIssuer}`]} />
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ ...sectionHeadingStyle, color: '#2775CA' }}>USDC (Circle)</h2>
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  The dollar stablecoin Veil cashes out to naira in, and the one most senders will pay you in. Adding the trustline locks <strong>0.5 XLM</strong> of refundable reserve, returned if you ever remove it.
+                </p>
+                {issuerMeta[`USDC:${usdcIssuer}`]?.description ? (
+                  <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                    {issuerMeta[`USDC:${usdcIssuer}`].description}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <button
+              onClick={() => setPendingAsset({ code: 'USDC', issuer: usdcIssuer })}
+              disabled={busy}
+              style={primaryButtonStyle(busy)}
+            >
+              {busy ? 'Enabling USDC…' : 'Enable USDC (0.5 XLM reserve)'}
+            </button>
+          </section>
         )}
 
         {/* Featured USDT0 enable card. Mainnet only — USDT0's issuer does not

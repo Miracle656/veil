@@ -1,57 +1,128 @@
+# Dependency updates.
+#
+# This was seven ecosystems, each weekly, each capped at five open PRs and each
+# assigning one person — up to thirty-five open pull requests a week, with a
+# notification apiece. Thirty-six were closed on 2026-10-14 and twenty-six were
+# reopened the same evening, because closing a Dependabot PR does not tell
+# Dependabot anything: it simply opens it again on the next run.
+#
+# Three changes, each aimed at a specific part of that:
+#
+#   groups      one PR per ecosystem for minor and patch, instead of one per
+#               dependency. Those are the updates worth taking in a batch, and
+#               reviewing them together is both faster and safer than fifteen
+#               PRs that each pass CI alone.
+#
+#   ignore      major versions are not opened at all. Every major bump that
+#               accumulated here was a breaking change nobody was going to take
+#               casually — next 14→16, react-dom 18→19, typescript 6→7,
+#               soroban-sdk 22→28, prisma 5→7 — and a PR that will never be
+#               merged is noise that trains you to ignore the ones that matter.
+#               Majors get planned and done deliberately, per workspace, with
+#               the test suites as the gate.
+#
+#   no assignees  the notifications were the actual complaint, and an assignee
+#               on an automated PR adds nothing: they are already visible in the
+#               repository's PR list.
+#
+# Security advisories are NOT affected. Dependabot security updates are a
+# separate feature, configured in the repository's settings rather than here,
+# and they are still wanted — including for a major version, where this file's
+# `ignore` does not apply to them.
 version: 2
 updates:
   - package-ecosystem: "npm"
     directory: "/frontend/wallet"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    assignees:
-      - "Miracle656"
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "npm"
+    directory: "/frontend/mobile"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend/website"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    assignees:
-      - "Miracle656"
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend/docs"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    assignees:
-      - "Miracle656"
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/sdk"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    assignees:
-      - "Miracle656"
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/packages/agent"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    assignees:
-      - "Miracle656"
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
+  # Contracts are deployed and not upgradeable, so a dependency bump here is a
+  # change to bytecode that is already live elsewhere. Quarterly, grouped, and
+  # never a major without a deliberate decision.
   - package-ecosystem: "cargo"
     directory: "/contracts"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    assignees:
-      - "Miracle656"
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    assignees:
-      - "Miracle656"
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ["*"]

@@ -32,6 +32,9 @@ describe('privacy bootnode fallback resolver', () => {
       url: fallback,
       usingFallback: true,
       reason: expect.stringContaining('NEXT_PUBLIC_SPP_BOOTNODE_URL is unset'),
+      // Not a fault: Veil's own bootnode is not deployed, so Nethermind's is the
+      // intended source. The banner stays quiet for this; the console does not.
+      kind: 'unconfigured',
     });
   });
 
@@ -50,6 +53,7 @@ describe('privacy bootnode fallback resolver', () => {
       url: primary,
       usingFallback: false,
       reason: null,
+      kind: 'healthy',
     });
   });
 
@@ -69,6 +73,8 @@ describe('privacy bootnode fallback resolver', () => {
       url: fallback,
       usingFallback: true,
       reason: expect.stringContaining('Primary SPP bootnode'),
+      // A bootnode we configured and then lost — this one the user sees.
+      kind: 'unreachable',
     });
   });
 

@@ -21,6 +21,7 @@
     "@scure/bip39": "^1.6.0",
     "@sentry/nextjs": "^8.0.0",
     "@soroswap/sdk": "^0.4.0",
+    "@stellar/js-xdr": "^3.1.2",
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.108.2",
     "@vitest/coverage-v8": "^1.3.0",

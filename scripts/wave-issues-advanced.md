@@ -108,6 +108,34 @@ The original reason was real — the mobile app had no signer when that screen w
 
 > **Drips Wave** · Complexity: **Advanced** · **200 points**
 
+### Resolved 2026-10-05/07 — and the brief was wrong
+
+Shipped as **#932** and **#943**, closing #925 and #922. Recorded here because
+two things in *What to build* above could not be done, and anyone reading this
+draft later should not try again.
+
+**"One signature covers the whole batch" is impossible on the deployed
+contracts.** A Soroban transaction carries one `InvokeHostFunction`,
+`__check_auth` authorises one root invocation per signature, and there is no
+`batch_transfer` entry point on either the wallet or the factory — neither of
+which is upgradeable (`docs/CONTRACTS_V2.md`). #932 shipped
+`MAX_ROWS_PER_TRANSACTION = 1` and row-by-row submission instead, with the
+reasoning written into the module and one passkey prompt per row stated on the
+screen rather than implied. The acceptance criterion asking for one signature
+was unmeetable, not unmet.
+
+**`sdk/src/bulkPayout.ts` never had `executeBulkPayout`.** That function lived
+only in `frontend/mobile/lib/bulkPayout.ts`, and #943 deleted it: #932 left it
+exported with no caller, still returning whatever `txHash` a submitter handed
+it with `failedRows: []`, so the old `pending-…` placeholder would still have
+reported a successful payout. The SDK module has `parseCSV`, `createBatches`
+and the batch-state helpers — no submitter.
+
+What did land: real per-row submission with confirmation, `isTxHash()` gating
+on `/^[0-9a-f]{64}$/i`, a `RowOutcome` per row so a partial run names the rows
+that went out, and `batchProblems()` refusing an unsendable batch before
+anything is signed.
+
 ---
 
 ### V251 · Session keys must constrain who gets paid
