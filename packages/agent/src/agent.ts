@@ -87,7 +87,8 @@ const tools: ToolSpec[] = [
     name: 'get_price',
     description:
       'Get the current price of one asset in terms of another on the Stellar DEX: ' +
-      'how many units of asset_b one unit of asset_a sells for right now, and how many hops the best route takes.',
+      'how many units of asset_b one unit of asset_a sells for right now, and how many hops the best route takes. ' +
+      'The Swap screen shows live quotes for supported swaps.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -101,7 +102,8 @@ const tools: ToolSpec[] = [
     name: 'get_asset_info',
     description:
       'Look up an asset in Veil\'s verified registry (ASSET_REGISTRY): its verified issuer, metadata, and whether it can be frozen or clawed back. ' +
-      'ALWAYS call this for asset information questions like "What is USDY?" or "What is USDT0?". Pass "CODE", "code" or "CODE:ISSUER". Never answer asset issuer details from LLM memory.',
+      'ALWAYS call this for asset information questions like "What is USDY?" or "What is USDT0?". Pass "CODE", "code" or "CODE:ISSUER". Never answer asset issuer details from LLM memory. ' +
+      'The Assets screen shows wallet assets and their details.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -114,7 +116,8 @@ const tools: ToolSpec[] = [
     name: 'open_invest',
     description:
       'Hand off a buy request or investment to the wallet\'s Invest/Earn section. ' +
-      'The agent must never construct or sign a transaction for buying invest assets.',
+      'The agent must never construct or sign a transaction for buying invest assets. ' +
+      'Use the Earn screen for available earn and investment options.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -130,7 +133,8 @@ const tools: ToolSpec[] = [
     name: 'get_transfer_history',
     description:
       'Get recent transfer history for a wallet — includes both classic Stellar payments (XLM sends/receives) ' +
-      'and Soroban token transfers. Returns classicPayments from Horizon and sorobanTransfers from Wraith.',
+      'and Soroban token transfers. Returns classicPayments from Horizon and sorobanTransfers from Wraith. ' +
+      'The Activity screen shows wallet transactions.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -146,7 +150,8 @@ const tools: ToolSpec[] = [
     description:
       'Get current XLM and token balances for a wallet address. Free. ' +
       'The result includes "holdings": every issued asset with its issuer and a status of verified, unverified or unlisted. ' +
-      'Always name the issuer when reporting an issued asset, and report "unverified" holdings as unverified.',
+      'Always name the issuer when reporting an issued asset, and report "unverified" holdings as unverified. ' +
+      'The Dashboard shows wallet balances.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -176,7 +181,7 @@ const tools: ToolSpec[] = [
     name: 'build_payment',
     description:
       'Build a Stellar payment transaction to send XLM or tokens. ' +
-      'ALWAYS call request_user_approval after building.',
+      'ALWAYS call request_user_approval after building. The Send screen is where users prepare payments.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -194,7 +199,7 @@ const tools: ToolSpec[] = [
     description:
       'ALWAYS call this before any transaction executes. ' +
       'Sends the transaction to the wallet UI for passkey (biometric) approval. ' +
-      'The user must approve with Face ID / fingerprint before the tx is submitted.',
+      'The user must approve with Face ID / fingerprint before the tx is submitted, in the wallet approval screen.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -264,6 +269,11 @@ ${langClause}
 ${personaClause}
 ${roleClause}
 
+REGISTERED CAPABILITIES (generated from the tools available in this agent):
+${tools.map(({ name, description }) => `- ${name}: ${description}`).join('\n')}
+
+For a request that none of these tools can perform, say plainly what you cannot do in chat and direct the user to the relevant screen named above when that screen can handle it. Do not claim the task was completed. If no Veil screen can handle the request, say so and name the relevant external wallet or service screen only when clear; never invent a Veil screen.
+
 You help users:
 - Check their balance and recent transfers
 - Get live prices
@@ -275,7 +285,7 @@ RULES:
 1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
 2. Before a payment executes, ALWAYS call request_user_approval — never skip this.
 3. Use get_price when the user asks about a price or wants to weigh a swap first.
-4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters. If price data is unavailable, state plainly that price data is currently unavailable — do NOT make up or estimate prices.
+4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters. If price data is unavailable, state plainly that price data is currently unavailable — do NOT make up or estimate prices. Ground every numeric answer in data returned by a registered tool for this request. If no tool provides the requested number (including balances on other chains or prices without a source), say "I cannot see that" and do not estimate, guess, or use remembered data.
 5. Format amounts clearly: "500 XLM", "47.3 USDC".
 6. If you need a recipient address and the user hasn't provided one, ask before building.
 7. Keep responses concise. Use bullet points for multi-step flows.

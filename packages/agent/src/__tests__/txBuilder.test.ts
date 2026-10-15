@@ -45,10 +45,16 @@ jest.unstable_mockModule('@stellar/stellar-sdk', () => {
     isNative: () => true,
     getCode: () => 'XLM',
     getIssuer: () => '',
+    contractId: () => 'mock-native-contract-id',
   }
 
   function AssetConstructor(code: string, issuer: string) {
-    return { isNative: () => false, getCode: () => code, getIssuer: () => issuer }
+    return {
+      isNative: () => false,
+      getCode: () => code,
+      getIssuer: () => issuer,
+      contractId: () => `mock-contract-id:${code}:${issuer}`,
+    }
   }
   (AssetConstructor as any).native = () => nativeAsset
 
