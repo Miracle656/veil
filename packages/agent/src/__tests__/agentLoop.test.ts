@@ -1,6 +1,6 @@
-import { describe, it, expect } from '@jest/globals'
+import { describe, it, expect, jest } from '@jest/globals'
 import { runAgent } from '../agent.js'
-import type { LlmProvider, LlmTurn } from '../llm.js'
+import type { LlmProvider, LlmTurn, ToolSpec } from '../llm.js'
 
 const INVEST_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
 
@@ -12,12 +12,18 @@ const INVEST_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
  * to run for as long as the model kept asking for tools.
  */
 
-function scripted(turns: LlmTurn[]): LlmProvider & { results: { id: string; content: string }[][] } {
+function scripted(turns: LlmTurn[]): LlmProvider & {
+  results: { id: string; content: string }[][]
+  availableTools: ToolSpec[]
+} {
   const results: { id: string; content: string }[][] = []
+  const availableTools: ToolSpec[] = []
   return {
     label: 'scripted',
     results,
-    start() {
+    availableTools,
+    start(_system, _history, _userMessage, tools) {
+      availableTools.push(...tools)
       let i = 0
       return {
         async next() {
@@ -74,6 +80,21 @@ describe('runAgent', () => {
     expect(llm.results[0][0].content).toMatch(/Unknown tool/)
   })
 
+  it('never repeats a bank account number in its response', async () => {
+    const llm = scripted([{ text: 'The account number is 0123456789.', toolCalls: [] }])
+    const result = await runAgent(
+      'My Nigerian bank account number is 0123456789.',
+      wallet,
+      [],
+      undefined,
+      undefined,
+      llm,
+    )
+
+    expect(result.response).not.toContain('0123456789')
+    expect(result.response).toContain('[account number hidden]')
+  })
+
   it('stops a model that never stops calling tools', async () => {
     const forever: LlmTurn = {
       text: '',
@@ -95,6 +116,131 @@ describe('runAgent', () => {
     const result = await runAgent('swap 10 xlm to usdc', wallet, [], undefined, undefined, llm)
     expect(result.swapIntent).toEqual({ from: 'XLM', to: 'USDC', amount: '10' })
     expect(result.pendingTxXdr).toBeUndefined()
+  })
+
+  it('reports an unavailable cash-out as unavailable and never creates an order', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: 'Cash-out is not configured' }),
+    } as Response)
+    try {
+      const llm = scripted([
+        { text: '', toolCalls: [{ id: 'r', name: 'get_offramp_rate', input: {} }] },
+        { text: 'This is unavailable because your account is invalid.', toolCalls: [] },
+      ])
+      const result = await runAgent(
+        'Cash out 25000 naira',
+        wallet,
+        [],
+        undefined,
+        undefined,
+        llm,
+        { wraithUrl: 'https://wraith.test' },
+      )
+
+      expect(JSON.parse(llm.results[0][0].content)).toEqual({ available: false, status: 'unavailable' })
+      expect(result.response).toMatch(/Cash-out is unavailable right now/i)
+      expect(result.response).not.toMatch(/account is invalid/i)
+      expect(result.cashOutIntent).toBeUndefined()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate')
+      expect(llm.availableTools.map((tool) => tool.name)).not.toContain('create_offramp_order')
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('tells an unverified user to verify their bank on Cash Out, not in chat', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ rate: 1500, currency: 'NGN', coin: 'USDC' }),
+    } as Response)
+    try {
+      const llm = scripted([
+        { text: '', toolCalls: [{ id: 'r', name: 'get_offramp_rate', input: {} }] },
+        { text: '', toolCalls: [{ id: 'p', name: 'prepare_cash_out', input: { amount_ngn: 25000 } }] },
+        { text: 'Your account is ready.', toolCalls: [] },
+      ])
+      const result = await runAgent(
+        "I haven't verified my bank account. Cash out 25000 naira.",
+        wallet,
+        [],
+        undefined,
+        undefined,
+        llm,
+        { wraithUrl: 'https://wraith.test' },
+      )
+
+      expect(result.response).toMatch(/select and verify your bank account on the Cash Out screen/i)
+      expect(result.response).not.toMatch(/account is ready/i)
+      expect(result.cashOutIntent).toEqual({ amountNGN: 25000, rate: 1500 })
+      expect(llm.availableTools.map((tool) => tool.name)).not.toContain('verify_bank_account')
+      expect(llm.availableTools.find((tool) => tool.name === 'prepare_cash_out')?.input_schema.properties)
+        .toEqual({ amount_ngn: expect.any(Object) })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('hands off the requested amount and live rate without creating an order or sending a deposit', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ rate: 1525.75, currency: 'NGN', coin: 'USDC' }),
+    } as Response)
+    try {
+      const llm = scripted([
+        { text: '', toolCalls: [{ id: 'r', name: 'get_offramp_rate', input: {} }] },
+        { text: '', toolCalls: [{ id: 'p', name: 'prepare_cash_out', input: { amount_ngn: 30000 } }] },
+        {
+          text: '',
+          toolCalls: [
+            {
+              id: 'pay',
+              name: 'build_payment',
+              input: { to_address: 'GDEPOSIT', asset: 'USDC', amount: 20, wallet_address: 'GFEEPAYER' },
+            },
+          ],
+        },
+        { text: 'Cash-out prepared.', toolCalls: [] },
+      ])
+      const result = await runAgent(
+        'Cash out 30000 naira',
+        wallet,
+        [],
+        undefined,
+        undefined,
+        llm,
+        { wraithUrl: 'https://wraith.test' },
+      )
+
+      expect(JSON.parse(llm.results[0][0].content)).toMatchObject({
+        available: true,
+        rate: 1525.75,
+        currency: 'NGN',
+        coin: 'USDC',
+      })
+      expect(JSON.parse(llm.results[1][0].content)).toMatchObject({
+        status: 'cash_out_screen_ready',
+        amountNGN: 30000,
+        rate: 1525.75,
+      })
+      expect(result.cashOutIntent).toEqual({ amountNGN: 30000, rate: 1525.75 })
+      expect(result.pendingTxXdr).toBeUndefined()
+      expect(result.response).toMatch(/Cash Out screen/)
+      expect(JSON.parse(llm.results[2][0].content)).toMatchObject({
+        error: 'Cash-out deposits must be sent from the Cash Out screen.',
+      })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate')
+      expect(llm.availableTools.map((tool) => tool.name)).not.toContain('create_offramp_order')
+      expect(llm.availableTools.map((tool) => tool.name)).not.toContain('verify_bank_account')
+    } finally {
+      fetchMock.mockRestore()
+    }
   })
 
   it('hands an issued asset to the Earn screen', async () => {

@@ -98,6 +98,27 @@ const tools: ToolSpec[] = [
     },
   },
   {
+    name: 'get_offramp_rate',
+    description:
+      'Read whether cash-out is available and, if available, the live NGN-per-USDC rate. Read-only: this never creates an order or verifies a bank account.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'prepare_cash_out',
+    description:
+      'Prepare a cash-out hand-off with its NGN amount and the live rate from get_offramp_rate. The Cash Out screen collects and verifies the bank account and handles order creation and deposit. This tool cannot verify an account, create an order, or send a deposit.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        amount_ngn: { type: 'number', description: 'Amount of naira the user wants to receive.' },
+      },
+      required: ['amount_ngn'],
+    },
+  },
+  {
     name: 'get_asset_info',
     description:
       'Look up an asset in Veil\'s verified registry (ASSET_REGISTRY): its verified issuer, metadata, and whether it can be frozen or clawed back. ' +
@@ -283,7 +304,8 @@ RULES:
 9. For asset explanation queries ("What is USDY?"), ALWAYS call get_asset_info. Base your answer strictly on the returned registry data (issuer name, issuer address, home domain, asset kind). NEVER invent or rely on LLM memory for asset issuer details. Asset codes are not identities: several issuers publish the same code (eight publish USDT0). When reporting holdings, name the issuer and report "unverified" holdings as unverified.
 10. For holdings questions ("what do I hold", "how much USDY do I have"), call get_wallet_balance and report exact balances with verified registry labels.
 11. For buy requests ("buy 50 USDC of USDY"), call open_invest. NEVER construct or sign a transaction for asset purchases. State that you are routing to the Invest section but that the destination screen is being built, not that it will be pre-filled and ready. Your response MUST include the issuer address and a one-line risk disclosure (e.g. "USDY is issued by Ondo Finance — review the asset details on the next screen before confirming"). Do NOT give an opinion on whether to buy.
-12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.`
+12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.
+13. For a cash-out, use get_offramp_rate first. If unavailable, say it is unavailable; do not blame the user or estimate a rate. If available, call prepare_cash_out with only the requested naira amount. Never select or verify a bank account, request or repeat an account number in chat, create a payout order, or send a deposit. Tell the user the Cash Out screen will collect and verify their bank account before order creation. An unverified account must be verified on that screen, not by you.`
 }
 
 /**
@@ -304,6 +326,11 @@ async function fetchWraith(baseUrl: string, path: string): Promise<unknown[]> {
   return Array.isArray(body) ? body : []
 }
 
+/** Redact Nigerian bank account numbers if the model repeats user-provided text. */
+function redactBankAccountNumbers(text: string): string {
+  return text.replace(/(?<!\d)(?:\d[ -]?){9}\d(?!\d)/g, '[account number hidden]')
+}
+
 // ── Core agent loop ──────────────────────────────────────────────────────────
 
 export interface AgentResult {
@@ -320,6 +347,8 @@ export interface AgentResult {
    * A buy request for the app's Invest screen to open. The agent never builds or signs buy transactions.
    */
   investIntent?: InvestIntent
+  /** A read-rate cash-out hand-off; the Cash Out screen owns all payout steps. */
+  cashOutIntent?: CashOutIntent
 }
 
 export interface SwapIntent {
@@ -334,6 +363,11 @@ export interface InvestIntent {
   amount?: string
   quoteCurrency?: string
   asset?: { code: string; issuer: string }
+}
+
+export interface CashOutIntent {
+  amountNGN: number
+  rate: number
 }
 
 /** Assets the apps' Swap screens offer. */
@@ -357,8 +391,17 @@ export async function runAgent(
   let pendingTxSummary: string | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
+  let cashOutIntent: CashOutIntent | undefined
+  let cashOutRate: number | undefined
+  let cashOutUnavailable = false
+  let cashOutRequested =
+    /\b(?:cash[\s-]?out|off[\s-]?ramp)\b/i.test(userMessage) ||
+    (/\b(?:naira|NGN)\b/i.test(userMessage) && /\b(?:bank|withdraw(?:al)?)\b/i.test(userMessage))
+  let cashOutNeedsRate = false
+  let cashOutPaymentBlocked = false
 
-  const wraithUrl = urls?.wraithUrl ?? process.env.WRAITH_URL ?? ''
+  const wraithUrl =
+    (urls?.wraithUrl || process.env.WRAITH_URL || process.env.NEXT_PUBLIC_WRAITH_URL || '').trim()
   const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
 
   // ── SLASH COMMAND INTERCEPTION ─────────────────────────────────────────────
@@ -404,7 +447,7 @@ export async function runAgent(
         });
       }
 
-      return { response: responseText.trim() };
+      return { response: redactBankAccountNumbers(responseText.trim()) };
     } catch (error) {
       console.error("History fetch failed:", error);
       return { response: "I couldn't fetch your transaction history at the moment. The Wraith indexer might be temporarily unavailable." };
@@ -420,6 +463,65 @@ export async function runAgent(
         } catch (err) {
           return JSON.stringify({ error: `Price data is currently unavailable for ${input.asset_a}.` })
         }
+      }
+
+      case 'get_offramp_rate': {
+        cashOutRequested = true
+        if (NETWORK !== 'mainnet' || !wraithUrl) {
+          cashOutUnavailable = true
+          return JSON.stringify({ available: false, status: 'unavailable' })
+        }
+        try {
+          const res = await fetch(`${wraithUrl.replace(/\/+$/, '')}/offramp/rate`, {
+            signal: AbortSignal.timeout(15_000),
+          })
+          if (res.status === 503 || !res.ok) {
+            cashOutUnavailable = true
+            return JSON.stringify({ available: false, status: 'unavailable' })
+          }
+          const quote = (await res.json()) as { rate?: unknown; currency?: unknown; coin?: unknown }
+          if (typeof quote.rate !== 'number' || !Number.isFinite(quote.rate) || quote.rate <= 0) {
+            cashOutUnavailable = true
+            return JSON.stringify({ available: false, status: 'unavailable' })
+          }
+          cashOutRate = quote.rate
+          cashOutUnavailable = false
+          return JSON.stringify({
+            available: true,
+            rate: quote.rate,
+            currency: typeof quote.currency === 'string' ? quote.currency : 'NGN',
+            coin: typeof quote.coin === 'string' ? quote.coin : 'USDC',
+          })
+        } catch (err) {
+          console.warn('[agent] Cash-out rate lookup failed:', (err as Error).message)
+          cashOutUnavailable = true
+          return JSON.stringify({ available: false, status: 'unavailable' })
+        }
+      }
+
+      case 'prepare_cash_out': {
+        cashOutRequested = true
+        const amountNGN = input.amount_ngn
+        if (cashOutRate === undefined || cashOutUnavailable) {
+          cashOutNeedsRate = !cashOutUnavailable
+          return JSON.stringify({ error: 'Cash-out is unavailable or its live rate has not been checked.' })
+        }
+        if (
+          typeof amountNGN !== 'number' ||
+          !Number.isFinite(amountNGN) ||
+          amountNGN <= 0 ||
+          amountNGN > Number.MAX_SAFE_INTEGER
+        ) {
+          return JSON.stringify({ error: 'amount_ngn must be a positive finite amount.' })
+        }
+        cashOutIntent = { amountNGN, rate: cashOutRate }
+        cashOutNeedsRate = false
+        return JSON.stringify({
+          status: 'cash_out_screen_ready',
+          amountNGN,
+          rate: cashOutRate,
+          bankAccountVerification: 'required_on_screen',
+        })
       }
 
       case 'get_asset_info': {
@@ -518,6 +620,10 @@ export async function runAgent(
       }
 
       case 'build_payment': {
+        if (cashOutRequested) {
+          cashOutPaymentBlocked = true
+          return JSON.stringify({ error: 'Cash-out deposits must be sent from the Cash Out screen.' })
+        }
         const payInput = {
           ...(input as unknown as Parameters<typeof buildPayment>[0]),
           wallet_address: feePayerAddress ?? (input as any).wallet_address,
@@ -527,6 +633,10 @@ export async function runAgent(
       }
 
       case 'request_user_approval': {
+        if (cashOutRequested) {
+          cashOutPaymentBlocked = true
+          return JSON.stringify({ error: 'Cash-out deposits must be sent from the Cash Out screen.' })
+        }
         pendingTxXdr = input.transaction_xdr as string
         pendingTxSummary = input.summary as string
         return JSON.stringify({ status: 'awaiting_approval' })
@@ -552,12 +662,18 @@ export async function runAgent(
   while (turn.toolCalls.length > 0) {
     if (++rounds > MAX_TOOL_ROUNDS) {
       return {
-        response:
-          "I couldn't finish that in one go. Try asking for one thing at a time.",
+        response: cashOutUnavailable
+          ? 'Cash-out is unavailable right now. I have not created an order. Please try again later.'
+          : cashOutIntent
+            ? 'Your cash-out amount and live rate are ready. Select and verify your bank account on the Cash Out screen before creating an order.'
+            : cashOutNeedsRate
+              ? 'I need to check the live cash-out rate before preparing this. No order has been created.'
+            : "I couldn't finish that in one go. Try asking for one thing at a time.",
         pendingTxXdr,
         pendingTxSummary,
         swapIntent,
         investIntent,
+        cashOutIntent,
       }
     }
 
@@ -578,6 +694,36 @@ export async function runAgent(
       // The work is done — a swap or invest to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
+      if (cashOutUnavailable) {
+        return {
+          response: 'Cash-out is unavailable right now. I have not created an order. Please try again later.',
+          pendingTxXdr,
+          pendingTxSummary,
+          swapIntent,
+          investIntent,
+          cashOutIntent,
+        }
+      }
+      if (cashOutIntent) {
+        return {
+          response: 'Your cash-out amount and live rate are ready. Select and verify your bank account on the Cash Out screen before creating an order.',
+          pendingTxXdr,
+          pendingTxSummary,
+          swapIntent,
+          investIntent,
+          cashOutIntent,
+        }
+        if (cashOutNeedsRate) {
+          return {
+            response: 'I need to check the live cash-out rate before preparing this. No order has been created.',
+            pendingTxXdr,
+            pendingTxSummary,
+            swapIntent,
+            investIntent,
+            cashOutIntent,
+          }
+        }
+      }
       if (swapIntent || investIntent || pendingTxXdr) {
         return {
           response: swapIntent
@@ -595,7 +741,20 @@ export async function runAgent(
     }
   }
 
-  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent, investIntent }
+  const response = cashOutUnavailable
+    ? 'Cash-out is unavailable right now. I have not created an order. Please try again later.'
+    : cashOutIntent
+      ? 'Your cash-out amount and live rate are ready. Select and verify your bank account on the Cash Out screen before creating an order.'
+      : cashOutNeedsRate
+        ? 'I need to check the live cash-out rate before preparing this. No order has been created.'
+        : cashOutPaymentBlocked
+          ? 'Cash-out orders and deposits must be handled on the Cash Out screen. I have not built or sent a payment.'
+          : cashOutRequested && cashOutRate === undefined
+            ? 'I could not check cash-out availability and the live rate. No order has been created; please try again later.'
+            : cashOutRequested
+              ? `Cash-out is available at ₦${cashOutRate?.toLocaleString('en-NG')} per USDC. No order has been created; the Cash Out screen handles bank verification and order creation.`
+              : redactBankAccountNumbers(turn.text)
+  return { response, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────
