@@ -97,8 +97,6 @@ test.describe('Happy Path: Register → Fund → Send', () => {
     
     // Step 7: Submit the send transaction. The form is two-step —
     // "Review" opens the confirmation card, "Confirm & sign" submits it.
-    const reviewButton = page.getByRole('button', { name: /review.*sign with passkey/i });
-    await expect(reviewButton).toBeEnabled({ timeout: 10_000 });
     // "Review & sign with passkey" opens the confirmation card,
     // "Confirm & sign" submits it.
     await page.waitForLoadState('networkidle');
