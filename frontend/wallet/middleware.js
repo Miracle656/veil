@@ -26,6 +26,12 @@ const configuredOrigins = [
   process.env.NEXT_PUBLIC_LENS_URL,
 ];
 
+// Playwright serves issuer logos from this fake host
+// (e2e/issuer-metadata.spec.ts). Allowed only when the e2e flag is set, as one
+// exact origin, never a wildcard, so production connect-src stays closed.
+const E2E_ORIGINS =
+  process.env.VEIL_E2E === "1" ? ["https://logos.example"] : [];
+
 function originOf(value) {
   if (!value) return null;
   try {
@@ -69,6 +75,7 @@ export function middleware(request) {
       // fails if a registered homeDomain is missing here, because the symptom
       // otherwise is silently missing issuer names rather than an error.
       ...REGISTERED_ISSUER_ORIGINS,
+      ...E2E_ORIGINS,
       ...origins,
     ].join(" "),
     "worker-src 'self' blob:",

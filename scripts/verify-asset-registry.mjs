@@ -131,7 +131,7 @@ export function parseTomlCurrencies(tomlText) {
 
 export function hasExactTomlCurrency(currencies, asset) {
   return currencies.some(
-    (currency) => currency?.code === asset.code && (currency?.issuer === asset.issuer || !currency?.issuer),
+    (currency) => currency?.code === asset.code && currency?.issuer === asset.issuer,
   );
 }
 
@@ -354,4 +354,3 @@ const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).hr
 if (import.meta.url === invokedPath) {
   process.exitCode = await main();
 }
-

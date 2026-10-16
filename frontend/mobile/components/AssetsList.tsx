@@ -9,6 +9,8 @@ import { useCurrency } from '../hooks/useCurrency';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
+import { getRegisteredAsset, isRegisteredIssuer, verifiedAsset } from '../lib/assets';
+import { getNetworkName } from '../lib/network';
 // The ONE holdings loader — shared with the send/swap screens. This component
 // once had its own private copy that hit Horizon with the raw (contract)
 // address and threw; keep the implementations unified or the dashboard and the
@@ -46,6 +48,14 @@ export function AssetsList({
 
   const [holdings, setHoldings] = useState<Holding[] | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const [showUnverified, setShowUnverified] = useState(false);
+
+  const verifiedHoldings = holdings?.filter(
+    (holding) => holding.native || verifiedAsset(holding.code, holding.issuer, getNetworkName()) !== null,
+  ) ?? [];
+  const unverifiedHoldings = holdings?.filter(
+    (holding) => !holding.native && verifiedAsset(holding.code, holding.issuer, getNetworkName()) === null,
+  ) ?? [];
 
   const load = useCallback(async () => {
     if (!address) {
@@ -110,27 +120,73 @@ export function AssetsList({
           {loadError ? "Couldn't load assets — pull to refresh." : 'No assets yet. Fund this wallet to get started.'}
         </Text>
       ) : (
-        holdings.map((h, i) => (
-          <Pressable
-            key={`${h.code}-${h.issuer ?? 'native'}`}
-            onPress={() => router.push(`/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`)}
-            accessibilityRole="button"
-            accessibilityLabel={`${h.name} details`}
-            style={({ pressed }) => [styles.row, i > 0 && styles.rowBorder, pressed && styles.pressed]}
-          >
-            <View style={styles.left}>
-              <TokenIcon code={h.code} size={38} />
-              <View>
-                <Text style={styles.name}>{h.name}</Text>
-                <Text style={styles.code}>{h.code}</Text>
+        <>
+          <Text style={styles.sectionHeading}>Verified</Text>
+          {verifiedHoldings.map((h, i) => (
+            <Pressable
+              key={`${h.code}-${h.issuer ?? 'native'}`}
+              onPress={() => router.push(`/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`${h.name} details`}
+              style={({ pressed }) => [styles.row, i > 0 && styles.rowBorder, pressed && styles.pressed]}
+            >
+              <View style={styles.left}>
+                <TokenIcon code={h.code} size={38} />
+                <View>
+                  <Text style={styles.name}>{h.name}</Text>
+                  <Text style={styles.code}>{h.code}</Text>
+                </View>
               </View>
-            </View>
-            <View style={styles.right}>
-              <Text style={styles.balance}>{mask(fmtAmount(h.balance))}</Text>
-              <Text style={styles.fiat}>{h.usd === null ? '—' : mask(format(h.usd))}</Text>
-            </View>
-          </Pressable>
-        ))
+              <View style={styles.right}>
+                <Text style={styles.balance}>{mask(fmtAmount(h.balance))}</Text>
+                <Text style={styles.fiat}>{h.usd === null ? '—' : mask(format(h.usd))}</Text>
+              </View>
+            </Pressable>
+          ))}
+          {unverifiedHoldings.length > 0 && (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showUnverified }}
+                onPress={() => setShowUnverified((visible) => !visible)}
+                style={styles.sectionToggle}
+              >
+                <Text style={styles.sectionHeading}>
+                  Unverified ({unverifiedHoldings.length}) {showUnverified ? '−' : '+'}
+                </Text>
+              </Pressable>
+              {showUnverified && unverifiedHoldings.map((h) => {
+                const registered = getRegisteredAsset(h.code, getNetworkName());
+                return (
+                  <Pressable
+                    key={`${h.code}-${h.issuer ?? 'native'}`}
+                    onPress={() => router.push(`/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${h.name} details`}
+                    style={({ pressed }) => [styles.row, styles.rowBorder, pressed && styles.pressed]}
+                  >
+                    <View style={styles.left}>
+                      <TokenIcon code={h.code} size={38} />
+                      <View>
+                        <Text style={styles.name}>{h.name}</Text>
+                        <Text style={styles.code}>{h.code}</Text>
+                        {registered &&
+                          h.issuer !== registered.issuer &&
+                          !isRegisteredIssuer(h.code, h.issuer ?? '', getNetworkName()) && (
+                            <Text style={styles.warning}>Impersonating {registered.issuerName}</Text>
+                          )}
+                      </View>
+                    </View>
+                    <View style={styles.right}>
+                      <Text style={styles.balance}>{mask(fmtAmount(h.balance))}</Text>
+                      <Text style={styles.fiat}>{h.usd === null ? '—' : mask(format(h.usd))}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </>
+          )}
+        </>
       )}
     </View>
   );
@@ -154,6 +210,26 @@ const createStyles = (colors: ThemeColors) =>
       letterSpacing: 1.4,
       textTransform: 'uppercase',
       paddingVertical: 4,
+    },
+    sectionHeading: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      paddingTop: 10,
+      paddingBottom: 4,
+    },
+    sectionToggle: {
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      marginTop: 4,
+    },
+    warning: {
+      color: colors.danger,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 10,
+      marginTop: 3,
     },
     empty: {
       color: colors.textMuted,

@@ -338,8 +338,8 @@ for (const [label, path] of [
   ['wallet', walletAssetsPath],
   ['mobile', mobileAssetsPath],
 ]) {
-  test(`every ${label} registry issuer is checksum-valid`, () => {
-    const assets = parseAssetRegistry(path);
+  test(`every ${label} non-native registry issuer is checksum-valid`, () => {
+    const assets = parseAssetRegistry(path).filter((asset) => asset.kind !== 'native');
     assert.ok(assets.length > 0, `${label} registry parsed as empty — the assertions below would pass vacuously`);
     for (const asset of assets) {
       assert.ok(

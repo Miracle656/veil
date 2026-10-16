@@ -147,6 +147,15 @@ describe('buildPortfolio — verified vs counterfeit assets', () => {
     expect(summary.lines.find((l) => l.code === 'USDC')!.verification).toBe('verified')
     expect(summary.lines.find((l) => l.code === 'USDY')!.verification).toBe('verified')
   })
+
+  it('keeps real and impostor USDY distinct and identifies the registered issuer', () => {
+    const counterfeit: WalletAsset = { code: 'USDY', issuer: FAKE_ISSUER, balance: '10' }
+    const summary = buildPortfolio([usdy, counterfeit], [], {}, NOW, { network: 'mainnet' })
+
+    expect(summary.lines.find((line) => line.issuer === USDY_ISSUER)?.verification).toBe('verified')
+    expect(summary.lines.find((line) => line.issuer === FAKE_ISSUER)?.verification).toBe('unverified')
+    expect(summary.lines).toHaveLength(2)
+  })
 })
 
 // ── buildPortfolio: totals match sum of parts ─────────────────────────────────

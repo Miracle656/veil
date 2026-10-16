@@ -3,7 +3,13 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
-import { formatAssetLabel, verifiedAsset, type HeldAsset } from '../lib/assets';
+import {
+  formatAssetLabel,
+  getRegisteredAsset,
+  isRegisteredIssuer,
+  verifiedAsset,
+  type HeldAsset,
+} from '../lib/assets';
 import { getNetworkName } from '../lib/network';
 import { truncateAddress } from './ui/AddressChip';
 
@@ -22,6 +28,12 @@ export function AssetRow({
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const registered = verifiedAsset(asset.code, asset.issuer, getNetworkName());
+  const registeredCode = getRegisteredAsset(asset.code, getNetworkName());
+  const impersonated = registeredCode &&
+    asset.issuer !== registeredCode.issuer &&
+    !isRegisteredIssuer(asset.code, asset.issuer, getNetworkName())
+    ? registeredCode
+    : null;
 
   return (
     <View style={styles.row}>
@@ -36,7 +48,9 @@ export function AssetRow({
         {registered ? (
           <Text style={styles.verified}>Issuer: {registered.issuerName}</Text>
         ) : (
-          <Text style={styles.unverified}>Unverified asset</Text>
+          <Text style={styles.unverified}>
+            {impersonated ? `Impersonating ${impersonated.issuerName}` : 'Unverified asset'}
+          </Text>
         )}
         <Text style={styles.issuer} numberOfLines={1}>
           {truncateAddress(asset.issuer, 6, 6)}
