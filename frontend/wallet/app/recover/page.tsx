@@ -253,7 +253,7 @@ export default function RecoverPage() {
   }
 
   return (
-    <div className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
+    <main className="wallet-shell" style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem', minHeight: '100dvh' }}>
       <div style={{ maxWidth: 400, width: '100%' }}>
 
         <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
@@ -397,6 +397,6 @@ export default function RecoverPage() {
           </div>
         )}
       </div>
-    </div>
+    </main>
   )
 }
