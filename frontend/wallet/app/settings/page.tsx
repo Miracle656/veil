@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
+import { TRUSTLINE_RESERVE_COST_XLM } from '@/lib/reserves'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { ensureWalletDeployed, getDeploymentState } from '@/lib/walletDeployment'
@@ -424,6 +425,25 @@ export default function SettingsPage() {
                 </div>
               </button>
 
+              {/* Trustlines & Reserves card */}
+              <button
+                className="card"
+                onClick={() => router.push('/assets')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Trustlines &amp; Reserves</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Manage enabled assets, view locked reserves ({TRUSTLINE_RESERVE_COST_XLM} XLM each), and reclaim reserves from empty trustlines
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
               {/* Fee Payer card */}
               <button
                 id="settings-fee-payer"
@@ -615,6 +635,25 @@ export default function SettingsPage() {
                 </button>
               ) : null}
 
+              {/* Bulk Payout */}
+              <button
+                className="card"
+                onClick={() => router.push('/bulk-payout')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Bulk Payout</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Pay many recipients from one CSV
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
               <button
                 className="card"
                 onClick={() => router.push('/vault')}
@@ -625,6 +664,25 @@ export default function SettingsPage() {
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>Time-Locked Vault</p>
                     <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
                       Protect long-term XLM with queued, cancellable withdrawals
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* About */}
+              <button
+                className="card"
+                onClick={() => router.push('/settings/about')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>About</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Build, network, and contract addresses
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>

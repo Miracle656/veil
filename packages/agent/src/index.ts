@@ -27,6 +27,15 @@ export {
   type AgentConfig,
   type AgentResult,
   type ChatOptions,
+  type InvestIntent,
+  type SwapIntent,
   type UserProfile,
   type VeilAgent,
 } from './agent.js'
+
+export {
+  ASSET_REGISTRY,
+  getRegisteredAsset,
+  isRegisteredIssuer,
+  type RegisteredAsset,
+} from './assets.js'

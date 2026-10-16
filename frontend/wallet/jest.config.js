@@ -33,6 +33,9 @@ const config = {
     '^@veil/backup$':   '<rootDir>/../../sdk/src/backup',
     '^@veil/sep7$':     '<rootDir>/../../sdk/src/sep7',
     '^@veil/prf$':      '<rootDir>/../../sdk/src/crypto/prf',
+    // The ONE dApp allow-list — mobile's module, imported by the web wallet
+    // (see dappParity.test.ts, which pins this mapping to the real file).
+    '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [

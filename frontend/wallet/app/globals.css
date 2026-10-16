@@ -19,6 +19,13 @@
   /* Surfaces */
   --surface:    rgba(255,255,255,0.03);
   --surface-md: rgba(255,255,255,0.06);
+  /* Opaque, unlike the two above, and that is the whole point. `--surface` is
+     3% white: it reads as a surface only when the page background is directly
+     behind it. Anything floating over a scrim — a modal, a sheet, a popover —
+     shows the page straight through it, which is exactly what the SEP-24
+     deposit sheet did. Lifted one step off `--near-black` so it still reads as
+     raised rather than as the page. */
+  --surface-raised: #1A1A1C;
   --border-dim: rgba(255,255,255,0.08);
 
   /* Animation */
@@ -35,6 +42,7 @@
   --off-white:  #1A1A1A;
   --surface:    rgba(0,0,0,0.03);
   --surface-md: rgba(0,0,0,0.06);
+  --surface-raised: #FFFFFF;
   --border-dim: rgba(0,0,0,0.10);
   --gold:       #C4A800;
   --teal:       #007A85;

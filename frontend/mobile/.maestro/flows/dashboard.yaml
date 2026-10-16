@@ -7,31 +7,29 @@ tags:
 # The first-run tutorial (backlog #27) is the mobile equivalent of the overlay
 # the web suite has to pre-seed past, and the dashboard is the only screen that
 # mounts it. This flow is where that skip is actually exercised rather than
-# silently no-op'd, and it covers the quick actions the dashboard routes through.
+# silently no-op'd, and it covers the two routes the balance card offers into
+# the critical paths.
 - runFlow: ../subflows/launch-fresh.yaml
 - runFlow: ../subflows/open-dashboard.yaml
 
-# Dismissed once, it stays dismissed: `veil_seen_tutorial` is persisted, so a
-# return visit must not put the overlay back in the way.
-- tapOn: "Send"
+# The balance card's Send and Receive buttons replace the old tab round-trip:
+# Send/Receive are full-screen push routes now, so the card is how a user
+# reaches them from the dashboard.
+- tapOn:
+    id: "dashboard-send"
 - assertVisible:
     id: "send-screen"
-- tapOn: "Dashboard"
+
+# Back lands on the dashboard, and the dismissed tutorial must stay dismissed:
+# `veil_seen_tutorial` is persisted, so a return visit must not put the overlay
+# back in the way.
+- back
 - assertVisible:
     id: "dashboard-screen"
 - assertNotVisible:
     id: "tutorial-overlay"
 
-# Quick actions are the dashboard's routes into the two critical paths.
-- assertVisible:
-    id: "quick-actions-grid"
 - tapOn:
-    id: "quick-action-send"
-- assertVisible:
-    id: "send-screen"
-
-- tapOn: "Dashboard"
-- tapOn:
-    id: "quick-action-receive"
+    id: "dashboard-receive"
 - assertVisible:
     id: "receive-screen"

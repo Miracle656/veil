@@ -1,0 +1,11 @@
+{
+  "name": "veil-spp-native",
+  "version": "0.1.0",
+  "description": "Veil's SPP native prover (Rust/uniffi via an Expo Android module)",
+  "main": "index.js",
+  "private": true,
+  "keywords": ["expo", "react-native", "uniffi", "rust"],
+  "expo": {
+    "platforms": ["android"]
+  }
+}

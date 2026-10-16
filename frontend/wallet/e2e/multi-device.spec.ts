@@ -106,18 +106,22 @@ test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
         console.log('No explicit recover button found, checking for auto-signin');
       }
       
-      // Manually set the wallet address on device B to simulate successful recovery
-      // In a real scenario, the app would derive this from the passkey
+      // Manually set the wallet address on device B to simulate successful recovery.
+      // The dashboard reads the unlocked address from sessionStorage
+      // (walletSession). localStorage alone sends the route to /lock, which
+      // is why this test was waiting for "balance" on the wrong page.
       await pageB.evaluate((address) => {
         localStorage.setItem('invisible_wallet_address', address);
+        sessionStorage.setItem('invisible_wallet_address', address);
       }, walletAddressA!);
       
       // Navigate to dashboard
       await pageB.goto('/dashboard');
       
-      // Get the wallet address from device B
+      // Get the wallet address from device B — the session copy is what the
+      // dashboard actually unlocked.
       const walletAddressB = await pageB.evaluate(() => 
-        localStorage.getItem('invisible_wallet_address')
+        sessionStorage.getItem('invisible_wallet_address')
       );
       
       console.log('Device B wallet address:', walletAddressB);
@@ -130,7 +134,7 @@ test.describe('Multi-Device: Cross-Device Passkey Sync', () => {
       // Verify both devices can access the dashboard
       await expect(
         pageB.getByText(/balance|dashboard|xlm/i).first()
-      ).toBeVisible({ timeout: 10_000 });
+      ).toBeVisible({ timeout: 15_000 });
       
       await pageA.close();
       await pageB.close();

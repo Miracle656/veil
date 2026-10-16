@@ -16,11 +16,15 @@ export default function Pay() {
     to?: string;
     amount?: string;
     asset?: string;
+    issuer?: string;
     memo?: string;
+    // SEP-7 memo kind (text/id/hash/return): the send flow validates the memo
+    // against it before submit (#704).
+    memo_type?: string;
   }>();
 
   const forwarded: Record<string, string> = {};
-  for (const key of ["to", "amount", "asset", "memo"] as const) {
+  for (const key of ["to", "amount", "asset", "issuer", "memo", "memo_type"] as const) {
     const value = params[key];
     if (typeof value === "string" && value) forwarded[key] = value;
   }

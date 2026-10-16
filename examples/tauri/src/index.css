@@ -167,6 +167,12 @@ button:disabled {
   color: #991b1b;
 }
 
+.alert.warning {
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+}
+
 .trace {
   display: grid;
   gap: 18px;

@@ -8,6 +8,7 @@ import {
   type Account,
   type Transaction,
 } from '@stellar/stellar-sdk'
+import { TRUSTLINE_RESERVE_COST_XLM } from './reserves'
 
 /**
  * Trustline management helpers (issue #343).
@@ -25,6 +26,8 @@ export interface HorizonBalanceLike {
   asset_issuer?: string
   balance: string
   limit?: string
+  buying_liabilities?: string
+  selling_liabilities?: string
 }
 
 export interface Trustline {
@@ -33,6 +36,8 @@ export interface Trustline {
   balance: string
   limit: string
   assetType: string
+  /** True when open DEX offers on this asset still hold liabilities against the line. */
+  hasOpenOffers?: boolean
 }
 
 export interface AnchorAsset {
@@ -42,6 +47,14 @@ export interface AnchorAsset {
 
 /** Setting a trustline limit to zero removes it (only allowed at zero balance). */
 export const REMOVE_TRUSTLINE_LIMIT = '0'
+
+/**
+ * Open offers on an asset show up as non-zero buying/selling liabilities on its
+ * balance line. Stellar refuses to remove a trustline while any remain.
+ */
+function hasOpenOffers(b: HorizonBalanceLike): boolean {
+  return Number(b.buying_liabilities ?? 0) > 0 || Number(b.selling_liabilities ?? 0) > 0
+}
 
 /** Extracts the classic (non-native, non-pool-share) trustlines from balances. */
 export function parseTrustlines(balances: HorizonBalanceLike[]): Trustline[] {
@@ -57,6 +70,7 @@ export function parseTrustlines(balances: HorizonBalanceLike[]): Trustline[] {
       balance: b.balance,
       limit: b.limit ?? REMOVE_TRUSTLINE_LIMIT,
       assetType: b.asset_type,
+      ...(hasOpenOffers(b) ? { hasOpenOffers: true } : {}),
     }))
 }
 
@@ -74,7 +88,24 @@ export function hasTrustline(
  * rejects a `changeTrust` to zero while the holder still owns the asset.
  */
 export function canRemoveTrustline(trustline: Trustline): boolean {
-  return Number(trustline.balance) === 0
+  return Number(trustline.balance) === 0 && !trustline.hasOpenOffers
+}
+
+/**
+ * Explains why a trustline removal is refused if the balance is non-zero.
+ */
+export function getRemovalRefusalReason(trustline: Trustline): string | null {
+  const bal = Number(trustline.balance)
+  if (!Number.isFinite(bal)) {
+    return `Cannot remove trustline for ${trustline.code}: its balance ("${trustline.balance}") could not be read. Refresh and try again.`
+  }
+  if (bal > 0) {
+    return `Cannot remove trustline for ${trustline.code}: balance is ${trustline.balance} (must be 0 to remove and reclaim ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve).`
+  }
+  if (trustline.hasOpenOffers) {
+    return `Cannot remove trustline for ${trustline.code}: you still have open offers on this asset. Cancel them first, then remove the trustline.`
+  }
+  return null
 }
 
 /**

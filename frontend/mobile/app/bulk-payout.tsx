@@ -12,27 +12,36 @@ import {
 } from 'react-native';
 
 import { ThemeToggle } from '../components/ThemeToggle';
+import { useWallet } from '../components/WalletProvider';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import {
-  executeBulkPayout,
+  batchProblems,
+  bulkView,
+  executeRowByRow,
   isRowValid,
   validateRow,
-  type BatchSubmitResult,
+  MAX_BATCH_ROWS,
   type PayoutRow,
+  type RowByRowResult,
 } from '../lib/bulkPayout';
+import { sendAssetFromContract } from '../lib/contractSpend';
+import { deployWalletIfNeeded } from '../lib/deployWallet';
+import { getWalletAddress } from '../lib/walletStore';
 
-type Step = 'form' | 'submitting' | 'done';
+type Step = 'form' | 'submitting' | 'done' | 'partial';
 
 export default function BulkPayoutScreen() {
   const { colors } = useTheme();
+  const { wallet } = useWallet();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [rows, setRows] = useState<PayoutRow[]>([]);
   const [recipient, setRecipient] = useState('');
   const [amount, setAmount] = useState('');
   const [asset, setAsset] = useState('XLM');
   const [step, setStep] = useState<Step>('form');
-  const [txHash, setTxHash] = useState<string | null>(null);
+  const [result, setResult] = useState<RowByRowResult | null>(null);
+  const [progress, setProgress] = useState(0);
 
   const addRow = () => {
     const row: PayoutRow = { recipient: recipient.trim(), amount: amount.trim(), asset: asset.trim() };
@@ -57,47 +66,88 @@ export default function BulkPayoutScreen() {
 
   const handleSignAndSubmit = async () => {
     if (rows.length === 0) return;
+    const problems = batchProblems(rows);
+    if (problems.length > 0) {
+      Alert.alert('Cannot send this batch', problems.join('\n'));
+      return;
+    }
     setStep('submitting');
+    setProgress(0);
     try {
-      // Single authorization covers the entire batch — one signature, one submission.
-      const submitBatch = async (batch: PayoutRow[]): Promise<BatchSubmitResult> => {
-        return {
-          txHash: `pending-${Date.now().toString(36)}`,
-          rowIndices: batch.map((_, i) => i),
-        };
-      };
-
-      const result = await executeBulkPayout(rows, submitBatch);
-      if (result.failedRows.length > 0) {
-        throw new Error('Batch submission failed');
+      const stored = await getWalletAddress().catch(() => null);
+      if (!stored?.startsWith('C')) {
+        throw new Error('No smart wallet on this device to pay from.');
       }
-      setTxHash(result.txHash);
-      setStep('done');
+      // The wallet contract must exist on-chain before __check_auth can run.
+      await deployWalletIfNeeded(wallet.deploy, stored);
+
+      // One signed, submitted and confirmed transaction per recipient: a
+      // Soroban transaction carries one invocation, so there is no single
+      // signature for the whole list yet (see lib/bulkPayout.ts).
+      const outcome = await executeRowByRow(
+        rows,
+        async (row, index) => {
+          setProgress(index + 1);
+          return sendAssetFromContract(stored, row.recipient, row.amount);
+        },
+        errorMessage,
+      );
+      setResult(outcome);
+      const view = bulkView(outcome, rows.length);
+      if (view === 'failed') {
+        // Nothing went through: stay on the form so the batch can be retried.
+        const first = outcome.outcomes.find((o) => o.status === 'failed');
+        Alert.alert('Payout failed', first && first.status === 'failed' ? first.error : 'No payment was submitted.');
+        setStep('form');
+        return;
+      }
+      setStep(view);
     } catch (e: unknown) {
-      const msg = errorMessage(e);
-      Alert.alert('Payout failed', msg);
+      Alert.alert('Payout failed', errorMessage(e));
       setStep('form');
     }
   };
 
   const reset = () => {
     setRows([]);
-    setTxHash(null);
+    setResult(null);
     setStep('form');
   };
 
-  if (step === 'done') {
+  if ((step === 'done' || step === 'partial') && result) {
+    const total = rows.length;
+    const failedRows = result.outcomes.filter((o) => o.status === 'failed');
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Payout submitted</Text>
+      <ScrollView contentContainerStyle={styles.container}>
+        <Text style={styles.title}>{step === 'done' ? 'Payout submitted' : 'Payout partly submitted'}</Text>
         <Text style={styles.subtitle}>
-          {rows.length} recipient{rows.length === 1 ? '' : 's'} paid in one signed batch.
+          {step === 'done'
+            ? `${total} payment${total === 1 ? '' : 's'} submitted, one signed transaction each.`
+            : `${result.submitted.length} of ${total} payments submitted. The rest did not go through and nothing was sent for them.`}
         </Text>
-        {txHash ? <Text style={styles.hash}>{txHash}</Text> : null}
+        {result.outcomes.map((o) => (
+          <View key={o.index} style={styles.list}>
+            <Text style={styles.listItemAddr} numberOfLines={1}>
+              {rows[o.index].recipient}
+            </Text>
+            <Text style={styles.listItemAmount}>
+              {rows[o.index].amount} {rows[o.index].asset}
+            </Text>
+            {o.status === 'submitted' ? <Text style={styles.hash}>{o.txHash}</Text> : null}
+            {o.status === 'failed' ? <Text style={styles.remove}>Failed: {o.error}</Text> : null}
+            {o.status === 'not_attempted' ? <Text style={styles.listItemAmount}>Not attempted</Text> : null}
+          </View>
+        ))}
+        {failedRows.length > 0 || result.notAttempted.length > 0 ? (
+          <Text style={styles.subtitle}>
+            Did not go through: row{result.failed.length + result.notAttempted.length === 1 ? '' : 's'}{' '}
+            {[...result.failed, ...result.notAttempted].map((i) => i + 1).sort((a, b) => a - b).join(', ')}.
+          </Text>
+        ) : null}
         <Pressable style={[styles.btn, styles.btnPrimary]} onPress={reset}>
           <Text style={styles.btnText}>Start new batch</Text>
         </Pressable>
-      </View>
+      </ScrollView>
     );
   }
 
@@ -107,7 +157,7 @@ export default function BulkPayoutScreen() {
         <Text style={styles.title}>Bulk payout</Text>
         <ThemeToggle />
       </View>
-      <Text style={styles.subtitle}>Add recipients, then sign once for the whole batch.</Text>
+      <Text style={styles.subtitle}>{`Add up to ${MAX_BATCH_ROWS} XLM recipients. Each payment is its own signed transaction, so you confirm with your passkey once per recipient.`}</Text>
 
       <View style={styles.form}>
         <TextInput
@@ -178,9 +228,12 @@ export default function BulkPayoutScreen() {
         disabled={rows.length === 0 || step === 'submitting'}
       >
         {step === 'submitting' ? (
-          <ActivityIndicator color={colors.onAccent} />
+          <>
+            <ActivityIndicator color={colors.onAccent} />
+            <Text style={styles.btnText}>{`Payment ${progress} of ${rows.length}`}</Text>
+          </>
         ) : (
-          <Text style={styles.btnText}>Sign once & submit batch</Text>
+          <Text style={styles.btnText}>Sign & submit payments</Text>
         )}
       </Pressable>
     </ScrollView>

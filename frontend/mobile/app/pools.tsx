@@ -38,9 +38,9 @@ const POOLS: Pool[] = [
     yourShares: 340,
   },
   {
-    id: 'usdc-eurc',
+    id: 'usdc-xlm-2',
     assetA: 'USDC',
-    assetB: 'EURC',
+    assetB: 'XLM',
     reserveA: 88000,
     reserveB: 81000,
     totalShares: 84000,

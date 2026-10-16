@@ -24,10 +24,12 @@ export function SlideToConfirm({
   label = 'Slide to confirm',
   onConfirm,
   disabled = false,
+  testID = 'slide-to-confirm',
 }: {
   label?: string;
   onConfirm: () => void;
   disabled?: boolean;
+  testID?: string;
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -78,6 +80,15 @@ export function SlideToConfirm({
     <View
       style={[styles.track, disabled && styles.trackDisabled]}
       onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+      // Exposed for the Maestro send flow, which asserts the CTA becomes
+      // actionable with a valid recipient + amount (#704). The outer View —
+      // not the thumb — is the stable target: it is present from the first
+      // layout and never unmounts.
+      testID={testID}
+      accessible={true}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      aria-disabled={disabled}
     >
       <Animated.Text style={[styles.label, { opacity: labelOpacity }]} numberOfLines={1}>
         {label}

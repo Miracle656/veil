@@ -33,7 +33,12 @@ export type SilverBalanceCardProps = {
   breakdown?: string | null;
   loading?: boolean;
   error?: boolean;
+  /** Reserved amount in XLM (locks base reserve and trustlines) */
+  reservedXlm?: number | null;
+  /** Explanation for why the amount is reserved */
+  reserveReason?: string | null;
 };
+
 
 /** Trim a raw balance string to at most 2 decimals for display. */
 function trimAmount(raw: string): string {
@@ -82,6 +87,8 @@ export function SilverBalanceCard({
   breakdown = null,
   loading,
   error,
+  reservedXlm = null,
+  reserveReason = null,
 }: SilverBalanceCardProps) {
   const router = useRouter();
   const { currency, format } = useCurrency();
@@ -109,10 +116,15 @@ export function SilverBalanceCard({
   // whenever it is known, and the XLM view moves to the back.
   const hasTotal = totalUsd !== null && totalUsd !== undefined;
 
+  const reserveNote =
+    reservedXlm !== undefined && reservedXlm !== null
+      ? `Reserved: ${reservedXlm.toFixed(1)} XLM (${reserveReason ?? 'account base reserve'})`
+      : null;
+
   // The whole card flips (Send/Receive included). Only the VISIBLE face is
   // interactive (pointerEvents + zIndex/elevation below): the turned-away face
   // is mirror-flipped and would otherwise steal taps / swap Send↔Receive.
-  const face = (label: string, big: string, sub: string) => (
+  const face = (label: string, big: string, sub: string, note?: string | null) => (
     <>
       <Metal />
       <View style={styles.headerRow}>
@@ -135,13 +147,18 @@ export function SilverBalanceCard({
           {mask(big)}
         </Text>
         <Text style={styles.sub}>{hidden ? '••••' : sub}</Text>
+        {note && !hidden && (
+          <Text style={styles.reserveNote} numberOfLines={1}>
+            {note}
+          </Text>
+        )}
       </Pressable>
       <View style={styles.actions}>
-        <Pressable onPress={() => router.push('/send')} accessibilityRole="button" accessibilityLabel="Send" style={({ pressed }) => [styles.sendBtn, pressed && styles.pressed]}>
+        <Pressable onPress={() => router.push('/send')} accessibilityRole="button" accessibilityLabel="Send" testID="dashboard-send" style={({ pressed }) => [styles.sendBtn, pressed && styles.pressed]}>
           <PaperPlaneIcon size={15} color="#FDDA24" />
           <Text style={styles.sendText}>Send</Text>
         </Pressable>
-        <Pressable onPress={() => router.push('/receive')} accessibilityRole="button" accessibilityLabel="Receive" style={({ pressed }) => [styles.receiveBtn, pressed && styles.pressed]}>
+        <Pressable onPress={() => router.push('/receive')} accessibilityRole="button" accessibilityLabel="Receive" testID="dashboard-receive" style={({ pressed }) => [styles.receiveBtn, pressed && styles.pressed]}>
           <ReceiveIcon size={15} color={INK} strokeWidth={2} />
           <Text style={styles.receiveText}>Receive</Text>
         </Pressable>
@@ -177,20 +194,21 @@ export function SilverBalanceCard({
         style={[styles.face, { zIndex: flipped ? 0 : 2, elevation: flipped ? 0 : 12, transform: [{ perspective: 1400 }, { rotateY: frontRotate }] }]}
       >
         {hasTotal
-          ? face('Total balance', format(totalUsd as number), breakdown ?? cryptoText)
-          : face('Total balance', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')}
+          ? face('Total balance', format(totalUsd as number), breakdown ?? cryptoText, reserveNote)
+          : face('Total balance', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet', reserveNote)}
       </Animated.View>
       <Animated.View
         pointerEvents={flipped ? 'auto' : 'none'}
         style={[styles.face, { zIndex: flipped ? 2 : 0, elevation: flipped ? 12 : 0, transform: [{ perspective: 1400 }, { rotateY: backRotate }] }]}
       >
         {hasTotal
-          ? face('XLM', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')
-          : face(`Balance · ${currency}`, fiatText, `≈ ${trimAmount(balance)} XLM`)}
+          ? face('XLM', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet', reserveNote)
+          : face(`Balance · ${currency}`, fiatText, `≈ ${trimAmount(balance)} XLM`, reserveNote)}
       </Animated.View>
     </View>
   );
 }
+
 
 const createStyles = () =>
   StyleSheet.create({
@@ -259,6 +277,12 @@ const createStyles = () =>
       fontFamily: fontFamily.address,
       fontSize: 12,
       marginTop: 12,
+    },
+    reserveNote: {
+      color: INK_60,
+      fontFamily: fontFamily.body,
+      fontSize: 10,
+      marginTop: 4,
     },
     earnChip: {
       backgroundColor: 'rgba(15,15,15,0.85)',

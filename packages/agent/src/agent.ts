@@ -7,8 +7,10 @@ import {
   type ToolSpec,
 } from './llm.js'
 import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
+import { StrKey } from '@stellar/stellar-sdk'
 
 // ── Agent configuration ──────────────────────────────────────────────────────
 
@@ -89,10 +91,39 @@ const tools: ToolSpec[] = [
     input_schema: {
       type: 'object' as const,
       properties: {
-        asset_a: { type: 'string', description: 'Asset to price: "XLM", "USDC" or "CODE:ISSUER"' },
-        asset_b: { type: 'string', description: 'Asset to price it in: "XLM", "USDC" or "CODE:ISSUER"' },
+        asset_a: { type: 'string', description: 'Asset to price: "XLM", "USDC", "USDY" or "CODE:ISSUER"' },
+        asset_b: { type: 'string', description: 'Asset to price it in: "XLM", "USDC", "USDY" or "CODE:ISSUER"' },
       },
       required: ['asset_a', 'asset_b'],
+    },
+  },
+  {
+    name: 'get_asset_info',
+    description:
+      'Look up an asset in Veil\'s verified registry (ASSET_REGISTRY): its verified issuer, metadata, and whether it can be frozen or clawed back. ' +
+      'ALWAYS call this for asset information questions like "What is USDY?" or "What is USDT0?". Pass "CODE", "code" or "CODE:ISSUER". Never answer asset issuer details from LLM memory.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        code: { type: 'string', description: 'Asset code, e.g. "USDY" or "USDC"' },
+        asset: { type: 'string', description: '"USDT0", "USDC" or "CODE:ISSUER"' },
+      },
+    },
+  },
+  {
+    name: 'open_invest',
+    description:
+      'Hand off a buy request or investment to the wallet\'s Invest/Earn section. ' +
+      'The agent must never construct or sign a transaction for buying invest assets.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        code: { type: 'string', description: 'Asset code to buy, e.g. "USDY"' },
+        asset_code: { type: 'string', description: 'Issued asset code, e.g. "USDY"' },
+        asset_issuer: { type: 'string', description: 'The asset issuer public key (G...)' },
+        amount: { type: 'string', description: 'Amount to buy, e.g. "50" (omit if not specified by user)' },
+        quoteCurrency: { type: 'string', description: 'Quote currency used to buy, e.g. "USDC"' },
+      },
     },
   },
   {
@@ -112,7 +143,10 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'get_wallet_balance',
-    description: 'Get current XLM and token balances for a wallet address. Free.',
+    description:
+      'Get current XLM and token balances for a wallet address. Free. ' +
+      'The result includes "holdings": every issued asset with its issuer and a status of verified, unverified or unlisted. ' +
+      'Always name the issuer when reporting an issued asset, and report "unverified" holdings as unverified.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -233,17 +267,23 @@ ${roleClause}
 You help users:
 - Check their balance and recent transfers
 - Get live prices
+- Explain assets such as USDT0 or USDY by their verified issuer
 - Set up swaps (opened in the Swap screen) and payments — the user always approves with their passkey
+- Learn about verified invest assets and route buy requests to the Invest/Earn section
 
 RULES:
 1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
 2. Before a payment executes, ALWAYS call request_user_approval — never skip this.
 3. Use get_price when the user asks about a price or wants to weigh a swap first.
-4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters.
+4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters. If price data is unavailable, state plainly that price data is currently unavailable — do NOT make up or estimate prices.
 5. Format amounts clearly: "500 XLM", "47.3 USDC".
 6. If you need a recipient address and the user hasn't provided one, ask before building.
 7. Keep responses concise. Use bullet points for multi-step flows.
-8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.`
+8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.
+9. For asset explanation queries ("What is USDY?"), ALWAYS call get_asset_info. Base your answer strictly on the returned registry data (issuer name, issuer address, home domain, asset kind). NEVER invent or rely on LLM memory for asset issuer details. Asset codes are not identities: several issuers publish the same code (eight publish USDT0). When reporting holdings, name the issuer and report "unverified" holdings as unverified.
+10. For holdings questions ("what do I hold", "how much USDY do I have"), call get_wallet_balance and report exact balances with verified registry labels.
+11. For buy requests ("buy 50 USDC of USDY"), call open_invest. NEVER construct or sign a transaction for asset purchases. State that you are routing to the Invest section but that the destination screen is being built, not that it will be pre-filled and ready. Your response MUST include the issuer address and a one-line risk disclosure (e.g. "USDY is issued by Ondo Finance — review the asset details on the next screen before confirming"). Do NOT give an opinion on whether to buy.
+12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.`
 }
 
 /**
@@ -276,12 +316,24 @@ export interface AgentResult {
    * payment reaches and has its own review, so the agent hands off to it.
    */
   swapIntent?: SwapIntent
+  /**
+   * A buy request for the app's Invest screen to open. The agent never builds or signs buy transactions.
+   */
+  investIntent?: InvestIntent
 }
 
 export interface SwapIntent {
   from: string
   to: string
   amount?: string
+}
+
+export interface InvestIntent {
+  code?: string
+  issuer?: string
+  amount?: string
+  quoteCurrency?: string
+  asset?: { code: string; issuer: string }
 }
 
 /** Assets the apps' Swap screens offer. */
@@ -304,6 +356,7 @@ export async function runAgent(
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
   let swapIntent: SwapIntent | undefined
+  let investIntent: InvestIntent | undefined
 
   const wraithUrl = urls?.wraithUrl ?? process.env.WRAITH_URL ?? ''
   const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
@@ -362,7 +415,62 @@ export async function runAgent(
   async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
       case 'get_price': {
-        return JSON.stringify(await getPrice(String(input.asset_a), String(input.asset_b)))
+        try {
+          return JSON.stringify(await getPrice(String(input.asset_a), String(input.asset_b)))
+        } catch (err) {
+          return JSON.stringify({ error: `Price data is currently unavailable for ${input.asset_a}.` })
+        }
+      }
+
+      case 'get_asset_info': {
+        const query = String(input.code ?? input.asset ?? '').trim()
+        if (query.includes(':') || query.toUpperCase() === 'USDT0') {
+          return JSON.stringify(describeAsset(query))
+        }
+        const asset = getRegisteredAsset(query)
+        if (!asset) {
+          return JSON.stringify(describeAsset(query))
+        }
+        return JSON.stringify(asset)
+      }
+
+      case 'open_invest': {
+        if (input.asset_code || input.asset_issuer) {
+          const code = String(input.asset_code ?? '').trim().toUpperCase()
+          const issuer = String(input.asset_issuer ?? '').trim()
+          const amount = String(input.amount ?? '').trim()
+          if (!/^[A-Z0-9]{1,12}$/.test(code) || !StrKey.isValidEd25519PublicKey(issuer)) {
+            return JSON.stringify({ error: 'asset_code and a valid asset_issuer are required.' })
+          }
+          if (amount && (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0)) {
+            return JSON.stringify({ error: 'amount must be a plain positive number with at most seven decimals.' })
+          }
+          investIntent = { asset: { code, issuer }, amount }
+          return JSON.stringify({ status: 'invest_screen_ready' })
+        }
+
+        const code = String(input.code ?? '').trim().toUpperCase()
+        const asset = getRegisteredAsset(code)
+        if (!asset) {
+          return JSON.stringify({ error: `Asset "${code}" is not in the verified asset registry.` })
+        }
+        if (asset.network !== 'all' && asset.network !== NETWORK) {
+          return JSON.stringify({ error: `Asset "${code}" is only supported on ${asset.network}.` })
+        }
+        const amount = input.amount === undefined ? undefined : String(input.amount).trim()
+        if (amount !== undefined && !/^\d+(\.\d{1,7})?$/.test(amount)) {
+          return JSON.stringify({ error: 'amount must be a plain number like "50" or "10.5"' })
+        }
+        const quoteCurrency = input.quoteCurrency ? String(input.quoteCurrency).trim().toUpperCase() : 'USDC'
+        investIntent = { code, issuer: asset.issuer, ...(amount ? { amount } : {}), quoteCurrency }
+        return JSON.stringify({
+          status: 'invest_screen_ready',
+          code,
+          issuer: asset.issuer,
+          issuerName: asset.issuerName,
+          amount,
+          quoteCurrency,
+        })
       }
 
       case 'get_transfer_history': {
@@ -390,7 +498,9 @@ export async function runAgent(
         const fpAddress = feePayerAddress ?? (input.address as string)
         const contractAddr = walletAddress?.startsWith('C') ? walletAddress : undefined
         const balances = await getBalances(fpAddress, contractAddr)
-        return JSON.stringify(balances)
+        // Keep the flat balances the model already sees, and add each issued
+        // asset classified by issuer. A code match alone is never "verified".
+        return JSON.stringify({ ...balances, holdings: classifyBalances(balances) })
       }
 
       case 'open_swap': {
@@ -447,6 +557,7 @@ export async function runAgent(
         pendingTxXdr,
         pendingTxSummary,
         swapIntent,
+        investIntent,
       }
     }
 
@@ -464,22 +575,27 @@ export async function runAgent(
     try {
       turn = await session.next()
     } catch (err) {
-      // The work is done — a swap to open or a payment to approve — and only the
+      // The work is done — a swap or invest to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
-      if (swapIntent || pendingTxXdr) {
+      if (swapIntent || investIntent || pendingTxXdr) {
         return {
-          response: swapIntent ? 'Your swap is ready in the Swap screen.' : 'Your transaction is ready to review.',
+          response: swapIntent
+            ? 'Your swap is ready in the Swap screen.'
+            : investIntent
+            ? 'Routing to the Invest section (destination screen under construction).'
+            : 'Your transaction is ready to review.',
           pendingTxXdr,
           pendingTxSummary,
           swapIntent,
+          investIntent,
         }
       }
       throw err
     }
   }
 
-  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent }
+  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent, investIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────
@@ -557,4 +673,4 @@ export function createVeilAgent(config: AgentConfig): VeilAgent {
       conversations.delete(walletAddress)
     },
   }
-}
+}
