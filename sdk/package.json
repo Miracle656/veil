@@ -36,6 +36,11 @@
     "./angular": {
       "types": "./dist/angular/index.d.ts",
       "default": "./dist/angular/index.js"
+    },
+    "./stellar-wallets-kit": {
+      "types": "./dist/stellarWalletsKit.d.ts",
+      "react-native": "./src/stellarWalletsKit.ts",
+      "default": "./dist/stellarWalletsKit.js"
     }
   },
   "files": [
