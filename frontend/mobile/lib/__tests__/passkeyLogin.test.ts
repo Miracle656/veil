@@ -40,8 +40,18 @@ jest.mock('../walletBreadcrumbs', () => ({
   readBreadcrumbs: jest.fn(),
   writeBreadcrumbs: (...a: unknown[]) => mockWriteBreadcrumbs(...a),
 }));
+const mockFetchContractOrigin = jest.fn<Promise<string | null>, [string, string | null]>(async () => null);
+jest.mock('../platformLimitation', () => {
+  const actual = jest.requireActual('../platformLimitation');
+  return {
+    ...actual,
+    fetchContractOrigin: (rpcUrl: string, address: string | null) =>
+      mockFetchContractOrigin(rpcUrl, address),
+  };
+});
 jest.mock('../network', () => ({
   getNetworkName: () => mockGetNetworkName(),
+  getNetwork: () => ({ rpcUrl: 'https://soroban-testnet.stellar.org' }),
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
@@ -227,6 +237,16 @@ describe('loginWithAddress — edge cases', () => {
     mockDiscoverWithPrf.mockResolvedValue(null);
 
     await expect(loginWithAddress(WALLET)).rejects.toThrow(/cancelled/);
+    expect(mockSetWalletAddress).not.toHaveBeenCalled();
+    expect(mockSetSignerSecret).not.toHaveBeenCalled();
+  });
+
+  it('rejects sign-in if the wallet was deployed on web', async () => {
+    mockReadSigners.mockResolvedValue([signerOf(REGISTERED)]);
+    mockDiscoverWithPrf.mockResolvedValue(assertionOf(REGISTERED));
+    mockFetchContractOrigin.mockResolvedValueOnce('https://app.useveilapp.xyz');
+
+    await expect(loginWithAddress(WALLET)).rejects.toThrow(/website/i);
     expect(mockSetWalletAddress).not.toHaveBeenCalled();
     expect(mockSetSignerSecret).not.toHaveBeenCalled();
   });

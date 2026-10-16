@@ -35,6 +35,12 @@ import { beginTx, endTx } from '@/lib/txState'
 import { fetchPrices } from '@/lib/fetchPrice'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { isPrivacyEnabled } from '@/lib/privacy/config'
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import {
+  FIRST_SPEND_LIMITATION_MESSAGE,
+  isFirstSpend,
+  markFirstSpendCompleted,
+} from '@/lib/platformLimitation'
 
 const network = getNetwork()
 
@@ -81,6 +87,8 @@ export default function SendPage() {
   const [recipient, setRecipient]     = useState('')
   const [amount, setAmount]           = useState('')
   const [memo, setMemo]               = useState('')
+  // TODO(#1003): remove platform limitation warning when multi-origin contract ships
+  const [isFirstSpendNotice, setIsFirstSpendNotice] = useState(false)
   /**
    * The exact asset a payment request asked for, held until the account's
    * balances load so it can be selected by `code:issuer` rather than lost when
@@ -139,6 +147,15 @@ export default function SendPage() {
     if (m) setMemo(m)
     if (m && mt) setMemoType(mt)
   }, [])
+  // TODO(#1003): remove platform limitation check when multi-origin contract ships
+  useEffect(() => {
+    if (step === 'confirm') {
+      const addr = walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('invisible_wallet_address')
+      if (addr) {
+        isFirstSpend(addr).then(setIsFirstSpendNotice).catch(() => {})
+      }
+    }
+  }, [step])
   const [txHash, setTxHash]           = useState<string | null>(null)
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
   const [showPicker, setShowPicker]   = useState(false)
@@ -434,6 +451,8 @@ export default function SendPage() {
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
         setTxHash(result.hash)
+        // TODO(#1003): remove platform limitation call when multi-origin contract ships
+        markFirstSpendCompleted(walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('invisible_wallet_address'))
       } else {
         const rpcServer     = new SorobanRpc.Server(network.rpcUrl)
         const feePayerAcct  = await rpcServer.getAccount(feePayerKp.publicKey())
@@ -475,6 +494,8 @@ export default function SendPage() {
           await new Promise(r => setTimeout(r, 1_000))
         }
         setTxHash(sendResult.hash)
+        // TODO(#1003): remove platform limitation call when multi-origin contract ships
+        markFirstSpendCompleted(walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('invisible_wallet_address'))
       }
 
       setStep('done')
@@ -850,6 +871,27 @@ export default function SendPage() {
                 <Row label="Auth"    value="Passkey (WebAuthn)" />
               </div>
             </div>
+            {/* TODO(#1003): remove platform limitation warning when multi-origin contract ships */}
+            {isFirstSpendNotice && (
+              <div
+                id="first-spend-limitation-notice"
+                role="note"
+                style={{
+                  fontSize: '0.8125rem',
+                  lineHeight: 1.5,
+                  color: 'var(--gold)',
+                  backgroundColor: 'rgba(212, 175, 55, 0.08)',
+                  border: '1px solid rgba(212, 175, 55, 0.25)',
+                  borderRadius: 10,
+                  padding: '0.75rem 1rem',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '0.5rem',
+                }}
+              >
+                <span>{FIRST_SPEND_LIMITATION_MESSAGE}</span>
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <button className="btn-gold" onClick={handleSend}>
                 Confirm &amp; sign
