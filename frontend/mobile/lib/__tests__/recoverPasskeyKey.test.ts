@@ -175,4 +175,16 @@ describe('recoverWalletFromAssertion', () => {
     mockAssert.mockResolvedValue(null);
     expect(await recoverWalletFromAssertion(sign(p256.utils.randomPrivateKey()))).toBeNull();
   });
+
+  it('refuses when an authenticator produces identical signatures (deterministic tie-break failure)', async () => {
+    const priv = p256.utils.randomPrivateKey();
+    const assertion = sign(priv, 'fixed-challenge');
+    // Simulate an authenticator that returns the exact same signature/assertion
+    mockAssert.mockResolvedValue(assertion);
+
+    const resolved = await recoverWalletFromAssertion(assertion);
+    expect(mockAssert).toHaveBeenCalledWith('credential-id');
+    // Intersection will contain all candidates (>= 2), so it safely refuses
+    expect(resolved).toBeNull();
+  });
 });
