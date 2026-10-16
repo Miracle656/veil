@@ -484,7 +484,14 @@ describe('useInvisibleWallet', () => {
     })
 
     it('returns a WebAuthnSignature when the assertion succeeds', async () => {
-      mockCredentialsGet.mockResolvedValueOnce(makeMockAssertionCredential())
+      const { webAuthnProvider } = require('../webauthn')
+      jest.mocked(webAuthnProvider.authenticate).mockResolvedValueOnce({
+        credentialId: 'bW9jay1jcmVkZW50aWFsLWlk',
+        authData: new Uint8Array(37),
+        clientDataJSON: new Uint8Array(64),
+        signature: new Uint8Array(64).fill(1),
+        publicKeyBytes: null,
+      })
 
       const { result } = renderHook(() => useInvisibleWallet(CONFIG))
       const payload = new Uint8Array(32).fill(9)
@@ -497,6 +504,40 @@ describe('useInvisibleWallet', () => {
       expect(sig!.authData).toBeInstanceOf(Uint8Array)
       expect(sig!.clientDataJSON).toBeInstanceOf(Uint8Array)
       expect(sig!.signature).toBeInstanceOf(Uint8Array)
+    })
+
+    it('lets the authenticator choose between the primary and locally saved additional signers', async () => {
+      const additionalCredentialId = 'c2Vjb25kYXJ5LWNyZWRlbnRpYWw';
+      localStorage.setItem('invisible_wallet_additional_signers', JSON.stringify({
+        version: 1,
+        credentials: [{
+          credentialId: additionalCredentialId,
+          publicKey: '22'.repeat(65),
+          status: 'active',
+          signerIndex: 1,
+        }],
+      }))
+      const { webAuthnProvider } = require('../webauthn')
+      jest.mocked(webAuthnProvider.authenticate).mockResolvedValueOnce({
+        credentialId: additionalCredentialId,
+        authData: new Uint8Array(37),
+        clientDataJSON: new Uint8Array(64),
+        signature: new Uint8Array(64).fill(1),
+        publicKeyBytes: null,
+      })
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+      await act(async () => {
+        await result.current.signAuthEntry(new Uint8Array(32).fill(9))
+      })
+
+      expect(webAuthnProvider.authenticate).toHaveBeenCalledWith(expect.objectContaining({
+        credentialIds: [
+          { id: 'bW9jay1jcmVkZW50aWFsLWlk', transports: undefined },
+          { id: additionalCredentialId },
+        ],
+      }))
+      expect(localStorage.getItem('invisible_wallet_key_id')).toBe('bW9jay1jcmVkZW50aWFsLWlk')
     })
 
     it('throws when the payload is not 32 bytes', async () => {

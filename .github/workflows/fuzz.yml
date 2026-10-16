@@ -5,6 +5,10 @@ on:
     - cron: '0 3 * * 1'  # Every Monday at 03:00 UTC
   workflow_dispatch:      # Allow manual trigger
 
+concurrency:
+  group: scheduled-failure-weekly-fuzz
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -13,9 +17,7 @@ jobs:
     name: cargo-fuzz (${{ matrix.target }})
     runs-on: ubuntu-latest
     permissions:
-      # Open issue on panic (github-script), failure path only.
       contents: read
-      issues: write
     strategy:
       fail-fast: false
       matrix:
@@ -47,15 +49,25 @@ jobs:
           name: fuzz-crashes-${{ matrix.target }}
           path: contracts/fuzz/artifacts/${{ matrix.target }}/
 
-      - name: Open issue on panic
-        if: failure()
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+  report:
+    name: Report scheduled fuzz result
+    needs: fuzz
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Create or update scheduled failure issue
+        uses: ./.github/actions/scheduled-failure-issue
         with:
-          script: |
-            github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `Fuzz panic: ${{ matrix.target }} — ${new Date().toISOString().slice(0,10)}`,
-              body: `cargo-fuzz target \`${{ matrix.target }}\` found a panic.\nSee the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for crash artifacts.`,
-              labels: ['bug', 'fuzz']
-            })
+          key: weekly-fuzz
+          status: ${{ needs.fuzz.result }}
+          title-prefix: Weekly cargo-fuzz run failed
+          labels: bug,fuzz
+          what-to-check: |
+            - Reproduce locally with the seed or corpus path shown in the log.
+            - Check for and preserve a new crash input in `contracts/fuzz/artifacts/`.
+            - Confirm whether the failure is deterministic and identify the affected target.

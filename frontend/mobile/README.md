@@ -364,6 +364,57 @@ Passkeys need platform association before they resolve on a device: an
 `assetlinks.json` on the domain for Android. `EXPO_PUBLIC_PASSKEY_RP_ID` must be
 the same relying-party id the wallet's passkey was registered against.
 
+### Adding a passkey signer
+
+Settings → Passkeys uses the SDK's `registerAdditionalSigner()` path, not
+`register()`. The new credential is recorded under the separate,
+versioned `invisible_wallet_additional_signers` key and authorized on the
+existing wallet contract. The primary credential ID, public key, and wallet
+address are guarded against writes during this operation; the flow does not
+write the fee-payer key. If submission status is uncertain, the saved credential
+stays pending and **Finish adding** checks the on-chain signer list before
+retrying, avoiding a duplicate signer.
+Existing installs are migrated lazily to an empty additional-signer registry;
+their legacy primary binding remains the primary signer.
+
+To verify this flow on testnet:
+
+1. Build/run the app as a native development build on both devices, with the
+   passkey RP domain associated on iOS/Android. Configure
+   `EXPO_PUBLIC_NETWORK=testnet`,
+   `EXPO_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org`, and the
+   same `EXPO_PUBLIC_PASSKEY_RP_ID` on both devices. Expo Go cannot run native
+   passkey ceremonies.
+2. On device A, create or restore a testnet wallet and make one spend so its
+   wallet contract is deployed. Record its `C...` wallet address and the
+   current fee-payer `G...` address.
+3. Open Settings → Passkeys, choose **Add a passkey**, and confirm the dialog
+   explicitly states that the credential is added to the existing wallet. Do
+   not use the wallet-creation or rotation flows for this test.
+4. Confirm the screen lists the new signer and the original wallet address and
+   fee-payer address are unchanged. The signer list is read with `get_signers`
+   from the wallet contract; independently inspect it with a Soroban RPC
+   `get_signers` simulation if desired.
+5. Make the new passkey available to device B using the platform passkey
+   provider's sync/sharing mechanism. On device B, choose **Sign in with wallet
+   address**, enter the recorded `C...` address, and authenticate with the new
+   passkey. Address sign-in verifies the assertion against the contract's signer
+   list before adopting that signer on device B.
+6. The fee payer on device B is derived from that passkey's PRF and is a
+   separate Stellar account. If it has no testnet XLM, fund its `G...` address
+   from Friendbot (`https://friendbot.stellar.org/?addr=<fee-payer-G-address>`)
+   or transfer testnet XLM from a funded test account. This does not change
+   device A's fee payer or the wallet contract address.
+7. Send a small testnet payment from the same wallet on device A, then another
+   from device B. Record each transaction hash and verify both are successful
+   on the Stellar testnet explorer/RPC. A successful signer-list read alone is
+   not proof that both devices can spend.
+
+No private-key environment variables are required. Keep passkey material and
+fee-payer secrets in the app's platform storage. The verification needs the
+public wallet `C...` address, the fee-payer `G...` address to fund on device B
+if needed, and a testnet recipient `G...` address.
+
 ## Deep linking
 
 Three URL families open the app, and all three resolve to the same in-app routes:
