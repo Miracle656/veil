@@ -264,6 +264,76 @@ async function signAuthEntry(payloadHash: Uint8Array): Promise<WebAuthnSignature
 }
 
 /**
+ * Build the payload the wallet contract's `__check_auth` expects and attach the
+ * resulting credential to one authorization entry, in place.
+ *
+ * This is the *only* place that composes a passkey signature vector. The
+ * transaction path and the standalone `signAuthEntry` path both call it, because
+ * a second implementation of the preimage is how a wallet ends up with a
+ * signature that verifies on one path and not the other.
+ *
+ * Returns false when the entry carries no address credential — a caller-supplied
+ * or contract-group credential is not ours to sign.
+ */
+async function attachPasskeyCredential(
+  entry: xdr.SorobanAuthorizationEntry,
+  options: {
+    rpc: SorobanRpc.Server;
+    networkPassphrase: string;
+    networkId: Uint8Array<ArrayBuffer>;
+    validUntilLedger: number;
+    probeSource: string;
+  }
+): Promise<boolean> {
+  const { rpc, networkPassphrase, networkId, validUntilLedger, probeSource } = options;
+  const credentials = entry.credentials();
+  if (credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+    return false;
+  }
+
+  const addressCredentials = credentials.address();
+  const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
+  const currentNonce = await getWalletNonce(rpc, contractAddress, networkPassphrase, probeSource);
+
+  const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+    new xdr.HashIdPreimageSorobanAuthorization({
+      networkId: Buffer.from(networkId),
+      nonce: addressCredentials.nonce(),
+      invocation: entry.rootInvocation(),
+      signatureExpirationLedger: validUntilLedger,
+    })
+  );
+  const payloadHash = await sha256(new Uint8Array(preimage.toXDR()));
+
+  const webAuthnSig = await signAuthEntry(payloadHash);
+  if (!webAuthnSig) {
+    throw new Error('USER_REJECTED');
+  }
+
+  const sigElements = [
+    nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
+    nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
+    nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
+    nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+  ];
+  if (currentNonce !== null) {
+    sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
+  }
+
+  entry.credentials(
+    xdr.SorobanCredentials.sorobanCredentialsAddress(
+      new xdr.SorobanAddressCredentials({
+        address: addressCredentials.address(),
+        nonce: addressCredentials.nonce(),
+        signatureExpirationLedger: validUntilLedger,
+        signature: xdr.ScVal.scvVec(sigElements),
+      })
+    )
+  );
+  return true;
+}
+
+/**
  * Sign a dApp-supplied transaction with the wallet passkey and the fee payer.
  *
  * Mirrors the browser wallet: simulate in recording mode, sign each Soroban
@@ -308,55 +378,16 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   const authEntries = successSim.result?.auth;
 
   if (authEntries) {
-    const networkIdBytes = await sha256(new TextEncoder().encode(network.networkPassphrase));
+    const networkId = await sha256(new TextEncoder().encode(network.networkPassphrase));
 
-    for (const parsed of authEntries) {
-      const credentials = parsed.credentials();
-      if (
-        credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
-      ) {
-        continue;
-      }
-
-      const addressCredentials = credentials.address();
-      const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
-      const currentNonce = await getWalletNonce(rpc, contractAddress, network.networkPassphrase, feePayerKeypair.publicKey());
-
-      const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
-        new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addressCredentials.nonce(),
-          invocation: parsed.rootInvocation(),
-          signatureExpirationLedger: validUntilLedger,
-        })
-      );
-      const payloadHash = await sha256(new Uint8Array(preimage.toXDR()));
-
-      const webAuthnSig = await signAuthEntry(payloadHash);
-      if (!webAuthnSig) {
-        throw new Error('USER_REJECTED');
-      }
-
-      const sigElements = [
-        nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
-        nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
-        nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
-        nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
-      ];
-      if (currentNonce !== null) {
-        sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
-      }
-
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
-          new xdr.SorobanAddressCredentials({
-            address: addressCredentials.address(),
-            nonce: addressCredentials.nonce(),
-            signatureExpirationLedger: validUntilLedger,
-            signature: xdr.ScVal.scvVec(sigElements),
-          })
-        )
-      );
+    for (const entry of authEntries) {
+      await attachPasskeyCredential(entry, {
+        rpc,
+        networkPassphrase: network.networkPassphrase,
+        networkId,
+        validUntilLedger,
+        probeSource: feePayerKeypair.publicKey(),
+      });
     }
   }
 
@@ -384,6 +415,53 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   const assembled = SorobanRpc.assembleTransaction(signedTx, enforceSim).build();
   assembled.sign(feePayerKeypair);
   return assembled.toXDR();
+}
+
+/**
+ * Sign one standalone Soroban authorization entry with the wallet passkey.
+ *
+ * SEP-43 `signAuthEntry` hands the wallet an entry rather than a transaction:
+ * the dApp has already simulated, already built the footprint, and wants only the
+ * credential filled in so it can assemble and submit the envelope itself. So
+ * there is no re-simulation and no fee-payer signature here — the entry goes back
+ * exactly as it arrived, with a signed credential attached.
+ *
+ * The credential is built by `attachPasskeyCredential`, the same code the
+ * transaction path uses, so a provider signature and a WalletConnect signature
+ * for the same payload are the same bytes. The caller (the dApp bridge) has
+ * already confirmed the entry names *this* wallet account; this function will
+ * happily sign any address credential it is given, which is why it is not the
+ * place for that check.
+ *
+ * @throws when the entry carries no address credential, when the passkey is
+ * unavailable, or when the user declines the prompt (`USER_REJECTED`).
+ */
+export async function signAuthEntryPayload(authEntryXdr: string): Promise<string> {
+  const network = getNetwork();
+  const rpc = getRpcServer();
+  const feePayerKeypair = await getFeePayerKeypair();
+
+  const entry = xdr.SorobanAuthorizationEntry.fromXDR(authEntryXdr, 'base64');
+
+  // Same rule as the transaction path: recording-mode entries arrive with
+  // expiration 0, and the host reads that as already expired. The value that
+  // goes into the preimage and the value attached to the credential must match.
+  const latestLedger = await rpc.getLatestLedger();
+  const validUntilLedger = latestLedger.sequence + 100;
+  const networkId = await sha256(new TextEncoder().encode(network.networkPassphrase));
+
+  const signed = await attachPasskeyCredential(entry, {
+    rpc,
+    networkPassphrase: network.networkPassphrase,
+    networkId,
+    validUntilLedger,
+    probeSource: feePayerKeypair.publicKey(),
+  });
+  if (!signed) {
+    throw new Error('This authorization entry has no wallet credential to sign.');
+  }
+
+  return entry.toXDR('base64');
 }
 
 async function signAndSubmitXdr(xdrString: string): Promise<string> {
