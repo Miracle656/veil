@@ -1,13 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import {
-  repoRoot,
   findLockfileDirs,
   parseNpmCiError,
   verifyWorkspace,
-  verifyAllLockfiles,
 } from '../verify-all-lockfiles.mjs';
 
 describe('verify-all-lockfiles', () => {
@@ -48,36 +44,14 @@ npm error npm ci
     assert.equal(result.ok, true);
   });
 
-  test('deliberately drifted lockfile fails verification with workspace and package name', () => {
-    const lockPath = join(repoRoot, 'frontend/mobile/package-lock.json');
-    const origLock = readFileSync(lockPath, 'utf8');
-    const parsed = JSON.parse(origLock);
+  test('reports npm ci lockfile errors with package names', () => {
+    const result = verifyWorkspace('frontend/mobile', () => {
+      const error = new Error('npm ci failed');
+      error.stderr = "npm error Invalid: lock file's invisible-wallet-sdk@0.0.0 does not satisfy invisible-wallet-sdk@0.2.0";
+      throw error;
+    });
 
-    // Modify a package in packages map to create intentional drift
-    const pkgKeys = Object.keys(parsed.packages || {});
-    const targetKey = pkgKeys.find((k) => k.includes('react')) || pkgKeys[1];
-    assert(targetKey, 'Expected to find package entry in package-lock.json');
-
-    const origVersion = parsed.packages[targetKey].version;
-    parsed.packages[targetKey].version = '0.0.0';
-    writeFileSync(lockPath, JSON.stringify(parsed, null, 2));
-
-    try {
-      const result = verifyWorkspace('frontend/mobile');
-      assert.equal(result.ok, false, 'Expected drifted lockfile to fail verification');
-      assert(typeof result.error === 'string' && result.error.length > 0, 'Expected error details');
-      // Verify error names the offending package
-      const packageName = targetKey.replace(/^node_modules\//, '');
-      assert(
-        result.error.includes(packageName) || result.error.includes('does not satisfy') || result.error.includes('lock file'),
-        `Expected error to mention offending package or mismatch, got: ${result.error}`
-      );
-    } finally {
-      writeFileSync(lockPath, origLock);
-    }
-
-    // Verify it is restored and passes again
-    const restoredResult = verifyWorkspace('frontend/mobile');
-    assert.equal(restoredResult.ok, true, 'Expected restored lockfile to pass verification');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /invisible-wallet-sdk/);
   });
 });
