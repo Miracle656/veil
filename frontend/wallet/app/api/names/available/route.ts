@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { globalNamesRegistry } from '@/lib/namesRegistry'
+import { getMasqueradeFigureForOrder } from '@/lib/masquerade'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -13,11 +14,20 @@ export async function GET(req: NextRequest) {
   }
 
   const result = globalNamesRegistry.checkAvailability(name)
+  const nextClaimOrder = globalNamesRegistry.getAllClaims().length + 1
+  const figureStatus = getMasqueradeFigureForOrder(nextClaimOrder)
 
   return NextResponse.json(
     {
       name,
       ...result,
+      price: '5 USDC',
+      priceUsdc: 5,
+      nextClaimOrder,
+      hasFigure: figureStatus.hasFigure,
+      figure: figureStatus.figure,
+      figureWarning: figureStatus.warning,
+      figureNote: figureStatus.note,
     },
     {
       status: 200,

@@ -8,6 +8,7 @@ import {
   PasskeyAlreadyClaimedError,
   InvalidSignatureError,
 } from '@/lib/namesRegistry'
+import { getMasqueradeFigureForOrder } from '@/lib/masquerade'
 
 export async function POST(req: NextRequest) {
   try {
@@ -39,6 +40,9 @@ export async function POST(req: NextRequest) {
       signature,
     })
 
+    const tokenIdNum = parseInt(record.tokenId, 10)
+    const figureStatus = getMasqueradeFigureForOrder(tokenIdNum)
+
     return NextResponse.json(
       {
         success: true,
@@ -49,6 +53,9 @@ export async function POST(req: NextRequest) {
           walletAddress: record.walletAddress,
           passkeyPublicKey: record.passkeyPublicKey,
           claimedAt: record.claimedAt,
+          hasFigure: figureStatus.hasFigure,
+          figure: figureStatus.figure,
+          figureWarning: figureStatus.warning,
         },
       },
       {

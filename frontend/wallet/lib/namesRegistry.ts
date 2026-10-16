@@ -398,8 +398,16 @@ export class NamesRegistry {
       throw new PasskeyAlreadyClaimedError(passkeyPublicKey)
     }
 
-    // Check if name or skeleton is already taken
-    if (this.names.has(normalized) || this.skeletons.has(skeleton)) {
+    // Idempotent recovery: if this exact name was already claimed with this paymentTxHash, return it
+    if (this.names.has(normalized)) {
+      const existing = this.names.get(normalized)
+      if (existing && paymentTxHash && existing.paymentTxHash === paymentTxHash.trim()) {
+        return existing
+      }
+      throw new NameAlreadyTakenError(normalized)
+    }
+
+    if (this.skeletons.has(skeleton)) {
       throw new NameAlreadyTakenError(normalized)
     }
 
