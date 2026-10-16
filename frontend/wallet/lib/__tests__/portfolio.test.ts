@@ -16,6 +16,7 @@ import type { BlendPosition } from '@/lib/blend'
 const USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
 const USDC_TESTNET_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 const USDY_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6'
+const ETHERFUSE_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC'
 const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
 // The registry constants these must match are pinned by registryParity.test.ts.
 const USDC_MAINNET_SAC = 'CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75'
@@ -44,6 +45,7 @@ describe('classifyAsset', () => {
     ['XLM',  null,              'cash'   as AssetKind],
     ['USDC', USDC_ISSUER,       'cash'   as AssetKind],
     ['USDY', USDY_ISSUER,       'invest' as AssetKind],
+    ['CETES', ETHERFUSE_ISSUER, 'invest' as AssetKind],
     // A code is not an asset: same code, wrong issuer is NOT cash.
     ['USDC', FAKE_ISSUER,       'invest' as AssetKind],
     // Issuerless non-native codes are not verified dollars either.

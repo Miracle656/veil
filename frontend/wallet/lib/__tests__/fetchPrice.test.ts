@@ -85,6 +85,21 @@ describe('falls back to the SDEX order book when Lens is unavailable', () => {
     expect(spy.mock.calls.some(([u]) => String(u).includes('/order_book'))).toBe(true)
   })
 
+  it.each(['CETES', 'USTRY', 'TESOURO'])('queries %s as credit_alphanum12', async (code) => {
+    const issuer = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC'
+    const spy = jest.fn(async (url: unknown) =>
+      String(url).includes('/order_book')
+        ? (book('1.0', '1.1') as never)
+        : ({ ok: false, status: 503 } as never),
+    )
+    global.fetch = spy as unknown as typeof fetch
+
+    await expect(fetchPrice(code, issuer)).resolves.toBeCloseTo(1.05, 6)
+    expect(spy.mock.calls.find(([url]) => String(url).includes('/order_book'))?.[0]).toEqual(
+      expect.stringContaining(`selling_asset_type=credit_alphanum12&selling_asset_code=${code}`),
+    )
+  })
+
   it('falls back when Lens throws rather than answers', async () => {
     const spy = jest.fn(async (url: unknown) => {
       if (String(url).includes('/order_book')) return book('1.0', '1.1') as never
