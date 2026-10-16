@@ -58,6 +58,8 @@ export interface WebAuthnCreateResult {
 }
 
 export interface WebAuthnAssertResult {
+    /** Base64url credential ID selected by the authenticator. */
+    credentialId: string;
     /** Raw authenticatorData bytes from the assertion response. */
     authData: Uint8Array;
     /** Raw clientDataJSON bytes. */
@@ -99,7 +101,8 @@ export interface WebAuthnProvider {
 
     authenticate(options: {
         challenge: ArrayBuffer;
-        credentialId: string;
+        credentialId?: string;
+        credentialIds?: { id: string; transports?: string[] }[];
         rpId?: string;
         /**
          * Transport hints persisted with the credential. Forwarded to
@@ -177,20 +180,30 @@ export const webAuthnProvider: WebAuthnProvider = {
         };
     },
 
-    async authenticate({ challenge, credentialId, rpId, transports }) {
-        const credId = b64urlToUint8Array(credentialId);
-        const credIdBuf = credId.buffer.slice(
-            credId.byteOffset, credId.byteOffset + credId.byteLength
-        ) as ArrayBuffer;
+    async authenticate({ challenge, credentialId, credentialIds, rpId, transports }) {
+        const allowedCredentials = credentialIds ?? (credentialId ? [{ id: credentialId, transports }] : []);
 
         const assertion = await navigator.credentials.get({
             publicKey: {
                 challenge,
-                allowCredentials: [{
-                    id: credIdBuf,
-                    type: 'public-key',
-                    ...(transports && transports.length ? { transports: transports as AuthenticatorTransport[] } : {}),
-                }],
+                ...(allowedCredentials.length
+                    ? {
+                        allowCredentials: allowedCredentials.map((credential) => {
+                            const credId = b64urlToUint8Array(credential.id);
+                            const credIdBuf = credId.buffer.slice(
+                                credId.byteOffset,
+                                credId.byteOffset + credId.byteLength,
+                            ) as ArrayBuffer;
+                            return {
+                                id: credIdBuf,
+                                type: 'public-key' as const,
+                                ...(credential.transports?.length
+                                    ? { transports: credential.transports as AuthenticatorTransport[] }
+                                    : {}),
+                            };
+                        }),
+                    }
+                    : {}),
                 userVerification: 'required',
                 ...(rpId ? { rpId } : {}),
             },
@@ -226,6 +239,7 @@ export const webAuthnProvider: WebAuthnProvider = {
         }
 
         return {
+            credentialId: assertion.id,
             authData:       new Uint8Array(response.authenticatorData),
             clientDataJSON: new Uint8Array(response.clientDataJSON),
             signature:      derToRawSignature(response.signature),

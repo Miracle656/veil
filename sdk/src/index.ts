@@ -64,6 +64,6 @@ export * from './fees';
 export * from './reserves';
 export * from './deriveFeePayer';
 export * from './feePayer';
-export * from './walletStorage';
-
+export { createNamespacedStorage, clearNetworkWalletKeys } from './walletStorage';
+export type { AdditionalSignerCredential } from './walletStorage';
 

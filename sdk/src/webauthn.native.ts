@@ -66,6 +66,7 @@ type PasskeyCreateResponse = {
 };
 
 type PasskeyAuthResponse = {
+  id: string;
   response: {
     signature: string;
     authenticatorData: string;
@@ -183,16 +184,21 @@ export const webAuthnProvider: WebAuthnProvider = {
         };
     },
 
-    async authenticate({ challenge, credentialId, rpId, transports }): Promise<WebAuthnAssertResult> {
+    async authenticate({ challenge, credentialId, credentialIds, rpId, transports }): Promise<WebAuthnAssertResult> {
         const challengeArr = new Uint8Array(challenge);
+        const allowedCredentials = credentialIds ?? (credentialId ? [{ id: credentialId, transports }] : []);
 
         const result = await passkey().authenticate({
             challenge:         uint8ArrayToB64url(challengeArr),
-            allowCredentials:  [{
-                id: credentialId,
-                type: 'public-key',
-                ...(transports && transports.length ? { transports } : {}),
-            }],
+            ...(allowedCredentials.length
+                ? {
+                    allowCredentials: allowedCredentials.map(({ id, transports: credentialTransports }) => ({
+                        id,
+                        type: 'public-key',
+                        ...(credentialTransports?.length ? { transports: credentialTransports } : {}),
+                    })),
+                }
+                : {}),
             userVerification:  'required',
             ...(rpId ? { rpId } : {}),
         });
@@ -202,6 +208,7 @@ export const webAuthnProvider: WebAuthnProvider = {
         const derSig = b64urlToUint8Array(result.response.signature);
 
         return {
+            credentialId: result.id,
             authData:       b64urlToUint8Array(result.response.authenticatorData),
             clientDataJSON: b64urlToUint8Array(result.response.clientDataJSON),
             signature:      derToRawSignature(derSig.buffer as ArrayBuffer),

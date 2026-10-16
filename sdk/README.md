@@ -236,6 +236,22 @@ refuses the operation: the SDK call rejects with its error and nothing is
 submitted. The SDK also rejects a signer that returns an envelope for a
 different transaction, or one with no added signature.
 
+`registerAdditionalSigner(feePayer, walletAddress, username?)` creates a new
+WebAuthn credential through a dedicated add-signer path and registers its public
+key on the existing wallet. It writes only to the versioned
+`invisible_wallet_additional_signers` registry; the primary credential ID,
+public key, and wallet address are guarded against writes for the duration of
+the flow. `getAdditionalSignerCredentials()` reads that local registry and
+migrates legacy installs by creating an empty v1 registry while leaving the
+existing primary keys untouched. `signAuthEntry()` offers the authenticator the
+primary and active additional credentials so locally available signers can
+authorize transactions. `retryAdditionalSigner(feePayer, walletAddress,
+credentialId)` safely resumes an interrupted enrollment: it reads the on-chain
+signer set first and adds the public key only if it is not already present.
+
+Soroban authorization vectors use the contract's five-element WebAuthn format:
+`[public_key, auth_data, client_data_json, signature, nonce]`.
+
 ### Migrating from a secret or Keypair
 
 Passing a secret string or a `Keypair` still works but is **deprecated**: it

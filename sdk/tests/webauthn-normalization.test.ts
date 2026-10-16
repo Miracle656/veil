@@ -131,9 +131,9 @@ function makeMockRegistrationCredential(id: string) {
   };
 }
 
-function makeMockAssertionCredential() {
+function makeMockAssertionCredential(id: string) {
   return {
-    id:   'mock-id',
+    id,
     type: 'public-key',
     response: {
       authenticatorData: new ArrayBuffer(37),
@@ -194,7 +194,9 @@ describe('WebAuthn unicode normalization tests', () => {
     expect(userIdNFC).toEqual(userIdNFD);
 
     // Confirm signing works after registration
-    mockCredentialsGet.mockResolvedValueOnce(makeMockAssertionCredential());
+    mockCredentialsGet.mockResolvedValueOnce(
+      makeMockAssertionCredential('deterministic-mock-credential-id'),
+    );
     const payload = new Uint8Array(32).fill(9);
 
     let sig: any;

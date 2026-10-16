@@ -7,6 +7,10 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch: {}   # allow manual trigger for debugging
 
+concurrency:
+  group: scheduled-failure-nightly-smoke
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -15,9 +19,7 @@ jobs:
     name: Stellar testnet — deploy wallet, fund, send, verify
     runs-on: ubuntu-latest
     permissions:
-      # Open GitHub issue on failure (github-script).
       contents: read
-      issues: write
     # Skip on dependabot branches so dependency PRs don't trigger a burner-key spend
     if: ${{ !startsWith(github.head_ref, 'dependabot/') }}
 
@@ -234,46 +236,26 @@ jobs:
               "text": ":red_circle: *Veil testnet smoke test FAILED* — <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run>"
             }'
 
-      # Option B — Open a GitHub issue on failure (always available, no extra secret).
-      - name: Open GitHub issue on failure
-        if: failure()
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+  report:
+    name: Report scheduled smoke-test result
+    needs: testnet-smoke
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Create or update scheduled failure issue
+        uses: ./.github/actions/scheduled-failure-issue
         with:
-          script: |
-            const title = `Nightly testnet smoke test failed — ${new Date().toISOString().slice(0, 10)}`;
-            const body = [
-              '## Nightly testnet smoke test failure',
-              '',
-              `**Run:** https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-              '',
-              'The nightly Stellar testnet smoke test failed.',
-              'Steps: fund burner wallet via Friendbot → send 1 XLM → verify Horizon balance.',
-              '',
-              '**Triage checklist:**',
-              '- [ ] Is Friendbot healthy? <https://friendbot.stellar.org>',
-              '- [ ] Is Horizon testnet healthy? <https://horizon-testnet.stellar.org>',
-              '- [ ] Is the Soroban RPC healthy? <https://soroban-testnet.stellar.org>',
-              '- [ ] Any recent changes to stellar-sdk version?',
-            ].join('\n');
-
-            // Avoid duplicate issues for the same day.
-            const today = new Date().toISOString().slice(0, 10);
-            const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'testnet-smoke-failure',
-            });
-            const alreadyOpen = existing.data.some((i) => i.title.includes(today));
-            if (alreadyOpen) {
-              console.log('Issue for today already exists — skipping.');
-              return;
-            }
-
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body,
-              labels: ['testnet-smoke-failure', 'ci'],
-            });
+          key: nightly-smoke
+          status: ${{ needs.testnet-smoke.result }}
+          title-prefix: Nightly testnet smoke test failed
+          labels: testnet-smoke-failure,ci
+          what-to-check: |
+            - Check testnet Soroban RPC and Horizon availability.
+            - Confirm Friendbot and the funded test accounts are available.
+            - Check for recent testnet network resets or service incidents.
+            - Review recent dependency changes, especially `@stellar/stellar-sdk`.
