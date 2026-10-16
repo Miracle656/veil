@@ -23,6 +23,7 @@ import {
   type SwapAsset,
 } from '@/lib/swapAssets'
 import { getAssetIssuer } from '@/lib/assets'
+import { fetchPlatformFee } from '@/lib/platformFee'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -353,6 +354,15 @@ export default function SwapPage() {
       }
 
       // ── Classic SDEX fallback ──
+      //
+      // Classic SDEX swaps can carry multiple classic operations in the same
+      // transaction, so a platform fee payment is added alongside the swap.
+      //
+      // In contrast, Soroswap swaps above execute as a Soroban contract invocation.
+      // A Stellar transaction may carry at most ONE Soroban operation, and cannot
+      // combine a contract invocation with classic payment operations. Thus,
+      // Soroswap swaps cannot carry a platform fee without a second transaction
+      // and second signature ceremony; they remain unfeeable by design.
       const account = await server.loadAccount(signerPubKey)
       const source = classicAsset(route.from)
       const dest = classicAsset(route.to)
@@ -375,18 +385,44 @@ export default function SwapPage() {
         txBuilder.addOperation(Operation.changeTrust({ asset: dest }))
       }
 
-      txBuilder
-        .addOperation(
-          Operation.pathPaymentStrictSend({
-            sendAsset: source,
-            sendAmount: sourceAmount,
-            destination: signerPubKey,
-            destAsset: dest,
-            destMin,
-            path,
-          })
+      txBuilder.addOperation(
+        Operation.pathPaymentStrictSend({
+          sendAsset: source,
+          sendAmount: sourceAmount,
+          destination: signerPubKey,
+          destAsset: dest,
+          destMin,
+          path,
+        })
+      )
+
+      // Affordability is checked before the fee op is added. A fee the user
+      // did not ask for must never cause a swap to fail.
+      const feeAsset = route.from.issuer ? route.from.code : 'XLM'
+      const platformFee = await fetchPlatformFee(feeAsset, Number(sourceAmount))
+      if (platformFee) {
+        const held = account.balances.find((b: any) =>
+          platformFee.assetIssuer === null
+            ? b.asset_type === 'native'
+            : b.asset_code === platformFee.assetCode && b.asset_issuer === platformFee.assetIssuer
         )
-        .setTimeout(30)
+        const available = platformFee.assetIssuer === null
+          ? Number(spendableNativeXlm(account))
+          : held ? Number(held.balance) : 0
+        if (available >= Number(sourceAmount) + Number(platformFee.amount)) {
+          txBuilder.addOperation(
+            Operation.payment({
+              destination: platformFee.destination,
+              asset: platformFee.assetIssuer
+                ? new Asset(platformFee.assetCode, platformFee.assetIssuer)
+                : Asset.native(),
+              amount: platformFee.amount,
+            })
+          )
+        }
+      }
+
+      txBuilder.setTimeout(30)
 
       const tx = txBuilder.build()
       tx.sign(signerKeypair)
