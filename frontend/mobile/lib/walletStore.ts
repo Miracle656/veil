@@ -122,6 +122,7 @@ export const SDK_KEYS = [
   'invisible_wallet_public_key',
   'invisible_wallet_address',
   'invisible_wallet_user_id',
+  'invisible_wallet_additional_signers',
 ] as const;
 
 /**

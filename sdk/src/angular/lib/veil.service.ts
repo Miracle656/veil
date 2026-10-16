@@ -103,6 +103,9 @@ export class VeilService implements OnDestroy {
     readonly login = this.core.actions.login;
     readonly getNonce = this.core.actions.getNonce;
     readonly addSigner = this.core.actions.addSigner;
+    readonly registerAdditionalSigner = this.core.actions.registerAdditionalSigner;
+    readonly retryAdditionalSigner = this.core.actions.retryAdditionalSigner;
+    readonly getAdditionalSignerCredentials = this.core.actions.getAdditionalSignerCredentials;
     readonly removeSigner = this.core.actions.removeSigner;
     readonly rotateSigner = this.core.actions.rotateSigner;
     readonly getSigners = this.core.actions.getSigners;
