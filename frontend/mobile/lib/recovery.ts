@@ -212,7 +212,8 @@ export async function collectRecoverySignatures(
 
 // ── Server configuration ──────────────────────────────────────────────────────
 
-const RECOVERY_SERVERS_KEY = 'veil_recovery_servers';
+/** AsyncStorage key holding the remembered SEP-30 server list. Wallet-derived: cleared on reset. */
+export const RECOVERY_SERVERS_KEY = 'veil_recovery_servers';
 
 /**
  * Parse a configured server list.
@@ -606,7 +607,8 @@ export async function submitRecoveryTransaction(
 
 // ── Pending recovery, across app launches ─────────────────────────────────────
 
-const PENDING_RECOVERY_KEY = 'veil_pending_recovery_v1';
+/** AsyncStorage key holding a recovery waiting out its timelock. Wallet-derived: cleared on reset. */
+export const PENDING_RECOVERY_KEY = 'veil_pending_recovery_v1';
 
 /**
  * A recovery waiting out the contract's timelock.

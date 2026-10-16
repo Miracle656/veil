@@ -123,6 +123,20 @@ export default function App() {
           </div>
         </header>
 
+        <div style={{
+          background: 'rgba(245, 158, 11, 0.12)',
+          border: '1px solid rgba(245, 158, 11, 0.4)',
+          borderRadius: 12,
+          padding: '0.875rem 1rem',
+          marginBottom: '1.5rem',
+          fontSize: '0.8rem',
+          lineHeight: 1.5,
+          color: '#fef3c7',
+        }}>
+          <strong style={{ color: '#fbbf24' }}>⚠️ Demonstration only — not production-safe:</strong>{' '}
+          This demo generates extractable WebCrypto keys and stores raw PKCS#8 private keys in browser <code>localStorage</code>. Production mobile apps must use hardware-backed keystores (Android Keystore / iOS Keychain / Secure Enclave).
+        </div>
+
         <main style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {step === 'register' && (
             <div style={{

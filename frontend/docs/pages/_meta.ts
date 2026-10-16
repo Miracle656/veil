@@ -16,8 +16,10 @@ export default {
   invest: 'Invest Rail & Disclosures',
   cookbook: 'Cookbook',
   'agent-integration': 'Agent Integration',
+  voice: 'Voice & Assistants',
   security: 'Security',
   'threat-model': 'Threat Model',
+  privacy: 'What "Private" Means',
   papers: {
     title: 'Research',
     type: 'separator',

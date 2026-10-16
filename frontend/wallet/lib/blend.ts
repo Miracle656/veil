@@ -23,14 +23,46 @@ const blendNetwork: Network = {
   passphrase: net.networkPassphrase,
 }
 
+/**
+ * Blend pool ids per network, as `frontend/mobile/lib/blend.ts` already has them.
+ *
+ * A pool is a contract, and a contract id on one network means nothing on the
+ * other — so there is no single correct value for `NEXT_PUBLIC_BLEND_POOL_IDS`,
+ * which is all this module read. With it unset the list was empty and Earn said
+ * "Coming soon. No Blend pools available on this network" on mainnet, where the
+ * pool has been live all along. The mobile app shipped the mainnet id as a
+ * default for exactly this reason and the web copy never got it.
+ *
+ * Testnet is deliberately empty: Blend has no testnet deployment, so "no pools"
+ * is the truth there rather than a configuration gap.
+ */
+const DEFAULT_POOL_IDS: Record<'mainnet' | 'testnet', string> = {
+  mainnet: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
+  testnet: '',
+}
+
 function configuredPoolIds(): string[] {
-  const ids = (process.env.NEXT_PUBLIC_BLEND_POOL_IDS || '')
+  const name = getNetwork().name
+  // Per-network first, then the shared variable, then the built-in default.
+  // Next.js inlines NEXT_PUBLIC_* at build time and only when referenced
+  // literally, so these cannot be composed as `NEXT_PUBLIC_..._${suffix}`.
+  const perNetwork =
+    name === 'mainnet'
+      ? process.env.NEXT_PUBLIC_BLEND_POOL_IDS_MAINNET
+      : process.env.NEXT_PUBLIC_BLEND_POOL_IDS_TESTNET
+
+  const configured =
+    perNetwork?.trim() ||
+    process.env.NEXT_PUBLIC_BLEND_POOL_IDS?.trim() ||
+    DEFAULT_POOL_IDS[name === 'mainnet' ? 'mainnet' : 'testnet']
+
+  const ids = configured
     .split(',')
     .map((v) => v.trim())
     .filter(Boolean)
 
   if (ids.length === 0) {
-    console.warn('[blend] NEXT_PUBLIC_BLEND_POOL_IDS is not configured')
+    console.warn(`[blend] no pools configured for ${name}`)
   }
 
   return ids
@@ -46,7 +78,15 @@ export interface BlendPool {
 
 export interface BlendPosition {
   poolId: string
+  /** Soroban contract ID of the underlying reserve asset. */
   asset: string
+  /**
+   * Reserve token code from the pool metadata (e.g. "USDC"), when known.
+   * A code alone does not identify the asset — pair it with the issuer (or
+   * resolve the contract ID against the verified registry) before treating
+   * it as a specific token.
+   */
+  assetCode?: string
   deposited: string
   bTokenBalance: string
   accruedInterest: string
@@ -100,7 +140,7 @@ export async function loadBlendPositions(userAddress: string): Promise<BlendPosi
         const user = await pool.loadUser(userAddress)
 
         return [...pool.reserves.values()]
-          .map((reserve) => {
+          .map((reserve): BlendPosition | null => {
             const bTokenBalance = user.getSupplyBTokens(reserve)
             if (bTokenBalance <= 0n) return null
 
@@ -110,6 +150,10 @@ export async function loadBlendPositions(userAddress: string): Promise<BlendPosi
             return {
               poolId,
               asset: reserve.assetId,
+              // Reserve list order from the pool metadata, not a price signal:
+              // the portfolio matches the contract ID against the verified
+              // registry before it ever names the token.
+              assetCode: pool.metadata.reserveList[reserve.config.index],
               deposited: deposited.toString(),
               bTokenBalance: bTokenBalance.toString(),
               accruedInterest: accruedInterest.toString(),

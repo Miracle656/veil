@@ -97,14 +97,15 @@ export default function FeePayerSettingsPage() {
             <AlertTriangle size={18} color="rgba(220,38,38,0.9)" strokeWidth={1.75} style={{ flexShrink: 0, marginTop: '0.125rem' }} />
             <div>
               <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'rgba(220,38,38,0.9)', marginBottom: '0.25rem' }}>
-                PRF was requested but is unavailable on this device
+                This device uses the older gas-account derivation
               </p>
               <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
-                This wallet fell back to the legacy fee payer because this authenticator did not
-                produce a WebAuthn PRF result{diagnostics?.prfError ? ` (${diagnostics.prfError})` : ''}.
-                The same passkey will derive a <em>different</em> fee payer on a PRF-capable device,
-                which can look like a different wallet there. Copy the diagnostics below if you need
-                to report this.
+                This authenticator produced no WebAuthn PRF result{diagnostics?.prfError ? ` (${diagnostics.prfError})` : ''},
+                so the older credential-id derivation was used instead. Your wallet address does not
+                depend on this &mdash; it comes from the passkey&apos;s own public key.
+                A PRF-capable device derives this same account as well as the preferred ones, probes
+                which actually exists on chain, and takes that one, so a funded account here is
+                still yours there. The candidates below show exactly what was tried.
               </p>
             </div>
           </div>

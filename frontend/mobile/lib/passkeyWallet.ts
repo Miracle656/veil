@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { recordFeePayerSource } from './feePayerSource';
 import { getNetwork } from './network';
 import { evaluatePrf } from './passkey';
 import type { PrfOutcome } from './prfOutcome';
@@ -22,7 +23,7 @@ import type { CreatedWallet } from './testnetWallet';
  * Domain-separated PRF salt for the fee-payer key. Matches the SDK's
  * `FEE_PAYER_PRF_SALT` so the passkey → fee-payer mapping is stable.
  */
-const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
 
 /** SDK storage key holding the WebAuthn credential id (see useInvisibleWallet). */
 const SDK_KEY_ID = 'invisible_wallet_key_id';
@@ -53,7 +54,38 @@ function toHex(bytes: Uint8Array): string {
  * signing path (passkey __check_auth), not the keypair path used in testnet
  * mode — that's a separate milestone.
  */
-export async function createPasskeyWallet(wallet: Registerable): Promise<CreatedWallet> {
+export type PasskeyWalletResult =
+  | {
+      status: 'created';
+      wallet: CreatedWallet;
+    }
+  | {
+      status: 'unsupported';
+      walletAddress: string;
+      publicKeyBytes?: Uint8Array;
+      keyId: string | null;
+      issue: Exclude<PrfOutcome, 'ok'>;
+      commit: (feePayer?: Keypair | null) => Promise<CreatedWallet>;
+    };
+
+/**
+ * Create a passkey smart wallet (dev build only — needs the native passkey
+ * module + a domain-associated RP):
+ *
+ *   1. `register()` creates a WebAuthn P-256 credential and computes the
+ *      deterministic C-address wallet (via the factory).
+ *   2. Evaluate PRF to determine whether the platform's manager returns a PRF
+ *      output.
+ *   3. If PRF is supported, derive fee-payer G-account, fund, write breadcrumbs,
+ *      save to storage, and return `{ status: 'created', wallet }`.
+ *   4. If PRF is NOT supported, do not commit to storage yet. Return
+ *      `{ status: 'unsupported', walletAddress, publicKeyBytes, keyId, issue, commit }`
+ *      so the caller can surface the trade-off before committing.
+ */
+export async function createPasskeyWallet(
+  wallet: Registerable,
+  options?: { forceCommit?: boolean }
+): Promise<PasskeyWalletResult> {
   const { walletAddress, publicKeyBytes } = await wallet.register('Veil wallet');
 
   const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
@@ -73,39 +105,49 @@ export async function createPasskeyWallet(wallet: Registerable): Promise<Created
       }
     }
   }
-  // Random fallback = the fee-payer CANNOT be re-derived from the passkey on
-  // another device. Never do this silently: the caller surfaces `recoverable`.
-  const recoverable = feePayer !== null;
-  if (!feePayer) feePayer = Keypair.random();
 
-  // Friendbot only exists on testnet; on mainnet this returns false at once.
-  const funded = await fundWithFriendbot(feePayer.publicKey());
+  const fallbackFeePayer = Keypair.random();
 
-  // On-chain breadcrumbs (best-effort): make "sign in with passkey" work on a
-  // fresh device by recording the C-address + passkey public key as data
-  // entries on the (deterministic) fee-payer account.
-  //
-  // Deliberately NOT gated on the Friendbot result. That gate asked "did a
-  // faucet just fund this?", and the answer on mainnet is always no, so every
-  // mainnet wallet was created with no on-chain record of itself and no way to
-  // be found again from a fresh device. The write needs a funded account, not a
-  // faucet, and it already fails harmlessly when there is none — the account
-  // simply does not load. `ensureBreadcrumbs` retries on dashboard load, which
-  // is what covers the mainnet order of events: the account is funded after the
-  // wallet is created, not before.
-  void writeBreadcrumbs(feePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
+  const doCommit = async (fp?: Keypair | null): Promise<CreatedWallet> => {
+    const finalFeePayer = fp ?? feePayer ?? fallbackFeePayer;
+    const recoverable = finalFeePayer !== fallbackFeePayer;
 
-  await Promise.all([
-    setWalletAddress(walletAddress),
-    setSignerSecret(feePayer.secret()),
-    keyId && publicKeyBytes
-      ? setPasskeyCredential(keyId, toHex(publicKeyBytes))
-      : keyId
-        ? setPasskeyId(keyId)
-        : Promise.resolve(),
-  ]);
+    // Friendbot only exists on testnet; on mainnet this returns false at once.
+    const funded = await fundWithFriendbot(finalFeePayer.publicKey());
 
-  return { address: walletAddress, funded, recoverable, ...(recoverable ? {} : { recoveryIssue: issue }) };
+    void writeBreadcrumbs(finalFeePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
+
+    await Promise.all([
+      setWalletAddress(walletAddress),
+      setSignerSecret(finalFeePayer.secret()),
+      // Whether this wallet can be recovered from the passkey alone. Settings
+      // and the recovery screens read it back through `getFeePayerInfo()`, and
+      // deferring the commit dropped this call — leaving `source: 'unknown'`,
+      // which reads as "we have no idea" rather than "random, not recoverable".
+      recordFeePayerSource(finalFeePayer.publicKey(), recoverable ? 'prf' : 'random'),
+      keyId && publicKeyBytes
+        ? setPasskeyCredential(keyId, toHex(publicKeyBytes))
+        : keyId
+          ? setPasskeyId(keyId)
+          : Promise.resolve(),
+    ]);
+
+    return { address: walletAddress, funded, recoverable, ...(recoverable ? {} : { recoveryIssue: issue }) };
+  };
+
+  if (feePayer || options?.forceCommit) {
+    const wallet = await doCommit(feePayer);
+    return { status: 'created', wallet };
+  }
+
+  return {
+    status: 'unsupported',
+    walletAddress,
+    publicKeyBytes: publicKeyBytes ?? undefined,
+    keyId,
+    issue,
+    commit: (fp?: Keypair | null) => doCommit(fp),
+  };
 }
 
 async function accountExists(address: string): Promise<boolean> {
@@ -125,7 +167,7 @@ export type RecoveryRetry =
   | { bound: true }
   | { bound: false; issue: Exclude<PrfOutcome, 'ok'> | 'funded' };
 
-export type Recreation = { ok: true; wallet: CreatedWallet } | { ok: false; reason: 'funded' };
+export type Recreation = { ok: true; result: PasskeyWalletResult } | { ok: false; reason: 'funded' };
 
 /**
  * Build the wallet again from a fresh passkey.
@@ -144,7 +186,10 @@ export type Recreation = { ok: true; wallet: CreatedWallet } | { ok: false; reas
  * the creation screen and nowhere else, and why an on-chain spending account
  * refuses instead.
  */
-export async function recreatePasskeyWallet(wallet: Registerable): Promise<Recreation> {
+export async function recreatePasskeyWallet(
+  wallet: Registerable,
+  options?: { forceCommit?: boolean }
+): Promise<Recreation> {
   const previous = await getSignerSecret();
   // Friendbot funds every wallet moments after it is made, so "the account
   // exists" says nothing on testnet about whether it holds anything worth
@@ -152,7 +197,7 @@ export async function recreatePasskeyWallet(wallet: Registerable): Promise<Recre
   if (previous && !getNetwork().friendbotUrl) {
     if (await accountExists(Keypair.fromSecret(previous).publicKey())) return { ok: false, reason: 'funded' };
   }
-  return { ok: true, wallet: await createPasskeyWallet(wallet) };
+  return { ok: true, result: await createPasskeyWallet(wallet, options) };
 }
 
 /**
@@ -185,7 +230,7 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
     }
   }
 
-  await setSignerSecret(derived.secret());
+  await Promise.all([setSignerSecret(derived.secret()), recordFeePayerSource(derived.publicKey(), 'prf')]);
   const pubHex = await getPasskeyPublicKey().catch(() => null);
   const pub = pubHex && /^[0-9a-fA-F]{130}$/.test(pubHex) ? new Uint8Array(Buffer.from(pubHex, 'hex')) : null;
   void writeBreadcrumbs(derived.secret(), walletAddress, pub).catch(() => undefined);

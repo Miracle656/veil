@@ -1,7 +1,6 @@
 import {
     Account,
     Contract,
-    Keypair,
     rpc as SorobanRpc,
     Horizon,
     StrKey,
@@ -14,6 +13,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 const HorizonServer = Horizon.Server;
+import { resolveSigner, signWith, type SignerInput } from './signer';
 import {
     bufferToHex,
     hexToUint8Array,
@@ -154,8 +154,8 @@ export class InvisibleWallet {
         };
     }
 
-    async deploy(signerKeypair: Keypair | string, publicKeyBytes?: Uint8Array): Promise<DeployResult> {
-        const keypair = typeof signerKeypair === 'string' ? Keypair.fromSecret(signerKeypair) : signerKeypair;
+    async deploy(signerInput: SignerInput, publicKeyBytes?: Uint8Array): Promise<DeployResult> {
+        const signer = resolveSigner(signerInput);
         
         const pubkeyBytes = publicKeyBytes || (() => {
             const stored = localStorage.getItem('invisible_wallet_pubkey');
@@ -181,7 +181,7 @@ export class InvisibleWallet {
             // Not deployed yet, continue with deployment
         }
 
-        const account = await horizonServer.loadAccount(keypair.publicKey());
+        const account = await horizonServer.loadAccount(signer.publicKey);
         const factory = new Contract(this.config.factoryAddress);
 
         const tx = new TransactionBuilder(account, {
@@ -200,9 +200,9 @@ export class InvisibleWallet {
             .build();
 
         const prepared = await server.prepareTransaction(tx);
-        prepared.sign(keypair);
+        const signed = await signWith(prepared, signer, this.config.networkPassphrase);
 
-        const result = await server.sendTransaction(prepared);
+        const result = await server.sendTransaction(signed);
         if (result.status === 'ERROR') {
             throw new Error(`Deploy failed: ${result.errorResult}`);
         }

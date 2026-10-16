@@ -99,6 +99,11 @@ test.describe('Happy Path: Register → Fund → Send', () => {
     // "Review" opens the confirmation card, "Confirm & sign" submits it.
     const reviewButton = page.getByRole('button', { name: /review.*sign with passkey/i });
     await expect(reviewButton).toBeEnabled({ timeout: 10_000 });
+    // "Review & sign with passkey" opens the confirmation card,
+    // "Confirm & sign" submits it.
+    await page.waitForLoadState('networkidle');
+    const reviewButton = page.getByRole('button', { name: /review & sign/i });
+    await expect(reviewButton).toBeEnabled({ timeout: 15_000 });
     await reviewButton.click();
 
     const confirmButton = page.getByRole('button', { name: /confirm.*sign/i });

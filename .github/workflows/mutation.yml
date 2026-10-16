@@ -36,7 +36,7 @@ jobs:
           cache: npm
           cache-dependency-path: sdk/package-lock.json
 
-      - run: npm ci || npm install
+      - run: npm ci || { echo "::warning::npm ci failed; falling back to npm install"; npm install; }
 
       - name: Run Stryker mutation tests
         run: npx stryker run

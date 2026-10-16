@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
+import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
@@ -26,6 +27,7 @@ interface Message {
   review?: ProposalReview | null
   /** A swap the agent handed to the Swap screen, which quotes and confirms it. */
   swapIntent?: { from: string; to: string; amount?: string }
+  investIntent?: { code?: string; asset?: string; issuer: string; amount?: string; quoteCurrency?: string }
 }
 
 /** Link into the Swap screen, pre-filled. The Swap page validates it again. */
@@ -33,6 +35,20 @@ function swapHref(intent: { from: string; to: string; amount?: string }): string
   const q = new URLSearchParams({ from: intent.from, to: intent.to })
   if (intent.amount) q.set('amount', intent.amount)
   return `/swap?${q}`
+}
+
+/** Link into the Earn/Invest section. */
+function investHref(intent: { code?: string; asset?: string; issuer?: string; amount?: string; quoteCurrency?: string }): string {
+  const code = intent.code ?? intent.asset ?? ''
+  const q = new URLSearchParams()
+  if (code) {
+    q.set('code', code)
+    q.set('asset', code)
+  }
+  if (intent.issuer) q.set('issuer', intent.issuer)
+  if (intent.amount) q.set('amount', intent.amount)
+  if (intent.quoteCurrency) q.set('quoteCurrency', intent.quoteCurrency)
+  return `/earn?${q}`
 }
 
 /** Earlier turns for the agent, as plain text. The server keeps no history. */
@@ -289,6 +305,19 @@ export default function AgentPage() {
       const msg: Message = { role: 'agent', content: data.response ?? '' }
       if (data.swapIntent && typeof data.swapIntent.from === 'string' && typeof data.swapIntent.to === 'string') {
         msg.swapIntent = data.swapIntent
+      }
+      if (data.investIntent) {
+        const parsed = parseInvestIntent(data.investIntent)
+        if (parsed) {
+          msg.investIntent = {
+            code: parsed.asset,
+            asset: parsed.asset,
+            issuer: parsed.issuer,
+            amount: parsed.amount,
+          }
+        } else if (typeof data.investIntent.code === 'string' && typeof data.investIntent.issuer === 'string') {
+          msg.investIntent = data.investIntent
+        }
       }
       if (data.pendingTxXdr) {
         msg.pendingTxXdr = data.pendingTxXdr
@@ -663,6 +692,24 @@ export default function AgentPage() {
                     className="agent-tx-card__btn"
                   >
                     Open Swap
+                  </button>
+                </div>
+              )}
+
+              {/* Invest hand-off — open Earn/Invest section */}
+              {msg.investIntent && (
+                <div className="agent-tx-card">
+                  <div className="agent-tx-card__header">
+                    <span className="agent-tx-card__label">Earn / Invest</span>
+                  </div>
+                  <div className="agent-tx-card__summary">
+                    Route to Earn section ({msg.investIntent.code ?? msg.investIntent.asset ?? ''})
+                  </div>
+                  <button
+                    onClick={() => router.push(investHref(msg.investIntent!))}
+                    className="agent-tx-card__btn"
+                  >
+                    Open Earn Section
                   </button>
                 </div>
               )}

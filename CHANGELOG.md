@@ -12,6 +12,9 @@ New sections are generated automatically by `conventional-changelog-cli` — run
 - Contributor documentation (`CONTRIBUTING.md`), issue templates, and PR template
 - This changelog
 
+### Changed
+- Factory: the per-wallet `Deployed(salt)` marker moved from instance to persistent storage (TTL bumped to ~30 days on write and read), so deploy cost no longer grows with the number of existing wallets. Reaches only future factory deployments (contracts are not upgradeable)
+
 ## [0.1.0] — 2025 testnet preview
 
 ### Added

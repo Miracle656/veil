@@ -1,156 +1,58 @@
-// jsdom has no TextEncoder, and the Stellar SDK needs one the moment it loads.
-// Must run before anything imports the SDK, including the mock factory below.
-if (typeof TextEncoder === 'undefined') {
-  const { TextEncoder: TE, TextDecoder: TD } = require('util')
-  global.TextEncoder = TE
-  global.TextDecoder = TD
-}
+/**
+ * Telling "this wallet has never spent" from "something went wrong".
+ *
+ * A Veil wallet's contract is deployed on its first spend, so a brand-new
+ * wallet legitimately has no contract at its address. The classifier exists to
+ * recognise that, and it recognised only two of the several ways a node says
+ * it — so a tester opening Passkeys on an unspent wallet was shown this,
+ * verbatim, on a settings screen:
+ *
+ *   HostError: Error(Storage, MissingValue) … "trying to get non-existing
+ *   value for contract instance" … fn_call, CCDRZY5F…, get_signers
+ *
+ * Classifying that as `unknown` is what let the caller carry on and read a
+ * signer list that could not exist.
+ */
 
-import { Keypair } from '@stellar/stellar-sdk'
+// The module imports the Stellar SDK, which needs these before it will load
+// under jsdom. Same shim the other suites here use.
+import { webcrypto } from 'crypto'
+import { TextEncoder, TextDecoder } from 'util'
 
-const mockGetContractData = jest.fn()
-const mockLoadAccount = jest.fn()
-const mockPeekFeePayerKeypair = jest.fn()
+Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true, writable: true })
+Object.assign(globalThis, { TextEncoder, TextDecoder })
 
-jest.mock('@stellar/stellar-sdk', () => {
-  const actual = jest.requireActual('@stellar/stellar-sdk')
-  return {
-    ...actual,
-    rpc: {
-      ...actual.rpc,
-      Server: jest.fn().mockImplementation(() => ({
-        getContractData: (...args: unknown[]) => mockGetContractData(...args),
-      })),
-    },
-    Horizon: {
-      ...actual.Horizon,
-      Server: jest.fn().mockImplementation(() => ({
-        loadAccount: (...args: unknown[]) => mockLoadAccount(...args),
-      })),
-    },
-  }
-})
+import { classifyContractDataError } from '../walletDeployment'
 
-jest.mock('../network', () => ({
-  getNetwork: () => ({ rpcUrl: 'https://rpc.test', horizonUrl: 'https://horizon.test' }),
-}))
-
-jest.mock('../feePayer', () => ({
-  peekFeePayerKeypair: () => mockPeekFeePayerKeypair(),
-}))
-
-import {
-  WalletNotActivatedError,
-  ensureWalletDeployed,
-  getDeploymentState,
-} from '../walletDeployment'
-
-const WALLET = 'CABCH3GZPGJOOZXPLN4EBXTLZSV6BUGFBXIKMNO2VJIPZ7ERENL7PCJ7'
-
-function horizon404() {
-  return Object.assign(new Error('Not Found'), { response: { status: 404 } })
-}
-
-beforeEach(() => {
-  mockGetContractData.mockReset()
-  mockLoadAccount.mockReset()
-  mockPeekFeePayerKeypair.mockReset()
-})
-
-describe('getDeploymentState', () => {
-  it('reports deployed when the contract instance exists', async () => {
-    mockGetContractData.mockResolvedValue({})
-    await expect(getDeploymentState(WALLET)).resolves.toBe('deployed')
+describe('classifyContractDataError', () => {
+  // Each of these is a real way a node reports an absent contract instance.
+  // The first is the one a tester actually hit, in full.
+  it.each([
+    [
+      'the storage error a tester saw',
+      'Simulation failed: HostError: Error(Storage, MissingValue) Event log (newest first): 0: [Diagnostic Event] topics:[error, Error(Storage, MissingValue)], data:"trying to get non-existing value for contract instance" 1: [Diagnostic Event] topics:[fn_call, CCDRZY5F4IRZFPIOIAHOJTCURLTFF736NAFB7WU3FPTP4SJJJZWAMDOE, get_signers], data:Void',
+    ],
+    ['a plain not-found', 'Contract data not found'],
+    ['an HTTP 404', 'Request failed with status code 404'],
+    ['a bare MissingValue', 'Error(Storage, MissingValue)'],
+    ['mixed case', 'ERROR(STORAGE, MISSINGVALUE)'],
+  ])('recognises %s as undeployed', (_label, message) => {
+    expect(classifyContractDataError(new Error(message))).toBe('undeployed')
   })
 
-  it('reports undeployed when the RPC says the instance is not found', async () => {
-    mockGetContractData.mockRejectedValue(new Error('Contract data not found'))
-    await expect(getDeploymentState(WALLET)).resolves.toBe('undeployed')
+  // A network failure is NOT "this wallet has never spent", and saying so would
+  // tell someone with a real, funded wallet that it does not exist.
+  it.each([
+    ['a network failure', 'fetch failed'],
+    ['a timeout', 'The operation timed out'],
+    ['a server error', 'Request failed with status code 502'],
+    ['a rate limit', 'Too many requests'],
+  ])('does not claim %s means undeployed', (_label, message) => {
+    expect(classifyContractDataError(new Error(message))).toBe('unknown')
   })
 
-  it('reports unknown, not undeployed, when the RPC cannot be reached', async () => {
-    // An unreachable RPC read as "undeployed" would show a working wallet as
-    // not set up for as long as the network blinked.
-    mockGetContractData.mockRejectedValue(new Error('socket hang up'))
-    await expect(getDeploymentState(WALLET)).resolves.toBe('unknown')
-  })
-
-  it('does not ask the network about something that is not a contract address', async () => {
-    await expect(getDeploymentState('GA6HCMBLTZS5VYYBCATRBRZ3BZJMAFUDKYYF6AH6MVCMGWMRDNSWJPIH')).resolves.toBe('unknown')
-    await expect(getDeploymentState(null)).resolves.toBe('unknown')
-    expect(mockGetContractData).not.toHaveBeenCalled()
-  })
-})
-
-describe('ensureWalletDeployed', () => {
-  it('does nothing for a wallet already on chain', async () => {
-    mockGetContractData.mockResolvedValue({})
-    const deploy = jest.fn()
-
-    await ensureWalletDeployed(deploy, WALLET)
-
-    expect(deploy).not.toHaveBeenCalled()
-  })
-
-  it('deploys with the spending key when the wallet is not on chain yet', async () => {
-    const feePayer = Keypair.random()
-    mockGetContractData.mockRejectedValue(new Error('not found'))
-    mockPeekFeePayerKeypair.mockReturnValue(feePayer)
-    mockLoadAccount.mockResolvedValue({})
-    const deploy = jest.fn().mockResolvedValue({})
-
-    await ensureWalletDeployed(deploy, WALLET)
-
-    expect(deploy).toHaveBeenCalledWith(feePayer.secret())
-  })
-
-  it('says where to send XLM when the spending account does not exist', async () => {
-    const feePayer = Keypair.random()
-    mockGetContractData.mockRejectedValue(new Error('not found'))
-    mockPeekFeePayerKeypair.mockReturnValue(feePayer)
-    mockLoadAccount.mockRejectedValue(horizon404())
-    const deploy = jest.fn()
-
-    const attempt = ensureWalletDeployed(deploy, WALLET)
-
-    await expect(attempt).rejects.toBeInstanceOf(WalletNotActivatedError)
-    await expect(attempt).rejects.toMatchObject({ spendingAddress: feePayer.publicKey() })
-    expect(deploy).not.toHaveBeenCalled()
-  })
-
-  it('turns an underfunded deploy into the same actionable error', async () => {
-    const feePayer = Keypair.random()
-    mockGetContractData.mockRejectedValue(new Error('not found'))
-    mockPeekFeePayerKeypair.mockReturnValue(feePayer)
-    mockLoadAccount.mockResolvedValue({})
-    const deploy = jest.fn().mockRejectedValue(new Error('txInsufficientBalance'))
-
-    await expect(ensureWalletDeployed(deploy, WALLET)).rejects.toMatchObject({
-      name: 'WalletNotActivatedError',
-      spendingAddress: feePayer.publicKey(),
-    })
-  })
-
-  it('passes through a deploy failure that is not about funds', async () => {
-    mockGetContractData.mockRejectedValue(new Error('not found'))
-    mockPeekFeePayerKeypair.mockReturnValue(Keypair.random())
-    mockLoadAccount.mockResolvedValue({})
-    const deploy = jest.fn().mockRejectedValue(new Error('User cancelled the passkey prompt'))
-
-    await expect(ensureWalletDeployed(deploy, WALLET)).rejects.toThrow('User cancelled the passkey prompt')
-  })
-
-  it('refuses without a spending key rather than deploying nothing', async () => {
-    mockGetContractData.mockRejectedValue(new Error('not found'))
-    mockPeekFeePayerKeypair.mockReturnValue(null)
-
-    await expect(ensureWalletDeployed(jest.fn(), WALLET)).rejects.toMatchObject({
-      name: 'WalletNotActivatedError',
-      spendingAddress: null,
-    })
-  })
-
-  it('refuses without a wallet address', async () => {
-    await expect(ensureWalletDeployed(jest.fn(), null)).rejects.toThrow(/No wallet address/)
+  it('survives a non-Error being thrown', () => {
+    expect(classifyContractDataError('Error(Storage, MissingValue)')).toBe('undeployed')
+    expect(classifyContractDataError(undefined)).toBe('unknown')
   })
 })

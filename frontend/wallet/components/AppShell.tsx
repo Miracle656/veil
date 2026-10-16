@@ -38,9 +38,13 @@ const NAV_MAIN: NavItem[] = [
   { href: '/send', label: 'Send', icon: '↗' },
   { href: '/receive', label: 'Receive', icon: '↙' },
   { href: '/swap', label: 'Swap', icon: '⇅' },
+  // Buy sits directly above Cash out: they are the two halves of the naira
+  // rail and reading one without the other makes the wallet look one-way.
+  { href: '/buy-ngn', label: 'Buy with naira', icon: '⇰' },
   { href: '/cashout', label: 'Cash out', icon: '⇲' },
   { href: '/earn', label: 'Earn', icon: '◎' },
   { href: '/bills', label: 'Bills & airtime', icon: '▤' },
+  { href: '/dapps', label: 'dApps', icon: '◈' },
   { href: '/agent', label: 'Agent', icon: '✦' },
 ]
 

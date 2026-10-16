@@ -9,6 +9,8 @@
  * `null`, and callers surface the balance without a fiat value.
  */
 
+import { isRegisteredIssuer } from './assets';
+
 const LENS_BASE_URL =
   process.env['EXPO_PUBLIC_LENS_URL']?.trim() || 'https://lens-ldtu.onrender.com';
 const TIMEOUT_MS = 5_000;
@@ -112,7 +114,7 @@ async function orderBookPrice(
   const selling =
     code.toUpperCase() === 'XLM' || !issuer
       ? 'selling_asset_type=native'
-      : `selling_asset_type=credit_alphanum4&selling_asset_code=${encodeURIComponent(code)}&selling_asset_issuer=${encodeURIComponent(issuer)}`;
+      : `selling_asset_type=${code.length > 4 ? 'credit_alphanum12' : 'credit_alphanum4'}&selling_asset_code=${encodeURIComponent(code)}&selling_asset_issuer=${encodeURIComponent(issuer)}`;
 
   const url =
     `${horizon}/order_book?${selling}` +
@@ -144,9 +146,10 @@ export async function fetchPrice(
   const upper = code.toUpperCase();
   // USDC is the quote asset, so its price against itself is 1 by definition —
   // not an estimate.
-  if (upper === 'USDC') return 1.0;
-
   const network = await activeNetworkName();
+  if (upper === 'USDC' && (!issuer || isRegisteredIssuer('USDC', issuer, network))) return 1.0;
+  if (upper === 'USDT0' && (!issuer || isRegisteredIssuer('USDT0', issuer, 'mainnet'))) return 1.0;
+
   const assetA = assetParam(code, issuer);
   const assetB = `USDC:${USDC_ISSUERS[network]}`;
   // Lens serves both networks from one deployment and falls back to its own

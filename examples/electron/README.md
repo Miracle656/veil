@@ -1,5 +1,9 @@
 # Veil Electron Wallet Example
 
+> [!WARNING]
+> **Demonstration only — not production-safe**
+> This example persists a delegated transaction signer secret (`veil_signer_secret`) directly in plaintext renderer `localStorage`. Any script running in the renderer context or local access can extract this key. Production Electron applications must protect secrets using OS-level encrypted storage (such as Electron's `safeStorage` API) or hardware-backed keystores.
+
 A minimal Electron desktop wallet example that runs the Veil **web** SDK
 unmodified in the renderer process — no native plugin, no IPC bridge for
 crypto. Registration, signing, and sending all use standard

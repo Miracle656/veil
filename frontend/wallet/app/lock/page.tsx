@@ -176,9 +176,8 @@ export default function LockPage() {
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
       <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem' }}>
-        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
-          <NetworkSwitcher />
-        </div>
+        {/* The switcher must sit inside a landmark (axe "region" rule), so it
+            lives inside the main below rather than above it. */}
 
         <header style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'center' }}>
            {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}

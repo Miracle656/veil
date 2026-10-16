@@ -221,7 +221,12 @@ export function parseSep7PayUri(input: string): Sep7PayRequest {
 
     const memo = get('memo');
     if (memo !== undefined) {
-        const memoType = (get('memo_type') ?? 'text') as Sep7MemoType;
+        const rawMt = (get('memo_type') ?? 'text').trim().toLowerCase();
+        const normalizedMt = rawMt.startsWith('memo_') ? rawMt.slice(5) : rawMt;
+        if (!['text', 'id', 'hash', 'return'].includes(normalizedMt)) {
+            throw new Sep7Error(`Unsupported memo type: "${get('memo_type')}"`);
+        }
+        const memoType = normalizedMt as Sep7MemoType;
         validateMemo(memo, memoType);
         result.memo = memo;
         result.memoType = memoType;

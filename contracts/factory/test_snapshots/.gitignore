@@ -1,0 +1,7 @@
+# The three scaling tests added in #933 seed 500 deployed markers each, so their
+# soroban ledger snapshots are ~1.8 MB of generated JSON — ten times the rest of
+# this directory. They carry no review value, so they stay out of git; the tests
+# assert on metered read/write bytes, not on the snapshot.
+test/test_deploy_cost_does_not_grow_with_existing_wallets.*.json
+test/test_deploy_still_works_past_old_instance_limit.*.json
+test/test_is_deployed_answers_for_early_wallet_after_many_deploys.*.json

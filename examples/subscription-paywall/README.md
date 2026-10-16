@@ -1,5 +1,9 @@
 # Subscription Paywall (Next.js)
 
+> [!WARNING]
+> **Demonstration only — not production-safe**
+> This example gates access using an unauthenticated cookie (`veil_subscriber_wallet`) that simply names a subscriber wallet address. Anyone who sets this cookie to a subscriber's address gains full access without proving wallet ownership. In production, use authenticated sessions backed by cryptographic signatures (e.g. SIWS / session challenges).
+
 A recurring **on-chain subscription paywall** built on the
 [`invisible-wallet-sdk`](../../sdk). Users create a passkey wallet, unlock premium
 content with a single **recurring payment authorization**, and Next.js middleware

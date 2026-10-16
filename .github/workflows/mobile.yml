@@ -40,7 +40,7 @@ jobs:
       # frontend/mobile is not a workspace member and keeps its own lockfile, so
       # a plain install inside the directory is enough. `npm install` is the
       # fallback for the window after a dependency bump lands ahead of the lock.
-      - run: npm ci || npm install
+      - run: npm ci || { echo "::warning::npm ci failed; falling back to npm install"; npm install; }
       - name: Typecheck
         run: npm run typecheck
       - name: Lint

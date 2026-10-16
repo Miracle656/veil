@@ -3,7 +3,7 @@
 import { inclusionFee } from './fees'
 import { useState, useEffect, useCallback } from 'react'
 import { Core } from '@walletconnect/core'
-import { Web3Wallet, type IWeb3Wallet } from '@walletconnect/web3wallet'
+import { WalletKit, type IWalletKit } from '@reown/walletkit'
 import { getSdkError } from '@walletconnect/utils'
 import {
   Keypair,
@@ -19,6 +19,7 @@ import {
   Operation,
 } from '@stellar/stellar-sdk'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { walletContractErrorMessage } from './walletContractError'
 
 async function getWalletNonce(
   rpc: SorobanRpc.Server,
@@ -76,7 +77,7 @@ export type WalletConnectProposal = {
 type SessionListener = (sessions: WalletConnectSession[]) => void
 type ProposalListener = (proposal: WalletConnectProposal | null) => void
 
-let _client: IWeb3Wallet | null = null
+let _client: IWalletKit | null = null
 let _sessions: WalletConnectSession[] = []
 let _pendingProposal: WalletConnectProposal | null = null
 
@@ -127,7 +128,7 @@ function notifyProposal(): void {
   for (const listener of proposalListeners) listener(_pendingProposal)
 }
 
-async function syncSessionsFromClient(client: IWeb3Wallet): Promise<void> {
+async function syncSessionsFromClient(client: IWalletKit): Promise<void> {
   const active = client.getActiveSessions()
   _sessions = Object.values(active).map(parseSession)
   persistSessions(_sessions)
@@ -336,6 +337,15 @@ async function signXdrPayload(
 
   const sim2 = await rpc.simulateTransaction(signedTx)
   if (SorobanRpc.Api.isSimulationError(sim2)) {
+    // Name the wallet-contract failure when we can. The raw HostError is two
+    // thousand characters of diagnostic log with `Error(Contract, #N)` buried in
+    // it, and #9 in particular means "retrying will never work" — the opposite
+    // of what a generic auth message implies.
+    const named = walletContractErrorMessage(sim2.error)
+    if (named) {
+      console.warn('[soroban] re-simulation failed:', sim2.error)
+      throw new Error(named)
+    }
     throw new Error(`Re-simulation (enforce mode) failed: ${sim2.error}`)
   }
 
@@ -446,7 +456,7 @@ export function getPendingWalletConnectProposal(): WalletConnectProposal | null 
   return _pendingProposal
 }
 
-export async function getWalletConnectClient(): Promise<IWeb3Wallet> {
+export async function getWalletConnectClient(): Promise<IWalletKit> {
   if (_client) return _client
 
   if (typeof window === 'undefined') {
@@ -462,7 +472,7 @@ export async function getWalletConnectClient(): Promise<IWeb3Wallet> {
   }
 
   const core = new Core({ projectId })
-  _client = await Web3Wallet.init({
+  _client = await WalletKit.init({
     core,
     metadata: {
       name: 'Veil Wallet',
