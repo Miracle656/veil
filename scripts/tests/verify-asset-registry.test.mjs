@@ -339,8 +339,8 @@ for (const [label, path] of [
   ['mobile', mobileAssetsPath],
 ]) {
   test(`every ${label} registry issuer is checksum-valid`, () => {
-    const assets = parseAssetRegistry(path);
-    assert.ok(assets.length > 0, `${label} registry parsed as empty — the assertions below would pass vacuously`);
+    const assets = parseAssetRegistry(path).filter((asset) => asset.kind !== 'native');
+    assert.ok(assets.length > 0, `${label} registry has no issued assets — the assertions below would pass vacuously`);
     for (const asset of assets) {
       assert.ok(
         StrKey.isValidEd25519PublicKey(asset.issuer),

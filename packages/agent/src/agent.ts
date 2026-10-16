@@ -82,9 +82,15 @@ const MAX_TOOL_ROUNDS = 8
 
 // ── Tools ────────────────────────────────────────────────────────────────────
 
-const tools: ToolSpec[] = [
+interface AgentTool extends ToolSpec {
+  /** App screen associated with this capability, used for out-of-scope guidance. */
+  screen: string
+}
+
+const tools: AgentTool[] = [
   {
     name: 'get_price',
+    screen: 'Swap screen',
     description:
       'Get the current price of one asset in terms of another on the Stellar DEX: ' +
       'how many units of asset_b one unit of asset_a sells for right now, and how many hops the best route takes.',
@@ -99,6 +105,7 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'get_asset_info',
+    screen: 'asset details screen',
     description:
       'Look up an asset in Veil\'s verified registry (ASSET_REGISTRY): its verified issuer, metadata, and whether it can be frozen or clawed back. ' +
       'ALWAYS call this for asset information questions like "What is USDY?" or "What is USDT0?". Pass "CODE", "code" or "CODE:ISSUER". Never answer asset issuer details from LLM memory.',
@@ -112,6 +119,7 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'open_invest',
+    screen: 'Earn screen',
     description:
       'Hand off a buy request or investment to the wallet\'s Invest/Earn section. ' +
       'The agent must never construct or sign a transaction for buying invest assets.',
@@ -128,6 +136,7 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'get_transfer_history',
+    screen: 'Activity screen',
     description:
       'Get recent transfer history for a wallet — includes both classic Stellar payments (XLM sends/receives) ' +
       'and Soroban token transfers. Returns classicPayments from Horizon and sorobanTransfers from Wraith.',
@@ -143,6 +152,7 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'get_wallet_balance',
+    screen: 'Wallet screen',
     description:
       'Get current XLM and token balances for a wallet address. Free. ' +
       'The result includes "holdings": every issued asset with its issuer and a status of verified, unverified or unlisted. ' +
@@ -157,6 +167,7 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'open_swap',
+    screen: 'Swap screen',
     description:
       'Hand a swap to the wallet\'s Swap screen, filled in with the assets and amount. ' +
       'The Swap screen fetches its own live quote across Soroswap, Phoenix, Aqua and the Stellar DEX, ' +
@@ -174,6 +185,7 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'build_payment',
+    screen: 'Send screen',
     description:
       'Build a Stellar payment transaction to send XLM or tokens. ' +
       'ALWAYS call request_user_approval after building.',
@@ -191,6 +203,7 @@ const tools: ToolSpec[] = [
   },
   {
     name: 'request_user_approval',
+    screen: 'wallet approval screen',
     description:
       'ALWAYS call this before any transaction executes. ' +
       'Sends the transaction to the wallet UI for passkey (biometric) approval. ' +
@@ -253,6 +266,9 @@ const SYSTEM_PROMPT = (walletAddress: string, feePayerAddress: string, profile?:
   const roleClause = profile?.role && ROLE_CONTEXT[profile.role]
     ? `\n${ROLE_CONTEXT[profile.role]}`
     : ''
+  const capabilityList = tools
+    .map((tool) => `- ${tool.name}: ${tool.description} (Screen: ${tool.screen})`)
+    .join('\n')
 
   return `\
 You are a helpful AI agent embedded in the Veil passkey smart wallet on Stellar.
@@ -264,12 +280,8 @@ ${langClause}
 ${personaClause}
 ${roleClause}
 
-You help users:
-- Check their balance and recent transfers
-- Get live prices
-- Explain assets such as USDT0 or USDY by their verified issuer
-- Set up swaps (opened in the Swap screen) and payments — the user always approves with their passkey
-- Learn about verified invest assets and route buy requests to the Invest/Earn section
+REGISTERED CAPABILITIES (generated from the tools available to you):
+${capabilityList}
 
 RULES:
 1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
@@ -283,7 +295,9 @@ RULES:
 9. For asset explanation queries ("What is USDY?"), ALWAYS call get_asset_info. Base your answer strictly on the returned registry data (issuer name, issuer address, home domain, asset kind). NEVER invent or rely on LLM memory for asset issuer details. Asset codes are not identities: several issuers publish the same code (eight publish USDT0). When reporting holdings, name the issuer and report "unverified" holdings as unverified.
 10. For holdings questions ("what do I hold", "how much USDY do I have"), call get_wallet_balance and report exact balances with verified registry labels.
 11. For buy requests ("buy 50 USDC of USDY"), call open_invest. NEVER construct or sign a transaction for asset purchases. State that you are routing to the Invest section but that the destination screen is being built, not that it will be pre-filled and ready. Your response MUST include the issuer address and a one-line risk disclosure (e.g. "USDY is issued by Ondo Finance — review the asset details on the next screen before confirming"). Do NOT give an opinion on whether to buy.
-12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.`
+12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.
+13. CAPABILITY BOUNDARY: Only claim actions or data available through the registered capabilities above. If a request is outside them, plainly say what you cannot do from this chat and direct the user to the most relevant screen named above. Do not claim that screen supports an action unless its registered capability says so; if no screen applies, say so instead of inventing one.
+14. DATA BOUNDARY: Never estimate or infer a requested number. get_wallet_balance and get_transfer_history provide Stellar data only; get_price provides current Stellar market data only. If the requested chain or figure has no available data source, say "I cannot see that data here" and do not give a guessed or approximate number. If a registered tool reports that data is unavailable, treat that as unavailable — do not fill the gap from memory.`
 }
 
 /**
@@ -357,6 +371,11 @@ export async function runAgent(
   let pendingTxSummary: string | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
+  let unavailablePrice: { assetA: string; assetB: string } | undefined
+  const unavailablePriceResponse = () =>
+    unavailablePrice
+      ? `Current Stellar price data for ${unavailablePrice.assetA}/${unavailablePrice.assetB} is unavailable. I cannot see it here, so I won't estimate it.`
+      : undefined
 
   const wraithUrl = urls?.wraithUrl ?? process.env.WRAITH_URL ?? ''
   const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
@@ -417,8 +436,11 @@ export async function runAgent(
       case 'get_price': {
         try {
           return JSON.stringify(await getPrice(String(input.asset_a), String(input.asset_b)))
-        } catch (err) {
-          return JSON.stringify({ error: `Price data is currently unavailable for ${input.asset_a}.` })
+        } catch {
+          unavailablePrice = { assetA: String(input.asset_a), assetB: String(input.asset_b) }
+          return JSON.stringify({
+            error: `Current Stellar price data for ${input.asset_a}/${input.asset_b} is unavailable. I cannot see it here. Do not estimate it.`,
+          })
         }
       }
 
@@ -541,7 +563,7 @@ export async function runAgent(
     SYSTEM_PROMPT(walletAddress, feePayerAddress ?? walletAddress, profile),
     conversationHistory,
     userMessage,
-    tools,
+    tools.map(({ screen: _screen, ...tool }) => tool),
   )
 
   // Agentic loop, bounded. Each round is a paid or rate-limited model call, so a
@@ -552,8 +574,7 @@ export async function runAgent(
   while (turn.toolCalls.length > 0) {
     if (++rounds > MAX_TOOL_ROUNDS) {
       return {
-        response:
-          "I couldn't finish that in one go. Try asking for one thing at a time.",
+        response: unavailablePriceResponse() ?? "I couldn't finish that in one go. Try asking for one thing at a time.",
         pendingTxXdr,
         pendingTxSummary,
         swapIntent,
@@ -575,6 +596,10 @@ export async function runAgent(
     try {
       turn = await session.next()
     } catch (err) {
+      const priceRefusal = unavailablePriceResponse()
+      if (priceRefusal) {
+        return { response: priceRefusal, pendingTxXdr, pendingTxSummary, swapIntent, investIntent }
+      }
       // The work is done — a swap or invest to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
@@ -595,7 +620,8 @@ export async function runAgent(
     }
   }
 
-  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent, investIntent }
+  const response = unavailablePriceResponse() ?? turn.text
+  return { response, pendingTxXdr, pendingTxSummary, swapIntent, investIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────

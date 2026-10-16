@@ -12,12 +12,18 @@ const INVEST_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
  * to run for as long as the model kept asking for tools.
  */
 
-function scripted(turns: LlmTurn[]): LlmProvider & { results: { id: string; content: string }[][] } {
+function scripted(turns: LlmTurn[]): LlmProvider & {
+  results: { id: string; content: string }[][]
+  systemPrompts: string[]
+} {
   const results: { id: string; content: string }[][] = []
+  const systemPrompts: string[] = []
   return {
     label: 'scripted',
     results,
-    start() {
+    systemPrompts,
+    start(system) {
+      systemPrompts.push(system)
       let i = 0
       return {
         async next() {
@@ -95,6 +101,43 @@ describe('runAgent', () => {
     const result = await runAgent('swap 10 xlm to usdc', wallet, [], undefined, undefined, llm)
     expect(result.swapIntent).toEqual({ from: 'XLM', to: 'USDC', amount: '10' })
     expect(result.pendingTxXdr).toBeUndefined()
+    expect(llm.systemPrompts[0]).toContain('open_swap:')
+    expect(llm.systemPrompts[0]).toContain('(Screen: Swap screen)')
+  })
+
+  it('answers out-of-scope requests with a capability boundary and a registered screen', async () => {
+    const llm = scripted([
+      {
+        text: 'I cannot see Solana balances from this chat. The Wallet screen shows your Stellar balances.',
+        toolCalls: [],
+      },
+    ])
+    const result = await runAgent('What is my SOL balance on Solana?', wallet, [], undefined, undefined, llm)
+
+    expect(result.response).toMatch(/cannot see Solana balances/i)
+    expect(result.response).toMatch(/Wallet screen/)
+    expect(llm.systemPrompts[0]).toContain('REGISTERED CAPABILITIES (generated from the tools available to you)')
+    expect(llm.systemPrompts[0]).toContain('get_wallet_balance:')
+    expect(llm.systemPrompts[0]).toContain('(Screen: Wallet screen)')
+    expect(llm.systemPrompts[0]).toContain('CAPABILITY BOUNDARY')
+  })
+
+  it('refuses to estimate a price when no registered price source can provide it', async () => {
+    const llm = scripted([
+      {
+        text: '',
+        toolCalls: [{ id: 'p', name: 'get_price', input: { asset_a: 'XLM', asset_b: 'ETH' } }],
+      },
+      { text: 'ETH trades at 12.4 XLM.', toolCalls: [] },
+    ])
+    const result = await runAgent('What is the current XLM price in ETH?', wallet, [], undefined, undefined, llm)
+
+    expect(llm.results[0][0].content).toMatch(/unavailable.*cannot see.*Do not estimate/i)
+    expect(result.response).toMatch(/cannot see it here/i)
+    expect(result.response).toMatch(/won't estimate it/i)
+    expect(result.response).not.toMatch(/\d+(?:\.\d+)?\s*(?:ETH|XLM)/i)
+    expect(llm.systemPrompts[0]).toContain('Never estimate or infer a requested number.')
+    expect(llm.systemPrompts[0]).toContain('get_price provides current Stellar market data only.')
   })
 
   it('hands an issued asset to the Earn screen', async () => {
