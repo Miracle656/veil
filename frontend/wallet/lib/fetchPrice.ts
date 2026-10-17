@@ -1,4 +1,4 @@
-import { isRegisteredIssuer } from './assets'
+import { isRegisteredIssuer, stellarAssetTypeForCode } from './assets'
 import { getNetwork, getUsdcIssuer } from './network'
 
 const LENS_BASE_URL = process.env.NEXT_PUBLIC_LENS_URL ?? 'https://lens-ldtu.onrender.com'
@@ -79,7 +79,7 @@ async function orderBookPrice(
   const selling =
     code.toUpperCase() === 'XLM' || !issuer
       ? 'selling_asset_type=native'
-      : `selling_asset_type=${code.length > 4 ? 'credit_alphanum12' : 'credit_alphanum4'}` +
+      : `selling_asset_type=${stellarAssetTypeForCode(code)}` +
         `&selling_asset_code=${encodeURIComponent(code)}` +
         `&selling_asset_issuer=${encodeURIComponent(issuer)}`
 
