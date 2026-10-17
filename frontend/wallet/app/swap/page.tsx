@@ -22,7 +22,8 @@ import {
   swapRouteInput,
   type SwapAsset,
 } from '@/lib/swapAssets'
-import { getAssetIssuer } from '@/lib/assets'
+import { getAssetIssuer, getRegisteredAsset } from '@/lib/assets'
+import { fetchBondLiquidity, type LiquidityVerdict } from '@/lib/liquidity'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -175,6 +176,47 @@ export default function SwapPage() {
     }
   }
 
+  // ── Bond liquidity gate (#1062) ──
+  // The swap page is the venue that actually buys a tokenized sovereign bond,
+  // so the check that guards /assets/bond/[code] has to run here too — picking
+  // KTB from the receive list would otherwise walk straight past it and leave
+  // the user holding a bond with one bid and no ask.
+  const [bondGate, setBondGate] = useState<LiquidityVerdict | null>(null)
+
+  // The registered bond behind the receive side, by issuer as well as code: a
+  // lookalike sharing a bond's code is a different asset and is handled by the
+  // ordinary route checks. Tokenized sovereign debt is the registry's
+  // `kind: 'treasury'` entry that names the government whose debt it is.
+  const destBond = (() => {
+    const registered = getRegisteredAsset(destAsset.code, network.name)
+    if (!registered || registered.issuer !== destAsset.issuer) return null
+    return registered.kind === 'treasury' && registered.obligor ? registered : null
+  })()
+  const bondCode = destBond?.code ?? null
+  const bondIssuer = destBond?.issuer ?? null
+  /** Nothing may be bought until the book has been read and approved. */
+  const bondChecking = bondCode !== null && bondGate === null
+  const bondBlocked = bondCode !== null && (bondGate === null || !bondGate.ok)
+
+  useEffect(() => {
+    if (!bondCode || !bondIssuer) {
+      setBondGate(null)
+      return
+    }
+    let cancelled = false
+    setBondGate(null)
+    void (async () => {
+      const verdict = await fetchBondLiquidity(
+        { code: bondCode, issuer: bondIssuer },
+        { horizonUrl: network.horizonUrl, quoteIssuer: getUsdcIssuer() },
+      )
+      if (!cancelled) setBondGate(verdict)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [bondCode, bondIssuer])
+
   // ── Quote fetching (Soroswap first, SDEX fallback) ──
   //
   // Both venues are asked about exactly one pair: the SAC derived from each
@@ -283,6 +325,21 @@ export default function SwapPage() {
 
   // ── Swap Execution ──
   async function handleSwap() {
+    // Books move: a bid that was resting when the pair was chosen is not proof
+    // anyone is still on the other side, so the gate is read again at submit
+    // rather than trusted from the last reading.
+    if (bondCode && bondIssuer) {
+      const verdict = await fetchBondLiquidity(
+        { code: bondCode, issuer: bondIssuer },
+        { horizonUrl: network.horizonUrl, quoteIssuer: getUsdcIssuer() },
+      )
+      setBondGate(verdict)
+      if (!verdict.ok) {
+        setErrorMsg(verdict.reason)
+        setStep('error')
+        return
+      }
+    }
     beginTx()
     setStep('swapping')
     setErrorMsg(null)
@@ -638,11 +695,41 @@ export default function SwapPage() {
               </div>
             )}
 
+            {/* Why a bond cannot be bought here right now. The same sentences
+                the bond screen uses, because it is the same check. */}
+            {bondBlocked && (
+              <div
+                className="card"
+                role="status"
+                style={{
+                  background: 'rgba(253,218,36,0.05)',
+                  border: '1px solid rgba(253,218,36,0.25)',
+                }}
+              >
+                <p className="text-[13px] leading-relaxed">
+                  {bondChecking
+                    ? `Checking the live market for ${bondCode}…`
+                    : bondGate && !bondGate.ok
+                      ? bondGate.reason
+                      : null}
+                </p>
+                <a
+                  href={`/assets/bond/${bondCode}`}
+                  className="inline-block mt-2 text-[12px] text-gold"
+                  style={{ textDecoration: 'underline' }}
+                >
+                  What is {bondCode}? →
+                </a>
+              </div>
+            )}
+
             <div style={{ marginTop: '0.5rem' }}>
               <button
                 className="btn-gold"
                 onClick={() => setStep('confirm')}
-                disabled={!sourceAmount || !destAmount || isFetchingQuote || !!errorMsg}
+                disabled={
+                  !sourceAmount || !destAmount || isFetchingQuote || !!errorMsg || bondBlocked
+                }
               >
                 Review swap
               </button>
