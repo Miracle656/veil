@@ -10,6 +10,15 @@ const nextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
         ],
       },
+      {
+        // SEP-1 metadata is fetched cross-origin by Stellar wallets. Keep the
+        // response public and explicitly use the media type SEP-1 expects.
+        source: "/.well-known/stellar.toml",
+        headers: [
+          { key: "Content-Type", value: "text/plain; charset=utf-8" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
+      },
     ];
   },
   // NOTE: locale routing lives in the App Router (`app/page.tsx` = en,

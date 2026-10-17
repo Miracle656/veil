@@ -27,6 +27,8 @@ jobs:
       - run: npm ci
       - run: npm run verify:lockfile
       - run: npm run verify:assets:offline
+      - name: Verify public Stellar federation metadata
+        run: node scripts/verify-stellar-toml.mjs
       # Belt and braces, and the actual acceptance criterion for #670: a real
       # install on a fresh clone must leave `git status` clean. A hoisted root
       # install used to rewrite package-lock.json (947 -> 21,217 lines) and to
