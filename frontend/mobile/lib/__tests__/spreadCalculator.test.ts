@@ -29,6 +29,7 @@ jest.mock('../network', () => ({
 
 const USDC = new Asset('USDC', 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN');
 const USDY = new Asset('USDY', 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6');
+const CETES = new Asset('CETES', 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC');
 
 /** Point `new Horizon.Server()` at a stub order book, returning the spy. */
 function mockOrderbook(result: unknown, { reject = false } = {}) {
@@ -67,6 +68,12 @@ describe('fetchOrderBookSpread', () => {
     // the way the swap flows. Calling it source-first silently inverts every
     // figure on the confirmation screen.
     expect(orderbook).toHaveBeenCalledWith(USDY, USDC);
+  });
+
+  it('requests the long-code stablebond by its exact code and issuer', async () => {
+    const orderbook = mockOrderbook(thinBook);
+    await fetchOrderBookSpread(USDC, CETES);
+    expect(orderbook).toHaveBeenCalledWith(CETES, USDC);
   });
 
   it('reports a two-sided book as measured', async () => {
