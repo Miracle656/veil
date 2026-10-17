@@ -13,6 +13,7 @@ import {
   swapAssetLabel,
   swapDestinations,
   swapRouteInput,
+  trustlineReserveForSwap,
   NATIVE,
 } from '../swapAssets';
 
@@ -36,6 +37,12 @@ it('derives the USDT0 SAC Horizon reports', () => {
 });
 
 describe('picker and routing input', () => {
+  it('states and accounts for the refundable trustline reserve only when a line is missing', () => {
+    expect(trustlineReserveForSwap({ code: 'CETES', issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC' }, false)).toBe(0.5);
+    expect(trustlineReserveForSwap({ code: 'CETES', issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC' }, true)).toBe(0);
+    expect(trustlineReserveForSwap(NATIVE, false)).toBe(0);
+  });
+
   it('offers the three issuer-pinned Etherfuse stablebonds on mainnet only', () => {
     const issuer = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
     for (const code of ['CETES', 'USTRY', 'TESOURO']) {

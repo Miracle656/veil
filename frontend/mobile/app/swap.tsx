@@ -24,6 +24,7 @@ import {
   swapDestinations,
   swapRouteInput,
   isStablebondUsdcPair,
+  trustlineReserveForSwap,
   type NetworkName,
   type SwapAsset,
 } from '../lib/swapAssets';
@@ -434,10 +435,10 @@ export default function SwapScreen() {
       // may not fall below that, so a freshly funded 1 XLM fee-payer has
       // nothing spendable at all.
       const spendable = (await getFeePayerXlm()).spendable;
-      const TRUSTLINE_RESERVE_XLM = 0.5;
       const needsTrustline = !!tokenOut.issuer && balanceOf(tokenOut) === null;
+      const trustlineReserve = trustlineReserveForSwap(tokenOut, !needsTrustline);
 
-      if (needsTrustline && spendable < TRUSTLINE_RESERVE_XLM) {
+      if (trustlineReserve > 0 && spendable < trustlineReserve) {
         throw new Error(
           `Holding ${tokenOut.code} for the first time locks 0.5 XLM of network reserve, and the account that pays for swaps has ${fmtBal(spendable)} XLM spare. It is funded separately from your wallet balance — send it a little XLM and try again.`,
         );
@@ -450,7 +451,7 @@ export default function SwapScreen() {
       // Paying in XLM comes out of that same account, so measure it against
       // what is spendable there rather than the balance on screen.
       if (!tokenIn.issuer) {
-        const left = needsTrustline ? spendable - TRUSTLINE_RESERVE_XLM : spendable;
+        const left = needsTrustline ? spendable - trustlineReserve : spendable;
         if (parsed > left) {
           throw new Error(
             `The account that pays for swaps has ${fmtBal(Math.max(0, left))} XLM available and you asked to swap ${fmtBal(parsed)}. It is funded separately from your wallet balance.`,
@@ -620,7 +621,8 @@ export default function SwapScreen() {
                 sellbackAmount: honestQuote?.reverseQuote?.sellbackAmount,
                 spreadLossPct: honestQuote?.reverseQuote?.spreadLossPct,
                 roundTripImpactPct: honestQuote?.reverseQuote?.roundTripImpactPct,
-                trustlineReserveXlm: tokenOut.issuer && balanceOf(tokenOut) === null ? 0.5 : undefined,
+                trustlineReserveXlm:
+                  trustlineReserveForSwap(tokenOut, balanceOf(tokenOut) !== null) || undefined,
               }}
               colors={colors}
             />
