@@ -19,6 +19,13 @@ export interface RegisteredAsset {
   homeDomain?: string
   network: 'mainnet' | 'testnet' | 'all'
   kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native'
+  /**
+   * For tokenized sovereign debt, the government whose debt the token
+   * represents. A structured registry fact the explainer can name even when
+   * the issuer's stellar.toml is unreachable — never free prose written per
+   * asset in a screen.
+   */
+  obligor?: string
   reserveXlm?: number
   sacContractId?: string
 }
@@ -30,6 +37,13 @@ export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSD
 export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA'
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
+/**
+ * Etherfuse publishes every "Stablebond" (tokenized sovereign debt) below,
+ * each under its own long code, from this one issuer account. Verified both
+ * ways: the account's Horizon home_domain is etherfuse.com, and the
+ * stellar.toml at that domain declares each code against this exact issuer.
+ */
+export const ETHERFUSE_MAINNET_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC'
 
 export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   USDC: {
@@ -91,6 +105,92 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     reserveXlm: 0.5,
     sacContractId: USDT0_MAINNET_SAC,
   },
+  // Tokenized sovereign debt from Etherfuse ("Stablebonds"). CETES, USTRY,
+  // TESOURO, EUROB and GILTS are longer than four characters, so their Horizon
+  // asset_type is credit_alphanum12 while KTB's is credit_alphanum4 — see
+  // `horizonAssetType`, which every Horizon query into these must use. The
+  // three with live two-sided USDC books (CETES, USTRY,
+  // TESOURO) can be bought; the three thin ones (KTB, EUROB, GILTS) can be held
+  // and sold but are refused for purchase until their books deepen.
+  CETES: {
+    code: 'CETES',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse CETES',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    obligor: 'Government of Mexico',
+    reserveXlm: 0.5,
+  },
+  USTRY: {
+    code: 'USTRY',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse USTRY',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    obligor: 'United States Government',
+    reserveXlm: 0.5,
+  },
+  TESOURO: {
+    code: 'TESOURO',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse TESOURO',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    obligor: 'Government of Brazil',
+    reserveXlm: 0.5,
+  },
+  KTB: {
+    code: 'KTB',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse KTB',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    obligor: 'Government of South Korea',
+    reserveXlm: 0.5,
+  },
+  EUROB: {
+    code: 'EUROB',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse EUROB',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    obligor: 'European Union governments',
+    reserveXlm: 0.5,
+  },
+  GILTS: {
+    code: 'GILTS',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse GILTS',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    obligor: 'United Kingdom Government',
+    reserveXlm: 0.5,
+  },
+}
+
+/**
+ * The Horizon `asset_type` for a classic asset code.
+ *
+ * Stellar codes of four characters or fewer are `credit_alphanum4`; five to
+ * twelve are `credit_alphanum12`. A query that hardcodes the short type against
+ * a long code does not error — it returns an empty order book, which looks
+ * exactly like "no liquidity". Every Horizon query built from a code must
+ * derive the type here rather than assume the four-character case.
+ */
+export function horizonAssetType(code: string): 'credit_alphanum4' | 'credit_alphanum12' {
+  return code.length > 4 ? 'credit_alphanum12' : 'credit_alphanum4'
 }
 
 export function getRegisteredAsset(

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Horizon, Keypair } from '@stellar/stellar-sdk'
 
 import { useInactivityLock } from '@/hooks/useInactivityLock'
@@ -515,6 +516,14 @@ export default function AssetsPage() {
                           Unverified asset
                         </span>
                       )}
+                      {registered?.kind === 'treasury' ? (
+                        <Link
+                          href={`/assets/bond/${line.code}`}
+                          style={{ display: 'inline-block', marginTop: '0.25rem', marginBottom: '0.25rem', fontSize: '0.75rem', color: 'var(--gold)' }}
+                        >
+                          What is {line.code}? →
+                        </Link>
+                      ) : null}
                       {meta?.description ? (
                         <p style={clampedNoteStyle}>{meta.description}</p>
                       ) : null}

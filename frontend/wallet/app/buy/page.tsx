@@ -310,6 +310,38 @@ export default function BuyPage() {
               </a>
             </div>
 
+            {/* ── Stablebond explainers (#1060) ──
+                Reachable from the buy flow, as the USDY explainer is. Each one
+                is built from the registry and the issuer's own stellar.toml. */}
+            <div
+              style={{
+                marginBottom: '2rem',
+                padding: '1.125rem 1.25rem',
+                background: 'rgba(0, 167, 181, 0.04)',
+                border: '1px solid rgba(0, 167, 181, 0.2)',
+                borderRadius: '12px',
+              }}
+            >
+              <p style={{ fontSize: '0.6875rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--teal)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+                Tokenized sovereign debt
+              </p>
+              <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.4, marginBottom: '0.75rem' }}>
+                Read whose debt each Stablebond represents and who issues the token before buying. Veil is not the counterparty.
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {['CETES', 'USTRY', 'TESOURO'].map((code) => (
+                  <a
+                    key={code}
+                    href={`/assets/bond/${code}`}
+                    className="btn btn-secondary"
+                    style={{ fontSize: '0.8125rem', padding: '6px 14px', textDecoration: 'none' }}
+                  >
+                    What is {code}? →
+                  </a>
+                ))}
+              </div>
+            </div>
+
             {/* SEP-24 domain input */}
             {selectedAnchor?.id === 'sep24' && (
               <div className="card" style={{ padding: '1.25rem', marginBottom: '1rem' }}>
