@@ -223,7 +223,7 @@ export default function OnboardingPage() {
               line above WCAG AA 4.5:1 on near-black (0.3 was 2.56:1). */}
           <p
             id="webauthn-footnote"
-            style={{ textAlign: 'center', fontSize: '0.75rem', color: 'rgba(246,247,248,0.6)', marginTop: '2.5rem' }}
+            style={{ textAlign: 'center', fontSize: '0.75rem', color: 'rgba(246,247,248,0.65)', marginTop: '2.5rem' }}
           >
             Secured by{' '}
             <span style={{ color: 'rgba(246,247,248,0.9)' }}>WebAuthn</span>

@@ -40,7 +40,7 @@ test.describe('Onboarding — new wallet creation', () => {
     await expect(page.getByRole('button', { name: /recover existing wallet/i })).toBeVisible()
   })
 
-  test('shows biometric waiting state after clicking Create wallet', async ({ page }) => {
+  test('creates a wallet after clicking Create wallet', async ({ page }) => {
     // Register a virtual authenticator so WebAuthn doesn't block
     await addVirtualAuthenticator(page)
     await page.goto('/')
@@ -48,10 +48,9 @@ test.describe('Onboarding — new wallet creation', () => {
 
     await page.getByRole('button', { name: /create wallet/i }).click({ force: true })
 
-    // Should show the "Waiting for biometric...", "Setting up your wallet...", or creation state
-    await expect(
-      page.getByText(/waiting for biometric|setting up your wallet|deploying wallet on-chain|wallet created/i).or(page.getByText(/dashboard/i).first()),
-    ).toBeVisible({ timeout: 10_000 })
+    // Fast virtual authenticators can complete the passkey prompt and advance
+    // straight to the dashboard before an intermediate loading state is painted.
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 30_000 })
   })
 
   test('full onboarding flow: create wallet → dashboard redirect', async ({ page }) => {
