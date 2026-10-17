@@ -5,13 +5,14 @@
 import '../lib/polyfills';
 
 import { useEffect, useRef } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { StyleSheet } from 'react-native';
 
@@ -33,6 +34,8 @@ import {
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
 import { WalletProvider } from '../components/WalletProvider';
 import { BootnodeBanner } from '../components/BootnodeBanner';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { initSentry } from '../lib/sentry';
 
 // Hold the native splash screen until the brand fonts are ready, so the UI
 // never flashes a system font on first paint.
@@ -40,6 +43,14 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const { colors, isDark } = useTheme();
+  // Only where privacy is actually in play.
+  //
+  // The banner reports which SPP archive the privacy client will use. That is
+  // worth saying on a privacy screen and is noise everywhere else — on the
+  // dashboard it reads as a standing error about a feature the user is not
+  // using, and before a wallet exists it is the first thing a new user sees.
+  const pathname = usePathname();
+  const showsBootnodeBanner = pathname.startsWith('/privacy');
   const [fontsLoaded, fontError] = useFonts(fontAssets);
 
   useEffect(() => {
@@ -80,6 +91,9 @@ export default function RootLayout() {
     // Check for payments while the app is closed, so a notification does not
     // wait for the next time the user opens it.
     void registerActivityCheck();
+    // Crash reporting is opt-in and silent without a DSN (#442); this picks up
+    // the stored choice, or does nothing on a build that was never configured.
+    void initSentry();
   }, []);
 
   // Keep the splash screen up (render nothing) until the fonts resolve — either
@@ -98,11 +112,29 @@ export default function RootLayout() {
     // reaches the bottom of the display even if the native window beneath is
     // still light, which is belt-and-braces alongside the SystemUI call above.
     <GestureHandlerRootView style={[styles.root, { backgroundColor: colors.background }]}>
+      {/* The app's global error boundary (#442). Outermost stateful component
+          on purpose: it sits above the providers as well as the navigator, so a
+          throw from either becomes the fallback instead of a white screen — and
+          nothing inside it is near a signing path, so the fallback can promise
+          the wallet is untouched. */}
+      <ErrorBoundary>
       <SafeAreaProvider>
+        {/* The app is edge-to-edge, which means Android no longer resizes the
+            window when the keyboard opens — so React Native's own
+            KeyboardAvoidingView has nothing to react to and silently does
+            nothing. This provider reads the real inset from the platform,
+            which is the only thing that still tells the truth once the window
+            stops changing size. */}
+        <KeyboardProvider>
         <BottomSheetModalProvider>
           <ConnectivityProvider>
             <WalletProvider>
-              <BootnodeBanner />
+              {/* Not on the way in. The banner reports which SPP archive the
+                  privacy client will use, which is meaningless before there is
+                  a wallet — and on the splash and the landing it reads as an
+                  error on a first impression. Gated here rather than inside the
+                  banner so the banner stays a pure render of its own status. */}
+              {showsBootnodeBanner ? <BootnodeBanner /> : null}
               <ConnectivityGate />
               <OutboxReplayGate />
               <InactivityLockGate />
@@ -126,7 +158,9 @@ export default function RootLayout() {
             </WalletProvider>
           </ConnectivityProvider>
         </BottomSheetModalProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
+      </ErrorBoundary>
     </GestureHandlerRootView>
   );
 }

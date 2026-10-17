@@ -29,9 +29,9 @@ import {
 } from './backup';
 import { getNetwork } from './network';
 
-// Wallet credential keys written by the SDK (`useInvisibleWallet`).
-const ADDRESS_KEY = 'invisible_wallet_address';
-const PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
+// Wallet credential keys written by the SDK (`useInvisibleWallet`), read and
+// written through the helper so a mainnet backup describes the mainnet wallet.
+import { SDK_ADDRESS as ADDRESS_KEY, SDK_PUBLIC_KEY as PUBLIC_KEY_KEY, getSdkItem, setSdkItems } from './sdkStorage';
 /** Non-secret wallet settings, mirrored from the web wallet. Wallet-derived: cleared on reset. */
 export const WALLET_SETTINGS_STORAGE_KEY = 'veil_wallet_settings';
 export const BACKUP_LAST_EXPORTED_KEY = 'veil_backup_last_exported_at';
@@ -65,12 +65,12 @@ async function readSettings(): Promise<Record<string, unknown> | undefined> {
 export async function collectWalletMetadata(
   overrides: Partial<WalletBackupMetadata> = {}
 ): Promise<WalletBackupMetadata> {
-  const address = overrides.address ?? (await AsyncStorage.getItem(ADDRESS_KEY)) ?? '';
+  const address = overrides.address ?? (await getSdkItem(ADDRESS_KEY)) ?? '';
   if (!address) {
     throw new BackupError('No wallet found on this device. Register before backing up.');
   }
 
-  const publicKey = await AsyncStorage.getItem(PUBLIC_KEY_KEY);
+  const publicKey = await getSdkItem(PUBLIC_KEY_KEY);
   const signers = overrides.signers ?? (publicKey ? [{ index: 0, publicKey }] : []);
 
   // The passphrase stamps which network the wallet lives on, so it must be the
@@ -273,15 +273,18 @@ export async function readBackupFile(uri: string): Promise<string> {
 
 /** Write the non-secret parts of a restored backup into device storage. */
 export async function persistRestoredState(metadata: WalletBackupMetadata): Promise<void> {
-  const entries: Record<string, string> = { [ADDRESS_KEY]: metadata.address };
-
+  // The SDK's credential keys are namespaced per network; the settings blob is
+  // a plain app key and is not. Restoring them through one AsyncStorage call
+  // wrote the address and public key unsuffixed, so a mainnet restore left the
+  // SDK still seeing no wallet.
+  const sdkEntries: [string, string][] = [[ADDRESS_KEY, metadata.address]];
   const primary = metadata.signers[0]?.publicKey;
-  if (primary) entries[PUBLIC_KEY_KEY] = primary;
-  if (metadata.settings) entries[WALLET_SETTINGS_STORAGE_KEY] = JSON.stringify(metadata.settings);
+  if (primary) sdkEntries.push([PUBLIC_KEY_KEY, primary]);
 
-  // `multiSet` (array of [key, value] tuples) is the batch API in async-storage
-  // 2.x (SDK 54); the record-shaped `setMany` only existed in 3.x.
-  await AsyncStorage.multiSet(Object.entries(entries));
+  await setSdkItems(sdkEntries);
+  if (metadata.settings) {
+    await AsyncStorage.setItem(WALLET_SETTINGS_STORAGE_KEY, JSON.stringify(metadata.settings));
+  }
 }
 
 /** A passkey enrolled on this device, to be bound as an additional signer. */

@@ -305,7 +305,15 @@ export default function ReceiveScreen() {
           </View>
         </View>
 
-        {/* Contract address */}
+        {/* Contract address.
+
+            Only for a smart wallet. On a keypair wallet `payable` IS `address`,
+            so this row repeated the address already shown above under a title
+            calling it a contract and a subtitle calling it classic — the same
+            string labelled two contradictory things, which is what it looked
+            like: a C-address screen showing a G-address. There is no second
+            address to offer, so there is no row to draw. */}
+        {isContract ? (
         <Pressable onPress={handleCopyContract} style={({ pressed }) => [styles.card, styles.contractRow, pressed && styles.pressed]}>
           <View style={styles.contractLeft}>
             <View style={styles.hexBadge}>
@@ -327,6 +335,7 @@ export default function ReceiveScreen() {
             <CopyIcon size={14} color={colors.textSecondary} />
           </View>
         </Pressable>
+        ) : null}
 
         {/* The classic account is now the headline address above, so this row
             only exists for the case where it is NOT what the QR shows. */}

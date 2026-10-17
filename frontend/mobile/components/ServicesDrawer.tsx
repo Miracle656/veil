@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -16,6 +16,8 @@ import {
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
+import { useRouter } from 'expo-router';
+
 import { VeilLogo } from './VeilLogo';
 import { BILL_SERVICES, type BillService } from './PayForGrid';
 
@@ -56,6 +58,7 @@ export function ServicesDrawer({
   onClose: () => void;
   services?: BillService[];
 }) {
+  const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // One driver for the whole panel: 0 closed, 1 open. Rows read off the same
@@ -166,6 +169,20 @@ export function ServicesDrawer({
   const soon = services.filter((s) => s.status !== 'live');
   const ordered = [...live, ...soon];
 
+  /**
+   * Close, then navigate on the next tick.
+   *
+   * Pushing while the Modal is still up leaves the drawer sitting over the
+   * screen it just opened — the same reason the More sheet defers its push.
+   */
+  const pick = useCallback(
+    (route: string) => {
+      onClose();
+      setTimeout(() => router.push(route as Parameters<typeof router.push>[0]), 140);
+    },
+    [onClose, router],
+  );
+
   return (
     <Modal
       visible={mounted}
@@ -212,7 +229,12 @@ export function ServicesDrawer({
                 </Stagger>
                 {live.map((s) => (
                   <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
-                    <Row service={s} colors={colors} styles={styles} />
+                    <Row
+                      service={s}
+                      colors={colors}
+                      styles={styles}
+                      onPick={s.route ? () => pick(s.route as string) : undefined}
+                    />
                   </Stagger>
                 ))}
               </>
@@ -282,14 +304,21 @@ function Row({
   colors,
   styles,
   soon = false,
+  onPick,
 }: {
   service: BillService;
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
   soon?: boolean;
+  /** Absent for a service with nowhere to go, which keeps the row inert. */
+  onPick?: () => void;
 }) {
-  return (
-    <View style={styles.row} accessibilityLabel={`${service.label}${soon ? ', coming soon' : ''}`}>
+  // A live row is a button; a "soon" row is a listing. The two looked identical
+  // and behaved identically — neither did anything — so the whole drawer read
+  // as decoration. `BillService` has carried a `route` the entire time.
+  const label = `${service.label}${soon ? ', coming soon' : ''}`;
+  const inner = (
+    <>
       <View style={[styles.rowIcon, soon && styles.rowIconSoon]}>
         <service.Icon size={18} color={soon ? colors.textMuted : colors.textPrimary} />
       </View>
@@ -304,7 +333,33 @@ function Row({
           <Text style={styles.badgeText}>SOON</Text>
         </View>
       ) : null}
-    </View>
+    </>
+  );
+
+  // Written out twice rather than through one `Wrapper` component, because the
+  // two take different `style` types and sharing one JSX node meant passing a
+  // FUNCTION style to a View. Only Pressable resolves those, so on every "soon"
+  // row `styles.row` was dropped entirely — the icon, the text and the badge
+  // fell into the default column layout with the badge stretched edge to edge.
+  // A View that silently ignores an unsupported style prop gives no warning,
+  // which is why it looked like a layout bug rather than a type one.
+  if (!onPick) {
+    return (
+      <View style={styles.row} accessibilityLabel={label}>
+        {inner}
+      </View>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={onPick}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+    >
+      {inner}
+    </Pressable>
   );
 }
 

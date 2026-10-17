@@ -21,6 +21,7 @@ import { sendAssetFromContract, getFeePayerSpendableXlm, getFeePayerXlm, type Fe
 import { useWallet } from '../components/WalletProvider';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
 import { sendPayment } from '../lib/sendPayment';
+import { previewSpendFee } from '../lib/spendAsset';
 import { validateMemoText } from '../lib/memo';
 import { validateMemo } from '../lib/sep7';
 import { truncateAddress } from '../components/ui/AddressChip';
@@ -346,13 +347,29 @@ export default function SendScreen() {
       await requirePasskey();
       const signer = await requireSigner();
       setStep('submitting');
+      // This screen has its own copy of the contract-or-spending-account
+      // decision rather than going through `spendAsset`, which is why the fee
+      // missed it the first time. `previewSpendFee` applies the same rule, so
+      // the two cannot drift: nothing is charged when the smart wallet pays,
+      // or when the balance would not cover the payment and the fee together.
+      const feeAsset =
+        nonNative && selected ? { code: selected.code, issuer: selected.issuer } : undefined;
+      const veilFee = await previewSpendFee({
+        amount,
+        // An issued asset with no issuer cannot be priced or paid, so it is
+        // treated as native here exactly as it is everywhere else on this
+        // screen.
+        ...(feeAsset?.issuer ? { asset: { code: feeAsset.code, issuer: feeAsset.issuer } } : {}),
+      }).catch(() => null);
+
       const result = await sendPayment(
         recipient,
         amount,
         signer,
         memo,
-        nonNative && selected ? { code: selected.code, issuer: selected.issuer } : undefined,
+        feeAsset,
         memoType || undefined,
+        veilFee ?? undefined,
       );
       setHash(result.hash);
       setStep('done');

@@ -1,9 +1,9 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { recordFeePayerSource } from './feePayerSource';
 import { getNetwork } from './network';
+import { SDK_KEY_ID, getSdkItem } from './sdkStorage';
 import { evaluatePrf } from './passkey';
 import type { PrfOutcome } from './prfOutcome';
 import { fundWithFriendbot } from './testnetWallet';
@@ -24,9 +24,6 @@ import type { CreatedWallet } from './testnetWallet';
  * `FEE_PAYER_PRF_SALT` so the passkey → fee-payer mapping is stable.
  */
 export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
-
-/** SDK storage key holding the WebAuthn credential id (see useInvisibleWallet). */
-const SDK_KEY_ID = 'invisible_wallet_key_id';
 
 /** Minimal shape of the SDK's register(); avoids importing the whole hook type. */
 type Registerable = {
@@ -88,7 +85,7 @@ export async function createPasskeyWallet(
 ): Promise<PasskeyWalletResult> {
   const { walletAddress, publicKeyBytes } = await wallet.register('Veil wallet');
 
-  const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+  const keyId = await getSdkItem(SDK_KEY_ID);
   let feePayer: Keypair | null = null;
   let issue: Exclude<PrfOutcome, 'ok'> = 'failed';
   if (keyId) {
@@ -213,7 +210,7 @@ export async function recreatePasskeyWallet(
  * changes, because it comes from the passkey's public key, not this key.
  */
 export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
-  const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+  const keyId = await getSdkItem(SDK_KEY_ID);
   const walletAddress = await getWalletAddress();
   if (!keyId || !walletAddress) return { bound: false, issue: 'failed' };
 

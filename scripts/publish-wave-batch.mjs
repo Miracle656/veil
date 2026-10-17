@@ -46,6 +46,23 @@ const LABEL_COLOURS = {
   'difficulty:advanced': 'D93F0B',
 }
 
+/**
+ * GitHub's secondary rate limit on content creation: no more than 80 per
+ * minute, and 500 per hour. A batch that trips it fails partway and leaves
+ * half the issues created with no record of which — the worst outcome, because
+ * re-running duplicates everything that already landed.
+ *
+ * One second between creations keeps us under a third of the per-minute
+ * allowance, which costs a minute per sixty issues and is not worth optimising.
+ */
+const CREATE_INTERVAL_MS = 1_000
+
+function sleep(ms) {
+  // Synchronous on purpose: main() is not async, and a publish run has nothing
+  // else to do while it waits.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
 function gh(args, { json = false } = {}) {
   const out = execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
   return json ? JSON.parse(out || 'null') : out
@@ -139,7 +156,10 @@ function main() {
   ensureLabels(repo, [...new Set(issues.flatMap((i) => i.labels))])
 
   for (const issue of issues) {
-    const args = ['issue', 'create', '-R', repo, '--title', issue.title, '--body', issue.body + TELEGRAM_FOOTER]
+    // A draft section that already ends in a rule would otherwise render two
+    // of them, one directly above the other, where the footer starts.
+    const body = issue.body.replace(/\n*-{3,}\s*$/, '') + TELEGRAM_FOOTER
+    const args = ['issue', 'create', '-R', repo, '--title', issue.title, '--body', body]
     for (const label of issue.labels) args.push('--label', label)
     const url = gh(args).trim().split('\n').pop()
     console.log(`  ${issue.id} [${issue.points}] ${url}`)

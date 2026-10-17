@@ -84,6 +84,17 @@ const config: ExpoConfig = {
     // androidNavigationBar colour could not do. Every screen already insets
     // through SafeAreaView/Screen, so nothing ends up underneath it.
     edgeToEdgeEnabled: true,
+    // The window background beneath React's own views.
+    //
+    // Without this it comes from the splash theme, which is #FFFFFF whenever
+    // the OS is in light mode — and edge-to-edge makes the navigation bar
+    // transparent, so that white shows through as a strip at the bottom even
+    // though every screen paints dark. Pinning it dark suits a dark-first
+    // brand: the splash's own dark variant is already this colour, and it
+    // removes the strip whichever view fails to reach the edge.
+    //
+    // Native: takes effect on the next build, not on a JS reload.
+    backgroundColor: '#0F0F0F',
     adaptiveIcon: {
       backgroundColor: '#0F0F0F',
       foregroundImage: './assets/images/android-icon-foreground.png',
@@ -125,6 +136,17 @@ const config: ExpoConfig = {
     './plugins/withIosAppShortcuts',
     // Local plugin: static App Shortcuts for the read-only actions.
     ['./plugins/withAndroidShortcuts', { shortcuts: ANDROID_SHORTCUTS }],
+    [
+      'expo-contacts',
+      {
+        // Shown in the OS permission prompt on the airtime screen. It says what
+        // we do with the list, because the honest answer is "nothing" — the
+        // number you pick goes into the field you are already filling in, and
+        // the contacts themselves are never copied, stored or sent anywhere.
+        contactsPermission:
+          'Veil can fill in a phone number from your contacts so you do not have to type it. Your contacts are not stored or sent anywhere.',
+      },
+    ],
     [
       'expo-splash-screen',
       {

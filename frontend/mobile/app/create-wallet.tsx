@@ -13,6 +13,12 @@ import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
 import { createTestnetWallet, importTestnetWallet, type CreatedWallet } from '../lib/testnetWallet';
 import {
+  CREDENTIAL_ALREADY_EXISTS_MESSAGE,
+  NO_CREDENTIAL_PROVIDER_MESSAGE,
+  isExcludedCredentialExists,
+  isNoCredentialProvider,
+} from '../lib/passkey';
+import {
   createPasskeyWallet,
   recreatePasskeyWallet,
   retryRecoveryBinding,
@@ -153,7 +159,16 @@ export default function CreateWallet() {
       setResult(await fn());
       setStatus('created');
     } catch (e) {
-      setError(errorMessage(e));
+      // Android's own words here are "createCredentialAsync no provider
+      // dependencies found", which reads as a bug in this app's build. It is
+      // not: the phone has no passkey provider enabled. Say what to do.
+      setError(
+        isNoCredentialProvider(e)
+          ? NO_CREDENTIAL_PROVIDER_MESSAGE
+          : isExcludedCredentialExists(e)
+            ? CREDENTIAL_ALREADY_EXISTS_MESSAGE
+            : errorMessage(e),
+      );
       setStatus('error');
     }
   }
@@ -394,6 +409,19 @@ export default function CreateWallet() {
                 {status === 'busy' ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.ctaText}>Create with passkey</Text>}
               </Pressable>
             )}
+            {/* A random keypair is a testnet affordance, and on mainnet it is a
+                trap. `createTestnetWallet` makes a random classic account and
+                funds it from Friendbot — which does not exist on mainnet, so
+                the wallet arrives empty, unfunded, with no passkey, no smart
+                contract and no way to recover it. It sat here as a peer of the
+                passkey button, one tap away, relabelled "Use a classic keypair
+                instead", and a tester who hit a passkey error took it: his
+                wallet was a G-address reading "not active on the network yet",
+                and it silently became the source of his naira customer
+                reference. Offered only where Friendbot can actually fund it,
+                and in Expo Go, where there is no passkey module and this is the
+                only way to get a wallet at all. */}
+            {(IN_EXPO_GO || getNetwork().friendbotUrl) && (
             <Pressable
               testID="create-wallet-button"
               accessibilityRole="button"
@@ -409,14 +437,11 @@ export default function CreateWallet() {
                 <ActivityIndicator color={colors.onAccent} />
               ) : (
                 <Text style={IN_EXPO_GO ? styles.ctaText : styles.ctaSecondaryText}>
-                  {IN_EXPO_GO
-                    ? 'Create testnet wallet'
-                    : getNetwork().friendbotUrl
-                      ? 'Use a testnet keypair instead'
-                      : 'Use a classic keypair instead'}
+                  {IN_EXPO_GO ? 'Create testnet wallet' : 'Use a testnet keypair instead'}
                 </Text>
               )}
             </Pressable>
+            )}
             <Pressable accessibilityRole="button" onPress={() => setImporting(true)} style={styles.linkBtn}>
               <Text style={styles.link}>I already have a secret key</Text>
             </Pressable>

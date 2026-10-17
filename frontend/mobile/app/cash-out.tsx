@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -17,7 +19,13 @@ import { useTheme } from '../hooks/useTheme';
 import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
-import { NIGERIAN_BANKS, bankName } from '../lib/nigerianBanks';
+import {
+  NIGERIAN_BANKS,
+  POPULAR_BANKS,
+  bankName,
+  bankSlug,
+  highlight,
+} from '../lib/nigerianBanks';
 import {
   OfframpTimeout,
   OfframpUnavailable,
@@ -25,7 +33,8 @@ import {
   getOfframpRate,
   getOrderStatus,
   isFailure,
-  activeOrderId,
+  OfframpOrderUnreadable,
+  activeOrder,
   forgetActiveOrder,
   isTerminal,
   rememberActiveOrder,
@@ -38,8 +47,11 @@ import { getFeePayerAddress } from '../lib/activity';
 import { getWalletAddress } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 import { errorMessage } from '../lib/errorMessage';
-import { NotEnoughToSend, spendAsset } from '../lib/spendAsset';
+import { NotEnoughToSend, previewSpendFee, spendAsset } from '../lib/spendAsset';
+import type { PlatformFee } from '../lib/platformFee';
 import { useWallet } from '../components/WalletProvider';
+import { BankMark } from '../components/BankMark';
+import { CloseIcon, SearchIcon } from '../components/icons';
 
 /** Circle's USDC on mainnet — the only asset Linq's Stellar leg credits. */
 const USDC_MAINNET_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
@@ -198,18 +210,6 @@ export default function CashOutScreen() {
     setStep('amount');
   };
 
-  // Typed through an in-brand keypad rather than the OS keyboard: this is the
-  // only field on the screen, and a system numpad covering the balance and
-  // rate while the user decides an amount is a worse trade than owning the
-  // keys.
-  const pressKey = (k: string) => {
-    setAmountNGN((prev) => {
-      if (k === '<') return prev.slice(0, -1);
-      if (k === '.') return prev.includes('.') ? prev : prev === '' ? '0.' : prev + '.';
-      const next = prev === '0' ? k : prev + k;
-      return next.replace(/^0+(?=[0-9])/, '');
-    });
-  };
 
   // The idempotency key is generated ONCE per attempt and reused on retry.
   // A fresh key on a retry is how one order becomes two, and the second one
@@ -225,7 +225,14 @@ export default function CashOutScreen() {
         setRate(r.rate);
         setRateState('ready');
       })
-      .catch(() => setRateState('failed'));
+      .catch((err) => {
+        // The screen says one thing for every cause, which is right for the
+        // user and useless for us: a preview build with no backend URL
+        // configured threw "No backend configured" instantly and read on
+        // screen as the rate service being unreachable.
+        console.warn('[cash-out] rate fetch failed:', errorMessage(err));
+        setRateState('failed');
+      });
   }, []);
 
   useEffect(() => {
@@ -241,10 +248,10 @@ export default function CashOutScreen() {
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const id = await activeOrderId();
-      if (!id || !alive) return;
+      const saved = await activeOrder();
+      if (!saved || !alive) return;
       try {
-        const live = await getOrderStatus(id);
+        const live = await getOrderStatus(saved.id, saved.token);
         if (!alive) return;
         setStatus(live.status);
         if (isTerminal(live.status)) {
@@ -262,13 +269,30 @@ export default function CashOutScreen() {
           amountNGN: live.amountNGN,
           rate: live.rate ?? 0,
           status: live.status,
+          // The status read does not return the token; it came from storage and
+          // the poll below needs it again.
+          accessToken: saved.token,
         });
         // Both come from the backend now. Without them a resumed order showed
         // "₦0 / USDC" and a countdown with no start — a dash where the minutes
         // belong, which reads as an order that has expired when it has not.
         if (live.createdAt) setCreatedAt(new Date(live.createdAt).getTime());
         setStep('deposit');
-      } catch {
+      } catch (err) {
+        if (err instanceof OfframpOrderUnreadable) {
+          // The pointer is no good — an order created before this app build
+          // kept the token, or one whose token was superseded by a retry. It
+          // will still settle; we just cannot follow it here, and keeping the
+          // pointer would mean failing this read on every single launch.
+          void forgetActiveOrder();
+          if (alive) {
+            setError(
+              'A cash-out from an earlier version of the app can no longer be tracked here. ' +
+                'It still completes — check Activity, or your bank alerts.',
+            );
+          }
+          return;
+        }
         // Unreachable backend: leave the fresh form rather than showing an
         // order we cannot describe.
       }
@@ -298,6 +322,26 @@ export default function CashOutScreen() {
 
   const ngn = Number(amountNGN.replace(/,/g, ''));
   const estimatedUsdc = rate && ngn > 0 ? ngn / rate : null;
+
+  // Disclosed on review, before the passkey. Decided by the same function
+  // `spendAsset` uses, so what is shown is what is taken. Null means nothing
+  // will be charged — the usual case, since paying from the Veil smart wallet
+  // is free and only the spending account carries a fee.
+  const [veilFee, setVeilFee] = useState<PlatformFee | null>(null);
+  useEffect(() => {
+    if (step !== 'review' || !estimatedUsdc) return;
+    let cancelled = false;
+    void (async () => {
+      const fee = await previewSpendFee({
+        amount: String(estimatedUsdc),
+        asset: { code: 'USDC', issuer: USDC_MAINNET_ISSUER },
+      }).catch(() => null);
+      if (!cancelled) setVeilFee(fee);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [step, estimatedUsdc]);
   // The most naira this balance can produce, floored to whole naira so the
   // suggestion never asks for more USDC than the wallet holds.
   const maxNGN = rate && usdcBalance ? Math.floor(usdcBalance * rate) : null;
@@ -372,7 +416,7 @@ export default function CashOutScreen() {
       setOrder(created);
       setStatus(created.status);
       setCreatedAt(Date.now());
-      void rememberActiveOrder(created.id);
+      void rememberActiveOrder(created.id, created.accessToken);
       // So the activity feed can call this "Cashed out" rather than a transfer
       // to an unknown address.
       void rememberDepositAddress(created.walletAddress);
@@ -400,9 +444,10 @@ export default function CashOutScreen() {
   useEffect(() => {
     if (step !== 'deposit' || !order) return;
     let alive = true;
+    let timer: ReturnType<typeof setInterval> | undefined;
     const tick = async () => {
       try {
-        const s = await getOrderStatus(order.id);
+        const s = await getOrderStatus(order.id, order.accessToken);
         if (!alive) return;
         setStatus(s.status);
         // The settled figures replace the quote as soon as the provider has
@@ -417,16 +462,31 @@ export default function CashOutScreen() {
           setStep('done');
           void forgetActiveOrder();
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof OfframpOrderUnreadable) {
+          // Not transient: retrying cannot produce a credential we do not have.
+          // Stopping the interval matters more than the message — otherwise this
+          // polls a guaranteed failure every few seconds for as long as the
+          // screen is open. The last status we did read stays on screen; it is
+          // still the truth, just no longer being refreshed.
+          if (timer) clearInterval(timer);
+          if (alive) {
+            setError(
+              'We can no longer check this cash-out from this device. It still completes — ' +
+                'your bank alert is the receipt.',
+            );
+          }
+          return;
+        }
         // Transient: the next tick tries again rather than showing an error
         // over a screen that is otherwise correct.
       }
     };
     void tick();
-    const id = setInterval(tick, POLL_MS);
+    timer = setInterval(tick, POLL_MS);
     return () => {
       alive = false;
-      clearInterval(id);
+      if (timer) clearInterval(timer);
     };
   }, [step, order]);
 
@@ -450,9 +510,19 @@ export default function CashOutScreen() {
 
 
   const stepNumber = step === 'amount' ? 1 : step === 'bank' ? 2 : 3;
-  const filteredBanks = NIGERIAN_BANKS.filter((b) =>
-    b.name.toLowerCase().includes(bankQuery.trim().toLowerCase()),
-  );
+  // Searching, as a state rather than a side effect of a non-empty box: it is
+  // what swaps the POPULAR chips for the results panel.
+  const query = bankQuery.trim().toLowerCase();
+  const searching = query !== '';
+  // Matched on the short name too, so typing "kuda" finds "Kuda Microfinance
+  // Bank" and "gt" finds GTBank.
+  const filteredBanks = searching
+    ? NIGERIAN_BANKS.filter(
+        (b) =>
+          b.name.toLowerCase().includes(query) ||
+          (b.short ?? '').toLowerCase().includes(query),
+      )
+    : [];
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -472,7 +542,17 @@ export default function CashOutScreen() {
         ) : null}
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={16}
+      >
+        <ScrollView
+          style={styles.flex}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.body}
+          keyboardShouldPersistTaps="handled"
+        >
         {mainnetOnly ? (
           <View style={styles.hairlineCard}>
             <Text style={styles.eyebrow}>MAINNET ONLY</Text>
@@ -500,9 +580,16 @@ export default function CashOutScreen() {
 
             <View style={styles.amountRow}>
               <Text style={styles.currency}>₦</Text>
-              <Text style={styles.amountValue} numberOfLines={1}>
-                {amountNGN === '' ? '0' : Number(amountNGN).toLocaleString('en-US')}
-              </Text>
+              <TextInput
+                style={styles.amountValue}
+                value={amountNGN}
+                onChangeText={(t) => setAmountNGN(t.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1'))}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                placeholderTextColor={colors.textFaint}
+                numberOfLines={1}
+                accessibilityLabel="Amount in naira"
+              />
             </View>
 
             <View style={styles.underAmount}>
@@ -542,19 +629,6 @@ export default function CashOutScreen() {
               </Text>
             ) : null}
 
-            <View style={styles.keypad}>
-              {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '<'].map((k) => (
-                <Pressable
-                  key={k}
-                  onPress={() => pressKey(k)}
-                  accessibilityRole="button"
-                  accessibilityLabel={k === '<' ? 'Delete' : k}
-                  style={({ pressed }) => [styles.key, pressed && styles.keyPressed]}
-                >
-                  <Text style={styles.keyText}>{k === '<' ? '⌫' : k}</Text>
-                </Pressable>
-              ))}
-            </View>
 
             <Pressable
               onPress={() => setStep('bank')}
@@ -602,7 +676,13 @@ export default function CashOutScreen() {
                 // worse, leaving them on screen reads as "still choosing".
                 // The answer stays visible; changing it is one tap away.
                 <View style={styles.bankChosen}>
-                  <Text style={styles.bankName}>{bankName(bankCode)}</Text>
+                  <View style={styles.bankChosenLeft}>
+                    <BankMark
+                      bank={{ name: bankName(bankCode), slug: bankSlug(bankCode) }}
+                      size={28}
+                    />
+                    <Text style={styles.bankName}>{bankName(bankCode)}</Text>
+                  </View>
                   <Pressable
                     onPress={() => {
                       setBankCode('');
@@ -618,35 +698,92 @@ export default function CashOutScreen() {
                 </View>
               ) : (
                 <>
-                  {/* A searchable list, not a wrap of chips. Fifteen banks as
-                      pills is a wall to scan; typing two letters is faster
-                      than reading all of them, and the list scales when more
-                      are added. */}
-                  <TextInput
-                    style={styles.fieldInput}
-                    value={bankQuery}
-                    onChangeText={setBankQuery}
-                    placeholder="Search banks"
-                    placeholderTextColor={colors.textFaint}
-                    accessibilityLabel="Search banks"
-                  />
-                  {bankQuery.trim() === '' ? <Text style={styles.eyebrowSub}>POPULAR</Text> : null}
-                  <View>
-                    {filteredBanks.map((b, i) => (
+                  {/* Six chips, and a search box for the rest.
+                      Almost everyone banks with one of the six, so the common
+                      case is one tap and no typing. Listing all fifteen as rows
+                      made the common case a scan, and listing nothing until you
+                      type made it a guess. */}
+                  <View style={styles.searchRow}>
+                    <SearchIcon size={18} color={colors.textFaint} />
+                    <TextInput
+                      style={styles.searchInput}
+                      value={bankQuery}
+                      onChangeText={setBankQuery}
+                      placeholder="Search banks"
+                      placeholderTextColor={colors.textFaint}
+                      accessibilityLabel="Search banks"
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                    />
+                    {searching ? (
                       <Pressable
-                        key={b.code}
-                        onPress={() => setBankCode(b.code)}
+                        onPress={() => setBankQuery('')}
                         accessibilityRole="button"
-                        style={({ pressed }) => [
-                          styles.bankRow,
-                          i > 0 && styles.bankRowDivider,
-                          pressed && styles.pressed,
-                        ]}
+                        accessibilityLabel="Clear search"
+                        hitSlop={8}
+                        style={({ pressed }) => [styles.clearBtn, pressed && styles.pressed]}
                       >
-                        <Text style={styles.bankName}>{b.name}</Text>
+                        <CloseIcon size={11} color={colors.textSecondary} strokeWidth={2.4} />
                       </Pressable>
-                    ))}
+                    ) : null}
                   </View>
+
+                  {searching ? (
+                    /* The design floats this over the chips. Here it takes
+                       their place instead — they are mutually exclusive, so
+                       nothing is covered, and an absolutely-positioned panel
+                       inside a ScrollView gets clipped on Android for no gain. */
+                    <View style={styles.results}>
+                      {filteredBanks.length > 0 ? (
+                        filteredBanks.map((b) => (
+                          <Pressable
+                            key={b.code}
+                            onPress={() => {
+                              setBankCode(b.code);
+                              setBankQuery('');
+                            }}
+                            accessibilityRole="button"
+                            accessibilityLabel={b.name}
+                            style={({ pressed }) => [styles.resultRow, pressed && styles.resultOn]}
+                          >
+                            <BankMark bank={b} size={32} />
+                            <Text style={styles.resultName} numberOfLines={1}>
+                              {highlight(b.name, query).map((part, i) => (
+                                <Text key={i} style={part.hit ? styles.resultHit : undefined}>
+                                  {part.text}
+                                </Text>
+                              ))}
+                            </Text>
+                          </Pressable>
+                        ))
+                      ) : (
+                        <Text style={styles.noMatch}>
+                          No bank matches “{bankQuery.trim()}”. Try the short name, like GTBank or
+                          UBA.
+                        </Text>
+                      )}
+                    </View>
+                  ) : (
+                    <>
+                      <Text style={styles.popularEyebrow}>POPULAR</Text>
+                      <View style={styles.chipGrid}>
+                        {POPULAR_BANKS.map((b) => (
+                          <Pressable
+                            key={b.code}
+                            onPress={() => setBankCode(b.code)}
+                            accessibilityRole="button"
+                            accessibilityLabel={b.name}
+                            style={({ pressed }) => [styles.chip, pressed && styles.pressed]}
+                          >
+                            <BankMark bank={b} size={22} />
+                            <Text style={styles.chipLabel} numberOfLines={1}>
+                              {b.short ?? b.name}
+                            </Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </>
+                  )}
                 </>
               )}
             </View>
@@ -701,6 +838,9 @@ export default function CashOutScreen() {
               {/* True, and worth saying: the fee payer covers it, so the amount
                   the user sends is the amount that counts. */}
               <Row label="Network fee" value="Under 0.01 XLM" />
+              {veilFee ? (
+                <Row label="Veil fee" value={`${veilFee.amount} ${veilFee.assetCode}`} />
+              ) : null}
             </View>
 
             <Text style={styles.hint}>
@@ -868,7 +1008,8 @@ export default function CashOutScreen() {
         )}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
-      </ScrollView>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -902,6 +1043,7 @@ function Row({
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
+    flex: { flex: 1 },
     header: { paddingHorizontal: 20, paddingTop: 16, gap: 12 },
     body: { padding: 20, paddingBottom: 60, gap: 18 },
 
@@ -972,16 +1114,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     maxPillText: { color: colors.accentText, fontFamily: fontFamily.bodySemiBold, fontSize: 12 },
 
-    keypad: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 4 },
-    key: {
-      width: '33.33%',
-      paddingVertical: 16,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    keyPressed: { opacity: 0.4 },
-    keyText: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 26 },
-
     field: { gap: 8 },
     fieldHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     counter: { color: colors.textFaint, fontFamily: fontFamily.address, fontSize: 12 },
@@ -994,10 +1126,105 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 10,
     },
 
+    searchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingTop: 10,
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    searchInput: {
+      flex: 1,
+      minWidth: 0,
+      padding: 0,
+      color: colors.textStrong,
+      fontFamily: fontFamily.body,
+      fontSize: 15,
+    },
+    clearBtn: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceMd,
+    },
+
+    // The raised panel from the design, in the chips' place.
+    results: {
+      marginTop: 8,
+      backgroundColor: colors.surfaceRaised,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 6,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: 0.14,
+      shadowRadius: 40,
+      elevation: 6,
+    },
+    resultRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 10,
+      borderRadius: 12,
+    },
+    resultOn: { backgroundColor: colors.surfaceMd },
+    resultName: {
+      flex: 1,
+      minWidth: 0,
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+    },
+    // What you typed, inside the name you were looking for.
+    resultHit: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold },
+    noMatch: {
+      paddingVertical: 14,
+      paddingHorizontal: 10,
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 20,
+    },
+
+    popularEyebrow: {
+      marginTop: 22,
+      color: colors.textFaint,
+      fontFamily: fontFamily.address,
+      fontSize: 12,
+      letterSpacing: 1,
+    },
+    chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+    chip: {
+      // Three to a row, as the design's grid does, minus the two gaps.
+      width: '31.5%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingLeft: 5,
+      paddingRight: 10,
+      paddingVertical: 5,
+      borderRadius: 100,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    chipLabel: {
+      flexShrink: 1,
+      minWidth: 0,
+      color: colors.textPrimary,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+    },
+
     bankRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
+      gap: 12,
       paddingVertical: 13,
     },
     bankRowDivider: { borderTopWidth: 1, borderTopColor: colors.border },
@@ -1008,6 +1235,7 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'space-between',
       paddingVertical: 14,
     },
+    bankChosenLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 },
     changeHit: { paddingVertical: 4, paddingHorizontal: 6, marginRight: -6 },
     changeLink: {
       color: colors.accentText,

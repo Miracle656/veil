@@ -89,6 +89,10 @@ export function Row({
 const TOKEN_LOGOS: Record<string, string> = {
   XLM: '/tokens/xlm.png',
   USDC: '/tokens/usdc.png',
+  EURC: '/tokens/eurc.png',
+  // USDT0's issuer publishes no home_domain, so there is no stellar.toml to
+  // resolve a logo from — it has to be bundled or it stays a lettered circle.
+  USDT0: '/tokens/usdt0.png',
 }
 
 /** Circular token mark with a branded image or a token-code fallback. */

@@ -1,4 +1,21 @@
-import { useState } from 'react';
+/**
+ * Wallet backup — export and restore the encrypted envelope.
+ *
+ * Previously this screen drew itself from a hardcoded slate-and-indigo palette
+ * with system font weights, so it read as a different app sitting inside Veil:
+ * no back chevron, no Lora title, none of the theme's colours, and nothing that
+ * survived a light/dark switch. Everything visual here now comes from the theme
+ * and the brand typefaces, like every other settings screen.
+ *
+ * The copy changed for the same reason the colours did. "Encrypted backup" says
+ * what the file is, not what it is for or when it matters, and the one fact a
+ * user has to know before trusting it — that this restores the wallet's
+ * identity, not the ability to spend, because the private key never leaves the
+ * passkey — was buried in a card that only appeared after a successful restore.
+ * It is stated up front now.
+ */
+
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -8,7 +25,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { FlowHeader } from '../../components/FlowHeader';
+import { useTheme } from '../../hooks/useTheme';
 import { BackupError, BackupTamperError } from '../../lib/backup';
 import {
   exportBackupToFile,
@@ -19,6 +39,8 @@ import {
   type PickedBackupFile,
   type RestoreResult,
 } from '../../lib/backupFile';
+import type { ThemeColors } from '../../lib/theme';
+import { fontFamily } from '../../theme/typography';
 
 /**
  * Anything shorter is not worth the 210k PBKDF2 rounds standing behind it. The
@@ -29,25 +51,50 @@ import {
 const MIN_PASSPHRASE_LENGTH = 12;
 
 type Mode = 'export' | 'restore';
+type Styles = ReturnType<typeof createStyles>;
 
 export default function BackupScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [mode, setMode] = useState<Mode>('export');
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>Wallet backup</Text>
-
-      <View style={styles.segmented}>
-        <SegmentButton label="Back up" active={mode === 'export'} onPress={() => setMode('export')} />
-        <SegmentButton
-          label="Restore"
-          active={mode === 'restore'}
-          onPress={() => setMode('restore')}
-        />
+    <SafeAreaView style={styles.screen} edges={['top']}>
+      <View style={styles.header}>
+        <FlowHeader title="Wallet backup" />
       </View>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.intro}>
+          A backup is a single encrypted file that lets you bring this wallet back on a new phone.
+          Keep one anywhere you will still reach if this device is lost.
+        </Text>
 
-      {mode === 'export' ? <ExportPanel /> : <RestorePanel />}
-    </ScrollView>
+        <View style={styles.segmented}>
+          <SegmentButton
+            label="Back up"
+            active={mode === 'export'}
+            onPress={() => setMode('export')}
+            styles={styles}
+          />
+          <SegmentButton
+            label="Restore"
+            active={mode === 'restore'}
+            onPress={() => setMode('restore')}
+            styles={styles}
+          />
+        </View>
+
+        {mode === 'export' ? (
+          <ExportPanel styles={styles} colors={colors} />
+        ) : (
+          <RestorePanel styles={styles} colors={colors} />
+        )}
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -55,7 +102,7 @@ export default function BackupScreen() {
 
 type ExportStatus = 'idle' | 'encrypting' | 'done';
 
-function ExportPanel() {
+function ExportPanel({ styles, colors }: { styles: Styles; colors: ThemeColors }) {
   const [passphrase, setPassphrase] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [status, setStatus] = useState<ExportStatus>('idle');
@@ -109,16 +156,16 @@ function ExportPanel() {
 
   return (
     <>
-      <Text style={styles.subtitle}>
-        Export an encrypted copy of your wallet so you can restore it on another device.
-      </Text>
-
       <View style={styles.card}>
         <Text style={styles.cardTitle}>What goes in the file</Text>
         <Text style={styles.cardBody}>
           Your wallet address, your registered signer public keys, and your app settings — all
-          sealed with AES-256-GCM. Private keys never leave your passkey, so they are not in the
-          backup and cannot be.
+          sealed with AES-256-GCM.
+        </Text>
+        <Text style={styles.cardBody}>
+          Your private key never leaves your passkey, so it is not in the backup and cannot be. That
+          means the file is useless to anyone who takes it, and that restoring it brings the wallet
+          back to view — your passkey is still what spends from it.
         </Text>
       </View>
 
@@ -126,7 +173,7 @@ function ExportPanel() {
       <TextInput
         style={styles.input}
         placeholder={`At least ${MIN_PASSPHRASE_LENGTH} characters`}
-        placeholderTextColor="#64748b"
+        placeholderTextColor={colors.textFaint}
         value={passphrase}
         onChangeText={setPassphrase}
         secureTextEntry
@@ -142,7 +189,7 @@ function ExportPanel() {
       <TextInput
         style={styles.input}
         placeholder="Type it again"
-        placeholderTextColor="#64748b"
+        placeholderTextColor={colors.textFaint}
         value={confirmation}
         onChangeText={setConfirmation}
         secureTextEntry
@@ -152,20 +199,26 @@ function ExportPanel() {
       />
       {mismatched && <Text style={styles.hint}>Passphrases do not match.</Text>}
 
-      <Text style={styles.warning}>
-        There is no way to recover this passphrase. Lose it and the backup is unreadable, by us and
-        by anyone else.
-      </Text>
+      <View style={styles.warningCard}>
+        <Text style={styles.warning}>
+          There is no way to recover this passphrase. Lose it and the backup is unreadable, by us
+          and by anyone else.
+        </Text>
+      </View>
 
       <Pressable
-        style={[styles.button, !canExport && styles.buttonDisabled]}
+        style={({ pressed }) => [
+          styles.button,
+          !canExport && styles.buttonDisabled,
+          pressed && canExport && styles.pressed,
+        ]}
         onPress={handleExport}
         disabled={!canExport}
         accessibilityRole="button"
         accessibilityLabel="Create encrypted backup"
       >
         {status === 'encrypting' ? (
-          <ActivityIndicator color="#f8fafc" />
+          <ActivityIndicator color={colors.onAccent} />
         ) : (
           <Text style={styles.buttonLabel}>Create encrypted backup</Text>
         )}
@@ -183,12 +236,12 @@ function ExportPanel() {
             Save it somewhere you will still have access to if this device is lost.
           </Text>
           <Pressable
-            style={[styles.button, styles.buttonSecondary]}
+            style={({ pressed }) => [styles.secondary, pressed && styles.pressed]}
             onPress={() => offerShare(result)}
             accessibilityRole="button"
             accessibilityLabel="Share backup file"
           >
-            <Text style={styles.buttonLabel}>Share</Text>
+            <Text style={styles.secondaryLabel}>Share</Text>
           </Pressable>
         </View>
       )}
@@ -203,7 +256,7 @@ function ExportPanel() {
 
 type RestoreStatus = 'idle' | 'decrypting' | 'done';
 
-function RestorePanel() {
+function RestorePanel({ styles, colors }: { styles: Styles; colors: ThemeColors }) {
   const [file, setFile] = useState<PickedBackupFile | null>(null);
   const [passphrase, setPassphrase] = useState('');
   const [status, setStatus] = useState<RestoreStatus>('idle');
@@ -252,17 +305,19 @@ function RestorePanel() {
   return (
     <>
       <Text style={styles.subtitle}>
-        Import a backup file to restore your wallet on this device.
+        Pick a backup file and unlock it with the passphrase you sealed it with.
       </Text>
 
       <Pressable
-        style={[styles.button, styles.buttonSecondary]}
+        style={({ pressed }) => [styles.secondary, pressed && styles.pressed]}
         onPress={handlePick}
         disabled={status === 'decrypting'}
         accessibilityRole="button"
         accessibilityLabel="Choose backup file"
       >
-        <Text style={styles.buttonLabel}>{file ? 'Choose a different file' : 'Choose file'}</Text>
+        <Text style={styles.secondaryLabel}>
+          {file ? 'Choose a different file' : 'Choose file'}
+        </Text>
       </Pressable>
 
       {file && <Text style={styles.filename}>{file.name}</Text>}
@@ -271,7 +326,7 @@ function RestorePanel() {
       <TextInput
         style={styles.input}
         placeholder="The passphrase you sealed it with"
-        placeholderTextColor="#64748b"
+        placeholderTextColor={colors.textFaint}
         value={passphrase}
         onChangeText={setPassphrase}
         secureTextEntry
@@ -281,14 +336,18 @@ function RestorePanel() {
       />
 
       <Pressable
-        style={[styles.button, !canRestore && styles.buttonDisabled]}
+        style={({ pressed }) => [
+          styles.button,
+          !canRestore && styles.buttonDisabled,
+          pressed && canRestore && styles.pressed,
+        ]}
         onPress={handleRestore}
         disabled={!canRestore}
         accessibilityRole="button"
         accessibilityLabel="Restore wallet from backup"
       >
         {status === 'decrypting' ? (
-          <ActivityIndicator color="#f8fafc" />
+          <ActivityIndicator color={colors.onAccent} />
         ) : (
           <Text style={styles.buttonLabel}>Restore wallet</Text>
         )}
@@ -335,10 +394,12 @@ function SegmentButton({
   label,
   active,
   onPress,
+  styles,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
+  styles: Styles;
 }) {
   return (
     <Pressable
@@ -357,144 +418,144 @@ function describeError(err: unknown, fallback: string): string {
   return fallback;
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: '#0B0B0F',
-    padding: 24,
-    gap: 12,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: '#9BA1A6',
-    fontSize: 15,
-    marginBottom: 4,
-  },
-  segmented: {
-    flexDirection: 'row',
-    backgroundColor: '#11131a',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    padding: 4,
-    gap: 4,
-  },
-  segment: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 7,
-    alignItems: 'center',
-  },
-  segmentActive: {
-    backgroundColor: '#334155',
-  },
-  segmentLabel: {
-    color: '#94a3b8',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  segmentLabelActive: {
-    color: '#f8fafc',
-  },
-  card: {
-    backgroundColor: '#11131a',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#334155',
-    padding: 16,
-    gap: 8,
-  },
-  cardTitle: {
-    color: '#f1f5f9',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  cardBody: {
-    color: '#9BA1A6',
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  filename: {
-    color: '#6366f1',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  address: {
-    color: '#6366f1',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  label: {
-    color: '#cbd5e1',
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: 8,
-  },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    color: '#f1f5f9',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  hint: {
-    color: '#94a3b8',
-    fontSize: 12,
-  },
-  warning: {
-    color: '#fbbf24',
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 8,
-  },
-  button: {
-    backgroundColor: '#6366f1',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-    minHeight: 48,
-  },
-  buttonSecondary: {
-    backgroundColor: '#334155',
-  },
-  buttonDisabled: {
-    backgroundColor: '#312e81',
-    opacity: 0.5,
-  },
-  buttonLabel: {
-    color: '#f8fafc',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  notice: {
-    color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  errorCard: {
-    backgroundColor: '#1f1113',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#7f1d1d',
-    padding: 16,
-    gap: 8,
-  },
-  errorTitle: {
-    color: '#fca5a5',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  error: {
-    color: '#f87171',
-    fontSize: 13,
-    lineHeight: 19,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    header: { paddingHorizontal: 20, paddingTop: 16 },
+    container: { padding: 20, paddingBottom: 48, gap: 12 },
+    intro: {
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 21,
+      color: colors.textSecondary,
+    },
+    subtitle: {
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 21,
+      color: colors.textSecondary,
+      marginBottom: 4,
+    },
+    segmented: {
+      flexDirection: 'row',
+      backgroundColor: colors.surfaceMd,
+      borderRadius: 100,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      padding: 4,
+      gap: 4,
+      marginBottom: 4,
+    },
+    segment: { flex: 1, paddingVertical: 10, borderRadius: 100, alignItems: 'center' },
+    segmentActive: { backgroundColor: colors.accent },
+    segmentLabel: {
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 14,
+      color: colors.textMuted,
+    },
+    segmentLabelActive: { fontFamily: fontFamily.bodySemiBold, color: colors.onAccent },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      padding: 18,
+      gap: 10,
+    },
+    cardTitle: {
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 16,
+      color: colors.textStrong,
+    },
+    cardBody: {
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      color: colors.textMuted,
+    },
+    filename: {
+      fontFamily: fontFamily.address,
+      fontSize: 13,
+      color: colors.accentText,
+    },
+    address: {
+      fontFamily: fontFamily.address,
+      fontSize: 12,
+      color: colors.accentText,
+    },
+    label: {
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 13,
+      color: colors.textSecondary,
+      marginTop: 8,
+    },
+    input: {
+      backgroundColor: colors.surfaceMd,
+      borderRadius: 14,
+      padding: 14,
+      fontFamily: fontFamily.body,
+      color: colors.textPrimary,
+      fontSize: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.borderStrong,
+    },
+    hint: { fontFamily: fontFamily.body, fontSize: 12, lineHeight: 18, color: colors.textMuted },
+    warningCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.accent,
+      padding: 14,
+      marginTop: 8,
+    },
+    warning: {
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 18,
+      color: colors.accentText,
+    },
+    button: {
+      backgroundColor: colors.accent,
+      borderRadius: 100,
+      paddingVertical: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 8,
+      minHeight: 50,
+    },
+    buttonDisabled: { backgroundColor: colors.surfaceMd },
+    buttonLabel: {
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 15,
+      color: colors.onAccent,
+    },
+    secondary: {
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderRadius: 100,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      marginTop: 8,
+    },
+    secondaryLabel: {
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 14,
+      color: colors.textPrimary,
+    },
+    pressed: { opacity: 0.7 },
+    notice: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.textMuted },
+    errorCard: {
+      backgroundColor: colors.dangerSurface,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.danger,
+      padding: 16,
+      gap: 8,
+    },
+    errorTitle: {
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 15,
+      color: colors.danger,
+    },
+    error: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.danger },
+  });

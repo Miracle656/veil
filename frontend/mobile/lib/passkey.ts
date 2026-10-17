@@ -280,3 +280,126 @@ export async function discoverWithPrf(
     throw error;
   }
 }
+
+/** The pieces of an assertion that let a caller recover the signing public key. */
+export type RecoveryAssertion = {
+  /** The credential that actually signed (the user may pick in the sheet). */
+  credentialId: string;
+  /** Raw P-256 ECDSA signature (64 bytes, r‖s, low-S). */
+  signature: Uint8Array;
+  authData: Uint8Array;
+  clientDataJSON: Uint8Array;
+};
+
+/**
+ * One assertion over a fresh random challenge, for public-key recovery.
+ *
+ * Targeted at `credentialId` when the device still has it, so the user is asked
+ * about their own wallet rather than shown a picker. With no stored id it falls
+ * back to a discoverable assertion — the wallet whose key we are trying to
+ * recover may be exactly the one whose credential id went missing.
+ *
+ * The challenge is random because nothing on chain consumes this signature; it
+ * exists only so the authenticator reveals, by signing, which key it holds.
+ */
+export async function assertForKeyRecovery(
+  credentialId: string | null,
+): Promise<RecoveryAssertion | null> {
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      ...(credentialId ? { allowCredentials: [{ id: credentialId, type: 'public-key' as const }] } : {}),
+      userVerification: 'required',
+      timeout: 60_000,
+    });
+    if (!assertion) return null;
+    const picked =
+      (assertion as { id?: string; rawId?: string }).id ??
+      (assertion as { id?: string; rawId?: string }).rawId ??
+      credentialId;
+    if (!picked) return null;
+    return {
+      credentialId: picked,
+      signature: derToRawSignature(base64UrlToUint8Array(assertion.response.signature)),
+      authData: base64UrlToUint8Array(assertion.response.authenticatorData),
+      clientDataJSON: base64UrlToUint8Array(assertion.response.clientDataJSON),
+    };
+  } catch (error: unknown) {
+    if (isUserRejection(error)) return null;
+    if (isCredentialNotFound(error)) throw new Error(CREDENTIAL_ORPHANED_MESSAGE);
+    throw error;
+  }
+}
+
+/**
+ * Whether Android is saying it has nowhere to put a passkey.
+ *
+ * `createCredentialAsync no provider dependencies found` comes from Android's
+ * Credential Manager, not from us. The app ships both halves it needs
+ * (`androidx.credentials` and `credentials-play-services-auth`, declared by
+ * react-native-passkeys), so this is the device answering: no credential
+ * provider is installed or switched on, most often because Google Password
+ * Manager is disabled as a passkey provider, Play Services is stale, or no
+ * Google account is signed in.
+ *
+ * Worth naming because the raw string reads like a missing build dependency —
+ * it sent us looking at our own gradle file first — and a user shown it has no
+ * idea the fix is three taps away in their own settings.
+ */
+export function isNoCredentialProvider(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+  return (
+    message.includes('no provider dependencies') ||
+    message.includes('no create options') ||
+    (message.includes('provider') && message.includes('createcredential'))
+  );
+}
+
+/**
+ * What to tell someone whose phone has no passkey provider switched on.
+ *
+ * The screen lock is first because it is the one people have genuinely not got,
+ * and Google Password Manager refuses to create a passkey without one — the
+ * passkey is released by that lock, so there is nothing to hold it shut
+ * otherwise. The Google path is given before the Xiaomi one because it is the
+ * same on every skin; the per-manufacturer menus move between OS versions, and
+ * on HyperOS the autofill setting is not under anything called "passwords".
+ */
+export const NO_CREDENTIAL_PROVIDER_MESSAGE =
+  'This phone has no passkey provider switched on, so Android has nowhere to save it. ' +
+  'First set a screen lock (PIN, pattern or fingerprint) — a passkey cannot be created ' +
+  'without one. Then open Settings → Google → All services → Autofill & Passwords and ' +
+  'turn on "Autofill with Google". On Xiaomi and Redmi it may instead be under ' +
+  'Settings → Additional settings → Languages & input → Autofill service — pick Google there.';
+
+/**
+ * Whether the platform refused because this device already holds a Veil passkey.
+ *
+ * The SDK passes the stored credential id as `excludeCredentials` so one device
+ * cannot register twice for the same wallet, and Android enforces that by
+ * refusing outright: "One of the excluded credentials exists on the local
+ * device." The raw string names a WebAuthn mechanism and no action, so it reads
+ * as a failure when it is in fact the platform saying the thing already exists.
+ *
+ * Two ways to arrive here, with opposite fixes, which is why the message offers
+ * both: a wallet is already set up on this device and should be signed into
+ * rather than recreated, or a reset left the SDK's credential id behind while
+ * clearing the secure store, so the app wants to create a wallet the OS thinks
+ * it already has.
+ */
+export function isExcludedCredentialExists(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+  return (
+    message.includes('excluded credential') ||
+    message.includes('excludecredentials') ||
+    message.includes('already registered')
+  );
+}
+
+/** What to tell someone whose device already holds a passkey for this wallet. */
+export const CREDENTIAL_ALREADY_EXISTS_MESSAGE =
+  'This device already has a Veil passkey, so a new one cannot be created over it. ' +
+  'If you already have a wallet here, go back and sign in with it instead. ' +
+  'If you meant to start fresh, reset the wallet first in Settings \u2192 Danger zone \u2014 ' +
+  'that clears the old credential so a new one can be created.';

@@ -11,7 +11,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, type Href } from 'expo-router';
 
 import { useTheme } from '../hooks/useTheme';
+import { FlowHeader } from './FlowHeader';
 import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
 
 // ── Design tokens (legacy static export kept for back-compat) ─────────────
 // Prefer `useTheme()` in new code; the scaffold itself is now theme-aware.
@@ -82,7 +84,6 @@ export function ScreenScaffold({
   const ContentInner = (
     <>
       {eyebrow ? <Text style={styles.eyebrow}>{eyebrow}</Text> : null}
-      <Text style={styles.title}>{title}</Text>
       {description ? <Text style={styles.description}>{description}</Text> : null}
       {children}
     </>
@@ -90,23 +91,19 @@ export function ScreenScaffold({
 
   return (
     <SafeAreaView style={styles.root} edges={['top']} testID={testID}>
+      {/* The house header: FlowHeader itself, not an imitation of it.
+
+          The title belongs beside the back control, which is where Send, Swap,
+          Receive and every other screen put it. This had the back button alone
+          on one row and the title underneath in the body, so a scaffolded page
+          started a line lower than its neighbours and read as a different
+          layout — which it was. */}
       <View style={styles.header}>
         {hideBack ? (
-          <View style={styles.headerSide} />
+          <Text style={styles.title}>{title}</Text>
         ) : (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={backLabel}
-            onPress={handleBack}
-            style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-            hitSlop={12}
-          >
-            <Text style={styles.backChevron}>←</Text>
-            <Text style={styles.backLabel}>{backLabel}</Text>
-          </Pressable>
+          <FlowHeader title={title} onBack={handleBack} />
         )}
-        <Text style={styles.logo}>VEIL</Text>
-        <View style={styles.headerSide} />
       </View>
 
       {scrollable ? (
@@ -174,60 +171,34 @@ const createStyles = (colors: ThemeColors) =>
     header: {
       flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingHorizontal: 16,
-      paddingVertical: 10,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors.border,
-    },
-    headerSide: {
-      minWidth: 72,
-    },
-    backButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingVertical: 4,
-      minWidth: 72,
-    },
-    backChevron: {
-      color: colors.textPrimary,
-      fontSize: 18,
-      marginTop: -2,
-    },
-    backLabel: {
-      color: colors.textPrimary,
-      fontSize: 14,
-      fontWeight: '500',
-    },
-    logo: {
-      color: colors.accent,
-      fontSize: 18,
-      fontWeight: '900',
-      letterSpacing: 2,
+      paddingHorizontal: 20,
+      paddingTop: 16,
+      paddingBottom: 4,
     },
     pressed: { opacity: 0.6 },
     scroll: { flex: 1 },
     scrollContent: { flexGrow: 1, paddingBottom: 32 },
     body: {
-      paddingHorizontal: 24,
+      paddingHorizontal: 20,
       paddingTop: 20,
       gap: 12,
     },
     eyebrow: {
+      fontFamily: fontFamily.accent,
       color: colors.textMuted,
       fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 1.6,
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
     title: {
+      fontFamily: fontFamily.heading,
       color: colors.textStrong,
-      fontSize: 30,
-      fontWeight: '700',
-      letterSpacing: -0.4,
+      // 26 to match FlowHeader exactly: on a tab destination this renders in
+      // place of it, and two title sizes for the same role is the drift.
+      fontSize: 26,
     },
     description: {
+      fontFamily: fontFamily.body,
       color: colors.textMuted,
       fontSize: 14,
       lineHeight: 20,
@@ -251,13 +222,14 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: -4,
     },
     comingSoonLabel: {
+      fontFamily: fontFamily.accent,
       color: colors.accent,
       fontSize: 12,
-      fontWeight: '700',
-      letterSpacing: 1.4,
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
     },
     comingSoonNote: {
+      fontFamily: fontFamily.body,
       color: colors.textMuted,
       fontSize: 12,
     },
@@ -274,12 +246,13 @@ const createStyles = (colors: ThemeColors) =>
     },
     navRowPressed: { opacity: 0.7 },
     navRowLabel: {
+      fontFamily: fontFamily.bodySemiBold,
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '600',
       flex: 1,
     },
     navRowHint: {
+      fontFamily: fontFamily.body,
       color: colors.textMuted,
       fontSize: 12,
       maxWidth: 180,

@@ -15,7 +15,9 @@ import { EyeIcon, EyeOffIcon, PaperPlaneIcon, ReceiveIcon } from './icons';
 const INK = '#0F0F0F';
 const INK_55 = 'rgba(15,15,15,0.55)';
 const INK_60 = 'rgba(15,15,15,0.6)';
-const CARD_HEIGHT = 208;
+// Only the loading/error placeholder is a fixed height — it has no content to
+// measure. The real card measures itself; see `faceFront` below.
+const PLACEHOLDER_HEIGHT = 208;
 
 export type SilverBalanceCardProps = {
   /** Native balance string (XLM), or undefined while loading. */
@@ -34,9 +36,7 @@ export type SilverBalanceCardProps = {
   loading?: boolean;
   error?: boolean;
   /** Reserved amount in XLM (locks base reserve and trustlines) */
-  reservedXlm?: number | null;
   /** Explanation for why the amount is reserved */
-  reserveReason?: string | null;
 };
 
 
@@ -87,8 +87,6 @@ export function SilverBalanceCard({
   breakdown = null,
   loading,
   error,
-  reservedXlm = null,
-  reserveReason = null,
 }: SilverBalanceCardProps) {
   const router = useRouter();
   const { currency, format } = useCurrency();
@@ -116,15 +114,11 @@ export function SilverBalanceCard({
   // whenever it is known, and the XLM view moves to the back.
   const hasTotal = totalUsd !== null && totalUsd !== undefined;
 
-  const reserveNote =
-    reservedXlm !== undefined && reservedXlm !== null
-      ? `Reserved: ${reservedXlm.toFixed(1)} XLM (${reserveReason ?? 'account base reserve'})`
-      : null;
 
   // The whole card flips (Send/Receive included). Only the VISIBLE face is
   // interactive (pointerEvents + zIndex/elevation below): the turned-away face
   // is mirror-flipped and would otherwise steal taps / swap Send↔Receive.
-  const face = (label: string, big: string, sub: string, note?: string | null) => (
+  const face = (label: string, big: string, sub: string) => (
     <>
       <Metal />
       <View style={styles.headerRow}>
@@ -143,15 +137,21 @@ export function SilverBalanceCard({
         </View>
       </View>
       <Pressable onPress={toggleFlip} accessibilityRole="button" accessibilityLabel="Flip balance" style={styles.balanceArea}>
-        <Text style={styles.amount} numberOfLines={1} adjustsFontSizeToFit>
+        <Text
+            style={styles.amount}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            // Without a floor a long balance shrinks until it is unreadable;
+            // 0.65 of 44 is ~28pt, which still reads as the headline figure.
+            minimumFontScale={0.65}
+          >
           {mask(big)}
         </Text>
         <Text style={styles.sub}>{hidden ? '••••' : sub}</Text>
-        {note && !hidden && (
-          <Text style={styles.reserveNote} numberOfLines={1}>
-            {note}
-          </Text>
-        )}
+        {/* The reserve explanation moved to the XLM asset page.
+            "Reserved: 1.5 XLM (account base reserve)" never fit on one line
+            here, and truncating it left a number whose reason was cut off —
+            worse than not saying it. The asset page has room to explain. */}
       </Pressable>
       <View style={styles.actions}>
         <Pressable onPress={() => router.push('/send')} accessibilityRole="button" accessibilityLabel="Send" testID="dashboard-send" style={({ pressed }) => [styles.sendBtn, pressed && styles.pressed]}>
@@ -191,19 +191,19 @@ export function SilverBalanceCard({
     <View style={styles.wrap}>
       <Animated.View
         pointerEvents={flipped ? 'none' : 'auto'}
-        style={[styles.face, { zIndex: flipped ? 0 : 2, elevation: flipped ? 0 : 12, transform: [{ perspective: 1400 }, { rotateY: frontRotate }] }]}
+        style={[styles.faceFront, { zIndex: flipped ? 0 : 2, elevation: flipped ? 0 : 12, transform: [{ perspective: 1400 }, { rotateY: frontRotate }] }]}
       >
         {hasTotal
-          ? face('Total balance', format(totalUsd as number), breakdown ?? cryptoText, reserveNote)
-          : face('Total balance', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet', reserveNote)}
+          ? face('Total balance', format(totalUsd as number), breakdown ?? cryptoText)
+          : face('Total balance', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')}
       </Animated.View>
       <Animated.View
         pointerEvents={flipped ? 'auto' : 'none'}
-        style={[styles.face, { zIndex: flipped ? 2 : 0, elevation: flipped ? 12 : 0, transform: [{ perspective: 1400 }, { rotateY: backRotate }] }]}
+        style={[styles.faceBack, { zIndex: flipped ? 2 : 0, elevation: flipped ? 12 : 0, transform: [{ perspective: 1400 }, { rotateY: backRotate }] }]}
       >
         {hasTotal
-          ? face('XLM', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet', reserveNote)
-          : face(`Balance · ${currency}`, fiatText, `≈ ${trimAmount(balance)} XLM`, reserveNote)}
+          ? face('XLM', cryptoText, hasFiat ? `≈ ${format(usd)}` : 'no price yet')
+          : face(`Balance · ${currency}`, fiatText, `≈ ${trimAmount(balance)} XLM`)}
       </Animated.View>
     </View>
   );
@@ -213,9 +213,30 @@ export function SilverBalanceCard({
 const createStyles = () =>
   StyleSheet.create({
     wrap: {
-      height: CARD_HEIGHT,
+      // No fixed height. A number here has to be re-guessed every time the
+      // card's contents change, and when the guess is low `overflow: 'hidden'`
+      // silently eats the bottom padding and clips the Send/Receive row —
+      // which is exactly what 208 did once the action row moved into the flow
+      // and started taking up height of its own.
+      position: 'relative',
     },
-    face: {
+    // The FRONT face sits in normal flow, so the wrapper is exactly as tall as
+    // the card's content — no slack above the buttons, nothing clipped below
+    // them. A rotation does not affect layout, so the height holds while it
+    // flips.
+    faceFront: {
+      borderRadius: 24,
+      padding: 24,
+      overflow: 'hidden',
+      backfaceVisibility: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: 0.5,
+      shadowRadius: 40,
+    },
+    // The BACK face fills whatever the front measured. Both faces are built by
+    // the same `face()` with the same rows, so they cannot disagree on height.
+    faceBack: {
       ...StyleSheet.absoluteFillObject,
       borderRadius: 24,
       padding: 24,
@@ -225,10 +246,9 @@ const createStyles = () =>
       shadowOffset: { width: 0, height: 18 },
       shadowOpacity: 0.5,
       shadowRadius: 40,
-      // elevation is set per-face inline so only the visible face casts a shadow.
     },
     staticFace: {
-      ...StyleSheet.absoluteFillObject,
+      minHeight: PLACEHOLDER_HEIGHT,
       borderRadius: 24,
       padding: 24,
       overflow: 'hidden',
@@ -263,7 +283,9 @@ const createStyles = () =>
       color: INK,
       fontFamily: fontFamily.heading,
       fontSize: 44,
-      lineHeight: 50,
+      // No lineHeight on purpose: with `adjustsFontSizeToFit` a fixed line box
+      // does not shrink with the font, so a long balance shrinks inside a 50pt
+      // box and the glyphs come out visibly squashed on Android.
       marginTop: 10,
     },
     subRow: {
@@ -277,12 +299,6 @@ const createStyles = () =>
       fontFamily: fontFamily.address,
       fontSize: 12,
       marginTop: 12,
-    },
-    reserveNote: {
-      color: INK_60,
-      fontFamily: fontFamily.body,
-      fontSize: 10,
-      marginTop: 4,
     },
     earnChip: {
       backgroundColor: 'rgba(15,15,15,0.85)',
@@ -309,10 +325,20 @@ const createStyles = () =>
       marginTop: 12,
     },
     actions: {
-      position: 'absolute',
-      left: 24,
-      right: 24,
-      bottom: 20,
+      // In the flow, never absolutely positioned.
+      //
+      // Absolute meant the buttons floated OVER whatever was above them, so on
+      // a funded wallet the reserve note ran underneath them and `overflow:
+      // 'hidden'` clipped what stuck out. Nothing about the text was wrong; it
+      // had nowhere to go. In the flow the text pushes the buttons down and
+      // they can never overlap it.
+      //
+      // `auto` is kept so the row still sinks to the bottom if the card is ever
+      // given a fixed height again. With the card sizing itself there is no
+      // free space for it to claim, so it reads as 0 — which is the point: no
+      // gap to open above the buttons.
+      marginTop: 'auto',
+      paddingTop: 16,
       flexDirection: 'row',
       gap: 10,
     },

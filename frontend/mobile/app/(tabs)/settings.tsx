@@ -1,7 +1,7 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useCurrency } from '../../hooks/useCurrency';
@@ -20,6 +20,7 @@ import { NoticeModal } from '../../components/NoticeModal';
 import { getWalletAddress, hasUsableWallet } from '../../lib/walletStore';
 import { getFeePayerAddress } from '../../lib/activity';
 import { fundWithFriendbot } from '../../lib/testnetWallet';
+import { isNairaKycMismatch, isNairaVerified } from '../../lib/onramp';
 import {
   getNotifIncoming,
   getNotifOutgoing,
@@ -164,6 +165,62 @@ export default function SettingsScreen() {
     });
   };
 
+  // Whether naira payments are open to this person, read once per visit.
+  //
+  // Verification is one-time and invisible otherwise: it happens inside the
+  // buy flow, and afterwards nothing in the app says it stuck. Someone who is
+  // not sure has no way to check short of starting a purchase, and someone
+  // stranded against an older reference cannot tell that apart from never
+  // having verified at all.
+  const [ninState, setNinState] = useState<'unknown' | 'verified' | 'unverified' | 'stranded'>(
+    'unknown',
+  );
+  // On focus, not on mount. Settings is a tab and stays mounted, so a check
+  // that ran once would still say "Verify your identity" to someone who had
+  // just gone and done exactly that — which is the one moment this row is
+  // being looked at.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        const [verified, mismatch] = await Promise.all([
+          isNairaVerified().catch(() => false),
+          isNairaKycMismatch().catch(() => false),
+        ]);
+        if (cancelled) return;
+        // Stranded wins: such a device believes it is verified, and saying so
+        // here would send someone to a buy screen that refuses them.
+        setNinState(mismatch ? 'stranded' : verified ? 'verified' : 'unverified');
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+
+  const ninRow: Row =
+    ninState === 'verified'
+      ? {
+          key: 'nin',
+          title: 'Identity verified',
+          subtitle: 'Your NIN is confirmed. Naira payments are open.',
+          value: '✓',
+          onPress: () => undefined,
+        }
+      : ninState === 'stranded'
+        ? {
+            key: 'nin',
+            title: 'Identity needs support',
+            subtitle: 'Your NIN is verified against an older reference. Open Buy to see what to send support.',
+            onPress: () => router.push('/buy-ngn'),
+          }
+        : {
+            key: 'nin',
+            title: 'Verify your identity',
+            subtitle: 'A one-time NIN check. Needed before you can buy or pay with naira.',
+            onPress: () => router.push('/verify'),
+          };
+
   const general: Row[] = [
     {
       key: 'network',
@@ -172,8 +229,12 @@ export default function SettingsScreen() {
       onPress: () => handleNetworkToggle(onTestnet),
       switch: { value: !onTestnet, onChange: (v) => handleNetworkToggle(v) },
     },
+    // Mainnet only, and not merely to hide a row: Linq has no test
+    // environment, so on testnet there is nothing this could truthfully say.
+    // `unknown` is skipped too — a checkmark that appears a moment after the
+    // screen does is worse than one that was always there.
+    ...(!onTestnet && ninState !== 'unknown' ? [ninRow] : []),
     { key: 'fee-payer', title: 'Fee payer', subtitle: 'The account that pays network fees, and its balance', onPress: () => router.push('/settings/fee-payer') },
-    { key: 'dapps', title: 'Discover dApps', subtitle: 'Browse the Stellar apps Veil can open', onPress: () => router.push('/dapps') },
     { key: 'trustlines', title: 'Trustlines & reserves', subtitle: `Manage enabled assets and reclaim locked reserves (${TRUSTLINE_RESERVE_COST_XLM} XLM each)`, onPress: () => router.push('/assets') },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
     { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
