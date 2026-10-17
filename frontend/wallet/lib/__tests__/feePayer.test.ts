@@ -75,15 +75,62 @@ describe('fresh wallet with PRF (secure path)', () => {
 })
 
 describe('fallback when PRF is unavailable', () => {
-  it('falls back to the legacy derivation and persists as before (no brick)', async () => {
+  it('falls back to a random keypair for a fresh wallet (not derived from public credential ID)', async () => {
     localStorage.setItem(KEY_ID, CRED)
 
     const kp = await ensureFeePayer(noPrf)
 
-    expect(getFeePayerMode()).toBe('legacy')
+    expect(getFeePayerMode()).toBe('random')
     const legacy = await deriveFeePayerKeypair(CRED)
-    expect(kp!.publicKey()).toBe(legacy.publicKey()) // exactly today's address
-    expect(localStorage.getItem(SECRET)).toBe(kp!.secret()) // unchanged persistence
+    expect(kp!.publicKey()).not.toBe(legacy.publicKey()) // not derived from public credential ID
+    expect(localStorage.getItem(SECRET)).toBe(kp!.secret()) // local persistence so gas wallet works
+    expect(sessionStorage.getItem(SECRET)).toBe(kp!.secret())
+  })
+
+  it('preserves an existing legacy account if funded on-chain when PRF is unavailable', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const legacy = await deriveFeePayerKeypair(CRED)
+
+    // Mock fetch to simulate that legacy.publicKey() exists on-chain
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (typeof url === 'string' && url.includes(legacy.publicKey())) {
+        return { ok: true, status: 200 } as Response
+      }
+      return { ok: false, status: 404 } as Response
+    })
+
+    try {
+      const kp = await ensureFeePayer(noPrf)
+      expect(getFeePayerMode()).toBe('legacy')
+      expect(kp!.publicKey()).toBe(legacy.publicKey())
+      expect(localStorage.getItem(SECRET)).toBe(legacy.secret())
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('preserves an existing legacy account if funded on-chain even when PRF is available', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const legacy = await deriveFeePayerKeypair(CRED)
+
+    // Mock fetch: PRF candidates 404, legacy exists on-chain
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      if (typeof url === 'string' && url.includes(legacy.publicKey())) {
+        return { ok: true, status: 200 } as Response
+      }
+      return { ok: false, status: 404 } as Response
+    })
+
+    try {
+      const kp = await ensureFeePayer(withPrf)
+      expect(getFeePayerMode()).toBe('legacy')
+      expect(kp!.publicKey()).toBe(legacy.publicKey())
+      expect(localStorage.getItem(SECRET)).toBe(legacy.secret())
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })
 
@@ -126,12 +173,27 @@ describe('pre-existing wallet stays legacy (no address move)', () => {
 describe('clearFeePayer', () => {
   it('leaves a legacy wallet recoverable (unlock without a prompt)', async () => {
     localStorage.setItem(KEY_ID, CRED)
+    const legacy = await deriveFeePayerKeypair(CRED)
+    localStorage.setItem(SECRET, legacy.secret())
+    localStorage.setItem('veil_feepayer_mode', 'legacy')
+
     await ensureFeePayer(noPrf) // legacy
 
     clearFeePayer()
 
     // legacy seed is still in localStorage, so peek restores it
-    expect(peekFeePayerSecret()).toBe(localStorage.getItem(SECRET))
+    expect(peekFeePayerSecret()).toBe(legacy.secret())
+    expect(peekFeePayerSecret()).not.toBeNull()
+  })
+
+  it('leaves a random fallback wallet recoverable (unlock without a prompt)', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const kp = await ensureFeePayer(noPrf) // random
+    expect(getFeePayerMode()).toBe('random')
+
+    clearFeePayer()
+
+    expect(peekFeePayerSecret()).toBe(kp!.secret())
     expect(peekFeePayerSecret()).not.toBeNull()
   })
 })

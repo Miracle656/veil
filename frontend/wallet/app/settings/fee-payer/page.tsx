@@ -19,12 +19,14 @@ const MODE_LABEL: Record<FeePayerMode, string> = {
   'prf-raw': 'PRF (raw)',
   'prf-hkdf': 'PRF (HKDF)',
   legacy: 'Legacy (credential ID)',
+  random: 'Random fallback',
 }
 
 const MODE_DESCRIPTION: Record<FeePayerMode, string> = {
   'prf-raw': 'Derived directly from a WebAuthn PRF output on this passkey — the same method the mobile app uses, so this address reproduces on a PRF-capable device.',
   'prf-hkdf': 'Derived by running a WebAuthn PRF output through HKDF — what the web wallet used before it matched mobile. Kept only because this wallet was already pinned this way.',
-  legacy: 'Derived from the (non-secret) passkey credential ID. Used for wallets created before PRF support, or as a fallback when the authenticator does not support PRF.',
+  legacy: 'Derived from the (non-secret) passkey credential ID. Preserved for wallets created before PRF support with an existing funded account.',
+  random: 'Generated at random because your passkey gave no PRF output. Stored only on this device and not derived from public values.',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -97,15 +99,14 @@ export default function FeePayerSettingsPage() {
             <AlertTriangle size={18} color="rgba(220,38,38,0.9)" strokeWidth={1.75} style={{ flexShrink: 0, marginTop: '0.125rem' }} />
             <div>
               <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'rgba(220,38,38,0.9)', marginBottom: '0.25rem' }}>
-                This device uses the older gas-account derivation
+                {mode === 'legacy' ? 'This device uses the legacy gas-account derivation' : 'This device uses a local random gas-account fallback'}
               </p>
               <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
                 This authenticator produced no WebAuthn PRF result{diagnostics?.prfError ? ` (${diagnostics.prfError})` : ''},
-                so the older credential-id derivation was used instead. Your wallet address does not
+                so {mode === 'legacy' ? 'the legacy credential-id derivation was used to preserve your existing funded account.' : 'a device-local random keypair was generated instead of deriving a key from the public credential ID.'} Your wallet address does not
                 depend on this &mdash; it comes from the passkey&apos;s own public key.
-                A PRF-capable device derives this same account as well as the preferred ones, probes
-                which actually exists on chain, and takes that one, so a funded account here is
-                still yours there. The candidates below show exactly what was tried.
+                A PRF-capable device probes candidate accounts that exist on-chain,
+                so a funded legacy account is preserved across devices. The candidates below show exactly what was tried.
               </p>
             </div>
           </div>

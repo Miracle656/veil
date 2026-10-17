@@ -28,8 +28,8 @@ export function usePrivacyRecoveryNotice(): boolean {
     if (!isPrivacyEnabled()) return
     const mode = getFeePayerMode()
     if (!mode) return // no established wallet — nothing to warn about
-    if (mode === 'legacy') {
-      // V132: a legacy fee payer cannot even sign privacy keys.
+    if (mode === 'legacy' || mode === 'random') {
+      // V132: a legacy or random fee payer cannot sign privacy keys.
       setUnsupported(true)
       return
     }
