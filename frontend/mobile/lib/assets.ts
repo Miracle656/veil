@@ -23,7 +23,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon, StrKey } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
-import { getFeePayerAddress } from './activity';
 
 /** AsyncStorage key holding the active wallet's public key (shared with backupFile). */
 export const WALLET_PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
@@ -357,6 +356,27 @@ export function classicAccountExists(): boolean {
   return lastAccountExists;
 }
 
+/**
+ * The stored fee payer, read through `lib/activity` at call time rather than
+ * imported at module load.
+ *
+ * `lib/activity.ts` reaches the keystore (`walletStore` -> `storage`,
+ * `privacy/storage`, `walletConnect`), which pulls in `expo-secure-store`,
+ * `expo-crypto`, `expo-sqlite` and `@reown/walletkit`. A top-level import here
+ * drags all of that into `frontend/wallet/lib/__tests__/registryParity.test.ts`,
+ * which requires this module from the web wallet's own run, where the mobile
+ * `node_modules` is not installed. That suite then dies at load — before a
+ * single assertion runs, so a registry divergence would have gone unreported.
+ * The invariant is the one this module's own `sacContractIdForCode` comment
+ * states: the web counterpart must stay import-free for the parity harness.
+ *
+ * Same function, same moment it is called; only the load-time edge is gone.
+ */
+async function readFeePayerAddress(): Promise<string | null> {
+  const { getFeePayerAddress } = require('./activity') as typeof import('./activity');
+  return getFeePayerAddress();
+}
+
 export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   // Read at call time from the ACTIVE network, not from a module constant: a
   // build-time default froze this to testnet Horizon, so on mainnet the
@@ -386,7 +406,7 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
 
   let effective = publicKey;
   if (StrKey.isValidContract(publicKey)) {
-    const feePayer = await getFeePayerAddress();
+    const feePayer = await readFeePayerAddress();
     // No fee payer stored means no classic account exists for this wallet yet,
     // so there are no trustlines to report — empty, not broken.
     if (!feePayer) {
