@@ -36,7 +36,18 @@ export interface SwapAsset {
  * so `swapDestinations` drops it on testnet, where the issuer account does not
  * exist and a trustline would fail with op_no_issuer.
  */
-export const SWAP_DEST_CODES = ['USDC', 'USDT0', 'USDY'] as const;
+export const SWAP_DEST_CODES = ['USDC', 'USDT0', 'USDY', 'CETES', 'USTRY', 'TESOURO'] as const;
+export const STABLEBOND_CODES = ['CETES', 'USTRY', 'TESOURO'] as const;
+export const TRUSTLINE_RESERVE_XLM = 0.5;
+
+export function isStablebondUsdcPair(from: SwapAsset, to: SwapAsset): boolean {
+  return (STABLEBOND_CODES.includes(from.code as (typeof STABLEBOND_CODES)[number]) && to.code === 'USDC') ||
+    (STABLEBOND_CODES.includes(to.code as (typeof STABLEBOND_CODES)[number]) && from.code === 'USDC');
+}
+
+export function trustlineReserveForSwap(destination: SwapAsset, alreadyTrusted: boolean): number {
+  return destination.issuer && !alreadyTrusted ? TRUSTLINE_RESERVE_XLM : 0;
+}
 
 export const NATIVE: SwapAsset = { code: 'XLM', issuer: null };
 

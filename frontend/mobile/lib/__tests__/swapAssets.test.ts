@@ -13,6 +13,7 @@ import {
   swapAssetLabel,
   swapDestinations,
   swapRouteInput,
+  trustlineReserveForSwap,
   NATIVE,
 } from '../swapAssets';
 
@@ -36,6 +37,31 @@ it('derives the USDT0 SAC Horizon reports', () => {
 });
 
 describe('picker and routing input', () => {
+  it('states and accounts for the refundable trustline reserve only when a line is missing', () => {
+    expect(trustlineReserveForSwap({ code: 'CETES', issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC' }, false)).toBe(0.5);
+    expect(trustlineReserveForSwap({ code: 'CETES', issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC' }, true)).toBe(0);
+    expect(trustlineReserveForSwap(NATIVE, false)).toBe(0);
+  });
+
+  it('constructs long-code classic assets without truncating their identity', () => {
+    const tesouro = classicAsset({
+      code: 'TESOURO',
+      issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC',
+    });
+    expect(tesouro.getCode()).toBe('TESOURO');
+    expect(tesouro.getIssuer()).toBe('GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC');
+  });
+
+  it('offers the three issuer-pinned Etherfuse stablebonds on mainnet only', () => {
+    const issuer = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
+    for (const code of ['CETES', 'USTRY', 'TESOURO']) {
+      expect(swapDestinations('mainnet')).toContainEqual({ code, issuer });
+      expect(checkSwapAsset({ code, issuer }, 'mainnet').ok).toBe(true);
+      expect(checkSwapAsset({ code, issuer: USDT0_ISSUER }, 'mainnet').ok).toBe(false);
+      expect(swapDestinations('testnet').map((asset) => asset.code)).not.toContain(code);
+    }
+  });
+
   it('offers USDT0 on mainnet only, with its genuine issuer', () => {
     expect(swapDestinations('mainnet')).toContainEqual(USDT0);
     expect(swapDestinations('testnet').map((a) => a.code)).not.toContain('USDT0');
@@ -140,6 +166,18 @@ describe('getSdexQuote', () => {
     const [src, , dests] = strictSendPaths.mock.calls[0] as unknown as [Asset, string, Asset[]];
     expect(src.isNative()).toBe(true);
     expect([dests[0]!.getCode(), dests[0]!.getIssuer()]).toEqual(['USDT0', USDT0_ISSUER]);
+  });
+
+  it('keeps a credit_alphanum12 stablebond intact in the Horizon path request', async () => {
+    call.mockResolvedValue({ records: [] });
+    const cetes = {
+      code: 'CETES',
+      issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC',
+    };
+    await load().getSdexQuote(USDT0, '10', cetes);
+    const [src, , dests] = strictSendPaths.mock.calls[0] as unknown as [Asset, string, Asset[]];
+    expect([src.getCode(), src.getIssuer()]).toEqual(['USDT0', USDT0_ISSUER]);
+    expect([dests[0]!.getCode(), dests[0]!.getIssuer()]).toEqual(['CETES', cetes.issuer]);
   });
 
   it('never takes a path that pays out a different USDT0', async () => {
