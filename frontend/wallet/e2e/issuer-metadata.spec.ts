@@ -37,12 +37,16 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
   await page.route('https://circle.com/.well-known/stellar.toml', (route) => {
     tomlRequests++
     return offline ? route.abort() : route.fulfill({
-      contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nname="Issuer supplied name"\ndesc="Issuer supplied description"\nimage="https://logos.example/usdc.svg"`,
+      contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nname="Issuer supplied name"\ndesc="Issuer supplied description"\nimage="https://circle.com/usdc.svg"`,
     })
   })
-  await page.route('https://logos.example/usdc.svg', (route) => {
+  await page.route('https://circle.com/usdc.svg', (route) => {
     imageRequests++
-    return route.fulfill({ contentType: 'image/svg+xml', body: broken ? Buffer.from('invalid image') : logo })
+    return route.fulfill({
+      contentType: 'image/svg+xml',
+      headers: { 'access-control-allow-origin': '*' },
+      body: broken ? Buffer.from('invalid image') : logo,
+    })
   })
   await page.goto('/assets')
   const verified = page.locator('.card').filter({ hasText: `Issuer: Circle` })
@@ -87,14 +91,28 @@ for (const failure of ['oversized', 'http', 'unreadable', 'redirect', 'offline']
     await page.route('**/api/issuer-logo?**', (route) => { proxyRequests++; return route.fulfill({ status: 502 }) })
     await page.route('https://circle.com/.well-known/stellar.toml', (route) => failure === 'offline'
       ? route.abort()
-      : route.fulfill({ contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="${failure === 'http' ? 'http' : 'https'}://logos.example/usdc.svg"` }))
-    await page.route('**://logos.example/**', (route) => {
+      : route.fulfill({ contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="${failure === 'http' ? 'http' : 'https'}://circle.com/usdc.svg"` }))
+    await page.route('**://circle.com/*.svg', (route) => {
       // The insecure redirect target serves a valid logo; it must still be refused.
-      if (route.request().url().endsWith('/insecure.svg')) return route.fulfill({ contentType: 'image/svg+xml', body: logo })
+      if (route.request().url().endsWith('/insecure.svg')) return route.fulfill({
+        contentType: 'image/svg+xml',
+        headers: { 'access-control-allow-origin': '*' },
+        body: logo,
+      })
       imageRequests++
       if (failure === 'unreadable') return route.abort()
-      if (failure === 'redirect') return route.fulfill({ status: 302, headers: { location: 'http://logos.example/insecure.svg' } })
-      return route.fulfill({ contentType: 'image/svg+xml', body: Buffer.alloc(MAX_ISSUER_LOGO_BYTES + 1) })
+      if (failure === 'redirect') return route.fulfill({
+        status: 302,
+        headers: {
+          location: 'http://circle.com/insecure.svg',
+          'access-control-allow-origin': '*',
+        },
+      })
+      return route.fulfill({
+        contentType: 'image/svg+xml',
+        headers: { 'access-control-allow-origin': '*' },
+        body: Buffer.alloc(MAX_ISSUER_LOGO_BYTES + 1),
+      })
     })
     await page.goto('/assets')
     const verified = page.locator('.card').filter({ hasText: 'Issuer: Circle' })
@@ -111,12 +129,14 @@ for (const failure of ['oversized', 'http', 'unreadable', 'redirect', 'offline']
   })
 }
 
-test('loads the logo through the wallet route when the host sends no CORS headers', async ({ page }) => {
+test('loads the logo through the wallet route when the direct fetch fails', async ({ page }) => {
   const proxied: URL[] = []
   await page.route('https://circle.com/.well-known/stellar.toml', (route) => route.fulfill({
-    contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="https://logos.example/usdc.svg"`,
+    contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="https://circle.com/usdc.svg"`,
   }))
-  await page.route('https://logos.example/**', (route) => route.abort())
+  // Keep the request inside the CSP allowlist, then simulate an unreachable
+  // logo host so the wallet-route fallback is the code path under test.
+  await page.route('https://circle.com/usdc.svg', (route) => route.abort())
   await page.route('**/api/issuer-logo?**', (route) => {
     proxied.push(new URL(route.request().url()))
     return route.fulfill({ contentType: 'image/svg+xml', body: logo })

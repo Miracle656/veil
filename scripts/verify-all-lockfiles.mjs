@@ -63,7 +63,7 @@ export function parseNpmCiError(output) {
  * Verify a single workspace directory with npm ci --dry-run.
  * Returns { ok: true } or { ok: false, error: string }.
  */
-export function verifyWorkspace(workspaceDir) {
+export function verifyWorkspace(workspaceDir, runNpm = execFileSync) {
   const fullPath = join(repoRoot, workspaceDir);
   const args = ['ci', '--dry-run', '--ignore-scripts', '--no-audit', '--no-fund'];
   if (workspaceDir === 'sdk') {
@@ -80,7 +80,7 @@ export function verifyWorkspace(workspaceDir) {
   }
 
   try {
-    execFileSync(npm, args, options);
+    runNpm(npm, args, options);
     return { ok: true };
   } catch (error) {
     const rawOutput = (error.stderr ?? '') + '\n' + (error.stdout ?? '');
