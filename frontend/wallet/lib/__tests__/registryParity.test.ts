@@ -22,6 +22,8 @@ jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn
 const mobile = require('../../../mobile/lib/assets') as typeof wallet
 
 const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
+const ETHERFUSE_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC'
+const CETES_LOOKALIKE_ISSUER = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
 
 describe('wallet and mobile asset registries are identical — edit both lib/assets.ts together', () => {
   it('list the same assets', () => {
@@ -50,6 +52,35 @@ describe('wallet and mobile asset registries are identical — edit both lib/ass
     for (const registry of [wallet, mobile]) {
       expect(registry.ASSET_REGISTRY['USDT0']).toMatchObject({ issuer: USDT0_ISSUER, sacContractId: derived })
     }
+  })
+})
+
+describe('Etherfuse sovereign debt entries are pinned by issuer and government', () => {
+  it.each([
+    ['CETES', 'Mexico'],
+    ['USTRY', 'United States'],
+    ['TESOURO', 'Brazil'],
+  ])('%s records the sovereign it represents', (code, government) => {
+    for (const registry of [wallet, mobile]) {
+      expect(registry.ASSET_REGISTRY[code]).toMatchObject({
+        code,
+        issuer: ETHERFUSE_ISSUER,
+        issuerName: 'Etherfuse',
+        homeDomain: 'etherfuse.com',
+        network: 'mainnet',
+        kind: 'sovereign-debt',
+        government,
+      })
+    }
+  })
+
+  it.each([
+    ['wallet', wallet],
+    ['mobile', mobile],
+  ] as const)('%s labels a lookalike CETES issuer as unverified', (_side, registry) => {
+    expect(registry.verifiedAsset('CETES', ETHERFUSE_ISSUER, 'mainnet')?.government).toBe('Mexico')
+    expect(registry.verifiedAsset('CETES', CETES_LOOKALIKE_ISSUER, 'mainnet')).toBeNull()
+    expect(registry.formatAssetLabel('CETES', CETES_LOOKALIKE_ISSUER, 'mainnet')).toMatch(/^Unverified: CETES/)
   })
 })
 

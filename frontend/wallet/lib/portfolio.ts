@@ -68,6 +68,7 @@ export function classifyAsset(
       case 'stablecoin':
         return 'cash'
       case 'treasury':
+      case 'sovereign-debt':
       case 'fund':
       case 'equity':
         return 'invest'

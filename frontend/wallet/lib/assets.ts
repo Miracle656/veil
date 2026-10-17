@@ -18,7 +18,9 @@ export interface RegisteredAsset {
   issuerName: string
   homeDomain?: string
   network: 'mainnet' | 'testnet' | 'all'
-  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native'
+  kind: 'treasury' | 'sovereign-debt' | 'fund' | 'equity' | 'stablecoin' | 'native'
+  /** Government whose sovereign debt backs this asset, when applicable. */
+  government?: string
   reserveXlm?: number
   sacContractId?: string
 }
@@ -80,6 +82,36 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     network: 'mainnet',
     kind: 'treasury',
     reserveXlm: 0.5,
+  },
+  CETES: {
+    code: 'CETES',
+    issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC',
+    name: 'Mexican Treasury Certificates',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'sovereign-debt',
+    government: 'Mexico',
+  },
+  USTRY: {
+    code: 'USTRY',
+    issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC',
+    name: 'US Treasury Notes',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'sovereign-debt',
+    government: 'United States',
+  },
+  TESOURO: {
+    code: 'TESOURO',
+    issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC',
+    name: 'Brazilian Treasury Bonds',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'sovereign-debt',
+    government: 'Brazil',
   },
   USDT0: {
     code: 'USDT0',

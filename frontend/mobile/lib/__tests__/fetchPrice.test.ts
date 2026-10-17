@@ -151,6 +151,20 @@ describe('order book fallback', () => {
     await expect(fetchPrice('XLM', null)).resolves.toBeCloseTo(0.1905, 4);
   });
 
+  it.each(['CETES', 'USTRY', 'TESOURO'])('queries %s as credit_alphanum12', async (code) => {
+    const spy = jest
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
+      .mockResolvedValueOnce(book('1.0', '1.1'));
+    global.fetch = spy as unknown as typeof fetch;
+
+    const issuer = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
+    await expect(fetchPrice(code, issuer)).resolves.toBeCloseTo(1.05, 6);
+    expect(spy.mock.calls[1][0]).toEqual(
+      expect.stringContaining(`selling_asset_type=credit_alphanum12&selling_asset_code=${code}`),
+    );
+  });
+
   it('refuses a one-sided book rather than quoting an untradeable price', async () => {
     global.fetch = jest
       .fn()

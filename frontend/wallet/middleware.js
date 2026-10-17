@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
  */
 const REGISTERED_ISSUER_ORIGINS = [
   "https://ondo.finance",
+  "https://etherfuse.com",
   "https://circle.com",
   "https://stellar.org",
   "https://aqua.network",
