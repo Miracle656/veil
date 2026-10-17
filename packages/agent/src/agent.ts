@@ -10,6 +10,7 @@ import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
 import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
+import { getTrendingActivity } from './trending.js'
 import { StrKey } from '@stellar/stellar-sdk'
 
 // ── Agent configuration ──────────────────────────────────────────────────────
@@ -29,6 +30,8 @@ export interface AgentConfig {
   provider?: LlmProvider
   /** Optional transfer indexer (Wraith) for Soroban token history. Horizon covers classic payments. */
   wraithUrl?: string
+  /** Lens market-data API base URL. Defaults to LENS_URL or the hosted Lens service. */
+  lensUrl?: string
   /** Horizon URL. Default: follows STELLAR_NETWORK (mainnet unless set to testnet). */
   horizonUrl?: string
   /** Soroban RPC URL. Default: follows STELLAR_NETWORK. */
@@ -46,6 +49,7 @@ export interface AgentConfig {
 interface ResolvedConfig {
   llm: LlmProvider
   wraithUrl: string
+  lensUrl: string
   horizonUrl: string
   sorobanRpcUrl: string
   network: string
@@ -70,6 +74,7 @@ function resolveConfig(config: AgentConfig): ResolvedConfig {
   return {
     llm,
     wraithUrl: config.wraithUrl ?? '',
+    lensUrl: config.lensUrl ?? process.env.LENS_URL?.trim() ?? 'https://lens-ldtu.onrender.com',
     horizonUrl: config.horizonUrl ?? HORIZON_URL,
     sorobanRpcUrl: config.sorobanRpcUrl ?? SOROBAN_RPC_URL,
     network: config.network ?? NETWORK,
@@ -83,6 +88,16 @@ const MAX_TOOL_ROUNDS = 8
 // ── Tools ────────────────────────────────────────────────────────────────────
 
 const tools: ToolSpec[] = [
+  {
+    name: 'get_trending_activity',
+    description:
+      'Read the most active pairs among Lens watched markets, ranked only by Lens measured volume over the last 24 hours. ' +
+      'Every issued asset includes its exact issuer and verified or unverified status. This is read-only market data, not investment advice.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
   {
     name: 'get_price',
     description:
@@ -274,7 +289,7 @@ You help users:
 RULES:
 1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
 2. Before a payment executes, ALWAYS call request_user_approval — never skip this.
-3. Use get_price when the user asks about a price or wants to weigh a swap first.
+3. Use get_price when the user asks about a price or wants to weigh a swap first. Use get_trending_activity for questions about what is active or trending on Stellar. Only report the measured Lens 24-hour pair volume and source returned by the tool; identify every issued asset by issuer and call unverified issuers unverified. If Lens is unavailable, say "I cannot see the market right now" and do not guess.
 4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters. If price data is unavailable, state plainly that price data is currently unavailable — do NOT make up or estimate prices.
 5. Format amounts clearly: "500 XLM", "47.3 USDC".
 6. If you need a recipient address and the user hasn't provided one, ask before building.
@@ -351,7 +366,7 @@ export async function runAgent(
   /** The model provider (see llm.ts). Reuse one per process. */
   llm: LlmProvider,
   /** Service URLs — if not provided, falls back to process.env. */
-  urls?: { wraithUrl?: string; horizonUrl?: string },
+  urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string },
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
@@ -360,6 +375,7 @@ export async function runAgent(
 
   const wraithUrl = urls?.wraithUrl ?? process.env.WRAITH_URL ?? ''
   const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
+  const lensUrl = urls?.lensUrl ?? process.env.LENS_URL?.trim() ?? 'https://lens-ldtu.onrender.com'
 
   // ── SLASH COMMAND INTERCEPTION ─────────────────────────────────────────────
   const trimmedMessage = userMessage.trim();
@@ -414,6 +430,14 @@ export async function runAgent(
 
   async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
+      case 'get_trending_activity': {
+        try {
+          return JSON.stringify(await getTrendingActivity(lensUrl))
+        } catch {
+          return JSON.stringify({ error: 'I cannot see the market right now because Lens market data is unavailable.' })
+        }
+      }
+
       case 'get_price': {
         try {
           return JSON.stringify(await getPrice(String(input.asset_a), String(input.asset_b)))
@@ -658,6 +682,7 @@ export function createVeilAgent(config: AgentConfig): VeilAgent {
         {
           wraithUrl: resolved.wraithUrl,
           horizonUrl: resolved.horizonUrl,
+          lensUrl: resolved.lensUrl,
         },
       )
 
