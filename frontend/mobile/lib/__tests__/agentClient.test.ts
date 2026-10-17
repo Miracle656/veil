@@ -2,6 +2,7 @@ import {
   PRODUCTION_AGENT_URL,
   historyFromMessages,
   parseInvestIntent,
+  parseSwapDepositPlanIntent,
   parseSwapIntent,
   resolveAgentUrl,
   sendAgentMessage,
@@ -109,6 +110,18 @@ describe('parseSwapIntent', () => {
     expect(parseSwapIntent({ from: '../settings', to: 'USDC' })).toBeUndefined();
     expect(parseSwapIntent({ from: 'XLM', to: 'USDC', amount: '-1' })).toEqual({ from: 'XLM', to: 'USDC' });
     expect(parseSwapIntent('XLM→USDC')).toBeUndefined();
+  });
+});
+
+describe('parseSwapDepositPlanIntent', () => {
+  const issuer = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  it('accepts only supported assets, a positive amount, and a valid USDC issuer', () => {
+    expect(parseSwapDepositPlanIntent({ from: 'XLM', to: 'USDC', amount: '5', usdcIssuer: issuer })).toEqual({
+      from: 'XLM', to: 'USDC', amount: '5', usdcIssuer: issuer,
+    });
+    expect(parseSwapDepositPlanIntent({ from: 'BTC', to: 'USDC', amount: '5', usdcIssuer: issuer })).toBeUndefined();
+    expect(parseSwapDepositPlanIntent({ from: 'XLM', to: 'USDC', amount: '-5', usdcIssuer: issuer })).toBeUndefined();
+    expect(parseSwapDepositPlanIntent({ from: 'XLM', to: 'USDC', amount: '5', usdcIssuer: 'bad' })).toBeUndefined();
   });
 });
 

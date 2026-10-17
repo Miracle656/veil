@@ -6,7 +6,7 @@ import {
   type LlmProvider,
   type ToolSpec,
 } from './llm.js'
-import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL, USDC_ISSUER } from './network.js'
 import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
@@ -173,6 +173,20 @@ const tools: ToolSpec[] = [
     },
   },
   {
+    name: 'prepare_swap_deposit_plan',
+    description:
+      'Prepare a two-step plan that swaps into USDC and then deposits the realized USDC output into the existing Blend Earn screen. ' +
+      'This tool only returns a reviewable plan: it never builds, signs, or submits a transaction. The user reviews the complete plan first, then confirms each existing screen separately with their passkey. Use only when the user asks for swap then deposit.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        from_asset: { type: 'string', enum: ['XLM'], description: 'Asset to swap into USDC.' },
+        amount: { type: 'string', description: 'Positive amount to swap, with at most seven decimals.' },
+      },
+      required: ['from_asset', 'amount'],
+    },
+  },
+  {
     name: 'build_payment',
     description:
       'Build a Stellar payment transaction to send XLM or tokens. ' +
@@ -273,6 +287,7 @@ You help users:
 
 RULES:
 1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
+1a. For a request to swap an asset and deposit the resulting USDC into Blend, call prepare_swap_deposit_plan. The plan is read-only until the user opens step one. Each screen performs its own review and passkey ceremony; step two uses only the USDC balance increase observed after step one completes. Never claim that approving one step approves another.
 2. Before a payment executes, ALWAYS call request_user_approval — never skip this.
 3. Use get_price when the user asks about a price or wants to weigh a swap first.
 4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters. If price data is unavailable, state plainly that price data is currently unavailable — do NOT make up or estimate prices.
@@ -320,6 +335,8 @@ export interface AgentResult {
    * A buy request for the app's Invest screen to open. The agent never builds or signs buy transactions.
    */
   investIntent?: InvestIntent
+  /** A complete, read-only swap → Blend deposit plan for the mobile review UI. */
+  planIntent?: SwapDepositPlanIntent
 }
 
 export interface SwapIntent {
@@ -334,6 +351,13 @@ export interface InvestIntent {
   amount?: string
   quoteCurrency?: string
   asset?: { code: string; issuer: string }
+}
+
+export interface SwapDepositPlanIntent {
+  from: string
+  to: 'USDC'
+  amount: string
+  usdcIssuer: string
 }
 
 /** Assets the apps' Swap screens offer. */
@@ -357,6 +381,7 @@ export async function runAgent(
   let pendingTxSummary: string | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
+  let planIntent: SwapDepositPlanIntent | undefined
 
   const wraithUrl = urls?.wraithUrl ?? process.env.WRAITH_URL ?? ''
   const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
@@ -517,6 +542,26 @@ export async function runAgent(
         return JSON.stringify({ status: 'swap_screen_ready' })
       }
 
+      case 'prepare_swap_deposit_plan': {
+        const from = String(input.from_asset ?? '').trim().toUpperCase()
+        const amount = String(input.amount ?? '').trim()
+        if (from !== 'XLM') {
+          return JSON.stringify({ error: 'This plan currently supports swapping XLM into USDC.' })
+        }
+        if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) {
+          return JSON.stringify({ error: 'amount must be a plain positive number with at most seven decimals.' })
+        }
+        planIntent = { from, to: 'USDC', amount, usdcIssuer: USDC_ISSUER }
+        return JSON.stringify({
+          status: 'plan_ready_for_user_review',
+          steps: [
+            { action: 'swap', amount, from, to: 'USDC', usdc_issuer: USDC_ISSUER },
+            { action: 'blend_deposit', amount: 'realized_output_from_step_1', asset: 'USDC', issuer: USDC_ISSUER },
+          ],
+          execution: 'Each step is handled by its existing wallet screen and requires a separate passkey approval.',
+        })
+      }
+
       case 'build_payment': {
         const payInput = {
           ...(input as unknown as Parameters<typeof buildPayment>[0]),
@@ -558,6 +603,7 @@ export async function runAgent(
         pendingTxSummary,
         swapIntent,
         investIntent,
+        planIntent,
       }
     }
 
@@ -578,24 +624,27 @@ export async function runAgent(
       // The work is done — a swap or invest to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
-      if (swapIntent || investIntent || pendingTxXdr) {
+      if (swapIntent || investIntent || planIntent || pendingTxXdr) {
         return {
           response: swapIntent
             ? 'Your swap is ready in the Swap screen.'
             : investIntent
             ? 'Routing to the Invest section (destination screen under construction).'
+            : planIntent
+            ? 'Your complete swap and deposit plan is ready to review.'
             : 'Your transaction is ready to review.',
           pendingTxXdr,
           pendingTxSummary,
           swapIntent,
           investIntent,
+          planIntent,
         }
       }
       throw err
     }
   }
 
-  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent, investIntent }
+  return { response: turn.text, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, planIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────
