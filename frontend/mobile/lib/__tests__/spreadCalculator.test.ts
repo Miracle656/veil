@@ -82,6 +82,7 @@ describe('fetchOrderBookSpread', () => {
     expect(result.spread.askCount).toBe(2);
     expect(result.spread.bidDepth).toBe(800); // 500 + 300
     expect(result.spread.askDepth).toBe(600); // 200 + 400
+    expect(result.spread.askInputDepth).toBeCloseTo(200 * 1.1445 + 400 * 1.15);
     // (1.1445 - 1.082) / 1.082 * 100
     expect(result.spread.spreadPct).toBeCloseTo(5.79, 1);
   });
@@ -258,6 +259,7 @@ describe('formatSpreadDisplay', () => {
       askCount: 2,
       bidDepth: 800,
       askDepth: 600,
+      askInputDepth: 200 * 1.1445 + 400 * 1.15,
     });
 
     expect(out.bid).toBe('1.0820');

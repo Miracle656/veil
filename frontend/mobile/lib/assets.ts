@@ -49,6 +49,7 @@ export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSD
 export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
+export const ETHERFUSE_MAINNET_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
 
 export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   USDC: {
@@ -96,6 +97,36 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     name: 'Ondo US Dollar Yield',
     issuerName: 'Ondo Finance',
     homeDomain: 'ondo.finance',
+    network: 'mainnet',
+    kind: 'treasury',
+    reserveXlm: 0.5,
+  },
+  CETES: {
+    code: 'CETES',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse CETES',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    reserveXlm: 0.5,
+  },
+  USTRY: {
+    code: 'USTRY',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse USTRY',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+    reserveXlm: 0.5,
+  },
+  TESOURO: {
+    code: 'TESOURO',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Etherfuse TESOURO',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
     network: 'mainnet',
     kind: 'treasury',
     reserveXlm: 0.5,

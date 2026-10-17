@@ -36,6 +36,16 @@ it('derives the USDT0 SAC Horizon reports', () => {
 });
 
 describe('picker and routing input', () => {
+  it('offers the three issuer-pinned Etherfuse stablebonds on mainnet only', () => {
+    const issuer = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
+    for (const code of ['CETES', 'USTRY', 'TESOURO']) {
+      expect(swapDestinations('mainnet')).toContainEqual({ code, issuer });
+      expect(checkSwapAsset({ code, issuer }, 'mainnet').ok).toBe(true);
+      expect(checkSwapAsset({ code, issuer: USDT0_ISSUER }, 'mainnet').ok).toBe(false);
+      expect(swapDestinations('testnet').map((asset) => asset.code)).not.toContain(code);
+    }
+  });
+
   it('offers USDT0 on mainnet only, with its genuine issuer', () => {
     expect(swapDestinations('mainnet')).toContainEqual(USDT0);
     expect(swapDestinations('testnet').map((a) => a.code)).not.toContain('USDT0');

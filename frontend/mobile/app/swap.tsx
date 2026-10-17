@@ -23,6 +23,7 @@ import {
   swapAssetLabel,
   swapDestinations,
   swapRouteInput,
+  isStablebondUsdcPair,
   type NetworkName,
   type SwapAsset,
 } from '../lib/swapAssets';
@@ -233,7 +234,9 @@ export default function SwapScreen() {
           feePayerAddress: feePayer,
         });
         if (result.ok) {
-          setQuote(result.quote);
+          setQuote(isStablebondUsdcPair(tokenIn, tokenOut)
+            ? { ...result.quote, ttl: Math.min(result.quote.ttl, Date.now() + 10_000) }
+            : result.quote);
         } else {
           setQuote(null);
           // No route stays no route: nothing here substitutes another asset.
@@ -337,13 +340,49 @@ export default function SwapScreen() {
     // Last line of defence: the review screen hides the confirm control for a
     // refused order, but the threshold is re-checked here so no other entry
     // point can get past it.
-    if (honestQuote?.shouldRefuse) {
+    const expiredStablebondQuote =
+      !onTestnet && isStablebondUsdcPair(tokenIn, tokenOut) && !!quote && Date.now() > quote.ttl;
+    if (honestQuote?.shouldRefuse && !expiredStablebondQuote) {
       setExecError(
         honestQuote.refusalReason ??
           'This order exceeds the price-impact threshold, so it was not submitted.',
       );
       setStep('error');
       return;
+    }
+
+    // Etherfuse's thin books need a current quote and book disclosure. If the
+    // displayed quote expired while the user reviewed it, refresh both and
+    // return to the form so the user sees the new numbers before authorising.
+    if (!onTestnet && isStablebondUsdcPair(tokenIn, tokenOut) && quote && Date.now() > quote.ttl) {
+      setIsFetchingQuote(true);
+      try {
+        const route = swapRouteInput(tokenIn, tokenOut, networkName, getNetwork().networkPassphrase);
+        if (!route.ok) throw new Error(route.reason);
+        const feePayer = await getFeePayerAddress();
+        if (!feePayer) throw new Error('No spending account on this device yet.');
+        const refreshed = await getSoroswapQuote({
+          tokenIn: route.tokenIn,
+          tokenOut: route.tokenOut,
+          amountIn: Math.round(parseFloat(amountIn) * 1e7).toString(),
+          slippageBps: SLIPPAGE_BPS,
+          feePayerAddress: feePayer,
+        });
+        if (!refreshed.ok) throw new Error(`The quote expired and could not be refreshed: ${refreshed.reason}`);
+        const freshQuote = { ...refreshed.quote, ttl: Math.min(refreshed.quote.ttl, Date.now() + 10_000) };
+        setQuote(freshQuote);
+        setHonestQuote(await enhanceQuoteWithSpread(
+          freshQuote, tokenIn, tokenOut, parseFloat(amountIn), PRICE_IMPACT_THRESHOLD_PCT,
+        ));
+        setStep('form');
+        return;
+      } catch (error) {
+        setExecError(errorMessage(error));
+        setStep('error');
+        return;
+      } finally {
+        setIsFetchingQuote(false);
+      }
     }
 
     setStep('signing');
@@ -451,6 +490,15 @@ export default function SwapScreen() {
           feePayerAddress: feePayer,
         });
         if (!fresh.ok) throw new Error(`The quote expired and could not be refreshed: ${fresh.reason}`);
+        if (isStablebondUsdcPair(tokenIn, tokenOut)) {
+          const freshQuote = { ...fresh.quote, ttl: Math.min(fresh.quote.ttl, Date.now() + 10_000) };
+          setQuote(freshQuote);
+          setHonestQuote(await enhanceQuoteWithSpread(
+            freshQuote, tokenIn, tokenOut, parsed, PRICE_IMPACT_THRESHOLD_PCT,
+          ));
+          setStep('form');
+          return;
+        }
         live = fresh.quote.rawQuote;
       }
       if (!live) throw new Error('No quote to build this swap from. Please retry.');
@@ -572,6 +620,7 @@ export default function SwapScreen() {
                 sellbackAmount: honestQuote?.reverseQuote?.sellbackAmount,
                 spreadLossPct: honestQuote?.reverseQuote?.spreadLossPct,
                 roundTripImpactPct: honestQuote?.reverseQuote?.roundTripImpactPct,
+                trustlineReserveXlm: tokenOut.issuer && balanceOf(tokenOut) === null ? 0.5 : undefined,
               }}
               colors={colors}
             />
