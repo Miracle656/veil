@@ -65,13 +65,25 @@ export interface WebAuthnAssertResult {
     /** Raw P-256 ECDSA signature: r ‖ s (64 bytes, low-S normalised). */
     signature: Uint8Array;
     /**
-     * Uncompressed P-256 public key (65 bytes: 0x04 ‖ x ‖ y) when the
-     * authenticator exposes it via `getPublicKey()` on the assertion response.
-     * Platform passkeys (Touch ID, Windows Hello) generally do not expose the
-     * key; cross-platform roaming keys (YubiKey, etc.) may. When null, the
-     * caller cannot derive the wallet address from the assertion alone.
+     * Uncompressed P-256 public key (65 bytes: 0x04 ‖ x ‖ y) if — and only if —
+     * this platform chose to surface it.
+     *
+     * Expect `null`. The WebAuthn spec defines `getPublicKey()` on the
+     * *attestation* (registration) response; the assertion response has no such
+     * method, so browsers generally have nothing to report here and
+     * `react-native-passkey` never does (see `webauthn.native.ts`, whose
+     * `authenticate()` returns only authData / clientDataJSON / signature).
+     *
+     * This is not a limitation the SDK depends on: a caller that needs the
+     * signing key derives it from the signature with
+     * `recoverAssertionPublicKeys()` in `crypto/assertionKey.ts`, which works
+     * wherever the three fields above exist. Treat any value here as a hint that
+     * can save that recovery a step — never as a prerequisite.
+     *
+     * Optional because the React Native provider omits the property outright
+     * rather than returning null. Read it as "a key, if this platform bothered".
      */
-    publicKeyBytes: Uint8Array | null;
+    publicKeyBytes?: Uint8Array | null;
 }
 
 export interface WebAuthnProvider {
@@ -199,13 +211,16 @@ export const webAuthnProvider: WebAuthnProvider = {
         if (!assertion) throw new Error('Authentication was cancelled');
 
         const response = assertion.response as AuthenticatorAssertionResponse;
-        // Attempt to extract the P-256 public key from the assertion response.
-        // Some authenticators expose it via getPublicKey() (SPKI export);
-        // others do not.  When available, the SDK can derive the deterministic
-        // wallet address from the key alone — critical for cross-device login.
+        // Probe for a public key on the assertion response, and report what we get.
+        // Per spec an assertion carries no key — `getPublicKey()` is defined on the
+        // attestation response — so this normally leaves `publicKeyBytes` null, and
+        // that is fine: login() recovers the key from the signature instead
+        // (crypto/assertionKey.ts). A platform that does expose the key here just
+        // saves the SDK one on-chain check.
         let publicKeyBytes: Uint8Array | null = null;
-        // getPublicKey() is not in the standard TS DOM typings but is supported
-        // by Chrome/Edge and some other browsers on assertion responses.
+        // Not in the standard TS DOM typings, and not on the spec's assertion
+        // response; probed defensively because a handful of environments expose it
+        // anyway. Nothing may assume it is there.
         const resp = response as any;
         if (typeof resp.getPublicKey === 'function') {
             try {
