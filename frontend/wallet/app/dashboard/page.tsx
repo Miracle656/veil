@@ -941,6 +941,7 @@ function DashboardPageContent() {
             currencyCode={currencyCode}
             fxRate={fxRate}
             hideAmounts={hideAmounts}
+            walletAddress={walletAddress}
           />
         )}
 
