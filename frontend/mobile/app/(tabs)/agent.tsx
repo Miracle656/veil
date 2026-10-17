@@ -45,6 +45,7 @@ import {
   type ProposalStatus,
 } from '../../lib/agentMessages';
 import { useNetwork } from '../../hooks/useNetwork';
+import { loadBlendPositionSnapshot } from '../../lib/blend';
 import { historyFromMessages, sendAgentMessage, type AgentReply } from '../../lib/agentClient';
 import { signPayloadWithPasskey } from '../../lib/passkey';
 import { getPasskeyId, getSignerSecret, getWalletAddress } from '../../lib/walletStore';
@@ -200,10 +201,15 @@ export default function AgentScreen() {
 
     setIsThinking(true);
     try {
+      const asksAboutBlend = /blend|lending pool|supplied|earnings|earned|apy/i.test(text);
+      const blendPositionSnapshot = asksAboutBlend
+        ? await loadBlendPositionSnapshot(walletAddress)
+        : undefined;
       const reply = await sendAgentMessage({
         message: text,
         walletAddress,
         feePayerAddress: feePayerAddress ?? undefined,
+        blendPositionSnapshot,
         history,
       });
       handleReply(reply);

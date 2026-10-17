@@ -11,6 +11,7 @@
 
 import { StrKey } from '@stellar/stellar-sdk';
 import type { AgentMessage, InvestIntent, SwapIntent } from './agentMessages';
+import type { BlendPositionSnapshot } from './blend';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -136,6 +137,7 @@ export type AgentRequest = {
   walletAddress: string;
   feePayerAddress?: string;
   profile?: AgentUserProfile;
+  blendPositionSnapshot?: BlendPositionSnapshot;
   history: AgentTurn[];
 };
 

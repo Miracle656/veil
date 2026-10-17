@@ -111,6 +111,14 @@ const tools: ToolSpec[] = [
     },
   },
   {
+    name: 'get_blend_positions',
+    description:
+      'Read the connected wallet’s current Blend lending positions. Report each asset and current supplied value. ' +
+      'If no positions exist, say nothing is supplied yet. If the pool could not be reached, say the position data is unavailable. ' +
+      'The original principal is not recorded, so do not claim an earned amount or project future earnings. This tool is read-only.',
+    input_schema: { type: 'object' as const, properties: {} },
+  },
+  {
     name: 'open_invest',
     description:
       'Hand off a buy request or investment to the wallet\'s Invest/Earn section. ' +
@@ -283,7 +291,8 @@ RULES:
 9. For asset explanation queries ("What is USDY?"), ALWAYS call get_asset_info. Base your answer strictly on the returned registry data (issuer name, issuer address, home domain, asset kind). NEVER invent or rely on LLM memory for asset issuer details. Asset codes are not identities: several issuers publish the same code (eight publish USDT0). When reporting holdings, name the issuer and report "unverified" holdings as unverified.
 10. For holdings questions ("what do I hold", "how much USDY do I have"), call get_wallet_balance and report exact balances with verified registry labels.
 11. For buy requests ("buy 50 USDC of USDY"), call open_invest. NEVER construct or sign a transaction for asset purchases. State that you are routing to the Invest section but that the destination screen is being built, not that it will be pre-filled and ready. Your response MUST include the issuer address and a one-line risk disclosure (e.g. "USDY is issued by Ondo Finance — review the asset details on the next screen before confirming"). Do NOT give an opinion on whether to buy.
-12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.`
+12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.
+13. For questions about Blend, lending pools, supplied assets, or earnings, ALWAYS call get_blend_positions. Report its current value only; original principal is not recorded, so do not claim earnings or project future returns. If the tool reports unavailable, say so plainly. This tool is read-only.`
 }
 
 /**
@@ -339,6 +348,13 @@ export interface InvestIntent {
 /** Assets the apps' Swap screens offer. */
 const SWAP_CODES = new Set(['XLM', 'USDC', 'EURC', 'AQUA'])
 
+function formatStroops(value: string): string {
+  const amount = BigInt(value)
+  const whole = amount / 10_000_000n
+  const fraction = (amount % 10_000_000n).toString().padStart(7, '0').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole.toString()
+}
+
 /**
  * Run a single agent turn. Used internally by both the server and createVeilAgent.
  */
@@ -352,6 +368,10 @@ export async function runAgent(
   llm: LlmProvider,
   /** Service URLs — if not provided, falls back to process.env. */
   urls?: { wraithUrl?: string; horizonUrl?: string },
+  blendPositionSnapshot?: {
+    status: 'available' | 'unavailable'
+    positions: Array<{ poolId: string; asset: string; code: 'XLM' | 'USDC' | null; deposited: string; bTokenBalance: string }>
+  },
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
@@ -414,6 +434,23 @@ export async function runAgent(
 
   async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
+      case 'get_blend_positions': {
+        if (!blendPositionSnapshot || blendPositionSnapshot.status === 'unavailable') {
+          return JSON.stringify({ status: 'unavailable', message: 'Blend position data is currently unavailable.' })
+        }
+        if (blendPositionSnapshot.positions.length === 0) {
+          return JSON.stringify({ status: 'available', positions: [], message: 'Nothing is supplied yet.' })
+        }
+        return JSON.stringify({
+          status: 'available',
+          positions: blendPositionSnapshot.positions.map((position) => ({
+            asset: position.code ?? position.asset,
+            currentValue: formatStroops(position.deposited),
+            poolId: position.poolId,
+          })),
+          earnings: 'Unknown: the original principal is not recorded.',
+        })
+      }
       case 'get_price': {
         try {
           return JSON.stringify(await getPrice(String(input.asset_a), String(input.asset_b)))

@@ -29,7 +29,32 @@ export interface ChatRequest {
   walletAddress: string
   feePayerAddress?: string
   profile?: UserProfile
+  blendPositionSnapshot?: BlendPositionSnapshot
   history: ChatTurn[]
+}
+
+export interface BlendPositionSnapshot {
+  status: 'available' | 'unavailable'
+  positions: Array<{ poolId: string; asset: string; code: 'XLM' | 'USDC' | null; deposited: string; bTokenBalance: string }>
+}
+
+function parseBlendPositionSnapshot(value: unknown): BlendPositionSnapshot | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const raw = value as Record<string, unknown>
+  if (raw.status !== 'available' && raw.status !== 'unavailable') return undefined
+  if (!Array.isArray(raw.positions) || raw.positions.length > 50) return undefined
+  const positions = raw.positions.filter((item): item is BlendPositionSnapshot['positions'][number] => {
+    if (!item || typeof item !== 'object') return false
+    const p = item as Record<string, unknown>
+    return typeof p.poolId === 'string' && p.poolId.length <= 64 &&
+      typeof p.asset === 'string' && p.asset.length <= 64 &&
+      (p.code === 'XLM' || p.code === 'USDC' || p.code === null) &&
+      typeof p.deposited === 'string' && /^\d{1,40}$/.test(p.deposited) &&
+      typeof p.bTokenBalance === 'string' && /^\d{1,40}$/.test(p.bTokenBalance)
+  })
+  if (positions.length !== raw.positions.length) return undefined
+  if (raw.status === 'unavailable' && positions.length) return undefined
+  return { status: raw.status, positions }
 }
 
 export type ParseResult = { ok: true; value: ChatRequest } | { ok: false; error: string }
@@ -91,7 +116,17 @@ export function parseChatRequest(body: unknown): ParseResult {
   // start mid-exchange.
   while (history.length && history[0].role !== 'user') history.shift()
 
-  return { ok: true, value: { message, walletAddress, feePayerAddress, profile, history } }
+  return {
+    ok: true,
+    value: {
+      message,
+      walletAddress,
+      feePayerAddress,
+      profile,
+      blendPositionSnapshot: parseBlendPositionSnapshot(b.blendPositionSnapshot),
+      history,
+    },
+  }
 }
 
 export async function handleChat(request: ChatRequest, llm: LlmProvider): Promise<AgentResult> {
@@ -102,6 +137,8 @@ export async function handleChat(request: ChatRequest, llm: LlmProvider): Promis
     request.feePayerAddress,
     request.profile,
     llm,
+    undefined,
+    request.blendPositionSnapshot,
   )
 }
 
