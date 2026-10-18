@@ -4,7 +4,10 @@ export interface FederationResult {
   memo?: string
 }
 
-const cache: Record<string, FederationResult> = {}
+/** Keep name-to-account answers briefly; ownership can change between payments. */
+const FEDERATION_CACHE_TTL_MS = 60_000
+
+const cache = new Map<string, { result: FederationResult; expiresAt: number }>()
 
 function parseToml(tomlText: string): Record<string, string> {
   const result: Record<string, string> = {}
@@ -27,9 +30,11 @@ function parseToml(tomlText: string): Record<string, string> {
 }
 
 export async function resolveFederation(address: string): Promise<FederationResult> {
-  if (cache[address]) {
-    return cache[address]
+  const cached = cache.get(address)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result
   }
+  if (cached) cache.delete(address)
 
   const parts = address.split('*')
   if (parts.length !== 2) {
@@ -97,6 +102,6 @@ export async function resolveFederation(address: string): Promise<FederationResu
     throw new Error('address not found')
   }
 
-  cache[address] = result
+  cache.set(address, { result, expiresAt: Date.now() + FEDERATION_CACHE_TTL_MS })
   return result
 }

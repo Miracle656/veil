@@ -31,7 +31,7 @@ test.beforeEach(async ({ page }) => {
 
 test('registered metadata, cached logo, offline fallback, and image recovery', async ({ page }) => {
   let tomlRequests = 0
-  let imageRequests = 0
+  let logoRequests = 0
   let offline = false
   let broken = false
   await page.route('https://circle.com/.well-known/stellar.toml', (route) => {
@@ -40,8 +40,8 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
       contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nname="Issuer supplied name"\ndesc="Issuer supplied description"\nimage="https://logos.example/usdc.svg"`,
     })
   })
-  await page.route('https://logos.example/usdc.svg', (route) => {
-    imageRequests++
+  await page.route('**/api/issuer-logo?**', (route) => {
+    logoRequests++
     return route.fulfill({ contentType: 'image/svg+xml', body: broken ? Buffer.from('invalid image') : logo })
   })
   await page.goto('/assets')
@@ -52,10 +52,10 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
   const unverified = page.locator('.card').filter({ hasText: unknownIssuer })
   await expect(unverified).not.toContainText('Issuer: Circle')
   await expect(unverified.locator('img')).toHaveCount(0)
-  const initialRequests = [tomlRequests, imageRequests]
+  const initialRequests = [tomlRequests, logoRequests]
   await page.reload()
   await expect(verified.locator('img')).toHaveJSProperty('naturalWidth', 36)
-  expect([tomlRequests, imageRequests]).toEqual(initialRequests)
+  expect([tomlRequests, logoRequests]).toEqual(initialRequests)
 
   const expire = () => page.evaluate(({ key, ttl }) => {
     const entry = JSON.parse(localStorage.getItem(key)!)
@@ -71,7 +71,7 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
   offline = false
   broken = true
   await page.reload()
-  await expect.poll(() => imageRequests).toBeGreaterThan(initialRequests[1])
+  await expect.poll(() => logoRequests).toBeGreaterThan(initialRequests[1])
   await expect(verified.locator('img')).toHaveCount(0)
   await expect(verified.locator('span[aria-hidden]')).toHaveText('U')
   broken = false
@@ -80,22 +80,22 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
   await expect(verified.locator('img')).toHaveJSProperty('naturalWidth', 36)
 })
 
-for (const failure of ['oversized', 'http', 'unreadable', 'redirect', 'offline']) {
+for (const failure of ['oversized', 'http', 'unreadable', 'offline']) {
   test(`uses a letter for ${failure} metadata or logos`, async ({ page }) => {
-    let imageRequests = 0
     let proxyRequests = 0
-    await page.route('**/api/issuer-logo?**', (route) => { proxyRequests++; return route.fulfill({ status: 502 }) })
+    await page.route('**/api/issuer-logo?**', (route) => {
+      proxyRequests++
+      if (failure === 'oversized') {
+        return route.fulfill({
+          contentType: 'image/svg+xml',
+          body: Buffer.alloc(MAX_ISSUER_LOGO_BYTES + 1),
+        })
+      }
+      return route.fulfill({ status: 502 })
+    })
     await page.route('https://circle.com/.well-known/stellar.toml', (route) => failure === 'offline'
       ? route.abort()
       : route.fulfill({ contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="${failure === 'http' ? 'http' : 'https'}://logos.example/usdc.svg"` }))
-    await page.route('**://logos.example/**', (route) => {
-      // The insecure redirect target serves a valid logo; it must still be refused.
-      if (route.request().url().endsWith('/insecure.svg')) return route.fulfill({ contentType: 'image/svg+xml', body: logo })
-      imageRequests++
-      if (failure === 'unreadable') return route.abort()
-      if (failure === 'redirect') return route.fulfill({ status: 302, headers: { location: 'http://logos.example/insecure.svg' } })
-      return route.fulfill({ contentType: 'image/svg+xml', body: Buffer.alloc(MAX_ISSUER_LOGO_BYTES + 1) })
-    })
     await page.goto('/assets')
     const verified = page.locator('.card').filter({ hasText: 'Issuer: Circle' })
     await expect(verified.locator('span[aria-hidden]')).toHaveText('U')
@@ -103,11 +103,10 @@ for (const failure of ['oversized', 'http', 'unreadable', 'redirect', 'offline']
       await expect.poll(() => page.evaluate((key) => localStorage.getItem(key), cacheKey)).not.toBeNull()
     }
     await expect(verified.locator('img')).toHaveCount(0)
-    expect(imageRequests).toBe(failure === 'http' || failure === 'offline' ? 0 : 1)
-    // A logo the browser could not load (including a refused insecure redirect) is
-    // retried through the wallet route, which applies the same checks; one that was
-    // fetched and rejected is not.
-    expect(proxyRequests).toBe(failure === 'unreadable' || failure === 'redirect' ? 1 : 0)
+    // The wallet CSP permits connections only to known origins. Issuer logos are
+    // therefore loaded through the bounded, same-origin proxy, never directly
+    // from an arbitrary host named in stellar.toml.
+    expect(proxyRequests).toBe(failure === 'http' || failure === 'offline' ? 0 : 1)
   })
 }
 

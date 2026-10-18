@@ -171,7 +171,7 @@ export default function LockPage() {
   }, [wallet, router])
 
   return (
-    <div
+    <main
       className="wallet-shell"
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
@@ -186,10 +186,7 @@ export default function LockPage() {
         </span>
         </header>
        
-        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
-        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
-          <NetworkSwitcher />
-        </div>
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
         {/* Lock card */}
         <div
           className="card"
@@ -244,9 +241,9 @@ export default function LockPage() {
             Your biometric is your key — no password needed.
           </p>
         </div>
-        </main>
+        </div>
       </div>
-    </div>
+    </main>
   )
 }
 

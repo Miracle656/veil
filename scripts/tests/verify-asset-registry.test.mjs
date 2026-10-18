@@ -347,6 +347,10 @@ for (const [label, path] of [
     const assets = parseAssetRegistry(path).filter((a) => a.kind !== 'native');
     assert.ok(assets.length > 0, `${label} registry parsed as empty — the assertions below would pass vacuously`);
     for (const asset of assets) {
+      if (asset.kind === 'native') {
+        assert.equal(asset.issuer, '', `${label} registry: native ${asset.code} must not have an issuer`);
+        continue;
+      }
       assert.ok(
         StrKey.isValidEd25519PublicKey(asset.issuer),
         `${label} registry: ${asset.key} (${asset.code}) issuer is not a valid Stellar account id: ${asset.issuer}`,
