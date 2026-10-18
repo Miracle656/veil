@@ -225,6 +225,41 @@ export function nativePrfEvaluator(credentialId: string): (salt: Uint8Array) => 
   return async (salt: Uint8Array) => (await evaluatePrf(credentialId, salt)).output;
 }
 
+export type DiscoveredPasskeyAssertion = {
+  credentialId: string;
+  authenticatorData: Uint8Array;
+  clientDataJSON: Uint8Array;
+  signature: Uint8Array;
+  prf: Uint8Array | null;
+};
+
+/** Discover a passkey once, retaining the assertion fields used by shared recovery verification. */
+export async function discoverPasskeyAssertion(salt: Uint8Array): Promise<DiscoveredPasskeyAssertion | null> {
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      userVerification: 'required',
+      timeout: 60_000,
+      extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
+    });
+    if (!assertion) return null;
+    const credentialId = (assertion as { id?: string; rawId?: string }).id
+      ?? (assertion as { id?: string; rawId?: string }).rawId;
+    if (!credentialId) return null;
+    return {
+      credentialId,
+      authenticatorData: base64UrlToUint8Array(assertion.response.authenticatorData),
+      clientDataJSON: base64UrlToUint8Array(assertion.response.clientDataJSON),
+      signature: base64UrlToUint8Array(assertion.response.signature),
+      prf: parsePrfOutput(assertion),
+    };
+  } catch (error: unknown) {
+    if (isUserRejection(error)) return null;
+    throw error;
+  }
+}
+
 /**
  * A discovered assertion: one pic-and-tap passkey gesture, plus the pieces of
  * the resulting WebAuthn assertion that let a caller verify the credential's
