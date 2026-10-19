@@ -201,6 +201,12 @@ export const webAuthnProvider: WebAuthnProvider = {
 
         const derSig = b64urlToUint8Array(result.response.signature);
 
+        // No publicKeyBytes here, and there cannot be one: `react-native-passkey`
+        // exposes the key only on the registration response, and WebAuthn assertions
+        // do not carry a key at all. That is not a gap — the SDK recovers the signing
+        // key from this raw r ‖ s signature plus authData and clientDataJSON
+        // (crypto/assertionKey.ts), so login() resolves a wallet on mobile exactly as
+        // it does on the web.
         return {
             authData:       b64urlToUint8Array(result.response.authenticatorData),
             clientDataJSON: b64urlToUint8Array(result.response.clientDataJSON),

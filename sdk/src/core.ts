@@ -39,6 +39,7 @@ import {
     computeWalletAddress,
 } from './utils';
 import { webAuthnProvider } from './webauthn';
+import { assertionPublicKeyCandidates } from './crypto/assertionKey';
 import { TransactionOutbox, type ReplayOptions, type ReplayResult } from './outbox';
 import { verifyAttestation, AttestationError, type AttestationPolicy } from './webauthn/attestation';
 import { createLocalCipher, type LocalCipher } from './crypto/prf';
@@ -1058,14 +1059,17 @@ export class InvisibleWalletCore {
                 candidateAddress = options.walletAddress;
             }
 
+            // Addresses to verify on-chain below. Paths 1 and 2 know exactly one;
+            // path 3 can only produce candidates.
+            const addressesToCheck: string[] = candidateAddress ? [candidateAddress] : [];
+
             // ── Path 3: derive address from a passkey credential ──────────────
             if (!candidateAddress && options?.credentialId) {
                 const resolvedRpId = this.resolveRpId();
                 const portable = await readPortableSigner(store);
 
                 // Trigger a WebAuthn assertion so the user authenticates with
-                // their passkey.  The provider now exposes publicKeyBytes when
-                // the authenticator supports SPKI export on assertion responses.
+                // their passkey.
                 const challengeU8 = crypto.getRandomValues(new Uint8Array(32));
                 const assertResult = await webAuthnProvider.authenticate({
                     challenge: challengeU8.buffer.slice(
@@ -1076,17 +1080,27 @@ export class InvisibleWalletCore {
                     transports: portable?.transports,
                 });
 
-                if (assertResult.publicKeyBytes && assertResult.publicKeyBytes.length === 65) {
-                    candidateAddress = computeWalletAddress(
-                        factoryAddress,
-                        assertResult.publicKeyBytes,
-                        networkPassphrase
+                // An assertion carries a signature, not a key. The WebAuthn spec
+                // puts `getPublicKey()` on the *attestation* response only, and
+                // `react-native-passkey`'s authenticate() returns nothing but
+                // authData / clientDataJSON / signature — so the signing key is
+                // recovered from the signature (SEC1 ECDSA recovery) instead of
+                // read off the response. See sdk/src/crypto/assertionKey.ts.
+                //
+                // Recovery cannot pin the key to one: an assertion signature is
+                // raw r ‖ s with no recovery id, so two keys verify it and both
+                // are returned. That is why every address below is verified
+                // on-chain rather than taken on faith — the same check paths 1
+                // and 2 already go through, on Web and on React Native alike.
+                for (const publicKeyBytes of assertionPublicKeyCandidates(assertResult)) {
+                    addressesToCheck.push(
+                        computeWalletAddress(factoryAddress, publicKeyBytes, networkPassphrase)
                     );
                 }
             }
 
             // ── Verify on-chain ──────────────────────────────────────────────
-            if (!candidateAddress) {
+            if (!addressesToCheck.length) {
                 this.setError(
                     'No wallet found. Please register first, or pass a ' +
                     'credentialId / walletAddress to login().'
@@ -1094,29 +1108,35 @@ export class InvisibleWalletCore {
                 return null;
             }
 
-            try {
-                await server.getContractData(
-                    candidateAddress,
-                    xdr.ScVal.scvLedgerKeyContractInstance(),
-                    SorobanRpc.Durability.Persistent
-                );
+            for (const addressToCheck of addressesToCheck) {
+                try {
+                    await server.getContractData(
+                        addressToCheck,
+                        xdr.ScVal.scvLedgerKeyContractInstance(),
+                        SorobanRpc.Durability.Persistent
+                    );
 
-                // Persist for subsequent calls on this device.
-                await store.setItem('invisible_wallet_address', candidateAddress);
-                this.setAddress(candidateAddress);
-                this.setIsDeployed(true);
-                return { walletAddress: candidateAddress };
-            } catch (e: unknown) {
-                const msg = e instanceof Error ? e.message : String(e);
-                if (msg.toLowerCase().includes('not found')) {
-                    this.setError('Wallet not yet deployed. Call deploy() to create it on-chain.');
-                    this.setAddress(null);
-                    this.setIsDeployed(false);
-                    return null;
-                } else {
+                    // Persist for subsequent calls on this device.
+                    await store.setItem('invisible_wallet_address', addressToCheck);
+                    this.setAddress(addressToCheck);
+                    this.setIsDeployed(true);
+                    return { walletAddress: addressToCheck };
+                } catch (e: unknown) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    if (msg.toLowerCase().includes('not found')) {
+                        // A recovered candidate that is not deployed is expected —
+                        // roughly half of them never are. Try the next candidate
+                        // before concluding the wallet itself is missing.
+                        continue;
+                    }
                     throw e;
                 }
             }
+
+            this.setError('Wallet not yet deployed. Call deploy() to create it on-chain.');
+            this.setAddress(null);
+            this.setIsDeployed(false);
+            return null;
         } catch (err: unknown) {
             this.setError(err instanceof Error ? err.message : String(err));
             return null;

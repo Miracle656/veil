@@ -339,12 +339,29 @@ for (const [label, path] of [
   ['mobile', mobileAssetsPath],
 ]) {
   test(`every ${label} registry issuer is checksum-valid`, () => {
-    const assets = parseAssetRegistry(path);
+    // Native XLM has no issuer and cannot have one — the asset is the network's
+    // own lumen, not a credit anybody issued. `main()` and
+    // `verifyNonNativeAsset` both exclude native entries for the same reason;
+    // this assertion was the only place that did not, so adding XLM to the
+    // registry turned it red.
+    const assets = parseAssetRegistry(path).filter((a) => a.kind !== 'native');
     assert.ok(assets.length > 0, `${label} registry parsed as empty — the assertions below would pass vacuously`);
     for (const asset of assets) {
       assert.ok(
         StrKey.isValidEd25519PublicKey(asset.issuer),
         `${label} registry: ${asset.key} (${asset.code}) issuer is not a valid Stellar account id: ${asset.issuer}`,
+      );
+    }
+  });
+
+  test(`every ${label} registry native entry has an empty issuer`, () => {
+    // The other half of the exemption above: native means no issuer, so a
+    // native entry carrying one is a registry mistake rather than a test one.
+    for (const asset of parseAssetRegistry(path).filter((a) => a.kind === 'native')) {
+      assert.equal(
+        asset.issuer,
+        '',
+        `${label} registry: ${asset.key} is kind:native but declares an issuer (${asset.issuer})`,
       );
     }
   });
