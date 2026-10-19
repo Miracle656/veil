@@ -129,9 +129,25 @@ export function parseTomlCurrencies(tomlText) {
   return parsed.CURRENCIES;
 }
 
+/**
+ * True only when the toml lists this exact code AND this exact issuer.
+ *
+ * The issuer is the whole check. A `[[CURRENCIES]]` entry naming only a code
+ * corroborates nothing: mainnet carries nine assets called USDT0, and two of
+ * the impostors publish a home domain while the genuine issuer
+ * (GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q) publishes none —
+ * so "the domain lists a currency with this code" is exactly the signal an
+ * impersonator can manufacture and the real issuer cannot.
+ *
+ * Treating a missing `issuer` as a match made every code-only toml corroborate
+ * any issuer we happened to have pinned, which is the inverse of what this
+ * function exists to do. Native assets have no issuer, but they never reach
+ * here — `main()` and the tests filter `kind === 'native'`, and
+ * `verifyNonNativeAsset` says so in its name.
+ */
 export function hasExactTomlCurrency(currencies, asset) {
   return currencies.some(
-    (currency) => currency?.code === asset.code && (currency?.issuer === asset.issuer || !currency?.issuer),
+    (currency) => currency?.code === asset.code && currency?.issuer === asset.issuer,
   );
 }
 

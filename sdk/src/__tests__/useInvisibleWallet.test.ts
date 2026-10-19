@@ -8,6 +8,8 @@
 
 import { renderHook, act } from '@testing-library/react'
 import { useInvisibleWallet } from '../useInvisibleWallet'
+import { computeWalletAddress } from '../utils'
+import { recoverAssertionPublicKeys } from '../crypto/assertionKey'
 import { rpc as SorobanRpc, TransactionBuilder, Keypair } from '@stellar/stellar-sdk'
 
 // ── @stellar/stellar-sdk mock ─────────────────────────────────────────────────
@@ -89,6 +91,8 @@ jest.mock('@stellar/stellar-sdk', () => ({
   xdr: {
     ScVal: { scvLedgerKeyContractInstance: jest.fn().mockReturnValue({}) },
   },
+  // Real SHA-256, so crypto/assertionKey.ts can hash a genuine assertion.
+  hash: (input: Buffer) => require('crypto').createHash('sha256').update(input).digest(),
   nativeToScVal:  jest.fn().mockReturnValue({}),
   scValToNative:  jest.fn().mockReturnValue(BigInt(0)),
   Asset: {
@@ -183,6 +187,45 @@ function makeMockAssertionCredential() {
   }
 }
 
+// ── A genuine assertion, for the key-recovery path ────────────────────────────
+//
+// login({ credentialId }) can only resolve a wallet if it can work out which
+// passkey signed, and an assertion carries no public key. These fixtures make a
+// real P-256 key sign a real WebAuthn payload, so the test exercises actual
+// recovery instead of a stubbed key — the exact case React Native is in.
+
+const nodeCrypto = require('crypto')
+
+/** A real P-256 key pair, public half in the SDK's 0x04 ‖ x ‖ y form. */
+function makeRealPasskey() {
+  const pair = nodeCrypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const spki = new Uint8Array(pair.publicKey.export({ type: 'spki', format: 'der' }))
+  return { privateKey: pair.privateKey, publicKeyBytes: spki.slice(spki.length - 65) }
+}
+
+/** The three bytes an authenticator would return — deliberately no public key. */
+function makeRealAssertion(privateKey: unknown, seed: number) {
+  const authData = new Uint8Array(37)
+  authData[32] = 0x45
+  const clientDataJSON = new Uint8Array(64)
+  for (let i = 0; i < clientDataJSON.length; i++) clientDataJSON[i] = (i * 13 + seed) & 0xff
+
+  const clientDataHash = nodeCrypto.createHash('sha256').update(Buffer.from(clientDataJSON)).digest()
+  const verificationData = Buffer.concat([Buffer.from(authData), clientDataHash])
+  const signature = new Uint8Array(
+    nodeCrypto.sign('sha256', verificationData, { key: privateKey, dsaEncoding: 'ieee-p1363' })
+  )
+  return { authData, clientDataJSON, signature }
+}
+
+/**
+ * Stand-in for computeWalletAddress: an address that names the key it came from,
+ * so a test can tell which candidate the SDK actually derived.
+ */
+function addressForKey(publicKeyBytes: Uint8Array): string {
+  return `C${Buffer.from(publicKeyBytes).toString('hex').slice(0, 55).toUpperCase()}`
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('useInvisibleWallet', () => {
@@ -206,6 +249,10 @@ describe('useInvisibleWallet', () => {
           getTransaction:  jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
         }) as any,
     )
+
+    // mockImplementation survives clearAllMocks, so a test that maps keys to
+    // addresses must not leak that into the next one: restore the default.
+    jest.mocked(computeWalletAddress).mockImplementation(() => 'CWALLET_ADDRESS_MOCK')
   })
 
   // ── register() ─────────────────────────────────────────────────────────────
@@ -421,33 +468,186 @@ describe('useInvisibleWallet', () => {
       expect(result.current.error).toContain('not yet deployed')
     })
 
-    it('triggers a WebAuthn assertion when credentialId is provided and derives wallet address from public key', async () => {
-      // Configure the top-level webauthn mock's authenticate method
+    it('recovers the passkey public key from an assertion that carries none (the React Native shape)', async () => {
+      // react-native-passkey's authenticate() returns authData, clientDataJSON and
+      // signature — and no public key, because WebAuthn assertions do not have one.
+      // Before recovery existed this branch silently did nothing on mobile.
       const { webAuthnProvider } = require('../webauthn');
+      const { privateKey, publicKeyBytes } = makeRealPasskey();
+      const assertion = makeRealAssertion(privateKey, 3);
+
       jest.mocked(webAuthnProvider.authenticate).mockResolvedValue({
-        authData: new Uint8Array(37),
-        clientDataJSON: new Uint8Array(64),
-        signature: new Uint8Array(64).fill(1),
-        publicKeyBytes: new Uint8Array(65).fill(4),
+        ...assertion,
+        publicKeyBytes: null,
       });
+      jest.mocked(computeWalletAddress).mockImplementation(
+        (_factory: string, key: Uint8Array) => addressForKey(key)
+      );
 
-      // The computeWalletAddress mock returns 'CWALLET_ADDRESS_MOCK'
-      jest.mocked(SorobanRpc.Server).mockImplementation(
-        () => ({ getContractData: jest.fn().mockResolvedValue({}) }) as any,
-      )
+      const expectedAddress = addressForKey(publicKeyBytes);
+      const getContractData = jest.fn(async (address: string) => {
+        if (address !== expectedAddress) throw new Error('contract not found');
+        return {};
+      });
+      jest.mocked(SorobanRpc.Server).mockImplementation(() => ({ getContractData }) as any);
 
-      const { result } = renderHook(() => useInvisibleWallet(CONFIG))
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG));
 
       let loginResult!: Awaited<ReturnType<typeof result.current.login>>
       await act(async () => {
         loginResult = await result.current.login({ credentialId: 'bW9jay1jcmVkZW50aWFsLWlk' })
       })
 
-      // computeWalletAddress mock returns 'CWALLET_ADDRESS_MOCK'
-      expect(loginResult).toEqual({ walletAddress: 'CWALLET_ADDRESS_MOCK' })
-      expect(result.current.address).toBe('CWALLET_ADDRESS_MOCK')
-      expect(result.current.isDeployed).toBe(true)
-    })
+      // The wallet that is really deployed — i.e. the key that really signed.
+      expect(loginResult).toEqual({ walletAddress: expectedAddress });
+      expect(result.current.address).toBe(expectedAddress);
+      expect(result.current.isDeployed).toBe(true);
+    });
+
+    it('tries every recovered candidate and adopts only the deployed one', async () => {
+      // An assertion signature has no recovery id, so two keys verify it and
+      // recovery cannot say which signed. Which position the real key lands in
+      // depends on the nonce's parity, so build a fixture where it is the SECOND
+      // candidate — that forces the chain check to reject one address and move on.
+      const { webAuthnProvider } = require('../webauthn');
+
+      let deployedKey: Uint8Array | undefined;
+      let assertion: ReturnType<typeof makeRealAssertion> | undefined;
+      for (let attempt = 0; attempt < 24 && !deployedKey; attempt++) {
+        const { privateKey, publicKeyBytes } = makeRealPasskey();
+        const candidate = makeRealAssertion(privateKey, attempt);
+        const recovered = recoverAssertionPublicKeys(candidate);
+        if (recovered.length === 2 && Buffer.from(recovered[1]).equals(Buffer.from(publicKeyBytes))) {
+            deployedKey = publicKeyBytes;
+            assertion = candidate;
+        }
+      }
+      if (!deployedKey || !assertion) throw new Error('Fixture: no assertion put the real key second');
+
+      jest.mocked(webAuthnProvider.authenticate).mockResolvedValue({
+        ...assertion,
+        publicKeyBytes: null,
+      });
+      jest.mocked(computeWalletAddress).mockImplementation(
+        (_factory: string, key: Uint8Array) => addressForKey(key)
+      );
+
+      const deployedAddress = addressForKey(deployedKey);
+      const lookedUp: string[] = [];
+      const getContractData = jest.fn(async (address: string) => {
+        lookedUp.push(address);
+        if (address !== deployedAddress) throw new Error('contract not found');
+        return {};
+      });
+      jest.mocked(SorobanRpc.Server).mockImplementation(() => ({ getContractData }) as any);
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG));
+
+      let loginResult!: Awaited<ReturnType<typeof result.current.login>>
+      await act(async () => {
+        loginResult = await result.current.login({ credentialId: 'bW9jay1jcmVkZW50aWFsLWlk' })
+      });
+
+      // The bogus candidate was queried, rejected, and then the real one found.
+      expect(lookedUp).toHaveLength(2);
+      expect(lookedUp[1]).toBe(deployedAddress);
+      expect(lookedUp[0]).not.toBe(deployedAddress);
+      expect(loginResult).toEqual({ walletAddress: deployedAddress });
+      // Nothing was ever persisted for the candidate the chain rejected.
+      expect(localStorage.getItem('invisible_wallet_address')).toBe(deployedAddress);
+    });
+
+    it('reports a wallet that is not yet deployed when no candidate resolves', async () => {
+      const { webAuthnProvider } = require('../webauthn');
+      const { privateKey } = makeRealPasskey();
+
+      jest.mocked(webAuthnProvider.authenticate).mockResolvedValue({
+        ...makeRealAssertion(privateKey, 21),
+        publicKeyBytes: null,
+      });
+      jest.mocked(computeWalletAddress).mockImplementation(
+        (_factory: string, key: Uint8Array) => addressForKey(key)
+      );
+      jest.mocked(SorobanRpc.Server).mockImplementation(
+        () => ({
+          getContractData: jest.fn().mockRejectedValue(new Error('contract not found')),
+        }) as any,
+      );
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG));
+
+      let loginResult!: Awaited<ReturnType<typeof result.current.login>>
+      await act(async () => {
+        loginResult = await result.current.login({ credentialId: 'bW9jay1jcmVkZW50aWFsLWlk' })
+      })
+
+      expect(loginResult).toBeNull();
+      expect(result.current.address).toBeNull();
+      expect(result.current.error).toContain('not yet deployed');
+      expect(localStorage.getItem('invisible_wallet_address')).toBeNull();
+    });
+
+    it('derives nothing when the assertion recovers no key at all', async () => {
+      // A signature that is not a valid P-256 signature has no signing key to
+      // find, so login must say "no wallet" rather than guess one.
+      const { webAuthnProvider } = require('../webauthn');
+
+      jest.mocked(webAuthnProvider.authenticate).mockResolvedValue({
+        authData:       new Uint8Array(37),
+        clientDataJSON: new Uint8Array(64),
+        signature:      new Uint8Array(64).fill(1),
+        publicKeyBytes: null,
+      });
+      const getContractData = jest.fn().mockResolvedValue({});
+      jest.mocked(SorobanRpc.Server).mockImplementation(() => ({ getContractData }) as any);
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG));
+
+      let loginResult!: Awaited<ReturnType<typeof result.current.login>>
+      await act(async () => {
+        loginResult = await result.current.login({ credentialId: 'bW9jay1jcmVkZW50aWFsLWlk' })
+      })
+
+      expect(loginResult).toBeNull();
+      expect(result.current.error).toContain('No wallet found');
+      // Nothing was invented, so nothing was looked up.
+      expect(getContractData).not.toHaveBeenCalled();
+    });
+
+    it('still prefers a public key the platform did report, before recovering', async () => {
+      // Some environments do surface a key on the assertion. It is the same key
+      // recovery would find, so using it first just skips a chain lookup — and on
+      // every other platform the recovered candidates follow in the same list.
+      const { webAuthnProvider } = require('../webauthn');
+      const reportedKey = new Uint8Array(65).fill(4);
+      const { privateKey } = makeRealPasskey();
+
+      jest.mocked(webAuthnProvider.authenticate).mockResolvedValue({
+        ...makeRealAssertion(privateKey, 31),
+        publicKeyBytes: reportedKey,
+      });
+      jest.mocked(computeWalletAddress).mockImplementation(
+        (_factory: string, key: Uint8Array) => addressForKey(key)
+      );
+
+      const lookedUp: string[] = [];
+      const getContractData = jest.fn(async (address: string) => {
+        lookedUp.push(address);
+        if (address !== addressForKey(reportedKey)) throw new Error('contract not found');
+        return {};
+      });
+      jest.mocked(SorobanRpc.Server).mockImplementation(() => ({ getContractData }) as any);
+
+      const { result } = renderHook(() => useInvisibleWallet(CONFIG));
+
+      let loginResult!: Awaited<ReturnType<typeof result.current.login>>
+      await act(async () => {
+        loginResult = await result.current.login({ credentialId: 'bW9jay1jcmVkZW50aWFsLWlk' })
+      })
+
+      expect(loginResult).toEqual({ walletAddress: addressForKey(reportedKey) });
+      expect(lookedUp[0]).toBe(addressForKey(reportedKey));
+    });
   })
 
   // ── deploy() ───────────────────────────────────────────────────────────────

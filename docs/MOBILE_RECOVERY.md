@@ -1,6 +1,6 @@
 # Mobile recovery & migration — how "your passkey is your account" works
 
-_Last updated: 2026-08-21. Implemented in `frontend/mobile` (commit 8ce5bdb)._
+_Last updated: 2026-10-16 (Scenario 4, the classic keypair wallet — #1041). Passkey model: `frontend/mobile`, commit 8ce5bdb._
 
 ## The model
 
@@ -48,7 +48,55 @@ sensor → wallet is back. That's the whole migration.
 
 Two independent fallbacks, both pre-existing:
 - **SEP-30 recovery servers** (`app/recover.tsx`): servers registered while the wallet was healthy co-sign `request_recovery` for a fresh passkey; a time-delay window lets the real owner cancel. This is the credible answer for "phone in a river".
-- **Paper backup** (`lib/backupFile.ts`): exported key material import.
+- **Encrypted backup file** (`lib/backup.ts` + `lib/backupFile.ts`): the wallet's address, signer public keys and settings, sealed with a passphrase. It deliberately holds **no key material** — `assertNoSecretMaterial` refuses it, because the file is expected to end up in a cloud drive. It restores a wallet's *shape* and binds a new passkey signer; it cannot hand back a private key, and never should.
+
+## Scenario 4 — a classic keypair wallet (this phone cannot make a passkey)
+
+Not every device can enrol a passkey. A Redmi Note 11 5G returns
+`createCredentialAsync no provider dependencies found` from
+`react-native-passkeys`, with no credential provider exposed anywhere in the
+phone's settings. For those users the classic keypair wallet is the only option
+(`lib/testnetWallet.ts`): a plain Stellar G-account whose ed25519 secret sits in
+the secure store under `veil_signer_secret`, and which `lib/spendAsset.ts`
+spends through the classic branch because the stored address is not a `C…`.
+
+None of the scenarios above can restore that wallet:
+
+| Route | Works? | Why |
+|---|---|---|
+| Sign in with passkey (Scenarios 1–2) | No | There is no passkey on the device — that is *why* this wallet exists. |
+| SEP-30 recovery servers | No | They co-sign a new passkey onto a **wallet contract**; a classic wallet is not a contract. |
+| Encrypted backup file | No | Refuses key material by design, and correctly so. |
+
+So the keychain held the wallet's only copy, and an uninstall destroyed the
+wallet silently. Settings → **Reveal secret key**
+(`app/settings/reveal-secret.tsx`, decisions in `lib/secretExport.ts`) is the
+way to take that copy off the phone on purpose:
+
+- **Behind the device lock** — `expo-local-authentication`, the same factor
+  `app/lock.tsx` uses. `requirePasskey()` cannot be the gate here: it no-ops
+  precisely for wallets that have no passkey.
+- **Consequences before the key** — holding the key is holding the money, this
+  is the only copy, and Veil cannot recover it; the reveal button stays
+  disabled until that is acknowledged.
+- **One reveal at a time** — backgrounding the app or leaving the screen hides
+  the key, so every reveal passes the lock again. A device with no passcode or
+  biometric enrolled is refused outright rather than shown the key "behind" a
+  gate with nothing on the other side.
+- **Only for classic wallets** — a smart wallet is not offered this, because its
+  key never left the passkey. Its stored signer secret is the *fee-payer*, and
+  the screen does not read it.
+- **Writes nothing** — the reveal touches no log, no AsyncStorage key and no
+  backup envelope. The scrubber is unchanged; the backup stays safe to put in a
+  cloud drive.
+
+Importing the revealed secret reproduces the same address by construction:
+`resolveSecretExport` only returns a secret when
+`Keypair.fromSecret(secret).publicKey()` equals the stored address, which is the
+same derivation the import path performs. That round trip — reveal, wipe the
+keychain, import, same wallet — is exercised end to end in
+`lib/__tests__/secretExport.test.ts`.
+
 
 ## Spending model after login (who signs what)
 

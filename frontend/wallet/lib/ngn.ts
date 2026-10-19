@@ -298,20 +298,44 @@ export interface NairaCustomer {
   verified: boolean
   /** False when the customer already existed — provisioning is idempotent. */
   created: boolean
+  /**
+   * True when the reference that came back is not the one that was sent.
+   *
+   * Linq already had this person's email under a different reference and named
+   * it; the server adopted it rather than failing. The returned reference is
+   * the authoritative one from here on.
+   */
+  reusedExistingRef?: boolean
 }
 
 /**
  * One-time per person, not per order. Safe to call again after a dropped
  * response: Linq returns the existing customer with `created: false`.
+ *
+ * **The reference that comes back can differ from the one that went in.** If
+ * this person's email is already registered under another reference, Linq names
+ * it and the server adopts it. We then store that reference, because it is the
+ * one their identity is bound to — continuing with ours would mean every later
+ * KYC and order is refused, which is exactly the lockout this whole module is
+ * written to avoid.
+ *
+ * This is the one place a stored reference may be replaced. It is not a
+ * regenerated reference — it is Linq telling us which one is real.
  */
-export function provisionCustomer(params: {
+export async function provisionCustomer(params: {
   customerRef: string
   firstName: string
   lastName: string
   email: string
   phone: string
 }): Promise<NairaCustomer> {
-  return call<NairaCustomer>('/ngn/customers', { method: 'POST', body: params })
+  const customer = await call<NairaCustomer>('/ngn/customers', { method: 'POST', body: params })
+
+  if (customer.customerRef && customer.customerRef !== params.customerRef) {
+    walletLocal.setItem(CUSTOMER_REF_KEY, customer.customerRef)
+  }
+
+  return customer
 }
 
 export interface CustomerStatus {

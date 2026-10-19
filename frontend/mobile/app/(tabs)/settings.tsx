@@ -1,7 +1,7 @@
-import { useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 
 import { useTheme } from '../../hooks/useTheme';
 import { useCurrency } from '../../hooks/useCurrency';
@@ -30,6 +30,7 @@ import {
 } from '../../lib/notificationPrefs';
 import { requestNotificationPermissions } from '../../lib/notifications';
 import { TRUSTLINE_RESERVE_COST_XLM } from '../../lib/reserves';
+import { walletKind } from '../../lib/secretExport';
 
 type Row = {
   key: string;
@@ -57,6 +58,29 @@ export default function SettingsScreen() {
   const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false);
   const [themePickerOpen, setThemePickerOpen] = useState(false);
 
+  // Which wallet this network actually holds, re-read whenever the tab is
+  // focused — a wallet can be created or reset while the tab sits mounted, and
+  // a stale value would either hide the reveal entry from a keypair wallet or,
+  // worse, show it on a smart wallet that has no secret to reveal.
+  const [storedAddress, setStoredAddress] = useState<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void getWalletAddress()
+        .then((value) => {
+          if (active) setStoredAddress(value);
+        })
+        .catch(() => {
+          // Unreadable keystore: show nothing rather than offer a reveal the
+          // screen could not honour. The screen itself re-reads and refuses.
+          if (active) setStoredAddress(null);
+        });
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
   const appearance: Row[] = [
     {
       key: 'theme',
@@ -81,10 +105,30 @@ export default function SettingsScreen() {
     },
   ];
 
+  // A classic keypair wallet exists precisely because this device could not
+  // make a passkey, and its signing key lives in one place only — this phone's
+  // keychain. The encrypted backup cannot carry it by design, so without a way
+  // to take it off the device on purpose, losing the phone loses the wallet.
+  // A smart wallet is never offered this: its key was created inside a passkey
+  // and never left it, and the signer secret it does store is the fee-payer,
+  // not the wallet. `lib/secretExport.ts` re-checks all of this behind the row.
+  const revealRow: Row[] =
+    walletKind(storedAddress) === 'keypair'
+      ? [
+          {
+            key: 'reveal-secret',
+            title: 'Reveal secret key',
+            subtitle: 'This wallet’s key exists only on this device',
+            onPress: () => router.push('/settings/reveal-secret'),
+          },
+        ]
+      : [];
+
   const security: Row[] = [
     { key: 'passkeys', title: 'Passkeys', subtitle: 'Devices registered on this wallet', onPress: () => router.push('/settings/passkeys') },
     { key: 'recovery-coverage', title: 'Recovery coverage', subtitle: 'See which ways can restore this wallet', onPress: () => router.push('/settings/recovery') },
     { key: 'recovery', title: 'Recovery servers', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
+    ...revealRow,
     { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
     { key: 'privacy', title: 'Privacy', subtitle: 'Private payments and crash reporting', onPress: () => router.push('/settings/privacy') },
     { key: 'dapps', title: 'Connected dApps', subtitle: 'Sites with permission, and revoke them', onPress: () => router.push('/settings/permissions') },
