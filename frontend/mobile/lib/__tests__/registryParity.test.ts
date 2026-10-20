@@ -24,6 +24,8 @@ const NETWORKS = ['mainnet', 'testnet'] as const;
 /** From mainnet Horizon, 2026-09-24 (#792). */
 const USDT0_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 const USDT0_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
+const ETHERFUSE_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
+const CETES_LOOKALIKE_ISSUER = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK';
 const USDT0_IMPOSTORS = [
   'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK',
   'GADUBOKGYG4E2BZUVXAZBBILGPIYIPOXAXWIIG6DJ4JDXWOQR67HUSDT',
@@ -85,6 +87,35 @@ describe('USDT0 is pinned to its one genuine issuer on both sides', () => {
     for (const impostor of USDT0_IMPOSTORS) {
       expect(registry.isRegisteredIssuer('USDT0', impostor, 'mainnet')).toBe(false);
     }
+  });
+});
+
+describe('Etherfuse sovereign debt entries are pinned by issuer and government', () => {
+  it.each([
+    ['CETES', 'Mexico'],
+    ['USTRY', 'United States'],
+    ['TESOURO', 'Brazil'],
+  ])('%s records the sovereign it represents', (code, government) => {
+    for (const registry of [mobile, wallet]) {
+      expect(registry.ASSET_REGISTRY[code]).toMatchObject({
+        code,
+        issuer: ETHERFUSE_ISSUER,
+        issuerName: 'Etherfuse',
+        homeDomain: 'etherfuse.com',
+        network: 'mainnet',
+        kind: 'sovereign-debt',
+        government,
+      });
+    }
+  });
+
+  it.each([
+    ['mobile', mobile],
+    ['wallet', wallet],
+  ] as const)('%s labels a lookalike CETES issuer as unverified', (_side, registry) => {
+    expect(registry.verifiedAsset('CETES', ETHERFUSE_ISSUER, 'mainnet')?.government).toBe('Mexico');
+    expect(registry.verifiedAsset('CETES', CETES_LOOKALIKE_ISSUER, 'mainnet')).toBeNull();
+    expect(registry.formatAssetLabel('CETES', CETES_LOOKALIKE_ISSUER, 'mainnet')).toMatch(/^Unverified: CETES/);
   });
 });
 
