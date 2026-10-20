@@ -1,6 +1,6 @@
 import { errorMessage } from '../../lib/errorMessage';
-import { Keypair } from '@stellar/stellar-sdk';
-import { useRouter } from 'expo-router';
+import { Asset, Keypair, StrKey } from '@stellar/stellar-sdk';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -96,6 +96,7 @@ type Selected = { pool: BlendPool; reserve: BlendReserve };
 
 export default function EarnRoute() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ asset?: string; issuer?: string; amount?: string }>();
   const { colors } = useTheme();
   const { mask } = useHiddenAmounts();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -178,6 +179,21 @@ export default function EarnRoute() {
     setStep('deposit-form');
     void loadEarnBalances(reserve.code).then(setBalances).catch(() => setBalances(null));
   }
+
+  useEffect(() => {
+    const asset = typeof params.asset === 'string' ? params.asset.trim().toUpperCase() : '';
+    const issuer = typeof params.issuer === 'string' ? params.issuer.trim() : '';
+    const amount = typeof params.amount === 'string' ? params.amount.trim() : '';
+    if (!/^[A-Z0-9]{1,12}$/.test(asset) || !StrKey.isValidEd25519PublicKey(issuer)) return;
+    if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0 || pools.length === 0) return;
+    const assetId = new Asset(asset, issuer).contractId(network.networkPassphrase);
+    const match = pools
+      .flatMap((pool) => pool.reserves.map((reserve) => ({ pool, reserve })))
+      .find(({ reserve }) => reserve.assetId === assetId);
+    if (!match) return;
+    openDeposit(match.pool, match.reserve);
+    setDepositAmount(amount);
+  }, [pools, params.asset, params.issuer, params.amount, network.networkPassphrase]);
 
   const available = balances ? balances.inSpending + balances.inWallet : null;
   const parsedAmount = parseFloat(depositAmount);

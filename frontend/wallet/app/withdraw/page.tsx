@@ -199,7 +199,13 @@ export default function WithdrawPage() {
       const info = await discoverAnchorInfo(anchor.trim())
       transferServerRef.current = info.transferServerUrl
 
-      const jwt = await getSep10Jwt(info.webAuthEndpoint, feePayerAddress, info.networkPassphrase)
+      const jwt = await getSep10Jwt(
+        info.webAuthEndpoint,
+        feePayerAddress,
+        info.networkPassphrase,
+        info.homeDomain,
+        info.signingKey,
+      )
       jwtRef.current = jwt
 
       const result = await initiateWithdraw(

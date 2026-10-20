@@ -32,41 +32,6 @@ export function isRowValid(row: PayoutRow): boolean {
   return Object.keys(errors).length === 0;
 }
 
-export type BatchSubmitResult = {
-  txHash: string;
-  rowIndices: number[];
-};
-
-export type PayoutResult = {
-  txHash: string;
-  completedRows: number[];
-  failedRows: number[];
-};
-
-/**
- * Submit every recipient row as a single authorized batch.
- * `submitBatch` is called once for the whole list — one signature covers all rows.
- */
-export async function executeBulkPayout(
-  rows: PayoutRow[],
-  submitBatch: (batch: PayoutRow[]) => Promise<BatchSubmitResult>
-): Promise<PayoutResult> {
-  try {
-    const result = await submitBatch(rows);
-    return {
-      txHash: result.txHash,
-      completedRows: result.rowIndices,
-      failedRows: [],
-    };
-  } catch {
-    return {
-      txHash: '',
-      completedRows: [],
-      failedRows: rows.map((_, i) => i),
-    };
-  }
-}
-
 // ── Real submission ───────────────────────────────────────────────────────────
 //
 // Why one transaction per row rather than one for the whole list: a Soroban

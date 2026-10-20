@@ -14,6 +14,7 @@ import { NextResponse } from "next/server";
 const REGISTERED_ISSUER_ORIGINS = [
   "https://ondo.finance",
   "https://circle.com",
+  "https://stellar.org",
   "https://aqua.network",
 ];
 

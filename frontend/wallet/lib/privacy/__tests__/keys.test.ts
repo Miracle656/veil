@@ -182,9 +182,30 @@ describe('preparePrivacySigner — pre-PRF wallets', () => {
     expect(LEGACY_FEE_PAYER_MESSAGE).toMatch(/PRF-capable passkey/)
   })
 
+  it('refuses to sign with a random fallback fee payer', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const randomKp = Keypair.random()
+    localStorage.setItem('veil_signer_secret', randomKp.secret())
+    localStorage.setItem(MODE, 'random')
+
+    await expect(preparePrivacySigner()).rejects.toThrow(LEGACY_FEE_PAYER_MESSAGE)
+  })
+
   it('flags legacy wallets as recovery-unsupported without any ceremony', async () => {
     localStorage.setItem(KEY_ID, CRED)
     localStorage.setItem(MODE, 'legacy')
+    let prfCalled = false
+    const spying: PrfEvaluator = async () => {
+      prfCalled = true
+      return fromHex(PRF_OUTPUT)
+    }
+    await expect(isPrivacyRecoverySupported(spying)).resolves.toBe(false)
+    expect(prfCalled).toBe(false)
+  })
+
+  it('flags random fallback wallets as recovery-unsupported without any ceremony', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    localStorage.setItem(MODE, 'random')
     let prfCalled = false
     const spying: PrfEvaluator = async () => {
       prfCalled = true

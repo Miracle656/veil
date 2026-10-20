@@ -11,16 +11,10 @@
  * Portfolio (held-asset) helpers for the mobile wallet — the native counterpart
  * of the web wallet's assets view (`frontend/wallet/app/assets/page.tsx`) and
  * its `parseTrustlines` (`frontend/wallet/lib/trustlines.ts`).
- *
- * The screen only needs to *read* the portfolio, so this stays deliberately
- * smaller than the web module: the pure `parseHeldAssets` extracts every
- * non-native asset the account holds from a set of Horizon balances, and
- * `fetchHeldAssets` loads those balances over Horizon. No trustline writes, no
- * signing — that surface belongs to a later item.
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Horizon, StrKey } from '@stellar/stellar-sdk';
+import { Horizon } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
 
@@ -43,29 +37,45 @@ export interface RegisteredAsset {
   issuerName: string;
   homeDomain?: string;
   network: 'mainnet' | 'testnet' | 'all';
-  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'governance' | 'native';
+  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native';
   reserveXlm?: number;
   sacContractId?: string;
 }
 
 export const USDY_MAINNET_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6';
+export const USDC_MAINNET_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+export const USDC_TESTNET_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2';
+export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
 
-export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2';
-export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
-
 export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
+  USDC: {
+    code: 'USDC',
+    issuer: USDC_MAINNET_ISSUER,
+    name: 'USD Coin',
+    issuerName: 'Circle',
+    homeDomain: 'circle.com',
+    network: 'mainnet',
+    kind: 'stablecoin',
+    reserveXlm: 0.5,
+  },
+  XLM: {
+    code: 'XLM',
+    issuer: '',
+    name: 'Stellar Lumens',
+    issuerName: 'Stellar Development Foundation',
+    homeDomain: 'stellar.org',
+    network: 'mainnet',
+    kind: 'native',
+  },
   EURC: {
     code: 'EURC',
     issuer: EURC_MAINNET_ISSUER,
-    name: 'Euro Coin',
+    name: 'EUR Coin',
     issuerName: 'Circle',
     homeDomain: 'circle.com',
-    // Verified 2026-10-04: this issuer's Horizon home_domain is circle.com, the
-    // same domain the USDC issuer publishes. Circle serves no stellar.toml at
-    // that path (404), so the registry pin is the verification, exactly as it
-    // is for USDC.
     network: 'mainnet',
     kind: 'stablecoin',
     reserveXlm: 0.5,
@@ -76,16 +86,8 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     name: 'Aquarius',
     issuerName: 'Aquarius',
     homeDomain: 'aqua.network',
-    // Verified 2026-10-04 in both directions: the issuer publishes
-    // home_domain aqua.network, and that domain's stellar.toml declares AQUA
-    // against this exact issuer. The only registry asset that currently
-    // verifies both ways.
-    //
-    // Not a stablecoin — AQUA floats. `fetchPrice` quotes it off the real
-    // AQUA/USDC order book like any other issued asset, so nothing here needs
-    // a hardcoded rate, and it must never get one.
     network: 'mainnet',
-    kind: 'governance',
+    kind: 'equity',
     reserveXlm: 0.5,
   },
   USDY: {
@@ -94,20 +96,8 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     name: 'Ondo US Dollar Yield',
     issuerName: 'Ondo Finance',
     homeDomain: 'ondo.finance',
-    // Mainnet only: this issuer account does not exist on testnet, so a
-    // changeTrust there fails with op_no_issuer.
     network: 'mainnet',
     kind: 'treasury',
-    reserveXlm: 0.5,
-  },
-  USDC: {
-    code: 'USDC',
-    issuer: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
-    name: 'USD Coin',
-    issuerName: 'Circle',
-    homeDomain: 'circle.com',
-    network: 'mainnet',
-    kind: 'stablecoin',
     reserveXlm: 0.5,
   },
   USDT0: {
@@ -122,20 +112,40 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   },
 };
 
-export function getRegisteredAsset(code: string, network?: 'mainnet' | 'testnet'): RegisteredAsset | null {
-  const asset = ASSET_REGISTRY[code.toUpperCase()] ?? null;
+export function getRegisteredAsset(
+  code: string,
+  issuerOrNetwork?: string | null,
+): RegisteredAsset | null {
+  const upperCode = code.toUpperCase();
+  const asset = ASSET_REGISTRY[upperCode];
   if (!asset) return null;
-  if (network && asset.network !== 'all' && asset.network !== network) {
+
+  if (issuerOrNetwork === undefined) return asset;
+
+  if (issuerOrNetwork === 'mainnet' || issuerOrNetwork === 'testnet') {
+    if (asset.network !== 'all' && asset.network !== issuerOrNetwork) {
+      return null;
+    }
+    return asset;
+  }
+
+  if (upperCode === 'XLM' || asset.kind === 'native') {
+    if (!issuerOrNetwork || issuerOrNetwork === '' || issuerOrNetwork === 'native') {
+      return asset;
+    }
     return null;
   }
-  return asset;
+
+  if (upperCode === 'USDC' && issuerOrNetwork === USDC_TESTNET_ISSUER) {
+    return asset;
+  }
+
+  return asset.issuer === issuerOrNetwork ? asset : null;
 }
 
 export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'mainnet'): string | null {
-  // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
-  // for testnet returns null and every branch below becomes unreachable.
   if (code.toUpperCase() === 'USDC' && network === 'testnet') {
-    return 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+    return USDC_TESTNET_ISSUER;
   }
   const asset = getRegisteredAsset(code, network);
   if (!asset) return null;
@@ -145,26 +155,50 @@ export function getAssetIssuer(code: string, network: 'mainnet' | 'testnet' = 'm
   return asset.issuer;
 }
 
-/**
- * True when `issuer` is the registered issuer for `code` on `network`. The
- * USDC branch accepts both Circle's mainnet issuer and the SDF test anchor's,
- * matching how prices are quoted — same contract as the web wallet.
- */
-export function isRegisteredIssuer(code: string, issuer: string, network: 'mainnet' | 'testnet' = 'mainnet'): boolean {
-  // USDC first: it is registered `network: 'mainnet'`, so a registry lookup
-  // for testnet returns null and every branch below becomes unreachable.
-  if (code.toUpperCase() === 'USDC') {
-    return (
-      issuer === 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN' ||
-      issuer === 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
-    );
+export function isRegisteredIssuer(
+  code: string,
+  issuer: string,
+  network: 'mainnet' | 'testnet' = 'mainnet',
+): boolean {
+  const upperCode = code.toUpperCase();
+  if (upperCode === 'XLM') {
+    return !issuer || issuer === '' || issuer === 'native';
   }
-  const asset = getRegisteredAsset(code, network);
+  if (upperCode === 'USDC') {
+    return issuer === USDC_MAINNET_ISSUER || issuer === USDC_TESTNET_ISSUER;
+  }
+  const asset = ASSET_REGISTRY[upperCode];
   if (!asset) return false;
   if (asset.network === 'mainnet' && network === 'testnet') {
     return false;
   }
   return asset.issuer === issuer;
+}
+
+export function verifiedAsset(
+  code: string,
+  issuer: string | null | undefined,
+  network: 'mainnet' | 'testnet' = 'mainnet',
+): RegisteredAsset | null {
+  if (!issuer) {
+    if (code.toUpperCase() === 'XLM') return ASSET_REGISTRY.XLM;
+    return null;
+  }
+  const registered = ASSET_REGISTRY[code.toUpperCase()];
+  if (!registered || registered.code !== code) return null;
+  return isRegisteredIssuer(code, issuer, network) ? registered : null;
+}
+
+export function formatAssetLabel(
+  code: string,
+  issuer?: string | null,
+  network: 'mainnet' | 'testnet' = 'mainnet',
+): string {
+  const asset = verifiedAsset(code, issuer, network) ?? (code.toUpperCase() === 'XLM' ? ASSET_REGISTRY.XLM : null);
+  if (asset) return asset.code;
+
+  const shortIssuer = issuer ? `${issuer.slice(0, 4)}…` : 'unknown';
+  return `Unverified: ${code.toUpperCase()} (issuer ${shortIssuer})`;
 }
 
 /**
@@ -200,82 +234,7 @@ export function sacContractIdForCode(code: string, network: 'mainnet' | 'testnet
   return KNOWN_SAC_CONTRACT_IDS[network][asset.code] ?? null;
 }
 
-/**
- * The registry entry for an asset, but only when BOTH its code (exactly — codes
- * are case-sensitive) and its issuer are the registered ones. A code match on
- * its own is not an asset match: mainnet has eight assets called USDT0 and
- * seven are impostors, so anything that names or badges an asset goes through
- * here rather than looking the code up.
- */
-export function verifiedAsset(
-  code: string,
-  issuer: string | null | undefined,
-  network: 'mainnet' | 'testnet',
-): RegisteredAsset | null {
-  if (!issuer) return null;
-  const registered = ASSET_REGISTRY[code.toUpperCase()];
-  if (!registered || registered.code !== code) return null;
-  return isRegisteredIssuer(code, issuer, network) ? registered : null;
-}
-
 /** A single non-native asset held by the wallet. */
-/**
- * The issuer controls Horizon reports for an asset's issuing account.
- *
- * These are set on the ISSUER, not on the holder, so they are a property of the
- * asset and the same for everyone who holds it.
- */
-export interface HorizonIssuerFlags {
-  auth_required?: boolean;
-  auth_revocable?: boolean;
-  auth_clawback_enabled?: boolean;
-  auth_immutable?: boolean;
-}
-
-/**
- * What the issuer can do to a balance of this asset, in a sentence, or null
- * when it can do neither.
- *
- * Ported from the web wallet's `getAssetControlDisclosure` so the two cannot
- * drift into saying different things about the same asset. It matters most for
- * USDT0: its issuer has both flags set, and until now the only place mobile
- * said so was a hardcoded line inside the "enable USDT0" banner — which a
- * holder never sees again after they tap it once.
- *
- * The wording puts the fact where it belongs. This is the asset behaving as the
- * asset was designed to, not Veil holding anything back.
- */
-export function getAssetControlDisclosure(flags?: HorizonIssuerFlags | null): string | null {
-  if (!flags) return null;
-  if (flags.auth_revocable && flags.auth_clawback_enabled) {
-    return 'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.';
-  }
-  if (flags.auth_clawback_enabled) {
-    return 'The issuer can take this balance back, and this is a property of the asset, not of Veil.';
-  }
-  if (flags.auth_revocable) {
-    return 'The issuer can freeze this balance, and this is a property of the asset, not of Veil.';
-  }
-  return null;
-}
-
-/**
- * The issuing account's flags, or null when Horizon cannot answer.
- *
- * Null means "unknown", and callers show nothing rather than implying the
- * issuer is powerless — the web wallet had a bug of exactly that shape, where a
- * Horizon failure silently dropped the disclosure.
- */
-export async function fetchIssuerFlags(issuer: string): Promise<HorizonIssuerFlags | null> {
-  if (!issuer) return null;
-  try {
-    const account = await new Horizon.Server(getNetwork().horizonUrl).loadAccount(issuer);
-    return (account.flags as HorizonIssuerFlags) ?? null;
-  } catch {
-    return null;
-  }
-}
-
 export interface HeldAsset {
   code: string;
   issuer: string;
@@ -286,8 +245,7 @@ export interface HeldAsset {
 
 /**
  * Extracts the classic (non-native, non-pool-share) assets from a set of
- * Horizon balances — everything the wallet holds beyond XLM. Mirrors the web
- * wallet's `parseTrustlines` so both clients describe a portfolio the same way.
+ * Horizon balances — everything the wallet holds beyond XLM.
  */
 export function parseHeldAssets(balances: HorizonBalanceLike[]): HeldAsset[] {
   return balances
@@ -304,162 +262,27 @@ export function parseHeldAssets(balances: HorizonBalanceLike[]): HeldAsset[] {
 }
 
 /** Reads the active wallet's public key, or `null` when no wallet is stored. */
-/**
- * @deprecated Use `ensureCorrectWalletAddress()` from lib/walletRepair.
- *
- * This reads a raw AsyncStorage key that is not guaranteed to hold a Stellar
- * address — on a passkey wallet it holds the credential's P-256 public key —
- * and it is not network-aware, so it cannot answer "which wallet is active"
- * after a network switch. The Assets screen used it and asked Horizon about a
- * 130-character hex string for as long as it did.
- */
 export async function loadWalletAddress(): Promise<string | null> {
   return AsyncStorage.getItem(WALLET_PUBLIC_KEY_KEY);
 }
 
 /** A Horizon 404 means the account isn't funded yet — an empty portfolio, not an error. */
-/**
- * No `instanceof Error` gate, deliberately.
- *
- * The stellar-sdk's `NotFoundError` extends `Error`, and a class that extends a
- * built-in loses its prototype chain once Babel has compiled it for Hermes — so
- * `err instanceof Error` is FALSE on device for an error whose `name` is exactly
- * 'NotFoundError'. This function used to require it, which is why the Assets
- * screen reported "NotFoundError" as a failure for a wallet whose classic
- * account simply does not exist yet, while the dashboard — whose own copy of
- * this check in lib/holdings.ts never had the gate — handled the same response
- * from the same account without complaint.
- *
- * Duck-type it: a 404, or something calling itself NotFoundError.
- */
 function isAccountNotFound(err: unknown): boolean {
-  const e = err as { name?: string; response?: { status?: number } };
-  return e?.name === 'NotFoundError' || e?.response?.status === 404;
+  const status = (err as { response?: { status?: number } })?.response?.status;
+  return status === 404 || (err instanceof Error && err.name === 'NotFoundError');
 }
 
 /**
- * Loads every non-native asset held by `publicKey` from Horizon. An unfunded
- * account (no ledger entry yet) is reported as an empty portfolio rather than
- * an error; any other failure propagates so the screen can surface it.
+ * Loads every non-native asset held by `publicKey` from Horizon.
  */
-/**
- * Whether the account the trustlines live on exists on the network yet.
- *
- * Set by the last `fetchHeldAssets` call. A smart wallet can hold XLM in its
- * contract with no classic account behind it at all — the dashboard reads that
- * fine, but a trustline needs the classic account, so the screen has to be able
- * to say so rather than offering adds that fail.
- */
-let lastAccountExists = true;
-
-export function classicAccountExists(): boolean {
-  return lastAccountExists;
-}
-
-/**
- * The stored fee payer, read through `lib/activity` at call time rather than
- * imported at module load.
- *
- * `lib/activity.ts` reaches the keystore (`walletStore` -> `storage`,
- * `privacy/storage`, `walletConnect`), which pulls in `expo-secure-store`,
- * `expo-crypto`, `expo-sqlite` and `@reown/walletkit`. A top-level import here
- * drags all of that into `frontend/wallet/lib/__tests__/registryParity.test.ts`,
- * which requires this module from the web wallet's own run, where the mobile
- * `node_modules` is not installed. That suite then dies at load — before a
- * single assertion runs, so a registry divergence would have gone unreported.
- * The invariant is the one this module's own `sacContractIdForCode` comment
- * states: the web counterpart must stay import-free for the parity harness.
- *
- * Same function, same moment it is called; only the load-time edge is gone.
- */
-async function readFeePayerAddress(): Promise<string | null> {
-  const { getFeePayerAddress } = require('./activity') as typeof import('./activity');
-  return getFeePayerAddress();
-}
-
 export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
-  // Read at call time from the ACTIVE network, not from a module constant: a
-  // build-time default froze this to testnet Horizon, so on mainnet the
-  // portfolio screen queried the wrong chain and showed an empty portfolio.
-  // Each network's own env overrides still apply (see lib/network.ts).
-  // A smart wallet's address is a CONTRACT, and Horizon cannot load one — it
-  // only knows classic accounts. Asking it about a C-address fails on every
-  // attempt, which is why this screen showed the bare word "Unknown" on exactly
-  // the wallets it was built for, and kept failing after the retry landed.
-  //
-  // Trustlines are a property of the classic account regardless: a contract
-  // holds issued assets as SAC contract storage and needs no trustline at all.
-  // So the account to read is the fee payer, which is what `loadHoldings` has
-  // been resolving on the dashboard all along.
-  // Refuse anything that is not a Stellar address at all.
-  //
-  // This screen was passing the stored WebAuthn public key — `04` followed by
-  // 128 hex characters — straight through, and Horizon answered with a bare
-  // transport error carrying no name, no status and the message "Unknown". That
-  // read as a network fault for three rounds. A wrong question deserves a
-  // different answer from an unreachable server.
-  if (!StrKey.isValidContract(publicKey) && !StrKey.isValidEd25519PublicKey(publicKey)) {
-    throw new Error(
-      `"${publicKey.slice(0, 8)}…" is not a Stellar address, so there are no assets to read for it.`,
-    );
-  }
-
-  let effective = publicKey;
-  if (StrKey.isValidContract(publicKey)) {
-    const feePayer = await readFeePayerAddress();
-    // No fee payer stored means no classic account exists for this wallet yet,
-    // so there are no trustlines to report — empty, not broken.
-    if (!feePayer) {
-      lastAccountExists = false;
-      return [];
-    }
-    effective = feePayer;
-  }
-
   const server = new Horizon.Server(getNetwork().horizonUrl);
-
-  // Retry once, and say what failed.
-  //
-  // Android drops one of the several Horizon calls the app fires on mount with
-  // a bare error whose only readable field is `name: "Unknown"` — so the
-  // trustlines screen rendered the word "Unknown" and nothing else, which told
-  // the user and us precisely nothing. `loadHoldings` has retried around this
-  // for a while; this path never did.
-  let last: unknown = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const account = await server.loadAccount(effective);
-      lastAccountExists = true;
-      return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
-    } catch (err) {
-      // Definitive, not a transport failure: the account simply is not funded.
-      if (isAccountNotFound(err)) {
-        lastAccountExists = false;
-        return [];
-      }
-      last = err;
-      if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
-    }
+  try {
+    const account = await server.loadAccount(publicKey);
+    return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
+  } catch (err) {
+    if (isAccountNotFound(err)) return [];
+    throw err;
   }
-
-  // Carry the cause into the message. A flat "could not reach the network" is
-  // the same sentence whether Horizon is down, the URL is wrong, or the address
-  // is one Horizon cannot answer for — and those need different fixes. The
-  // screen is the only place most of these are ever observed.
-  // Read the fields directly rather than through `instanceof Error`, for the
-  // same Hermes reason `isAccountNotFound` cannot use it.
-  const e = last as { name?: string; message?: string } | null;
-  const detail = [e?.name, e?.message].filter(Boolean).join(': ') || String(last ?? 'no detail');
-
-  // Name the account that was actually queried. Without it this message is the
-  // same whether we asked about the right account, the fee payer, or a contract
-  // address Horizon cannot answer for at all — and telling those apart took
-  // three rounds of screenshots.
-  const which = effective === publicKey ? 'this wallet' : 'the fee payer';
-  const shortId = `${effective.slice(0, 4)}…${effective.slice(-4)}`;
-
-  console.warn(`[assets] loadAccount failed twice for ${effective} (${which}) — ${detail}`);
-  throw new Error(
-    `Could not read ${which} (${shortId}) from ${new URL(getNetwork().horizonUrl).host}. ${detail}`,
-  );
 }
+

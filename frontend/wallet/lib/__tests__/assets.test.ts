@@ -7,6 +7,7 @@ import {
   ASSET_REGISTRY,
   USDT0_MAINNET_ISSUER,
   USDT0_MAINNET_SAC,
+  formatAssetLabel,
   getAssetIssuer,
   getRegisteredAsset,
   isRegisteredIssuer,
@@ -15,6 +16,60 @@ import {
   fetchIssuerFlags,
   DISCLOSURE_UNAVAILABLE,
 } from '../assets'
+
+describe('Verified Asset Registry', () => {
+  const LOOKALIKE_ISSUER = 'GFAKE123456789012345678901234567890123456789012345678901'
+
+  it('includes exact registry entries for USDC, XLM, EURC, AQUA, USDY, and USDT0', () => {
+    expect(ASSET_REGISTRY.USDC).toBeDefined()
+    expect(ASSET_REGISTRY.XLM).toBeDefined()
+    expect(ASSET_REGISTRY.EURC).toBeDefined()
+    expect(ASSET_REGISTRY.AQUA).toBeDefined()
+    expect(ASSET_REGISTRY.USDY).toBeDefined()
+    expect(ASSET_REGISTRY.USDT0).toBeDefined()
+  })
+
+  it('resolves XLM correctly without an issuer field', () => {
+    const xlmAsset = getRegisteredAsset('XLM')
+    expect(xlmAsset).not.toBeNull()
+    expect(xlmAsset?.code).toBe('XLM')
+    expect(xlmAsset?.issuer).toBe('')
+
+    expect(getRegisteredAsset('XLM', '')).toEqual(xlmAsset)
+    expect(getRegisteredAsset('XLM', null)).toEqual(xlmAsset)
+    expect(formatAssetLabel('XLM')).toBe('XLM')
+    expect(formatAssetLabel('XLM', '')).toBe('XLM')
+  })
+
+  it('labels lookalike issuers (different G... address, same code) as unverified', () => {
+    const usdyLookalike = getRegisteredAsset('USDY', LOOKALIKE_ISSUER)
+    expect(usdyLookalike).toBeNull()
+
+    const formattedLabel = formatAssetLabel('USDY', LOOKALIKE_ISSUER)
+    expect(formattedLabel).toBe('Unverified: USDY (issuer GFAK…)')
+
+    const isRegistered = isRegisteredIssuer('USDY', LOOKALIKE_ISSUER)
+    expect(isRegistered).toBe(false)
+  })
+
+  it('labels lookalike EURC issuers as unverified', () => {
+    const eurcLookalike = getRegisteredAsset('EURC', LOOKALIKE_ISSUER)
+    expect(eurcLookalike).toBeNull()
+    expect(formatAssetLabel('EURC', LOOKALIKE_ISSUER)).toBe('Unverified: EURC (issuer GFAK…)')
+  })
+
+  it('resolves legitimate assets when exact code and issuer match', () => {
+    const usdyIssuer = ASSET_REGISTRY.USDY.issuer
+    expect(getRegisteredAsset('USDY', usdyIssuer)).not.toBeNull()
+    expect(formatAssetLabel('USDY', usdyIssuer)).toBe('USDY')
+    expect(isRegisteredIssuer('USDY', usdyIssuer)).toBe(true)
+  })
+
+  it('returns appropriate issuer per network', () => {
+    expect(getAssetIssuer('USDC', 'mainnet')).toBe(ASSET_REGISTRY.USDC.issuer)
+    expect(getAssetIssuer('USDC', 'testnet')).toBe('GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5')
+  })
+})
 
 describe('Verified Asset Registry - USDT0 (Issue #787)', () => {
   it('USDT0 resolves to exactly the pinned issuer on mainnet', () => {
@@ -29,7 +84,6 @@ describe('Verified Asset Registry - USDT0 (Issue #787)', () => {
   })
 
   it('derives the SAC contract ID dynamically from issuer and asserts equality with stored value', () => {
-    // Acceptance criterion: A test derives the SAC rather than asserting a pasted literal
     const derivedContractId = new Asset('USDT0', USDT0_MAINNET_ISSUER).contractId(Networks.PUBLIC)
     expect(derivedContractId).toBe(USDT0_MAINNET_SAC)
     expect(derivedContractId).toBe('CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF')
@@ -37,7 +91,6 @@ describe('Verified Asset Registry - USDT0 (Issue #787)', () => {
   })
 
   it('does not offer USDT0 on testnet', () => {
-    // Acceptance criterion: Nothing offers USDT0 on testnet
     expect(getRegisteredAsset('USDT0', 'testnet')).toBeNull()
     expect(getAssetIssuer('USDT0', 'testnet')).toBeNull()
     expect(isRegisteredIssuer('USDT0', USDT0_MAINNET_ISSUER, 'testnet')).toBe(false)
@@ -50,14 +103,13 @@ describe('Verified Asset Registry - USDT0 (Issue #787)', () => {
   })
 
   it('rejects trustlines with code USDT0 and any impostor issuer', () => {
-    // Acceptance criterion: A trustline with code USDT0 and any other issuer is not treated as USDT0
     const IMPOSTOR_ISSUERS = [
-      'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK', // quantumsystem.cc
-      'GADUBOKGYG4E2BZUVXAZBBILGPIYIPOXAXWIIG6DJ4JDXWOQR67HUSDT', // stellarusdtzero.com
-      'GBL35PWBKAHURS7SMATHXTS5X57BHC23P2B6MOJTDXTDKD7K25QHUSDT', // usd-t0.com
-      'GAKSY7RQI4YG3H5J5WRYHB4FDEJ2PAQJ6IN3P47HNG6KGUJJ2YOD7ZP3', // cryptos.litemint.store
-      'GA7GNGYVJHF7LTI6OO4FAD2JEQBIQWRBIZOLEZSJJHMNAY6UUZERU526', // stellar-reserve.com
-      'GAVRQZHG726XIHZKP3MODI3DOUP7IIQ6CC6OJX4JJD7PXRV4FJ3WE77O', // tokenize.litemint.store
+      'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK',
+      'GADUBOKGYG4E2BZUVXAZBBILGPIYIPOXAXWIIG6DJ4JDXWOQR67HUSDT',
+      'GBL35PWBKAHURS7SMATHXTS5X57BHC23P2B6MOJTDXTDKD7K25QHUSDT',
+      'GAKSY7RQI4YG3H5J5WRYHB4FDEJ2PAQJ6IN3P47HNG6KGUJJ2YOD7ZP3',
+      'GA7GNGYVJHF7LTI6OO4FAD2JEQBIQWRBIZOLEZSJJHMNAY6UUZERU526',
+      'GAVRQZHG726XIHZKP3MODI3DOUP7IIQ6CC6OJX4JJD7PXRV4FJ3WE77O',
       'GDBDGR2U3KVHUGJ5SVALIAPT7FBPSYWD25XTF4JPHTPBKFH2SHOOHZFF',
     ]
 
@@ -133,10 +185,6 @@ describe('USDT0 Freeze and Clawback Disclosure (Issue #789)', () => {
     )
     expect(mockServer.loadAccount).toHaveBeenCalledWith(USDT0_MAINNET_ISSUER)
 
-    // A real (StrKey-valid) USDT0 impostor issuer on mainnet, standing in here
-    // for "some other issuer". The mock hands it clear flags; on live mainnet
-    // this account actually has auth_revocable set, so do not read the null
-    // below as a statement about that issuer.
     const realImpostor = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
     const impostorDisc = await fetchAssetDisclosure(mockServer, realImpostor)
     expect(impostorDisc).toBeNull()
@@ -149,9 +197,6 @@ describe('USDT0 Freeze and Clawback Disclosure (Issue #789)', () => {
       }),
     }
 
-    // `null` means "the flags are clear". An unreachable Horizon must not be
-    // indistinguishable from that, or the disclosure vanishes while the Add
-    // trustline button stays live.
     await expect(fetchAssetDisclosure(deadServer, USDT0_MAINNET_ISSUER)).resolves.toBe(
       DISCLOSURE_UNAVAILABLE,
     )

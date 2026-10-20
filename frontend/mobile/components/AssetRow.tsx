@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
-import { verifiedAsset, type HeldAsset } from '../lib/assets';
+import { formatAssetLabel, verifiedAsset, type HeldAsset } from '../lib/assets';
 import { getNetworkName } from '../lib/network';
 import { truncateAddress } from './ui/AddressChip';
 
@@ -27,7 +27,7 @@ export function AssetRow({
     <View style={styles.row}>
       <View style={styles.left}>
         <Text style={styles.code}>
-          {asset.code}
+          {formatAssetLabel(asset.code, asset.issuer, getNetworkName())}
           {asset.name ? <Text style={styles.assetName}> · {asset.name}</Text> : null}
         </Text>
         {/* As on the web assets page: a registered asset names its issuer,
