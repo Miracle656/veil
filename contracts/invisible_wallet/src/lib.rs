@@ -17,7 +17,10 @@ mod auth_failure_tests;
 mod guardian_test;
 #[cfg(test)]
 mod batch_tests;
-use storage::{DataKey, AllowanceKey, PendingRecovery};
+#[cfg(test)]
+mod recovery_slot_test;
+use storage::{DataKey, AllowanceKey};
+pub use recovery::{PendingRecoveryStatus, RecoverySource};
 
 /// Recovery timelock duration: 3 days in seconds.
 const RECOVERY_DELAY_SECONDS: u64 = 259_200;
@@ -47,8 +50,13 @@ pub enum WalletError {
     /// Guardian recovery was requested but no guardian is set on this wallet.
     NoGuardianSet               = 12,
     /// A recovery is already pending — cannot start another one.
+    /// Returned only by wallets deployed before #1182, by either recovery
+    /// system; current wallets return `GuardianRecoveryPending` or
+    /// `RecoveryKeyRequestPending` instead. Kept so clients can still decode
+    /// errors from those wallets.
     RecoveryAlreadyPending      = 13,
-    /// No recovery is pending — nothing to complete or cancel.
+    /// No recovery is pending in either recovery system — nothing to complete
+    /// or cancel.
     RecoveryNotPending          = 14,
     /// The recovery timelock has not yet expired.
     RecoveryTimelockActive      = 15,
@@ -78,6 +86,14 @@ pub enum WalletError {
     InvalidCeremonyType         = 26,
     // A negative transfer amount was presented against an allowance.
     NegativeAmount              = 27,
+    /// The recovery slot is held by a guardian recovery (`initiate_recovery`).
+    /// Returned when starting a recovery in either system, or when calling
+    /// `finalize_recovery` while it is the guardian's recovery that is pending.
+    GuardianRecoveryPending     = 28,
+    /// The recovery slot is held by a recovery-key request (`request_recovery`).
+    /// Returned when starting a recovery in either system, or when calling
+    /// `complete_recovery` while it is the recovery key's request that is pending.
+    RecoveryKeyRequestPending   = 29,
 }
 
 #[contract]
@@ -519,7 +535,8 @@ impl InvisibleWallet {
     ///
     /// # Errors
     /// * `WalletError::NoGuardianSet` - if no guardian has been configured.
-    /// * `WalletError::RecoveryAlreadyPending` - if a recovery is already in progress.
+    /// * `WalletError::GuardianRecoveryPending` - if a guardian recovery is already in progress.
+    /// * `WalletError::RecoveryKeyRequestPending` - if a recovery-key request is in progress.
     pub fn initiate_recovery(env: Env, new_public_key: BytesN<65>) -> Result<(), WalletError> {
         // Verify a guardian is set
         let guardian: Address = env.storage()
@@ -530,20 +547,14 @@ impl InvisibleWallet {
         // Require guardian authorization
         guardian.require_auth();
 
-        // Prevent overwriting an existing pending recovery
-        if env.storage().persistent().has(&DataKey::RecoveryPending) {
-            return Err(WalletError::RecoveryAlreadyPending);
-        }
-
-        // Calculate unlock time: current ledger timestamp + 3 day delay
-        let recovery_unlock_time = env.ledger().timestamp() + RECOVERY_DELAY_SECONDS;
-
-        let pending = PendingRecovery {
-            new_public_key: new_public_key.clone(),
-            recovery_unlock_time,
-        };
-
-        env.storage().persistent().set(&DataKey::RecoveryPending, &pending);
+        // Take the single recovery slot shared with the recovery-key path;
+        // refuses while either system has a recovery pending.
+        let recovery_unlock_time = recovery::claim_slot(
+            &env,
+            RecoverySource::Guardian,
+            &new_public_key,
+            RECOVERY_DELAY_SECONDS,
+        )?;
 
         env.events().publish(
             (symbol_short!("recovery"), symbol_short!("init")),
@@ -560,25 +571,22 @@ impl InvisibleWallet {
     /// that was specified during `initiate_recovery`.
     ///
     /// # Errors
-    /// * `WalletError::RecoveryNotPending` - if no recovery has been initiated.
+    /// * `WalletError::RecoveryNotPending` - if no recovery is pending in either system.
+    /// * `WalletError::RecoveryKeyRequestPending` - if the pending recovery is a
+    ///   recovery-key request; complete it with `finalize_recovery`.
     /// * `WalletError::RecoveryTimelockActive` - if the timelock has not yet expired.
     pub fn complete_recovery(env: Env) -> Result<(), WalletError> {
         // Retrieve pending recovery
-        let pending: PendingRecovery = env.storage()
-            .persistent()
-            .get(&DataKey::RecoveryPending)
-            .ok_or(WalletError::RecoveryNotPending)?;
+        let pending = recovery::pending_for(&env, RecoverySource::Guardian)?;
 
         // Verify timelock has expired
         if env.ledger().timestamp() < pending.recovery_unlock_time {
             return Err(WalletError::RecoveryTimelockActive);
         }
 
-        // Replace signers: reset the map to only the recovered key at index 0.
-        storage::init_signers(&env, &pending.new_public_key);
-
-        // Clear the pending recovery
-        env.storage().persistent().remove(&DataKey::RecoveryPending);
+        // Replace every signer with the recovered key and release the slot.
+        // Why replace rather than merge: see `recovery::install_recovered_signer`.
+        recovery::install_recovered_signer(&env, RecoverySource::Guardian, &pending.new_public_key);
 
         env.events().publish(
             (symbol_short!("recovery"), symbol_short!("done")),
@@ -588,32 +596,34 @@ impl InvisibleWallet {
         Ok(())
     }
 
-    /// Cancel a pending guardian recovery.
+    /// Cancel the pending recovery, whichever system started it.
     ///
     /// Only callable by the current wallet signer (the contract itself must
     /// authorize). This allows a wallet owner who still has their key to
-    /// abort an unwanted or malicious recovery attempt.
+    /// abort an unwanted or malicious recovery attempt. A guardian recovery
+    /// and a recovery-key request share one slot, so on success nothing is
+    /// left pending; `cancel_recovery_request` behaves identically.
     ///
     /// # Errors
-    /// * `WalletError::RecoveryNotPending` - if no recovery has been initiated.
+    /// * `WalletError::RecoveryNotPending` - if no recovery is pending in either system.
     pub fn cancel_recovery(env: Env) -> Result<(), WalletError> {
         // Require current signer authorization
         env.current_contract_address().require_auth();
 
-        // Verify a recovery is actually pending
-        if !env.storage().persistent().has(&DataKey::RecoveryPending) {
-            return Err(WalletError::RecoveryNotPending);
-        }
-
-        // Remove the pending recovery
-        env.storage().persistent().remove(&DataKey::RecoveryPending);
+        let cancelled = recovery::cancel_any(&env)?;
 
         env.events().publish(
             (symbol_short!("recovery"), symbol_short!("cancel")),
-            (),
+            cancelled,
         );
 
         Ok(())
+    }
+
+    /// The pending recovery, if any: which system started it, the key it will
+    /// install and when it unlocks. `None` means nothing is counting down.
+    pub fn get_pending_recovery(env: Env) -> Option<PendingRecoveryStatus> {
+        recovery::pending(&env)
     }
 
     /// Register a scoped session key with an ACL.
@@ -732,8 +742,9 @@ impl InvisibleWallet {
     /// to complete the rotation.
     ///
     /// # Errors
-    /// * `NoRecoveryKeySet`       — no recovery key has been registered.
-    /// * `RecoveryAlreadyPending` — a recovery request is already in progress.
+    /// * `NoRecoveryKeySet`          — no recovery key has been registered.
+    /// * `RecoveryKeyRequestPending` — a recovery-key request is already in progress.
+    /// * `GuardianRecoveryPending`   — a guardian recovery is in progress.
     pub fn request_recovery(env: Env, new_signer: BytesN<65>) -> Result<(), WalletError> {
         recovery::request_recovery(&env, new_signer)
     }
@@ -743,20 +754,23 @@ impl InvisibleWallet {
     /// Permissionless — anyone may call this once `ledger.timestamp > unlock_at`.
     ///
     /// # Errors
-    /// * `RecoveryNotPending`     — no recovery request is in progress.
-    /// * `RecoveryTimelockActive` — the 7-day cooldown has not yet elapsed.
+    /// * `RecoveryNotPending`      — no recovery is pending in either system.
+    /// * `GuardianRecoveryPending` — the pending recovery is a guardian
+    ///   recovery; complete it with `complete_recovery`.
+    /// * `RecoveryTimelockActive`  — the 7-day cooldown has not yet elapsed.
     pub fn finalize_recovery(env: Env) -> Result<(), WalletError> {
         recovery::finalize_recovery(&env)
     }
 
-    /// Cancel a pending recovery-key request.
+    /// Cancel the pending recovery, whichever system started it.
     ///
     /// Only the current wallet signer (the contract itself) may cancel.
     /// This lets a wallet owner who still holds their key abort a recovery
-    /// attempt before it is finalized.
+    /// attempt before it is finalized. Identical to `cancel_recovery`: on
+    /// success nothing is left pending in either system.
     ///
     /// # Errors
-    /// * `RecoveryNotPending` — no recovery request is in progress.
+    /// * `RecoveryNotPending` — no recovery is pending in either system.
     pub fn cancel_recovery_request(env: Env) -> Result<(), WalletError> {
         env.current_contract_address().require_auth();
         recovery::cancel_recovery_request(&env)

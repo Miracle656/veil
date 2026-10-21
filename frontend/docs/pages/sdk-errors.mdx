@@ -98,14 +98,16 @@ The `WalletError` enum is defined in `contracts/invisible_wallet/src/lib.rs`. Wh
 | 10 | `CannotRemoveLastSigner` | `remove_signer()` would leave the wallet with zero signers | Add a replacement signer before removing the last one |
 | 11 | `SignerNotFound` | The signer index supplied to `remove_signer()` does not exist | Query the current signer list before removing |
 | 12 | `NoGuardianSet` | `initiate_recovery()` called but no guardian was registered via `set_guardian()` | Register a guardian first |
-| 13 | `RecoveryAlreadyPending` | `initiate_recovery()` called while a recovery is already in progress | Cancel the existing recovery or wait for it to complete |
-| 14 | `RecoveryNotPending` | `complete_recovery()` called with no active recovery | Call `initiate_recovery()` first |
+| 13 | `RecoveryAlreadyPending` | Wallets deployed before #1182 only: `initiate_recovery()` or `request_recovery()` called while that same path already had a recovery in progress. It does not tell you which path; on those wallets a recovery in the *other* path may also be pending | Cancel with **both** `cancel_recovery()` and `cancel_recovery_request()`, or wait for it to complete |
+| 14 | `RecoveryNotPending` | Completing or cancelling with no recovery pending in either path (on wallets before #1182: in the path you called) | Start a recovery first |
 | 15 | `RecoveryTimelockActive` | `complete_recovery()` called before the timelock has expired | Wait for the on-chain ledger timestamp to exceed the stored expiry |
 | 16 | `NonceMismatch` | The transaction nonce is out of sequence (replay or ordering protection) | Fetch the current on-chain nonce and retry with the correct value |
 | 17 | `InsufficientAllowance` | A session-key transfer exceeds its approved spending limit | Request a new session key with a higher allowance, or use the primary passkey signer |
 | 18 | `AllowanceExpired` | The session-key allowance period has ended | Issue a new session key |
 | 19 | `SessionKeyExpired` | The session key's validity window has passed | Issue a new session key |
 | 20 | `SessionKeyAclViolation` | The session key attempted an operation not permitted by its ACL | Use a session key with broader permissions, or use the primary passkey signer |
+| 28 | `GuardianRecoveryPending` | A guardian recovery (`initiate_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `finalize_recovery()` | Wait for it and call `complete_recovery()`, or cancel it with either cancel function |
+| 29 | `RecoveryKeyRequestPending` | A recovery-key request (`request_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `complete_recovery()` | Wait for it and call `finalize_recovery()`, or cancel it with either cancel function |
 
 ---
 
