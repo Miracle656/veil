@@ -70,8 +70,6 @@ export function classifyAsset(
       case 'treasury':
       case 'fund':
       case 'equity':
-      case 'governance':
-        // Governance tokens are non-cash holdings in the portfolio, so they belong in 'invest'.
         return 'invest'
       default:
         return 'invest'

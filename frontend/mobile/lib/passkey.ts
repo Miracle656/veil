@@ -34,8 +34,14 @@ import {
   type AuthEntrySigner,
   type WebAuthnSignature,
 } from './walletConnect';
-import { isUserRejection } from './walletConnectHelpers';
 import { prfFromAssertion, prfFromError, type PrfEvaluation } from './prfOutcome';
+import {
+  CREDENTIAL_ORPHANED_MESSAGE,
+  PASSKEY_CANCELLED_MESSAGE,
+  PasskeyCeremonyError,
+  isPasskeyCancellation,
+  toPasskeyCeremonyError,
+} from './passkeyOutcome';
 import { getPasskeyId, getPasskeyPublicKey, getSignerSecret } from './walletStore';
 import { base64UrlToUint8Array, derToRawSignature, hexToUint8Array, uint8ArrayToBase64Url } from './webauthn';
 
@@ -66,20 +72,23 @@ export function isPasskeySupported(): boolean {
 /**
  * Prompt the device passkey to sign one Soroban authorization-entry hash.
  *
- * Resolves to null when the user dismisses the prompt, so callers can treat a
- * decline as a rejection rather than a failure. Throws when the wallet has no
- * registered passkey or the platform reports a genuine error.
+ * Throws a {@link PasskeyCeremonyError} whose outcome says which of the three
+ * things happened — the user cancelled, the authenticator refused, or the
+ * ceremony failed — so a caller decides from the outcome, never from prose.
  */
 export async function signPayloadWithPasskey(
   payloadHash: Uint8Array
 ): Promise<WebAuthnSignature | null> {
   const [keyId, publicKeyHex] = await Promise.all([getPasskeyId(), getPasskeyPublicKey()]);
   if (!keyId || !publicKeyHex) {
-    throw new Error('No passkey found on this device. Register the wallet first.');
+    throw new PasskeyCeremonyError(
+      'refused',
+      'No passkey found on this device. Register the wallet first, then try again.',
+    );
   }
 
   if (!isPasskeySupported()) {
-    throw new Error('Passkeys are not supported on this device.');
+    throw new PasskeyCeremonyError('refused', 'Passkeys are not supported on this device.');
   }
 
   let assertion: Awaited<ReturnType<typeof PasskeysModule.get>>;
@@ -92,12 +101,20 @@ export async function signPayloadWithPasskey(
       timeout: 60_000,
     });
   } catch (error: unknown) {
-    if (isUserRejection(error)) return null;
-    throw error;
+    // A dismissal or the ceremony's own timeout is the user's decision, and it
+    // is converted HERE, where we know the error came from the passkey call —
+    // never inferred later from message text, where a Horizon timeout during
+    // submission would look identical and must not read as a cancellation.
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+    }
+    // A refusal is not a cancellation: carry which one it is so the spend
+    // screen can explain the next step instead of offering a blind retry.
+    throw toPasskeyCeremonyError(error);
   }
 
   // The platform returns null when the sheet is dismissed without a selection.
-  if (!assertion) return null;
+  if (!assertion) throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
 
   return {
     publicKey: hexToUint8Array(publicKeyHex),
@@ -143,9 +160,7 @@ function isCredentialNotFound(error: unknown): boolean {
 }
 
 /** The message shown when a stored credential no longer resolves on-device. */
-export const CREDENTIAL_ORPHANED_MESSAGE =
-  'This wallet’s passkey was created against an earlier Veil domain, so this device can no longer use it. ' +
-  'Create a new wallet on this network — your wallets on other networks are unaffected.';
+export { CREDENTIAL_ORPHANED_MESSAGE };
 
 /**
  * Gate a sensitive action behind the device passkey.
@@ -161,7 +176,10 @@ export async function requirePasskey(): Promise<void> {
     // Plain testnet-keypair mode (no passkey registered): the stored signer
     // secret authorises directly — nothing to assert against.
     if (await getSignerSecret()) return;
-    throw new Error('No passkey found on this device. Register the wallet first.');
+    throw new PasskeyCeremonyError(
+      'refused',
+      'No passkey found on this device. Register the wallet first, then try again.',
+    );
   }
 
   // A passkey exists → every sensitive action demands user presence, even
@@ -176,11 +194,15 @@ export async function requirePasskey(): Promise<void> {
       userVerification: 'required',
       timeout: 60_000,
     });
-    if (!assertion) throw new Error('Passkey cancelled. Please try again.');
+    if (!assertion) throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
   } catch (error: unknown) {
-    if (isUserRejection(error)) throw new Error('Passkey cancelled. Please try again.');
-    if (isCredentialNotFound(error)) throw new Error(CREDENTIAL_ORPHANED_MESSAGE);
-    throw error;
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+    }
+    if (isCredentialNotFound(error)) {
+      throw new PasskeyCeremonyError('refused', CREDENTIAL_ORPHANED_MESSAGE);
+    }
+    throw toPasskeyCeremonyError(error);
   }
 }
 
@@ -251,7 +273,8 @@ export type DiscoveredPasskey = {
  * Returns the chosen credential id, the assertion pieces (signature / authData /
  * clientDataJSON), and the PRF output for `salt` — the facts "sign in with
  * passkey" needs to re-derive the wallet on a fresh device. PRF stays optional:
- * a manager without it returns `prf: null`, it never makes the gesture fail.
+ * a manager without it returns `prf: null`, it never makes the gesture fail. A
+ * dismissed or timed-out prompt throws `PasskeyCeremonyError('cancelled')`.
  */
 export async function discoverWithPrf(
   salt: Uint8Array,
@@ -264,7 +287,8 @@ export async function discoverWithPrf(
       timeout: 60_000,
       extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
     });
-    if (!assertion) return null;
+    // The platform returns nothing when the sheet is dismissed without a pick.
+    if (!assertion) throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
     const credentialId = (assertion as { id?: string; rawId?: string }).id
       ?? (assertion as { id?: string; rawId?: string }).rawId;
     if (!credentialId) return null;
@@ -276,7 +300,11 @@ export async function discoverWithPrf(
       prf: parsePrfOutput(assertion),
     };
   } catch (error: unknown) {
-    if (isUserRejection(error)) return null;
-    throw error;
+    // Converted at the ceremony boundary, so a login/recovery caller can rely on
+    // the outcome instead of matching prose.
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+    }
+    throw toPasskeyCeremonyError(error);
   }
 }

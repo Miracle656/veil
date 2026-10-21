@@ -22,6 +22,7 @@ import {
   type WalletConnectRequest,
 } from '../lib/walletConnect';
 import { extractRequestXdr, isUserRejection } from '../lib/walletConnectHelpers';
+import { isPasskeyCancellation } from '../lib/passkeyOutcome';
 
 type ParsedRequestDetails = {
   operationType: 'payment' | 'contract' | 'unknown';
@@ -131,8 +132,10 @@ export function WalletConnectApprovalModal() {
       await approveWalletConnectRequest(request);
     } catch (approveError: unknown) {
       // A decline is a normal outcome: the dApp has already been told, and the
-      // request has left the queue, so there is nothing to report.
-      if (!isUserRejection(approveError)) {
+      // request has left the queue, so there is nothing to report. A passkey
+      // ceremony the user closed is that same decline, and it is recognised by
+      // its outcome rather than by any timeout wording.
+      if (!isUserRejection(approveError) && !isPasskeyCancellation(approveError)) {
         const message =
           errorMessage(approveError);
         setError(message || 'Failed to approve the request.');

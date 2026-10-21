@@ -18,7 +18,7 @@ export interface RegisteredAsset {
   issuerName: string
   homeDomain?: string
   network: 'mainnet' | 'testnet' | 'all'
-  kind: 'treasury' | 'fund' | 'equity' | 'governance' | 'stablecoin' | 'native'
+  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native'
   reserveXlm?: number
   sacContractId?: string
 }
@@ -61,7 +61,6 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     kind: 'stablecoin',
     reserveXlm: 0.5,
   },
-  // AQUA floats and is priced from the order book, never from a hardcoded rate.
   AQUA: {
     code: 'AQUA',
     issuer: AQUA_MAINNET_ISSUER,
@@ -69,7 +68,7 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     issuerName: 'Aquarius',
     homeDomain: 'aqua.network',
     network: 'mainnet',
-    kind: 'governance',
+    kind: 'equity',
     reserveXlm: 0.5,
   },
   USDY: {

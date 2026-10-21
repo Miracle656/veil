@@ -47,6 +47,7 @@ import {
 import { useNetwork } from '../../hooks/useNetwork';
 import { historyFromMessages, sendAgentMessage, type AgentReply } from '../../lib/agentClient';
 import { signPayloadWithPasskey } from '../../lib/passkey';
+import { isPasskeyCancellation } from '../../lib/passkeyOutcome';
 import { getPasskeyId, getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
@@ -287,6 +288,12 @@ export default function AgentScreen() {
       const result = await new Horizon.Server(network.horizonUrl).submitTransaction(tx);
       updateProposal(message.id, { state: 'submitted', hash: result.hash });
     } catch (error) {
+      // Closing the prompt is a decline, not a failure: the proposal was never
+      // signed. Recognised by the ceremony's outcome, not by message text.
+      if (isPasskeyCancellation(error)) {
+        updateProposal(message.id, { state: 'declined' });
+        return;
+      }
       updateProposal(message.id, { state: 'failed', reason: describeSubmissionError(error) });
     }
   }

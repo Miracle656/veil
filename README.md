@@ -156,7 +156,7 @@ veil/
 │   │   ├── vue/                   # Vue 3 composable — binds the same core to refs (invisible-wallet-sdk/vue)
 │   │   ├── angular/               # Angular DI service + provideVeil — standalone-compatible (invisible-wallet-sdk/angular)
 │   │   ├── webauthn.ts            # WebAuthn provider interface + web/browser implementation
-│   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkey) — Metro auto-resolves
+│   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkeys) — Metro auto-resolves
 │   │   ├── utils.ts               # Crypto utilities (DER→raw, pubkey extraction, SHA256, computeWalletAddress)
 │   │   └── index.ts               # Package exports
 │   └── package.json
@@ -296,7 +296,7 @@ The SDK ships a platform-split WebAuthn layer.  Metro automatically resolves
 #### Install peer dependencies
 
 ```bash
-npm install react-native-passkey @react-native-async-storage/async-storage
+npm install react-native-passkeys @react-native-async-storage/async-storage
 # iOS only — re-run pod install after adding the native module:
 npx pod-install
 ```

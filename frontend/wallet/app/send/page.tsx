@@ -26,6 +26,7 @@ import { buildStellarMemo, validateMemo } from '@/lib/sep7'
 import { getRegisteredAsset } from '@/lib/assets'
 import { buildSep7Memo, type Sep7MemoType } from '@/lib/sep7'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { horizonErrorMessage } from '@/lib/horizonError'
 import { spendableNativeXlm } from '@/lib/reserves'
 import { validateMemoText } from '@/lib/memo'
@@ -481,6 +482,13 @@ export default function SendPage() {
 
       setStep('done')
     } catch (err: unknown) {
+      // Closing the passkey sheet (or letting it time out) puts the user back
+      // on the form with their details intact. Nothing was submitted.
+      if (isPasskeyCancellation(err)) {
+        setErrorMsg(null)
+        setStep('form')
+        return
+      }
       // Horizon first: it rejects every failed transaction with a 400, so the
       // only thing `passkeyErrorMessage` could say about one was "Request
       // failed with status code 400". The reason is in the response body.

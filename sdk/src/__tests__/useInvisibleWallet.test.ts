@@ -469,7 +469,7 @@ describe('useInvisibleWallet', () => {
     })
 
     it('recovers the passkey public key from an assertion that carries none (the React Native shape)', async () => {
-      // react-native-passkey's authenticate() returns authData, clientDataJSON and
+      // react-native-passkeys' get() returns authData, clientDataJSON and
       // signature — and no public key, because WebAuthn assertions do not have one.
       // Before recovery existed this branch silently did nothing on mobile.
       const { webAuthnProvider } = require('../webauthn');
