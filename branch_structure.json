@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "feat/issue-1173-session-keys-are-deployed-and-nothing-has-ever",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "feat/issue-1173-session-keys-are-deployed-and-nothing-has-ever": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "feat/issue-1173-session-keys-are-deployed-and-nothing-has-ever",
+    "origin"
+  ]
+}
