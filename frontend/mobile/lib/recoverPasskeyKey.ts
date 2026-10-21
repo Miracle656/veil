@@ -183,6 +183,17 @@ export async function recoverWalletFromAssertion(
   if (withEvidence.length === 1) return withEvidence[0];
 
   // 2. A second signature from the same credential, and intersect.
+  //
+  // Authenticators sign over SHA-256(authData || SHA-256(clientDataJSON)).
+  // Even if an authenticator implements deterministic ECDSA (RFC 6979),
+  // assertForKeyRecovery supplies a cryptographically fresh 32-byte challenge
+  // into clientDataJSON, and the authenticator increments its signature counter
+  // in authData. Therefore, two real assertions from any conformant WebAuthn
+  // authenticator produce distinct message preimages and signatures.
+  //
+  // If a mock or broken authenticator returns identical signatures for the same
+  // challenge, the candidate sets are identical (shared.length > 1) and this
+  // function safely returns null rather than guessing.
   const second = await assertForKeyRecovery(assertion.credentialId);
   if (!second) return null;
   const seen = new Set(
