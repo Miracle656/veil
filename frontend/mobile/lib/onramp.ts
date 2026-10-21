@@ -503,7 +503,8 @@ export type BillCategory = 'airtime' | 'data' | 'electricity' | 'cabletv' | 'bet
 /**
  * A data bundle product returned by wraith for a given operator.
  *
- * The `id` is opaque — pass it straight to `payBill` as `customerId`.
+ * The `id` is opaque — pass it straight to `payBill` as `bundleId`, never as
+ * `customerId`, which stays the subscriber's phone number.
  * `sizeMb` and `validityDays` are the two things a user actually needs to see:
  * a list of naira prices alone tells them nothing about what they are buying.
  */
@@ -558,6 +559,12 @@ export function payBill(params: {
   provider: string;
   /** The phone number for airtime, the meter number for electricity. */
   customerId: string;
+  /**
+   * The provider's opaque product id for a data purchase. Travelling next to
+   * `customerId` rather than replacing it is the whole point: the phone number
+   * says who, the bundle id says what. Mirrors wraith#305's purchase field.
+   */
+  bundleId?: string;
   amountNgn: number;
   amountStableCoin: number;
   rate: number;

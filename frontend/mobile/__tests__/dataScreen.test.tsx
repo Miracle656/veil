@@ -278,7 +278,7 @@ it('advances to confirm step with the fee shown before the passkey gesture', asy
   expect(mockPreviewSpendFee).toHaveBeenCalled();
 });
 
-it('calls payBill with billCategory "data" and bundle id as customerId, then spendAsset', async () => {
+it('calls payBill with the phone as customerId and the bundle id alongside it, then spendAsset', async () => {
   const root = await renderScreen();
   await renderer.act(async () => { await new Promise((r) => setTimeout(r, 50)); });
 
@@ -304,7 +304,8 @@ it('calls payBill with billCategory "data" and bundle id as customerId, then spe
   expect(mockPayBill).toHaveBeenCalledWith(
     expect.objectContaining({
       billCategory: 'data',
-      customerId: 'mtn-1gb-30d',
+      customerId: '08031234567',
+      bundleId: 'mtn-1gb-30d',
       provider: 'MTN',
     }),
   );

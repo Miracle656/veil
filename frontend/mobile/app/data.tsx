@@ -285,9 +285,11 @@ export default function DataScreen() {
         customerRef,
         billCategory: 'data',
         provider: operator,
-        // Bundle ID is the product reference the provider uses to identify and
-        // vend the specific plan. Never elide or abbreviate it.
-        customerId: selectedBundle.id,
+        // customerId is the subscriber, not the product. The bundle id travels
+        // alongside it in `bundleId` so Linq still knows which phone to credit.
+        customerId: phoneDigits,
+        // Never elide or abbreviate the provider's product id.
+        bundleId: selectedBundle.id,
         amountNgn: selectedBundle.amountNgn,
         amountStableCoin,
         rate,
@@ -320,7 +322,7 @@ export default function DataScreen() {
       }
       setStep('confirm');
     }
-  }, [customerRef, refundAddress, rate, selectedBundle, operator, coin, wallet.deploy, code]);
+  }, [customerRef, refundAddress, rate, selectedBundle, operator, phoneDigits, coin, wallet.deploy, code]);
 
   const stepNumber = step === 'form' ? 1 : 2;
 
