@@ -548,6 +548,24 @@ export function getBillStatus(customerRef: string, orderId: string): Promise<Bil
   );
 }
 
+export type BillTerminalOutcome = 'done' | 'failed' | 'pending';
+
+/**
+ * Classifies a bill order status into terminal or in-flight states.
+ *
+ * The provider confirms the real success status is literally `completed`.
+ * We also recognize `complete`, `success`, and `delivered`.
+ * Failure statuses: `failed`, `refunded`, `reversed`, `cancelled`.
+ * All other / unrecognized statuses default to `pending` so requerying
+ * can settle them rather than assuming a false failure.
+ */
+export function classifyBillStatus(status: string): BillTerminalOutcome {
+  const s = status.trim().toLowerCase();
+  if (/complete|success|delivered/.test(s)) return 'done';
+  if (/fail|refund|revers|cancel/.test(s)) return 'failed';
+  return 'pending';
+}
+
 // ─── Bill Lookups ───────────────────────────────────────────────────────────
 
 export interface CableTvLookup {

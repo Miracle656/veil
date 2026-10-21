@@ -46,9 +46,11 @@ import {
   lookupCableTv,
   type NairaCoin,
   type CableTvLookup,
+  classifyBillStatus,
 } from '../lib/onramp';
+import { BillPoller, MAX_CONSECUTIVE_POLL_ERRORS } from '../lib/billPolling';
 
-type Step = 'form' | 'lookup' | 'confirm' | 'paying' | 'done' | 'failed';
+type Step = 'form' | 'lookup' | 'confirm' | 'paying' | 'done' | 'failed' | 'unconfirmed';
 
 const PROVIDERS = ['DSTV', 'GOtv', 'StarTimes'];
 
@@ -88,7 +90,10 @@ export default function CableTvScreen() {
   const [lookupData, setLookupData] = useState<CableTvLookup | null>(null);
   const [lookupLoading, setLookupLoading] = useState(false);
 
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollerRef = useRef<ReturnType<typeof BillPoller> | null>(null);
+  const [pollErrorCount, setPollErrorCount] = useState(0);
+  const [unconfirmedReason, setUnconfirmedReason] = useState<'error' | 'timeout' | null>(null);
+  const [isRechecking, setIsRechecking] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,20 +129,28 @@ export default function CableTvScreen() {
 
   useEffect(() => {
     if (!orderId || !customerRef || step !== 'paying' || !payHash) return;
-    const check = async () => {
-      try {
-        const s = await getBillStatus(customerRef, orderId);
-        if (/complete|success|delivered/i.test(s.status)) setStep('done');
-        if (/fail|refund|revers/i.test(s.status)) setStep('failed');
-      } catch (err) {
-        console.warn('[cabletv] status poll failed:', errorMessage(err));
-      }
-    };
-    void check();
-    pollRef.current = setInterval(check, 10_000);
+
+    const poller = new BillPoller(
+      customerRef,
+      orderId,
+      {
+        onDone: () => setStep('done'),
+        onFailed: () => setStep('failed'),
+        onUnconfirmed: (reason) => {
+          setUnconfirmedReason(reason);
+          setStep('unconfirmed');
+        },
+        onErrorCountChange: (count) => setPollErrorCount(count),
+      },
+    );
+    pollerRef.current = poller;
+    poller.start();
+
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-      pollRef.current = null;
+      if (pollerRef.current) {
+        pollerRef.current.stop();
+        pollerRef.current = null;
+      }
     };
   }, [orderId, customerRef, step, payHash]);
 
@@ -206,6 +219,8 @@ export default function CableTvScreen() {
     if (!customerRef || !refundAddress || !rate || !selectedPackage || !lookupData) return;
     setStep('paying');
     setError(null);
+    setPollErrorCount(0);
+    setUnconfirmedReason(null);
     try {
       const pkg = lookupData.availablePackages.find(p => p.id === selectedPackage);
       if (!pkg) throw new Error('Selected package not found');
@@ -247,6 +262,16 @@ export default function CableTvScreen() {
       setStep('confirm');
     }
   }, [customerRef, refundAddress, rate, selectedPackage, lookupData, provider, smartcardDigits, coin, wallet.deploy, code]);
+
+  // Stop polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollerRef.current) {
+        pollerRef.current.stop();
+        pollerRef.current = null;
+      }
+    };
+  }, []);
 
   const stepNumber = step === 'form' || step === 'lookup' ? 1 : 2;
 
@@ -458,7 +483,9 @@ export default function CableTvScreen() {
               <Text style={styles.hint}>
                 {waitingForPasskey
                   ? 'Face ID, fingerprint or device PIN, whichever this phone uses.'
-                  : `${provider} is activating your subscription.`}
+                  : pollErrorCount > 0
+                    ? `Checking status failed — retrying (${pollErrorCount}/${MAX_CONSECUTIVE_POLL_ERRORS})…`
+                    : `${provider} is activating your subscription.`}
               </Text>
             </View>
 
@@ -522,11 +549,113 @@ export default function CableTvScreen() {
                 setOrderId(null);
                 setPayHash(null);
                 setError(null);
+                setPollErrorCount(0);
+                setUnconfirmedReason(null);
                 void loadRate();
               }}
               style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
             >
               <Text style={styles.primaryText}>Try again</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.secondaryText}>Back to home</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── unconfirmed (bounded wait ended or consecutive poll errors) */}
+        {!mainnetOnly && step === 'unconfirmed' && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.question}>
+                {unconfirmedReason === 'error'
+                  ? "Couldn't confirm status"
+                  : 'Delivery taking longer than usual'}
+              </Text>
+              <Text style={styles.hint}>
+                {unconfirmedReason === 'error'
+                  ? `Checking status failed after ${MAX_CONSECUTIVE_POLL_ERRORS} attempts. The network service could not be reached, but your subscription may already have been activated.`
+                  : `Confirmation from ${provider} is taking longer than usual. Your subscription may already have been activated.`}
+              </Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Provider</Text>
+                <Text style={styles.rowValue}>{provider}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Smartcard</Text>
+                <Text style={styles.rowValue}>{smartcardDigits}</Text>
+              </View>
+              {lookupData ? (
+                <>
+                  <View style={styles.row}>
+                    <Text style={styles.rowLabel}>Customer</Text>
+                    <Text style={styles.rowValue}>{lookupData.customerName}</Text>
+                  </View>
+                  <View style={styles.row}>
+                    <Text style={styles.rowLabel}>Package</Text>
+                    <Text style={styles.rowValue}>
+                      {lookupData.availablePackages.find(p => p.id === selectedPackage)?.name || 'Unknown'}
+                    </Text>
+                  </View>
+                </>
+              ) : null}
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Payment</Text>
+                <Text style={styles.rowValue}>
+                  {(spent ?? cost).toFixed(coin === 'xlm' ? 4 : 2)} {code} sent
+                </Text>
+              </View>
+              {orderId ? (
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Reference</Text>
+                  <Text style={styles.rowValue}>{orderId.slice(0, 8).toUpperCase()}</Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.noteCard}>
+              <Text style={styles.eyebrow}>WHAT IS KNOWN</Text>
+              <Text style={styles.hint}>
+                • Your {(spent ?? cost).toFixed(coin === 'xlm' ? 4 : 2)} {code} left this wallet.
+              </Text>
+              <Text style={styles.hint}>
+                • The subscription may already have been activated for smartcard {smartcardDigits}.
+              </Text>
+              <Text style={styles.hint}>
+                • Check your provider's app or website, or wait for a confirmation SMS.
+              </Text>
+              <Text style={styles.hint}>
+                • If the subscription has not arrived, contact support with reference{' '}
+                <Text style={styles.linkText}>
+                  {orderId ? orderId.slice(0, 8).toUpperCase() : 'above'}
+                </Text>.
+              </Text>
+            </View>
+
+            <Pressable
+              disabled={isRechecking}
+              onPress={() => {
+                if (!pollerRef.current || isRechecking) return;
+                setIsRechecking(true);
+                pollerRef.current.manualCheck().then((result) => {
+                  setIsRechecking(false);
+                  if (result === 'done') setStep('done');
+                  else if (result === 'failed') setStep('failed');
+                  else if (result === 'error') setUnconfirmedReason('error');
+                  else setUnconfirmedReason('timeout');
+                });
+              }}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>
+                {isRechecking ? 'Checking status…' : 'Check status again'}
+              </Text>
             </Pressable>
             <Pressable
               onPress={() => router.back()}
@@ -570,9 +699,17 @@ function createStyles(colors: ThemeColors) {
     },
     errorText: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
 
+    noteCard: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      backgroundColor: colors.surface,
+    },
     eyebrow: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
     question: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 20 },
     hint: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+    linkText: { color: colors.accent, fontFamily: fontFamily.body, fontSize: 13, paddingTop: 6, textAlign: 'center' },
     centeredHint: {
       color: colors.textMuted,
       fontFamily: fontFamily.body,
