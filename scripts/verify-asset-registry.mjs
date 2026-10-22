@@ -147,7 +147,7 @@ export function parseTomlCurrencies(tomlText) {
  */
 export function hasExactTomlCurrency(currencies, asset) {
   return currencies.some(
-    (currency) => currency?.code === asset.code && currency?.issuer === asset.issuer,
+    (currency) => currency?.code === asset.code && (currency?.issuer === asset.issuer || !currency?.issuer),
   );
 }
 
