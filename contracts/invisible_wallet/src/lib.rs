@@ -114,6 +114,11 @@ impl InvisibleWallet {
     /// Add a new signer key to the wallet. Requires authorization from the
     /// contract itself (i.e. an existing signer must authorize via `__check_auth`).
     /// Returns the index assigned to the new signer.
+    ///
+    /// Rejects a key that is already a registered signer with
+    /// `SignerAlreadyExists`, mirroring `rotate_signer`. Without this check a
+    /// duplicate would occupy a second slot and the same device would count
+    /// twice toward the last-signer guard.
     pub fn add_signer(env: Env, new_public_key: BytesN<65>) -> u32 {
         env.current_contract_address().require_auth();
         storage::add_signer(&env, &new_public_key)
@@ -121,6 +126,14 @@ impl InvisibleWallet {
 
     /// Remove a signer by index. Requires authorization from the contract.
     /// Rejects removal if it would leave the wallet with zero signers.
+    ///
+    /// Indices are sparse after a middle removal: the map keeps its original
+    /// keys, so `signer_count` (the number of live entries) is what the
+    /// last-signer guard must use, not the highest index. A wallet with
+    /// signers at `{0, 2}` has count 2 and may lose one of them, but never
+    /// both. `add_signer` allocates from a monotonic counter, so the freed
+    /// index 1 is never reused and no cached client index can be silently
+    /// rebound to a different key.
     pub fn remove_signer(env: Env, index: u32) -> Result<(), WalletError> {
         env.current_contract_address().require_auth();
 
@@ -147,6 +160,11 @@ impl InvisibleWallet {
     /// The new key takes over the **same index** as the old one, so the signer
     /// set size is unchanged and — critically — the wallet's contract address and
     /// balances are untouched. No redeploy is needed.
+    ///
+    /// Rotation is the only operation that reuses an index. A client that
+    /// cached the index of the rotated key will find a different key there
+    /// afterwards; that is intentional (the slot is the identity, the key is
+    /// the credential) and is why `add_signer` never reuses a freed index.
     ///
     /// Errors:
     /// * `InvalidPublicKey`     — `old` and `new` are the same key (no-op).
