@@ -56,12 +56,16 @@ function buildChallenge({
   // SEP-10 requires sequence 0 and the anchor's key as source.
   const account = new Account(anchorKeypair.publicKey(), '-1')
 
+  const maxTime = nowSec + maxTimeOffsetSec
+
   const builder = new TransactionBuilder(account, {
     fee: '100',
     networkPassphrase,
+    // A negative offset models an expired challenge, and v17's builder rejects
+    // minTime > maxTime, so the window has to start no later than it ends.
     timebounds: {
-      minTime: nowSec,
-      maxTime: nowSec + maxTimeOffsetSec,
+      minTime: Math.min(nowSec, maxTime),
+      maxTime,
     },
   })
 
@@ -99,7 +103,7 @@ function signersFromXdr(xdr: string, networkPassphrase: string): string[] {
   return tx.signatures.map(sig => {
     // Each DecoratedSignature contains a 4-byte hint.  We match against all
     // known keypairs in the fixture set to identify the actual signer.
-    return Buffer.from(sig.hint()).toString('hex')
+    return Buffer.from(sig.hint.toBytes()).toString('hex')
   })
 }
 
@@ -151,7 +155,7 @@ describe('signSep10Challenge', () => {
       // cloneFrom resets signatures on the rebuilt tx, then we add one
       expect(signed.signatures).toHaveLength(1)
       // The hint must match the user keypair's public key hint
-      const hint = Buffer.from(signed.signatures[0].hint()).toString('hex')
+      const hint = Buffer.from(signed.signatures[0].hint.toBytes()).toString('hex')
       const expectedHint = Buffer.from(USER_KP.rawPublicKey().slice(28)).toString('hex')
       expect(hint).toBe(expectedHint)
       // The original count is informational — we log it to confirm fixture shape
@@ -278,7 +282,7 @@ describe('signSep10Challenge', () => {
       const tx           = new Transaction(signedXdr, PASSPHRASE)
 
       const expectedHint = Buffer.from(USER_KP.rawPublicKey().slice(28)).toString('hex')
-      const hints        = tx.signatures.map(s => Buffer.from(s.hint()).toString('hex'))
+      const hints        = tx.signatures.map(s => Buffer.from(s.hint.toBytes()).toString('hex'))
       expect(hints).toContain(expectedHint)
     })
   })

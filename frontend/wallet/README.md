@@ -158,7 +158,7 @@ If the browser cache is cleared (wiping `localStorage`):
 | Framework | Next.js 14 (App Router) |
 | Language | TypeScript |
 | Styling | CSS custom properties + utility classes (no Tailwind in production styles) |
-| Stellar SDK | `@stellar/stellar-sdk` v14 |
+| Stellar SDK | `@stellar/stellar-sdk` v17 |
 | Wallet SDK | `invisible-wallet-sdk` (local package `../../sdk`) |
 | PWA | `next-pwa` with offline fallback |
 | Animations | `framer-motion` |

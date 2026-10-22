@@ -5,6 +5,12 @@ import { Anton_400Regular } from "@expo-google-fonts/anton";
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from "@expo-google-fonts/inter";
 import { Inconsolata_400Regular } from "@expo-google-fonts/inconsolata";
 
+import { fontFamily } from './fontFamily';
+
+// `fontFamily` moved into its own module; re-exported here because every screen
+// still reads its type tokens from `theme/typography`.
+export { fontFamily };
+
 /**
  * Brand typefaces, loaded once at startup by `app/_layout.tsx` via `useFonts`.
  * The keys here are the family names referenced by `fontFamily` below, so the
@@ -18,19 +24,6 @@ export const fontAssets = {
   Inter_600SemiBold,
   Inconsolata_400Regular,
 };
-
-/**
- * Family name per role — mirrors how the Veil web wallet (`frontend/wallet`)
- * uses each face, keeping typographic parity across platforms.
- */
-export const fontFamily = {
-  heading: "Lora_600SemiBold_Italic",
-  accent: "Anton_400Regular",
-  body: "Inter_400Regular",
-  bodyMedium: "Inter_500Medium",
-  bodySemiBold: "Inter_600SemiBold",
-  address: "Inconsolata_400Regular",
-} as const;
 
 /**
  * Role-based text styles matching the web wallet's usage:

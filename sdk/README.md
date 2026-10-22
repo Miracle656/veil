@@ -10,6 +10,11 @@ TypeScript SDK for Veil / Invisible Wallet (Soroban + WebAuthn passkeys). Suppor
 npm install invisible-wallet-sdk @stellar/stellar-sdk
 ```
 
+`@stellar/stellar-sdk` (`^17.0.1`) is a required peer dependency: the SDK does not
+bundle it, so your app's copy is the only one in the process. Two copies means two
+sets of XDR classes, and an `Asset` or `Transaction` built by one fails `instanceof`
+against the other.
+
 Optional peer dependencies based on your framework:
 - **React**: `npm install react react-dom @tanstack/react-query`
 - **Vue 3**: `npm install vue`

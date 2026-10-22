@@ -10,7 +10,7 @@ import { ensureFeePayer, resetFeePayer } from '@/lib/feePayer'
 import { getNetwork } from '@/lib/network'
 import {
   rpc as SorobanRpc, Contract, TransactionBuilder, BASE_FEE,
-  Account, Keypair, scValToNative,
+  Account, Keypair, scValToNative, xdr,
 } from '@stellar/stellar-sdk'
 import { deriveP256KeyPair } from '@/lib/recovery'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
@@ -65,8 +65,12 @@ export default function RecoverPage() {
       // get_signers returns Map<u32, BytesN<65>> → SCV_MAP of (SCV_U32, SCV_BYTES) entries
       let publicKeys: Uint8Array[] = []
       try {
-        const entries = simResult.retval.map() as Array<{ val: () => { bytes: () => Buffer } }>
-        publicKeys = entries.map(e => new Uint8Array(e.val().bytes()))
+        if (simResult.retval.type !== 'scvMap') throw new Error('unexpected return type')
+        const entries = simResult.retval.map as Array<{ key: xdr.ScVal; val: xdr.ScVal }>
+        publicKeys = entries.map(e => {
+          if (e.val.type !== 'scvBytes') throw new Error('unexpected signer value type')
+          return new Uint8Array(e.val.bytes.toBytes())
+        })
       } catch {
         // Fallback: scValToNative handles all possible return shapes
         const raw = scValToNative(simResult.retval)
@@ -207,8 +211,12 @@ export default function RecoverPage() {
 
       let publicKeys: Uint8Array[] = []
       try {
-        const entries = simResult.retval.map() as Array<{ val: () => { bytes: () => Buffer } }>
-        publicKeys = entries.map(e => new Uint8Array(e.val().bytes()))
+        if (simResult.retval.type !== 'scvMap') throw new Error('unexpected return type')
+        const entries = simResult.retval.map as Array<{ key: xdr.ScVal; val: xdr.ScVal }>
+        publicKeys = entries.map(e => {
+          if (e.val.type !== 'scvBytes') throw new Error('unexpected signer value type')
+          return new Uint8Array(e.val.bytes.toBytes())
+        })
       } catch {
         const raw = scValToNative(simResult.retval)
         if (Array.isArray(raw)) {

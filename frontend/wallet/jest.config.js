@@ -13,7 +13,19 @@ const config = {
         allowSyntheticDefaultImports: true,
       },
     }],
+    // stellar-sdk 17's runtime deps (@exodus/bytes, @noble/*, uint8array-extras,
+    // smol-toml) and @scure/bip39 2.x are ESM-only; babel-jest converts them to
+    // CJS. Config is inline (babelrc/configFile off) so no root babel config can
+    // leak into the Next build.
+    '^.+\\.jsx?$': ['babel-jest', {
+      configFile: false,
+      babelrc: false,
+      presets: [['@babel/preset-env', { targets: { node: 'current' }, modules: 'commonjs' }]],
+    }],
   },
+  transformIgnorePatterns: [
+    '[\\\\/]node_modules[\\\\/](?!.*(@exodus|@noble|uint8array-extras|smol-toml|@scure)[\\\\/])',
+  ],
   // SDK source (compiled from ../../sdk/src) imports @stellar/stellar-sdk and
   // friends, but its sibling sdk/node_modules isn't installed in the wallet CI
   // job. Add the wallet's node_modules to the resolver search path (the jest
@@ -37,6 +49,10 @@ const config = {
     // (see dappParity.test.ts, which pins this mapping to the real file).
     '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',
   },
+  // jsdom lacks TextEncoder/TextDecoder; the polyfills they need are installed
+  // before any module loads, because uint8array-extras caches a TextEncoder at
+  // import time and stellar-sdk 17 tests `instanceof Uint8Array` on its output.
+  setupFiles: ['<rootDir>/jest.setup.ts'],
   setupFilesAfterEnv: [],
   collectCoverageFrom: [
     'lib/**/*.ts',

@@ -19,6 +19,7 @@ import {
     Contract,
     Keypair,
     Memo,
+    Operation,
     type Transaction,
     type FeeBumpTransaction,
     rpc as SorobanRpc,
@@ -540,6 +541,9 @@ export type WalletStateListener = (state: WalletState) => void;
 const POLL_INTERVAL_MS  = 1_000;
 const POLL_MAX_ATTEMPTS = 30;
 
+/** How many ledgers a passkey-signed Soroban auth entry stays valid for. */
+const AUTH_VALIDITY_LEDGERS = 100;
+
 /** Storage key holding the roaming (cross-platform) credential as a portable signer. */
 const PORTABLE_SIGNER_KEY = 'invisible_wallet_portable_signer';
 
@@ -1001,7 +1005,8 @@ export class InvisibleWalletCore {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
@@ -1194,8 +1199,8 @@ export class InvisibleWalletCore {
     };
 
     /**
-     * Sign every address-credential auth entry produced by a simulation with the
-     * stored passkey, rewriting each entry's signature in place.
+     * Sign every address-credential auth entry produced by a simulation, writing
+     * the passkey signature back into the entry the transaction carries.
      *
      * Shared by every passkey-gated call (setGuardian, rotateSigner, approve,
      * sendPayment) so the Soroban authorization payload is derived — and bound
@@ -1206,28 +1211,39 @@ export class InvisibleWalletCore {
         if (!authEntries) return;
 
         // stellarHash is a synchronous SHA-256 — avoids crypto.subtle (unavailable on some RN setups)
-        const networkIdBytes = new Uint8Array(
-            (stellarHash as (input: Buffer) => Buffer)(Buffer.from(this.config.networkPassphrase))
-        );
+        const networkIdBytes = stellarHash(new TextEncoder().encode(this.config.networkPassphrase));
+
+        // The simulation returns entries with signatureExpirationLedger = 0, which
+        // the host rejects as already expired — the client owns the validity window.
+        const expiresAtLedger = Number(sim.latestLedger) + AUTH_VALIDITY_LEDGERS;
+        const contractNonce = await this.readNonce();
 
         for (const parsed of authEntries) {
-            const cred = parsed.credentials();
-            if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+            const cred = parsed.credentials;
+
+            // Protocol 23 (CAP-71) moved address auth to the ADDRESS_V2 arm, which
+            // binds the authorising address into the signed payload; the legacy
+            // ADDRESS arm is still produced for pre-CAP-71 networks.
+            const isV2 = cred.type === 'sorobanCredentialsAddressV2';
+            if (!isV2 && cred.type !== 'sorobanCredentialsAddress') {
                 continue;
             }
+            const addrCred = isV2 ? cred.addressV2 : cred.address;
 
-            const addrCred = cred.address();
-            const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
-                new xdr.HashIdPreimageSorobanAuthorization({
-                    networkId: Buffer.from(networkIdBytes),
-                    nonce: addrCred.nonce(),
-                    invocation: parsed.rootInvocation(),
-                    signatureExpirationLedger: addrCred.signatureExpirationLedger(),
-                })
-            );
-            const payloadHash = new Uint8Array(
-                (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
-            );
+            const shared = {
+                networkId: new xdr.Hash(networkIdBytes),
+                nonce: addrCred.nonce,
+                invocation: parsed.rootInvocation,
+                signatureExpirationLedger: expiresAtLedger,
+            };
+            const preimage = isV2
+                ? xdr.HashIdPreimage.envelopeTypeSorobanAuthorizationWithAddress(
+                    new xdr.HashIdPreimageSorobanAuthorizationWithAddress({ ...shared, address: addrCred.address })
+                  )
+                : xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+                    new xdr.HashIdPreimageSorobanAuthorization(shared)
+                  );
+            const payloadHash = stellarHash(preimage.toXdr());
 
             const webAuthnSig = await this.signAuthEntry(payloadHash);
             if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
@@ -1237,56 +1253,124 @@ export class InvisibleWalletCore {
                 nativeToScVal(webAuthnSig.authData,       { type: 'bytes' }),
                 nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
                 nativeToScVal(webAuthnSig.signature,      { type: 'bytes' }),
+                // The wallet contract's __check_auth expects exactly five
+                // elements, the last being the on-chain nonce it compares
+                // against its own — a missing or stale one is rejected.
+                nativeToScVal(contractNonce, { type: 'u64' }),
             ]);
 
-            parsed.credentials(
-                xdr.SorobanCredentials.sorobanCredentialsAddress(
+            // stellar-sdk 17 made SorobanAuthorizationEntry fields readonly —
+            // swap the entry in the simulation result instead of mutating it.
+            // The assembled operation holds this same array, so the swap reaches
+            // the transaction that gets submitted.
+            const credentials = isV2
+                ? xdr.SorobanCredentials.sorobanCredentialsAddressV2(
                     new xdr.SorobanAddressCredentials({
-                        address: addrCred.address(),
-                        nonce: addrCred.nonce(),
-                        signatureExpirationLedger: addrCred.signatureExpirationLedger(),
+                        address: addrCred.address,
+                        nonce: addrCred.nonce,
+                        signatureExpirationLedger: expiresAtLedger,
                         signature: sigVec,
                     })
-                )
-            );
+                  )
+                : xdr.SorobanCredentials.sorobanCredentialsAddress(
+                    new xdr.SorobanAddressCredentials({
+                        address: addrCred.address,
+                        nonce: addrCred.nonce,
+                        signatureExpirationLedger: expiresAtLedger,
+                        signature: sigVec,
+                    })
+                  );
+
+            authEntries[authEntries.indexOf(parsed)] = new xdr.SorobanAuthorizationEntry({
+                credentials,
+                rootInvocation: parsed.rootInvocation,
+            });
         }
+    }
+
+    /**
+     * Re-simulate and re-assemble a transaction whose auth entries are now
+     * signed, and return the transaction to submit.
+     *
+     * The first simulation runs in recording auth mode, which never executes
+     * `__check_auth`, so its resource fee and footprint exclude the secp256r1
+     * verification. Submitting on that budget traps with "operation instructions
+     * exceeds amount specified" the moment the passkey signature is really
+     * checked. Transactions with no auth entries skip the extra round-trip.
+     */
+    private reprepareWithSignedAuth = async (
+        assembled: Transaction,
+        signer: SignerInput
+    ): Promise<Transaction> => {
+        const invokeOp = assembled.operations?.[0] as Operation.InvokeHostFunction | undefined;
+        const signedAuth = invokeOp?.auth ?? [];
+        if (signedAuth.length === 0 || !invokeOp) return assembled;
+
+        const { rpcUrl, networkPassphrase } = this.config;
+        const server = new SorobanRpc.Server(rpcUrl);
+        const payer = await server.getAccount(resolveSigner(signer).publicKey);
+
+        const retryTx = new TransactionBuilder(payer, {
+            fee: BASE_FEE,
+            networkPassphrase,
+        })
+            // Rebuild the operation so it carries the now-signed entries.
+            .addOperation(Operation.invokeHostFunction({
+                func: invokeOp.func,
+                auth: signedAuth,
+                source: invokeOp.source,
+            }))
+            .setTimeout(30)
+            .build();
+
+        const sim = await server.simulateTransaction(retryTx);
+        if (SorobanRpc.Api.isSimulationError(sim)) {
+            throw new Error(`Authorization re-simulation failed: ${sim.error}`);
+        }
+
+        return SorobanRpc.assembleTransaction(retryTx, sim).build();
     }
 
     // ── getNonce ──────────────────────────────────────────────────────────────
 
-    getNonce = async (): Promise<bigint> => {
+    /**
+     * The wallet contract's current nonce, read through a simulation. Touches no
+     * state so it can be called from inside another in-flight action.
+     */
+    private readNonce = async (): Promise<bigint> => {
         const { rpcUrl, networkPassphrase } = this.config;
+        const address = this.requireAddress();
 
+        const server = new SorobanRpc.Server(rpcUrl);
+        const walletContract = new Contract(address);
+
+        const dummyKeypair = Keypair.random();
+        const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
+
+        const tx = new TransactionBuilder(sourceAccount, {
+            fee: BASE_FEE,
+            networkPassphrase,
+        })
+            .addOperation(walletContract.call('get_nonce'))
+            .setTimeout(30)
+            .build();
+
+        const sim = await server.simulateTransaction(tx);
+        if (SorobanRpc.Api.isSimulationError(sim)) {
+            throw new Error(`Simulation failed: ${sim.error}`);
+        }
+
+        const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+        if (!result) throw new Error('Simulation returned no result');
+
+        return scValToNative(result.retval) as bigint;
+    };
+
+    getNonce = async (): Promise<bigint> => {
         this.setIsPending(true);
         this.setError(null);
         try {
-            const address = this.requireAddress();
-
-            const server = new SorobanRpc.Server(rpcUrl);
-            const walletContract = new Contract(address);
-
-            const dummyKeypair = Keypair.random();
-            const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
-
-            const tx = new TransactionBuilder(sourceAccount, {
-                fee: BASE_FEE,
-                networkPassphrase,
-            })
-                .addOperation(walletContract.call('get_nonce'))
-                .setTimeout(30)
-                .build();
-
-            const sim = await server.simulateTransaction(tx);
-            if (SorobanRpc.Api.isSimulationError(sim)) {
-                throw new Error(`Simulation failed: ${sim.error}`);
-            }
-
-            const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
-            if (!result) throw new Error('Simulation returned no result');
-
-            const nonce = scValToNative(result.retval) as bigint;
-            return nonce;
-
+            return await this.readNonce();
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this.setError(message);
@@ -1335,7 +1419,8 @@ export class InvisibleWalletCore {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
@@ -1463,7 +1548,8 @@ export class InvisibleWalletCore {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
@@ -1525,7 +1611,8 @@ export class InvisibleWalletCore {
 
             await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse);
 
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
@@ -1645,7 +1732,8 @@ export class InvisibleWalletCore {
             //    persist the new credential below.
             await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse);
 
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
@@ -1732,7 +1820,8 @@ export class InvisibleWalletCore {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
@@ -1807,7 +1896,8 @@ export class InvisibleWalletCore {
             }
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
@@ -1939,7 +2029,8 @@ export class InvisibleWalletCore {
 
             await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse);
 
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {
                 throw new Error(
@@ -1999,7 +2090,7 @@ export class InvisibleWalletCore {
             const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
             if (!result || !result.retval) throw new Error('Simulation returned no result');
 
-            if (result.retval.switch() === xdr.ScValType.scvVoid()) {
+            if (result.retval.type === 'scvVoid') {
                 return null;
             }
 
@@ -2040,7 +2131,7 @@ export class InvisibleWalletCore {
 
             let expiryVal: xdr.ScVal;
             if (expiry !== undefined) {
-                expiryVal = nativeToScVal([nativeToScVal(BigInt(expiry), { type: 'u64' })], { type: 'Vec' });
+                expiryVal = nativeToScVal([nativeToScVal(BigInt(expiry), { type: 'u64' })]);
             } else {
                 expiryVal = xdr.ScVal.scvVoid();
             }
@@ -2070,7 +2161,8 @@ export class InvisibleWalletCore {
 
             await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse);
 
-            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const submissionTx = await signForSubmission(
+                await this.reprepareWithSignedAuth(assembled, signer), signer, this.config);
 
             const sendResult = await server.sendTransaction(submissionTx);
             if (sendResult.status === 'ERROR') {

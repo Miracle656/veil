@@ -44,11 +44,14 @@ You install the one you are working on, in its own directory. There is no
 top-level install that pulls in everything, and there is no hoisted
 `node_modules` at the repo root.
 
-That is deliberate. The packages disagree on major versions on purpose (the SDK
-builds against `@stellar/stellar-sdk` 15 and TypeScript 6, the root smoke test
-against 14 and TypeScript 5), the SDK's Jest config maps modules through
-`<rootDir>/node_modules`, and Dependabot and every CI job are wired per package
-lockfile. A root `workspaces` field flattened all of that into one tree and
+That is deliberate. The packages are not all on the same toolchain: the SDK
+builds with TypeScript 6 and declares `@stellar/stellar-sdk` 17 as a peer
+dependency so the host app owns the single copy, the root smoke test runs
+TypeScript 5, and the `examples/*` apps are still on older
+`@stellar/stellar-sdk` majors. On top of that, the SDK's Jest config maps
+modules through `<rootDir>/node_modules`, and Dependabot and every CI job are
+wired per package lockfile. A root `workspaces` field flattened all of that
+into one tree and
 rewrote the root lockfile from ~950 to ~21,000 lines on every fresh clone
 ([#670](https://github.com/Miracle656/veil/issues/670)), so it was removed.
 

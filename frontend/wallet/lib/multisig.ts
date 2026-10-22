@@ -1,5 +1,6 @@
 import { inclusionFee } from './fees'
 import {
+  Address,
   Keypair,
   rpc as SorobanRpc,
   Contract,
@@ -10,7 +11,6 @@ import {
   nativeToScVal,
   scValToNative,
   Networks,
-  StrKey,
   Operation
 } from '@stellar/stellar-sdk';
 import { getNetwork } from './network';
@@ -111,18 +111,22 @@ export async function deployAndInitMultisig(params: {
     throw new Error(`Deploy transaction failed with status: ${txResp.status}`);
   }
 
-  const meta = txResp.resultMetaXdr as any;
-  let sorobanMeta: any = null;
-  const sw = meta.switch().name;
-  if (sw === 'transactionMetaV3') {
-    sorobanMeta = meta.v3().sorobanMeta();
-  } else if (sw === 'transactionMetaV4') {
-    sorobanMeta = meta.v4().sorobanMeta();
-  } else {
-    sorobanMeta = meta.v3()?.sorobanMeta() || meta.v4()?.sorobanMeta();
+  // stellar-sdk 17 reads XDR unions as discriminated properties instead of the
+  // accessor methods earlier majors had, so the arms are plain fields here.
+  const meta = txResp.resultMetaXdr;
+  const sorobanMeta =
+    meta.type === 'v4' ? meta.v4.sorobanMeta
+    : meta.type === 'v3' ? meta.v3.sorobanMeta
+    : undefined;
+  if (!sorobanMeta) {
+    throw new Error('Deploy transaction produced no Soroban meta.');
   }
-  const val = sorobanMeta.returnValue();
-  const contractId = StrKey.encodeContract(val.address().contractId() as any);
+  if (sorobanMeta.returnValue?.type !== 'scvAddress') {
+    throw new Error(
+      `Deploy returned ${sorobanMeta.returnValue?.type ?? 'no value'}, not a contract address.`
+    );
+  }
+  const contractId = Address.fromScAddress(sorobanMeta.returnValue.address).toString();
 
   console.log("Deployed Multisig contract:", contractId);
 
@@ -131,7 +135,7 @@ export async function deployAndInitMultisig(params: {
   const multisigContract = new Contract(contractId);
   const initAccount = await server.getAccount(feePayer.publicKey());
 
-  const ownersScVal = nativeToScVal(params.owners.map(addr => nativeToScVal(addr, { type: 'address' })), { type: 'vec' });
+  const ownersScVal = nativeToScVal(params.owners.map(addr => nativeToScVal(addr, { type: 'address' })));
 
   const initTx = new TransactionBuilder(initAccount, { fee: inclusionFee(), networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(multisigContract.call(

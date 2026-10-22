@@ -303,7 +303,7 @@ async function step5_assertContractExists(
     new xdr.LedgerKeyContractData({
       contract: contractScAddress,
       key: xdr.ScVal.scvLedgerKeyContractInstance(),
-      durability: xdr.ContractDataDurability.persistent(),
+      durability: xdr.ContractDataDurability.persistent,
     })
   );
 

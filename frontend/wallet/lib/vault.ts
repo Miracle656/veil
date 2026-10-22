@@ -7,7 +7,6 @@ import {
   Contract,
   Keypair,
   Operation,
-  StrKey,
   TransactionBuilder,
   nativeToScVal,
   rpc as SorobanRpc,
@@ -47,20 +46,6 @@ export interface VaultDetails {
   availableStroops: bigint
   availableXlm: string
   withdrawals: VaultWithdrawal[]
-}
-
-type SorobanMeta = {
-  returnValue: () => {
-    address: () => {
-      contractId: () => Uint8Array
-    }
-  }
-}
-
-type TransactionMeta = {
-  switch: () => { name: string }
-  v3: () => { sorobanMeta: () => SorobanMeta }
-  v4: () => { sorobanMeta: () => SorobanMeta }
 }
 
 function getVaultWasmHash(): string {
@@ -234,13 +219,23 @@ function extractContractId(
     throw new Error('Vault deployment did not succeed.')
   }
 
-  const meta = response.resultMetaXdr as unknown as TransactionMeta
-  const metaVersion = meta.switch().name
-  const sorobanMeta = metaVersion === 'transactionMetaV4'
-    ? meta.v4().sorobanMeta()
-    : meta.v3().sorobanMeta()
-  const rawContractId = sorobanMeta.returnValue().address().contractId()
-  return StrKey.encodeContract(Buffer.from(rawContractId))
+  // stellar-sdk 17 reads XDR unions as discriminated properties, so the arms are
+  // plain fields rather than accessor calls.
+  const meta = response.resultMetaXdr
+  const sorobanMeta =
+    meta.type === 'v4' ? meta.v4.sorobanMeta
+    : meta.type === 'v3' ? meta.v3.sorobanMeta
+    : undefined
+  if (!sorobanMeta) {
+    throw new Error('Vault deployment produced no Soroban transaction meta.')
+  }
+  const returnValue = sorobanMeta.returnValue
+  if (returnValue?.type !== 'scvAddress') {
+    throw new Error(
+      `Vault deployment returned ${returnValue?.type ?? 'no value'}, not a contract address.`
+    )
+  }
+  return Address.fromScAddress(returnValue.address).toString()
 }
 
 export async function deployAndInitializeVault(params: {

@@ -5,8 +5,8 @@ import {
   Operation,
   StellarToml,
   TransactionBuilder,
-  type Account,
   type Transaction,
+  type TransactionSource,
 } from '@stellar/stellar-sdk'
 import { TRUSTLINE_RESERVE_COST_XLM } from './reserves'
 
@@ -114,7 +114,7 @@ export function getRemovalRefusalReason(trustline: Trustline): string | null {
  * `limit`, when provided). The returned transaction still needs to be signed.
  */
 export function buildChangeTrustTx(params: {
-  account: Account
+  account: TransactionSource
   networkPassphrase: string
   code: string
   issuer: string

@@ -70,9 +70,9 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-function sha256(data: Uint8Array): Buffer {
-  // stellar-base types `hash` as Buffer in/out; wrapping the bytes is a view,
-  // not a copy, so the digest is exactly SHA-256 of those bytes.
+function sha256(data: Uint8Array): Uint8Array {
+  // stellar-sdk 17 returns a plain Uint8Array from `hash`; wrapping the input in
+  // a Buffer is a view, not a copy, so the digest is exactly SHA-256 of those bytes.
   return hash(Buffer.from(data));
 }
 

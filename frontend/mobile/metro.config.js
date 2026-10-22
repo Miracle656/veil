@@ -77,20 +77,19 @@ config.resolver.alias = {
 // `resolveRequest` does, because Metro calls it for every request no matter
 // which file asked.
 //
-// `@stellar/stellar-sdk` is here for a related but separate reason: the SDK
-// declares ^15.1.0 (dependabot #143) while this app declares ^14.6.1, so both
-// majors were being bundled — SDK code ran v15, app code ran v14. XDR types are
-// classes, so an object built by one major and read by the other is not the
-// same type, and `wallet.deploy()` produced an envelope the same bundle could
-// not decode:
+// `@stellar/stellar-sdk` is here for a related but separate reason, and it
+// survives #660 rather than being retired by it. That issue made stellar-sdk a
+// peer dependency of the SDK, so app and SDK now agree on one major — but the SDK
+// still dev-installs its own copy under `sdk/node_modules` to build and test
+// itself, and Metro, following the `file:../../sdk` symlink, resolves a bare
+// `@stellar/stellar-sdk` from inside `sdk/` to that copy first. XDR types are
+// classes, so an object built by one copy and read by the other is not the same
+// type, and `wallet.deploy()` produced an envelope the same bundle could not
+// decode:
 //
 //   Deploy: this device produced a transaction it cannot read back.
 //
-// while every app-side flow, on v14 throughout, worked. Pin both to the app's
-// copy so there is one XDR implementation in the bundle.
-//
-// The real fix is agreeing one version across the repo — PR #676 — after which
-// this entry is belt and braces rather than load-bearing.
+// Pin both to the app's copy so there is one XDR implementation in the bundle.
 const SINGLETON_PACKAGES = new Set(['react', 'react-dom', '@stellar/stellar-sdk']);
 const APP_NODE_MODULES = path.resolve(projectRoot, 'node_modules');
 

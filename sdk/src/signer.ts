@@ -13,6 +13,8 @@
 
 import { Keypair, TransactionBuilder, type FeeBumpTransaction, type Transaction } from '@stellar/stellar-sdk';
 
+import { bufferToHex } from './utils';
+
 /** Context handed to a signer alongside the XDR. */
 export type SignTransactionContext = {
     /** Passphrase of the network the transaction is for. */
@@ -123,7 +125,9 @@ export async function signWith<T extends Transaction | FeeBumpTransaction>(
     } catch {
         throw new Error('The signer returned something that is not a transaction envelope for this network.');
     }
-    if (signed.hash().toString('hex') !== tx.hash().toString('hex')) {
+    // stellar-sdk 17 hands back a Uint8Array, so the digests must be compared by
+    // value — `!==` on two byte arrays only ever compares references.
+    if (bufferToHex(signed.hash()) !== bufferToHex(tx.hash())) {
         throw new Error('The signer returned a different transaction than the one it was asked to sign.');
     }
     if (signed.signatures.length <= tx.signatures.length) {
