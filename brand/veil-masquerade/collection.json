@@ -1,0 +1,79 @@
+{
+  "name": "Veil Masquerade",
+  "symbol": "VMASQ",
+  "description": "Twenty cloth figures for Veil, a Stellar passkey wallet. Each is the same masquerade-inspired form — a crowned mask over layered, patterned cloth falling to an uneven hem — varied across five traits. No faces: where a figure is open, it is cloth removed rather than features drawn on.",
+  "external_url": "https://useveilapp.xyz",
+  "image": "ipfs://REPLACE_WITH_COLLECTION_CID/cover.png",
+  "total_supply": 20,
+  "trait_counts": {
+    "Crown": {
+      "Plume": 1,
+      "Horns": 1,
+      "Beaded dome": 1,
+      "Flat cap": 1,
+      "Crescent": 1,
+      "Fan": 1,
+      "Spikes": 1,
+      "Triple finial": 1,
+      "Discs": 1,
+      "Antlers": 1,
+      "Beaded cap": 1,
+      "Plume and beads": 1,
+      "Coins": 1,
+      "Feather crest": 1,
+      "Pyramid": 1,
+      "Loops": 1,
+      "Comb crest": 1,
+      "Beaded veil": 1,
+      "Twin horns": 1,
+      "Halo": 1
+    },
+    "Aperture": {
+      "Twin slits": 6,
+      "Slot": 7,
+      "Woven band": 6,
+      "None": 1
+    },
+    "Ornament": {
+      "Chevrons": 2,
+      "Diamonds": 1,
+      "Zigzag": 1,
+      "Concentric squares": 1,
+      "Dotted grid": 1,
+      "Basketweave": 1,
+      "Stripes": 1,
+      "Triangles": 1,
+      "Diamonds and dots": 1,
+      "Nested chevrons": 1,
+      "Lightning": 1,
+      "Checkerboard": 1,
+      "Waves": 1,
+      "Lattice": 1,
+      "Spirals": 1,
+      "Arrows": 1,
+      "Stars": 1,
+      "Herringbone": 1,
+      "Concentric circles": 1
+    },
+    "Palette": {
+      "Lilac": 4,
+      "Gold": 5,
+      "Bone": 2,
+      "Teal": 2,
+      "Gold + lilac": 1,
+      "Bone + teal": 2,
+      "Bone + lilac": 2,
+      "Gold + teal": 2
+    },
+    "Hem": {
+      "Beaded fringe": 3,
+      "Scalloped": 4,
+      "Pointed": 3,
+      "Ragged": 3,
+      "Straight": 2,
+      "Long fringe": 2,
+      "Layered": 2,
+      "Pointed fringe": 1
+    }
+  }
+}
