@@ -35,6 +35,7 @@ import { getNetwork } from '../lib/network';
 import { signAndSubmitSorobanXdr } from '../lib/sorobanTx';
 import { useNetwork } from '../hooks/useNetwork';
 import { requirePasskey } from '../lib/passkey';
+import { isPasskeyCancellation, PasskeyCeremonyError } from '../lib/passkeyOutcome';
 import { getWalletAddress, getSignerSecret } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 
@@ -471,7 +472,14 @@ export default function SwapScreen() {
       setTxHash(hash);
       setStep('done');
     } catch (err: unknown) {
-      const msg = errorMessage(err);
+      // Closing the prompt returns to the review the user was on. It is not an
+      // execution error, and no swap was built or submitted.
+      if (isPasskeyCancellation(err)) {
+        setExecError(null);
+        setStep('review');
+        return;
+      }
+      const msg = err instanceof PasskeyCeremonyError ? err.message : errorMessage(err);
       const name = err instanceof Error ? err.name : '';
       const friendly =
         name === 'NotFoundError' || /^not found$/i.test(msg.trim())
@@ -718,7 +726,11 @@ export default function SwapScreen() {
           </View>
         </View>
 
-        {execError ? <Text style={styles.errorBanner}>{execError}</Text> : null}
+        {execError ? (
+          <Text style={styles.errorBanner} testID="swap-error">
+            {execError}
+          </Text>
+        ) : null}
 
         <View style={styles.spacer} />
 
@@ -729,6 +741,7 @@ export default function SwapScreen() {
           </View>
         ) : canReview ? (
           <Pressable
+            testID="swap-review-button"
             style={styles.primaryBtn}
             onPress={() => setStep('review')}
           >

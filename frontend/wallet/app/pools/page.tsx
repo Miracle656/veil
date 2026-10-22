@@ -16,6 +16,7 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const Server = Horizon.Server
@@ -436,6 +437,13 @@ export default function PoolsPage() {
         : 'Withdrawal submitted. LP shares were redeemed for the underlying assets.')
       await refreshAll()
     } catch (err: unknown) {
+      // Cancelling leaves the form where it was, with no error and no
+      // submitted transaction.
+      if (isPasskeyCancellation(err)) {
+        setTxState('idle')
+        setError(null)
+        return
+      }
       setTxState('error')
       const horizonError = (err as any)?.response?.data
       const resultCodes = horizonError?.extras?.result_codes

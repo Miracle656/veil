@@ -26,6 +26,11 @@ import * as Crypto from 'expo-crypto';
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
 import {
+  PASSKEY_CANCELLED_MESSAGE,
+  PasskeyCeremonyError,
+  isPasskeyCancellation,
+} from './passkeyOutcome';
+import {
   WALLET_CONNECT_EVENTS,
   WALLET_CONNECT_METHODS,
   buildWcError,
@@ -334,7 +339,10 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
 
       const webAuthnSig = await signAuthEntry(payloadHash);
       if (!webAuthnSig) {
-        throw new Error('USER_REJECTED');
+        // The contract path signs inside the ceremony, so a dismissed sheet
+        // must still arrive at the spend screen as a cancellation rather than
+        // a generic rejection.
+        throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
       }
 
       const sigElements = [
@@ -435,7 +443,13 @@ export async function approveWalletConnectRequest(request: WalletConnectRequest)
     await client.respondSessionRequest({ topic, response: buildWcResult(id, result) });
     removePendingRequest(id, topic);
   } catch (error: unknown) {
-    const reason = isUserRejection(error) ? getSdkError('USER_REJECTED') : null;
+    // A ceremony cancellation is the user declining; a ceremony refusal is not.
+    // isUserRejection covers WalletConnect's own USER_REJECTED code, so both are
+    // checked rather than widening either helper's text matching.
+    const reason =
+      isUserRejection(error) || isPasskeyCancellation(error)
+        ? getSdkError('USER_REJECTED')
+        : null;
     const response = reason
       ? buildWcError(id, reason.code, reason.message)
       : buildWcError(id, 5000, errorMessage(error));

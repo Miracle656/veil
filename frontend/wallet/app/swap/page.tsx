@@ -42,6 +42,7 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { PasskeyCeremonyError, isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { signAndSubmitSorobanXdr } from '@/lib/sorobanTx'
 import {
   getSoroswapQuote,
@@ -394,12 +395,21 @@ export default function SwapPage() {
       setTxHash(result.hash)
       setStep('done')
     } catch (err: unknown) {
+      // A dismissed prompt is not a failed swap: go back to the confirmation
+      // the user was reviewing, with no error banner and no transaction built.
+      if (isPasskeyCancellation(err)) {
+        setErrorMsg(null)
+        setStep('confirm')
+        return
+      }
       const horizonError = (err as any)?.response?.data
       const codes = horizonError?.extras?.result_codes
       const msg = codes
         ? `${codes.transaction ?? ''} — ${(codes.operations ?? []).join(', ')}`
             .trim()
             .replace(/^—\s*/, '')
+        : err instanceof PasskeyCeremonyError
+        ? err.message
         : err instanceof Error
         ? err.message
         : String(err)

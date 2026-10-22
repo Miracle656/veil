@@ -40,6 +40,7 @@ import { getWalletAddress } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 import { errorMessage } from '../lib/errorMessage';
 import { NotEnoughToSend, spendAsset } from '../lib/spendAsset';
+import { isPasskeyCancellation } from '../lib/passkeyOutcome';
 import { useWallet } from '../components/WalletProvider';
 
 /** Circle's USDC on mainnet — the only asset Linq's Stellar leg credits. */
@@ -174,6 +175,13 @@ export default function CashOutScreen() {
       });
       setPayHash(hash);
     } catch (err) {
+      // Dismissing the passkey leaves the order where it was, unpaid and
+      // unmarked. Nothing on chain moved, so there is nothing to report.
+      if (isPasskeyCancellation(err)) {
+        setError(null);
+        setSendableInstead(null);
+        return;
+      }
       if (err instanceof NotEnoughToSend && err.available > 0 && err.available >= err.requested * 0.9) {
         // Floor to the stroop, so the offer never exceeds what is there.
         setSendableInstead(Math.floor(err.available * 1e7) / 1e7);

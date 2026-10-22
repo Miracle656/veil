@@ -21,6 +21,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 
 import { AccentCard, Card, PageHeader, PrimaryAction, SectionLabel } from '@/components/ui/primitives'
 import { previewBillSpendFee, sendBillPayment } from '@/lib/billSpend'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import {
   BillPoller,
   MAX_CONSECUTIVE_POLL_ERRORS,
@@ -268,12 +269,15 @@ export default function BillsPage() {
       poller.start()
     } catch (err) {
       setWaitingForPasskey(false)
+      // Cancelling returns to the confirmation with the order intact and no
+      // error banner. No crypto left the wallet.
+      if (isPasskeyCancellation(err)) {
+        setError(null)
+        setStep('confirm')
+        return
+      }
       const msg = err instanceof Error ? err.message : String(err)
-      setError(
-        msg.includes('NotAllowedError') || msg.includes('not allowed') || msg.includes('cancelled')
-          ? 'Passkey verification was cancelled. Please try again.'
-          : msg,
-      )
+      setError(msg)
       setStep('confirm')
     } finally {
       endTx()

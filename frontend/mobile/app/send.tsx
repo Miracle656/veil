@@ -16,6 +16,7 @@ import { QrScanner } from '../components/QrScanner';
 import type { Contact } from '../hooks/useContacts';
 import { requireSigner } from '../lib/signer';
 import { requirePasskey } from '../lib/passkey';
+import { isPasskeyCancellation, PasskeyCeremonyError } from '../lib/passkeyOutcome';
 import { fetchContractAssetBalance } from '../lib/activity';
 import { sendAssetFromContract, getFeePayerSpendableXlm, getFeePayerXlm, type FeePayerXlm } from '../lib/contractSpend';
 import { useWallet } from '../components/WalletProvider';
@@ -357,7 +358,14 @@ export default function SendScreen() {
       setHash(result.hash);
       setStep('done');
     } catch (err) {
-      const raw = errorMessage(err);
+      // A dismissed prompt is a decision, not a failure. Put the user back on
+      // the form they filled in, with no red banner and nothing submitted.
+      if (isPasskeyCancellation(err)) {
+        setError(null);
+        setStep('form');
+        return;
+      }
+      const raw = err instanceof PasskeyCeremonyError ? err.message : errorMessage(err);
       const name = err instanceof Error ? err.name : '';
       // Horizon's 404 for the source account surfaces as a bare "Not found".
       const friendly =
@@ -589,7 +597,11 @@ export default function SendScreen() {
           </View>
         ) : null}
 
-        {step === 'error' && error && <Text style={styles.errorBanner}>{error}</Text>}
+        {step === 'error' && error && (
+          <Text style={styles.errorBanner} testID="send-error">
+            {error}
+          </Text>
+        )}
         {requestProblem && <Text style={styles.errorBanner} accessibilityRole="alert">{requestProblem}</Text>}
         {nonNative && (
           <Text style={styles.note}>

@@ -9,6 +9,7 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { PasskeyCeremonyError, isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { signAndSubmitSorobanXdr } from '@/lib/sorobanTx'
 import {
   loadBlendPools,
@@ -129,10 +130,14 @@ export default function EarnPage() {
       // Refresh positions
       loadData(accountAddress)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg.toLowerCase().includes('cancel') || msg.toLowerCase().includes('abort')) {
-        setErrorMsg('Passkey cancelled. Please try again.')
-      } else if (msg.toLowerCase().includes('utilization') || msg.toLowerCase().includes('cap')) {
+      // Return to the deposit form untouched; no deposit was submitted.
+      if (isPasskeyCancellation(err)) {
+        setErrorMsg(null)
+        setStep('deposit-form')
+        return
+      }
+      const msg = err instanceof PasskeyCeremonyError ? err.message : err instanceof Error ? err.message : String(err)
+      if (msg.toLowerCase().includes('utilization') || msg.toLowerCase().includes('cap')) {
         setErrorMsg('Pool is at capacity — deposits temporarily unavailable.')
       } else {
         setErrorMsg(msg)
@@ -178,8 +183,13 @@ export default function EarnPage() {
       setStep('withdraw-done')
       loadData(accountAddress)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setErrorMsg(msg.toLowerCase().includes('cancel') ? 'Passkey cancelled. Please try again.' : msg)
+      if (isPasskeyCancellation(err)) {
+        setErrorMsg(null)
+        setStep('withdraw-form')
+        return
+      }
+      const msg = err instanceof PasskeyCeremonyError ? err.message : err instanceof Error ? err.message : String(err)
+      setErrorMsg(msg)
       setStep('error')
     } finally {
       endTx()
