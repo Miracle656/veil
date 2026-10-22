@@ -96,7 +96,10 @@ type Selected = { pool: BlendPool; reserve: BlendReserve };
 
 export default function EarnRoute() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ asset?: string; issuer?: string; amount?: string }>();
+  const params = useLocalSearchParams<{ asset?: string; issuer?: string; amount?: string; planSwapHash?: string }>();
+  const planSwapHash = typeof params.planSwapHash === 'string' && /^[a-fA-F0-9]{64}$/.test(params.planSwapHash)
+    ? params.planSwapHash
+    : undefined;
   const { colors } = useTheme();
   const { mask } = useHiddenAmounts();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -501,6 +504,11 @@ export default function EarnRoute() {
                   {txHash}
                 </Text>
               ) : null}
+              {step === 'deposit-done' && planSwapHash ? (
+                <Text style={[styles.muted, styles.center]}>
+                  Both plan steps completed. Swap transaction: {planSwapHash}
+                </Text>
+              ) : null}
               <Button
                 label="Back to Earn"
                 onPress={() => {
@@ -516,6 +524,11 @@ export default function EarnRoute() {
               <Text style={styles.errorMark}>!</Text>
               <Text style={[typography.heading, styles.cardTitle]}>That didn&apos;t go through</Text>
               {errorMsg ? <Text style={[styles.muted, styles.center]}>{errorMsg}</Text> : null}
+              {planSwapHash ? (
+                <Text style={[styles.muted, styles.center]}>
+                  The swap step completed, but the deposit did not. Swap transaction: {planSwapHash}
+                </Text>
+              ) : null}
               <Button label="Try again" variant="ghost" onPress={() => setStep('pools')} />
             </Card>
           ) : null}

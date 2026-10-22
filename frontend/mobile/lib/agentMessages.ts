@@ -34,6 +34,14 @@ export type InvestIntent = {
   asset?: { code: string; issuer: string };
 };
 
+/** A two-step swap into USDC followed by a Blend deposit of the realized output. */
+export type SwapDepositPlanIntent = {
+  from: string;
+  to: 'USDC';
+  amount: string;
+  usdcIssuer: string;
+};
+
 /** What a transaction the agent proposed will actually do, decoded locally. */
 export type ProposalReview = {
   /** Account that pays for and authorises the transaction. */
@@ -55,6 +63,8 @@ export type AgentMessage =
   | { id: string; kind: 'swap'; text: string; intent: SwapIntent }
   /** An issued-asset purchase or buy request handed to Earn/Invest. */
   | { id: string; kind: 'invest'; text: string; intent: InvestIntent }
+  /** A complete plan; opening it does not approve either transaction. */
+  | { id: string; kind: 'plan'; text: string; intent: SwapDepositPlanIntent }
   /** A failure, from the service or from this app. */
   | { id: string; kind: 'error'; text: string }
   /** App-generated context, never attributed to the agent. */
