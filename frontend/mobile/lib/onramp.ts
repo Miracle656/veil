@@ -548,6 +548,87 @@ export function getBillStatus(customerRef: string, orderId: string): Promise<Bil
   );
 }
 
+export type BillTerminalOutcome = 'done' | 'failed' | 'pending';
+
+/**
+ * Classifies a bill order status into terminal or in-flight states.
+ *
+ * The provider confirms the real success status is literally `completed`.
+ * We also recognize `complete`, `success`, and `delivered`.
+ * Failure statuses: `failed`, `refunded`, `reversed`, `cancelled`.
+ * All other / unrecognized statuses default to `pending` so requerying
+ * can settle them rather than assuming a false failure.
+ */
+export function classifyBillStatus(status: string): BillTerminalOutcome {
+  const s = status.trim().toLowerCase();
+  if (/complete|success|delivered/.test(s)) return 'done';
+  if (/fail|refund|revers|cancel/.test(s)) return 'failed';
+  return 'pending';
+}
+
+// ─── Bill Lookups ───────────────────────────────────────────────────────────
+
+export interface CableTvLookup {
+  customerName: string;
+  currentPackage: string;
+  dueDate: string;
+  availablePackages: Array<{
+    id: string;
+    name: string;
+    price: number;
+  }>;
+}
+
+export interface BettingLookup {
+  accountName: string;
+  accountStatus: string;
+  balance?: number;
+}
+
+/**
+ * Look up a cable TV smartcard before purchase.
+ *
+ * Returns customer name, current package, due date, and available packages.
+ * This allows the user to confirm details before spending.
+ */
+export function lookupCableTv(params: {
+  provider: string;
+  smartcardNumber: string;
+}): Promise<CableTvLookup> {
+  return call<CableTvLookup>('/ngn/bills/lookup/cabletv', { method: 'POST', body: params });
+}
+
+/**
+ * Look up a betting account ID before purchase.
+ *
+ * Returns account name and status. Supported only where the provider
+ * offers account ID verification.
+ */
+export function lookupBetting(params: {
+  provider: string;
+  accountId: string;
+}): Promise<BettingLookup> {
+  return call<BettingLookup>('/ngn/bills/lookup/betting', { method: 'POST', body: params });
+}
+
+/**
+ * Check if a specific bill category is available.
+ *
+ * Returns false if the provider is unreachable (outage), true otherwise.
+ * This allows us to show an outage message instead of hiding the category.
+ */
+export async function isBillCategoryAvailable(category: BillCategory): Promise<boolean> {
+  try {
+    // Try a lightweight operation to check availability
+    // For now, we check the main naira availability as a proxy
+    // In the future, this could be more category-specific
+    await getOnrampRate('usdc');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Availability ────────────────────────────────────────────────────────────
 
 /**
