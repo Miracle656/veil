@@ -9,6 +9,32 @@ This document covers the part of that model where mistakes are expensive: values
 that name something **on-chain**. It was written for issue
 [#672](https://github.com/Miracle656/veil/issues/672).
 
+## Nightly testnet smoke test
+
+`.github/workflows/testnet-smoke.yml` runs nightly against testnet and files an
+issue on each failure. It answers a single question: is the wallet still working
+against a live network? Its failures must be diagnosable from the job output
+alone.
+
+When it fails, the job reports the **step**, the **network** and the **response**
+that caused the failure. A failure is classified as one of:
+
+- *The smoke test is broken* — the check itself references something that no
+  longer exists (a removed contract, a renamed endpoint, a changed response
+  shape). Fix the check, and say so in the PR.
+- *The thing it smokes is broken* — the wallet, a deployed contract, or the RPC
+  no longer behaves as expected on testnet. Fix the product, or document why the
+  expectation changed.
+- *The backend is asleep* — a cold start of an idle deployment. This is not a
+  product failure. The job waits for the backend to wake, retrying with backoff,
+  and only reports a failure if it stays unreachable past the retry budget.
+
+A sleeping backend must never read as a broken wallet. Do not disable or skip a
+job to make the run green; a skipped job and a passing job look identical on a
+dashboard. Do not weaken what an assertion checks to make it pass. If a check
+tests something that no longer exists, remove it deliberately and record the
+reasoning in the PR.
+
 ## The rule
 
 > A contract ID or WASM hash is only meaningful on the network it was deployed
