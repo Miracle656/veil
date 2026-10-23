@@ -7,40 +7,95 @@
     "url": "git+https://github.com/Miracle656/veil.git",
     "directory": "sdk"
   },
+  "type": "commonjs",
   "main": "dist/index.js",
-  "module": "dist/index.js",
+  "module": "dist/esm/index.js",
   "react-native": "src/index.ts",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "react-native": "./src/index.ts",
+      "react-native": {
+        "types": "./dist/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
       "default": "./dist/index.js"
     },
     "./vanilla": {
-      "types": "./dist/vanilla.d.ts",
-      "react-native": "./src/vanilla.ts",
+      "react-native": {
+        "types": "./dist/vanilla.d.ts",
+        "default": "./src/vanilla.ts"
+      },
+      "import": {
+        "types": "./dist/esm/vanilla.d.ts",
+        "default": "./dist/esm/vanilla.js"
+      },
+      "require": {
+        "types": "./dist/vanilla.d.ts",
+        "default": "./dist/vanilla.js"
+      },
       "default": "./dist/vanilla.js"
     },
     "./react": {
-      "types": "./dist/react/index.d.ts",
+      "import": {
+        "types": "./dist/esm/react/index.d.ts",
+        "default": "./dist/esm/react/index.js"
+      },
+      "require": {
+        "types": "./dist/react/index.d.ts",
+        "default": "./dist/react/index.js"
+      },
       "default": "./dist/react/index.js"
     },
     "./vue": {
-      "types": "./dist/vue/index.d.ts",
+      "import": {
+        "types": "./dist/esm/vue/index.d.ts",
+        "default": "./dist/esm/vue/index.js"
+      },
+      "require": {
+        "types": "./dist/vue/index.d.ts",
+        "default": "./dist/vue/index.js"
+      },
       "default": "./dist/vue/index.js"
     },
     "./svelte": {
-      "types": "./dist/svelte/index.d.ts",
+      "import": {
+        "types": "./dist/esm/svelte/index.d.ts",
+        "default": "./dist/esm/svelte/index.js"
+      },
+      "require": {
+        "types": "./dist/svelte/index.d.ts",
+        "default": "./dist/svelte/index.js"
+      },
       "default": "./dist/svelte/index.js"
     },
     "./solid": {
-      "types": "./dist/solid/index.d.ts",
+      "import": {
+        "types": "./dist/esm/solid/index.d.ts",
+        "default": "./dist/esm/solid/index.js"
+      },
+      "require": {
+        "types": "./dist/solid/index.d.ts",
+        "default": "./dist/solid/index.js"
+      },
       "default": "./dist/solid/index.js"
     },
     "./angular": {
-      "types": "./dist/angular/index.d.ts",
-      "default": "./dist/angular/index.js"
+      "import": {
+        "types": "./dist/esm/angular/index.d.ts",
+        "default": "./dist/esm/angular/index.js"
+      },
+      "default": {
+        "types": "./dist/esm/angular/index.d.ts",
+        "default": "./dist/esm/angular/index.js"
+      }
     },
     "./package.json": "./package.json"
   },
@@ -49,7 +104,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc && node scripts/flatten-dist.js",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && tsc -p tsconfig.esm.json && node scripts/flatten-dist.js",
     "test": "jest",
     "test:vitest": "vitest run --coverage",
     "size": "npm run build && size-limit",
@@ -72,11 +127,6 @@
   ],
   "author": "",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Miracle656/veil.git",
-    "directory": "sdk"
-  },
   "homepage": "https://docs.useveilapp.xyz/sdk-reference",
   "bugs": {
     "url": "https://github.com/Miracle656/veil/issues"
@@ -220,7 +270,9 @@
         "dom"
       ],
       "paths": {
-        "invisible-wallet-sdk": ["./dist/index.d.ts"]
+        "invisible-wallet-sdk": [
+          "./dist/index.d.ts"
+        ]
       }
     }
   }

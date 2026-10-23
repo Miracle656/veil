@@ -5,7 +5,7 @@
   "private": true,
   "sideEffects": false,
   "main": "../dist/solid/index.js",
-  "module": "../dist/solid/index.js",
+  "module": "../dist/esm/solid/index.js",
   "types": "../dist/solid/index.d.ts",
   "peerDependencies": {
     "solid-js": "^1.8.0"

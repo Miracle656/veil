@@ -5,7 +5,7 @@
   "private": true,
   "sideEffects": false,
   "main": "../dist/svelte/index.js",
-  "module": "../dist/svelte/index.js",
+  "module": "../dist/esm/svelte/index.js",
   "types": "../dist/svelte/index.d.ts",
   "peerDependencies": {
     "svelte": ">=4.0.0"

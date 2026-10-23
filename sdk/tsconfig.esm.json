@@ -1,0 +1,11 @@
+{
+    // The ESM build. Same sources and options as tsconfig.json; only the module
+    // format and output directory differ. scripts/flatten-dist.js then adds the
+    // file extensions Node's ESM loader requires and marks dist/esm as ESM.
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "module": "es2020",
+        "moduleResolution": "bundler",
+        "outDir": "./dist/esm"
+    }
+}
