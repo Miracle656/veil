@@ -1,6 +1,20 @@
 /**
  * WebView prover — React component (#720 spike).
  *
+ * CAPABILITY NOTE: this prover does NOT yet produce real SPP proofs. The page
+ * in `assets/prover/prover.html` simulates the WASM step, and it returns a
+ * placeholder with `verified: false`. Callers must not offer privacy actions
+ * (send / shield / unshield) on the strength of this component alone.
+ *
+ * BROWSER-ONLY CONSTRAINT: the published `stellar-private-payments` SDK is
+ * browser-only (`Storage.open()` throws under Node), which is why it cannot be
+ * imported into the RN bundle directly and why a WebView is the lower-risk
+ * route. The native alternative is in `lib/prover/native/NativeProver.ts`.
+ */
+
+/**
+ * WebView prover — React component (#720 spike).
+ *
  * Renders a zero-dimension, invisible WebView that loads `assets/prover/prover.html`.
  * The HTML page bootstraps the WASM module (simulated in the spike) and then
  * listens for `postMessage` requests from this component.
@@ -131,7 +145,7 @@ export const ProverWebView = forwardRef<ProverWebViewHandle>(
     useImperativeHandle(
       ref,
       () => ({
-        isReady: ready,
+        isReady: ready && webViewRef.current !== null,
         prove(tx: MockSppTx): Promise<ProofResult> {
           return new Promise<ProofResult>((resolve, reject) => {
             if (!webViewRef.current) {

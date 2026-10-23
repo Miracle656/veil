@@ -76,6 +76,11 @@ export class SendPanelComponent {
     const recipient = to.trim();
     const stroops = Math.round(Number(amount) * 10_000_000);
     if (!recipient || !Number.isFinite(stroops)) return;
+    if (!this.wallet.canProve?.()) {
+      // Honest gate: this device cannot generate privacy proofs yet.
+      // Refuse here rather than failing mid-flow.
+      return;
+    }
 
     const secret = this.feePayer.readSecret();
     if (!secret) {

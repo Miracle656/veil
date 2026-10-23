@@ -1,10 +1,13 @@
 /**
- * Shield screen (PREVIEW) — Amount → Review → pending notice.
+ * Shield screen — Amount → Review → pending notice.
  *
  * Design preview of the "move XLM from public into the private pool" flow. There
  * is no SPP engine yet (see lib/privacy.ts), so confirming does NOT move funds or
  * broadcast anything: it surfaces ENGINE_PENDING_MESSAGE. The form UI is the
  * valuable part and is kept intact for when the real prover (V142) lands.
+ *
+ * The app has no prover, so this screen is gated on prover capability and says
+ * so plainly on devices that cannot prove, rather than failing mid-flow.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -36,6 +39,7 @@ import { isPrivacyEnabled } from '../../lib/privacy/config';
 import { getWalletAddress } from '../../lib/walletStore';
 import { fetchDashboardData } from '../../lib/activity';
 import { fetchPrice } from '../../lib/fetchPrice';
+import { isProverAvailable } from '../../lib/prover';
 
 type Step = 'form' | 'error';
 
@@ -68,6 +72,7 @@ export default function ShieldScreen() {
 
   const [step, setStep] = useState<Step>('form');
   const [error, setError] = useState<string | null>(null);
+  const proverAvailable = isProverAvailable();
 
   // #711: warn BEFORE anything is shielded when this wallet's privacy keys
   // cannot be re-derived from a passkey on another device.
@@ -133,6 +138,30 @@ export default function ShieldScreen() {
           <Text style={styles.provingTitle}>Private payments are not available</Text>
           <Text style={styles.provingHint}>
             This build has the privacy feature disabled.
+          </Text>
+          <Pressable
+            onPress={() => router.back()}
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.goldBtn, pressed && styles.pressed]}
+          >
+            <Text style={styles.goldBtnText}>Back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  // Prover gate — the app cannot generate proofs yet (the published SDK is
+  // browser-only; see lib/prover). Say so plainly instead of failing mid-flow.
+  if (!proverAvailable) {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
+        <View style={styles.doneWrap}>
+          <ShieldIcon size={48} color={colors.accent} />
+          <Text style={styles.provingTitle}>Not available on this device yet</Text>
+          <Text style={styles.provingHint}>
+            This device cannot generate privacy proofs yet, so shielding is
+            unavailable. No funds have been moved.
           </Text>
           <Pressable
             onPress={() => router.back()}
