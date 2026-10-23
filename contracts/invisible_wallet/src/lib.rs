@@ -154,6 +154,12 @@ impl InvisibleWallet {
         storage::add_signer(&env, &new_public_key).ok_or(WalletError::SignerAlreadyExists)
     }
 
+    /// Returns the number of live signers. Used by clients to render the
+    /// signer list and to pre-check the last-signer guard in the UI.
+    pub fn signer_count(env: Env) -> u32 {
+        storage::signer_count(&env)
+    }
+
     /// Remove a signer by index. Requires authorization from the contract.
     /// Rejects removal if it would leave the wallet with zero signers.
     ///

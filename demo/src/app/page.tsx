@@ -10,6 +10,11 @@ const FACTORY_ADDRESS = process.env.NEXT_PUBLIC_FACTORY_ADDRESS || '';
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE = process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE || Networks.TESTNET;
 
+type SignerInfo = {
+    publicKeyHex: string;
+    spendLimit: string | null;
+};
+
 export default function Home() {
     const { address, isPending, error, register, signAuthEntry } = useInvisibleWallet(FACTORY_ADDRESS);
     
@@ -19,6 +24,13 @@ export default function Home() {
     const [deploying, setDeploying] = useState(false);
     const [signatureResult, setSignatureResult] = useState<WebAuthnSignature | null>(null);
     const [signing, setSigning] = useState(false);
+
+    const [signers, setSigners] = useState<SignerInfo[]>([]);
+    const [loadingSigners, setLoadingSigners] = useState(false);
+    const [newSignerHex, setNewSignerHex] = useState('');
+    const [newSpendLimit, setNewSpendLimit] = useState('');
+    const [signerBusy, setSignerBusy] = useState(false);
+    const [signerMessage, setSignerMessage] = useState<string | null>(null);
 
     // 1. Register Action
     const handleRegister = async () => {
@@ -127,6 +139,133 @@ export default function Home() {
         }
     };
 
+    // 4. Signer management
+    const loadSigners = async () => {
+        if (!address) return;
+        setLoadingSigners(true);
+        setSignerMessage(null);
+        try {
+            const server = new rpc.Server(RPC_URL, { allowHttp: true });
+            const contract = new Contract(address);
+            const sourceKp = Keypair.random();
+            await fetch(`https://friendbot.stellar.org?addr=${sourceKp.publicKey()}`);
+            const account = await server.getAccount(sourceKp.publicKey());
+            const tx = new TransactionBuilder(account, { fee: '100000', networkPassphrase: NETWORK_PASSPHRASE })
+                .addOperation(contract.call("get_signers"))
+                .setTimeout(30)
+                .build();
+            const sim: any = await server.simulateTransaction(tx);
+            if (rpc.Api.isSimulationError(sim)) {
+                throw new Error(`Failed to load signers: ${sim.error || JSON.stringify(sim)}`);
+            }
+            const retval = sim.result?.retval;
+            const parsed: SignerInfo[] = [];
+            if (retval) {
+                const entries = retval.vec() || [];
+                for (const entry of entries) {
+                    const map = entry.map() || [];
+                    let publicKeyHex = '';
+                    let spendLimit: string | null = null;
+                    for (const kv of map) {
+                        const key = kv.key().sym().toString();
+                        const val = kv.val();
+                        if (key === 'public_key') {
+                            publicKeyHex = Buffer.from(val.bytes()).toString('hex');
+                        } else if (key === 'spend_limit') {
+                            const opt = val.switch().name === 'scvVoid' ? null : val;
+                            spendLimit = opt ? (opt.i128 ? String(opt.i128().lo().toString()) : null) : null;
+                        }
+                    }
+                    parsed.push({ publicKeyHex, spendLimit });
+                }
+            }
+            setSigners(parsed);
+        } catch (err: any) {
+            setSignerMessage(err.message || String(err));
+        } finally {
+            setLoadingSigners(false);
+        }
+    };
+
+    const removeSigner = async (publicKeyHex: string) => {
+        if (signers.length <= 1) {
+            setSignerMessage('Cannot remove the last signer: a wallet must always have at least one signing key.');
+            return;
+        }
+        if (!address) return;
+        setSignerBusy(true);
+        setSignerMessage(null);
+        try {
+            const contract = new Contract(address);
+            const pubKeyVal = xdr.ScVal.scvBytes(Buffer.from(publicKeyHex, 'hex'));
+            await submitWalletCall(contract.call("remove_signer", pubKeyVal));
+            setSignerMessage('Signer removed. It can no longer sign.');
+            await loadSigners();
+        } catch (err: any) {
+            setSignerMessage(err.message || String(err));
+        } finally {
+            setSignerBusy(false);
+        }
+    };
+
+    const addSigner = async () => {
+        if (!address) return;
+        const hex = newSignerHex.trim();
+        if (!/^[0-9a-fA-F]{130}$/.test(hex)) {
+            setSignerMessage('Signer public key must be 65 bytes (130 hex characters).');
+            return;
+        }
+        setSignerBusy(true);
+        setSignerMessage(null);
+        try {
+            const contract = new Contract(address);
+            const args: xdr.ScVal[] = [xdr.ScVal.scvBytes(Buffer.from(hex, 'hex'))];
+            const limit = newSpendLimit.trim();
+            if (limit) {
+                args.push(xdr.ScVal.scvI128(new xdr.Int128Parts({ hi: xdr.Int64.fromString('0'), lo: xdr.Uint64.fromString(limit) })));
+            } else {
+                args.push(xdr.ScVal.scvVoid());
+            }
+            await submitWalletCall(contract.call("add_signer", ...args));
+            setNewSignerHex('');
+            setNewSpendLimit('');
+            setSignerMessage('Signer added.');
+            await loadSigners();
+        } catch (err: any) {
+            setSignerMessage(err.message || String(err));
+        } finally {
+            setSignerBusy(false);
+        }
+    };
+
+    const submitWalletCall = async (op: xdr.Operation) => {
+        const server = new rpc.Server(RPC_URL, { allowHttp: true });
+        const feePayer = Keypair.random();
+        await fetch(`https://friendbot.stellar.org?addr=${feePayer.publicKey()}`);
+        const account = await server.getAccount(feePayer.publicKey());
+        const tx = new TransactionBuilder(account, { fee: '100000', networkPassphrase: NETWORK_PASSPHRASE })
+            .addOperation(op)
+            .setTimeout(30)
+            .build();
+        const sim: any = await server.simulateTransaction(tx);
+        if (rpc.Api.isSimulationError(sim)) {
+            throw new Error(`Simulation failed: ${sim.error || JSON.stringify(sim)}`);
+        }
+        const assembled = await server.prepareTransaction(tx);
+        assembled.sign(feePayer);
+        const submit = await server.sendTransaction(assembled);
+        if (submit.errorResult) {
+            throw new Error(`Submission failed: ${submit.errorResult}`);
+        }
+        for (let i = 0; i < 15; i++) {
+            const resp = await server.getTransaction(submit.hash);
+            if (resp.status === 'SUCCESS') return submit.hash;
+            if (resp.status === 'FAILED') throw new Error('Transaction failed on-chain');
+            await new Promise(r => setTimeout(r, 2000));
+        }
+        throw new Error('Transaction timed out');
+    };
+
     // Helper func
     const toHex = (bytes: Uint8Array) => Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 
@@ -202,6 +341,76 @@ export default function Home() {
                             </a>
                         )}
                     </div>
+                )}
+            </section>
+
+            {/* SIGNERS SECTION */}
+            <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+                <h2 className="text-xl font-semibold mb-4">Signers</h2>
+                <div className="mb-4 text-sm text-gray-600">
+                    Additional signer keys for this wallet, each with an optional spend limit. A wallet must always keep at least one signer.
+                </div>
+                <button
+                    onClick={loadSigners}
+                    disabled={loadingSigners || !address}
+                    className="bg-gray-700 hover:bg-gray-800 text-white px-5 py-2 rounded font-medium disabled:opacity-50 flex items-center gap-2 transition-colors mb-4"
+                >
+                    {loadingSigners && <Loader2 className="w-4 h-4 animate-spin" />}
+                    Load Signers
+                </button>
+                {signers.length > 0 && (
+                    <ul className="space-y-2 mb-4">
+                        {signers.map((s) => (
+                            <li key={s.publicKeyHex} className="flex items-center justify-between gap-3 border border-gray-200 rounded p-3 text-sm">
+                                <div className="min-w-0">
+                                    <code className="block break-all text-gray-800">{s.publicKeyHex}</code>
+                                    <span className="text-gray-500 text-xs">
+                                        {s.spendLimit !== null ? `Spend limit: ${s.spendLimit}` : 'No spend limit'}
+                                    </span>
+                                </div>
+                                <button
+                                    onClick={() => removeSigner(s.publicKeyHex)}
+                                    disabled={signerBusy || signers.length <= 1}
+                                    title={signers.length <= 1 ? 'The last signer cannot be removed' : 'Remove signer'}
+                                    className="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-xs font-medium disabled:opacity-50"
+                                >
+                                    Remove
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+                {signers.length === 1 && (
+                    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-4">
+                        This is the only signer, so it cannot be removed.
+                    </div>
+                )}
+                <div className="space-y-2">
+                    <input
+                        type="text"
+                        value={newSignerHex}
+                        onChange={(e) => setNewSignerHex(e.target.value)}
+                        placeholder="New signer public key (65-byte hex)"
+                        className="border border-gray-300 rounded px-3 py-2 text-sm w-full outline-none focus:border-blue-500"
+                    />
+                    <input
+                        type="text"
+                        value={newSpendLimit}
+                        onChange={(e) => setNewSpendLimit(e.target.value)}
+                        placeholder="Spend limit (optional, integer)"
+                        className="border border-gray-300 rounded px-3 py-2 text-sm w-full outline-none focus:border-blue-500"
+                    />
+                    <button
+                        onClick={addSigner}
+                        disabled={signerBusy || !address}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded font-medium disabled:opacity-50 flex items-center gap-2 transition-colors"
+                    >
+                        {signerBusy && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Add Signer
+                    </button>
+                </div>
+                {signerMessage && (
+                    <div className="mt-4 text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded p-3">{signerMessage}</div>
                 )}
             </section>
 

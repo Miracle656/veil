@@ -138,6 +138,12 @@ export default function DashboardPage() {
         {/* Actions */}
         <div className="grid grid-cols-2 gap-3">
           <Link
+            href="/signers"
+            className="rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-center text-sm font-semibold hover:bg-gray-800 transition-colors"
+          >
+            Signers
+          </Link>
+          <Link
             href="/send"
             className="rounded-xl border border-gray-700 bg-gray-900 px-4 py-3 text-center text-sm font-semibold hover:bg-gray-800 transition-colors"
           >
