@@ -21,6 +21,9 @@ function contractErrorCode(detail: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import { WRONG_PLATFORM_ERROR_MESSAGE } from './platformLimitation'
+
 /**
  * The origin baked into this wallet at deploy, versus the one signing now.
  *
@@ -34,19 +37,9 @@ function contractErrorCode(detail: string): number | null {
  * Retrying never helps, which is why this must not fall through to the generic
  * "signature wasn't accepted, try again".
  */
-function originMismatchMessage(detail: string): string {
-  const origin = signedOrigin(detail)
-  const here = typeof window === 'undefined' ? '' : window.location.origin
-
-  const madeElsewhere =
-    origin && here && origin === here
-      ? 'This wallet was created somewhere else — most likely the Veil mobile app.'
-      : 'This wallet was created with a different passkey origin.'
-
-  return (
-    `${madeElsewhere} For security the wallet only accepts signatures from where it was ` +
-    `created, so it cannot be signed here. Open it in the app you created it with to move these funds.`
-  )
+function originMismatchMessage(_detail: string): string {
+  // TODO(#1003): remove platform limitation warning when multi-origin contract ships
+  return WRONG_PLATFORM_ERROR_MESSAGE
 }
 
 /** The `origin` field of the assertion, pulled out of the diagnostic dump. */

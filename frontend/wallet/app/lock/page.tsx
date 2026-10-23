@@ -10,6 +10,12 @@ import { FEE_PAYER_PRF_SALT, type PrfEvaluator } from '@veil/prf'
 import { getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { adoptPasskeyFromOtherNetwork, walletLocal, walletSession } from '@/lib/walletStorage'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import {
+  fetchContractOrigin,
+  isWrongPlatformOrigin,
+  WRONG_PLATFORM_ERROR_MESSAGE,
+} from '@/lib/platformLimitation'
 
 /**
  * The active network's wallet address for a stored passkey public key, or null.
@@ -142,6 +148,13 @@ export default function LockPage() {
             : 'Your passkey has no wallet on this network yet. Taking you to create it…',
         )
         setTimeout(() => router.replace('/'), 1400)
+        return
+      }
+
+      // TODO(#1003): remove platform limitation check when multi-origin contract ships
+      const contractOrigin = await fetchContractOrigin(getNetwork().rpcUrl, sessionAddress)
+      if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
+        setError(WRONG_PLATFORM_ERROR_MESSAGE)
         return
       }
 
