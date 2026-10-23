@@ -96,6 +96,9 @@ pub fn add_signer(env: &Env, key: &BytesN<65>) -> Option<u32> {
 /// Remove a signer by index. Returns true if the signer existed and was removed.
 pub fn remove_signer(env: &Env, index: u32) -> bool {
     let mut signers = get_signers(env);
+    if signers.len() <= 1 {
+        return false;
+    }
     if signers.contains_key(index) {
         signers.remove(index);
         env.storage().instance().set(&DataKey::Signers, &signers);
