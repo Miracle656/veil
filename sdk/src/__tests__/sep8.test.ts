@@ -4,6 +4,16 @@
  */
 
 import {
+  Account,
+  Asset,
+  Memo,
+  Networks,
+  Operation,
+  StrKey,
+  TransactionBuilder,
+} from '@stellar/stellar-sdk';
+
+import {
   submitSep8Transaction,
   verifyRevisedTransaction,
   isRegulatedAsset,
@@ -445,6 +455,154 @@ describe('SEP-8 Regulated Assets', () => {
     it('should reject empty XDR strings', () => {
       const result = verifyRevisedTransaction('', '');
       expect(result).toBe(false);
+  // Builds real transactions rather than placeholder strings. The previous
+  // suite had five cases that all asserted `false` — including one named
+  // "should accept identical transactions" — because the fixture was not a
+  // parseable envelope, as its own comment admitted. Every case passed on the
+  // fail-closed path, so the source comparison, the operation matching and the
+  // length check had never executed once, and neither of the two real bugs in
+  // the function was visible.
+  describe('verifyRevisedTransaction', () => {
+    // Deterministic, checksum-valid addresses from fixed seeds. `Keypair.random()`
+    // cannot be used here: it needs crypto randomness jest's environment does not
+    // provide, and the suite then throws at import and runs zero tests — which is
+    // how the previous version of these tests looked green while testing nothing.
+    const addr = (seed: number) => StrKey.encodeEd25519PublicKey(Buffer.alloc(32, seed));
+    const USER = addr(1);
+    const DESTINATION = addr(2);
+    const ATTACKER = addr(3);
+    const ISSUER = addr(4);
+    const OTHER_SOURCE = addr(5);
+    const REGULATED = new Asset('REG', ISSUER);
+
+    /** A builder on a fixed sequence, so two builds are byte-comparable. */
+    const builder = (fee = '10000', source = USER) =>
+      new TransactionBuilder(new Account(source, '41'), {
+        fee,
+        networkPassphrase: Networks.TESTNET,
+      }).setTimeout(180);
+
+    const payment = (destination: string, amount: string) =>
+      Operation.payment({ destination, asset: REGULATED, amount });
+
+    const flag = (authorized: boolean) =>
+      Operation.setTrustLineFlags({
+        trustor: DESTINATION,
+        asset: REGULATED,
+        flags: { authorized },
+        source: ISSUER,
+      });
+
+    /** What the user asked for: one payment of a regulated asset. */
+    const original = (memo?: Memo) => {
+      let b = builder().addOperation(payment(DESTINATION, '100'));
+      if (memo) b = b.addMemo(memo);
+      return b.build().toXDR();
+    };
+
+    /**
+     * What a compliant approval server returns: the user's payment sandwiched
+     * between the flag changes that authorise and then de-authorise the
+     * destination. Note the payment lands at index 1, not 0.
+     */
+    const sandwiched = (memo?: Memo) => {
+      let b = builder()
+        .addOperation(flag(true))
+        .addOperation(payment(DESTINATION, '100'))
+        .addOperation(flag(false));
+      if (memo) b = b.addMemo(memo);
+      return b.build().toXDR();
+    };
+
+    it('accepts an identical transaction', () => {
+      const xdrString = original();
+      expect(verifyRevisedTransaction(xdrString, xdrString)).toBe(true);
+    });
+
+    it('accepts the SEP-8 sandwich, where the payment moves to index 1', () => {
+      // The case the feature exists to support. An index-aligned comparison
+      // fails this, because revised[0] is a flag change where original[0] is
+      // the payment — so the previous implementation refused every real
+      // revision.
+      expect(verifyRevisedTransaction(original(), sandwiched())).toBe(true);
+    });
+
+    it('refuses a revision that redirects the payment to another account', () => {
+      const tampered = builder()
+        .addOperation(flag(true))
+        .addOperation(payment(ATTACKER, '100'))
+        .build()
+        .toXDR();
+      // Still a payment, still the same asset — only the destination changed.
+      // Comparing operation types accepts this, which is the hole.
+      expect(verifyRevisedTransaction(original(), tampered)).toBe(false);
+    });
+
+    it('refuses a bare destination swap, with nothing added to disguise it', () => {
+      // One operation in, one out, same index, same type, same asset, same
+      // amount — only the destination differs. This is the narrowest form of
+      // the hole: comparing `body().switch()` returns true here, so the wallet
+      // would have been told a payment redirected to someone else "appears
+      // safe to sign".
+      const redirected = builder().addOperation(payment(ATTACKER, '100')).build().toXDR();
+      expect(verifyRevisedTransaction(original(), redirected)).toBe(false);
+    });
+
+    it('refuses a revision that changes the amount', () => {
+      const tampered = builder().addOperation(payment(DESTINATION, '100000')).build().toXDR();
+      expect(verifyRevisedTransaction(original(), tampered)).toBe(false);
+    });
+
+    it('refuses a revision that changes the memo', () => {
+      // A memo selects the crediting account at an exchange, so changing it
+      // redirects funds without touching an operation.
+      expect(
+        verifyRevisedTransaction(original(Memo.text('inv-1')), sandwiched(Memo.text('inv-2'))),
+      ).toBe(false);
+    });
+
+    it('refuses a revision that drops the user operation entirely', () => {
+      const stripped = builder().addOperation(flag(true)).build().toXDR();
+      expect(verifyRevisedTransaction(original(), stripped)).toBe(false);
+    });
+
+    it('refuses a revision that reorders the user operations', () => {
+      const inOrder = builder()
+        .addOperation(payment(DESTINATION, '1'))
+        .addOperation(payment(DESTINATION, '2'))
+        .build()
+        .toXDR();
+      const reversed = builder()
+        .addOperation(payment(DESTINATION, '2'))
+        .addOperation(payment(DESTINATION, '1'))
+        .build()
+        .toXDR();
+
+      expect(verifyRevisedTransaction(inOrder, inOrder)).toBe(true);
+      // Both operations are present, so a set-membership check accepts this.
+      // Order is part of the user's intent.
+      expect(verifyRevisedTransaction(inOrder, reversed)).toBe(false);
+    });
+
+    it('refuses a revision that changes the transaction source account', () => {
+      const other = builder('10000', OTHER_SOURCE)
+        .addOperation(payment(DESTINATION, '100'))
+        .build()
+        .toXDR();
+      expect(verifyRevisedTransaction(original(), other)).toBe(false);
+    });
+
+    it('allows the fee to rise, since added operations cost more', () => {
+      const dearer = builder('30000').addOperation(payment(DESTINATION, '100')).build().toXDR();
+      expect(verifyRevisedTransaction(original(), dearer)).toBe(true);
+    });
+
+    it('fails closed on unparseable input', () => {
+      const valid = original();
+      expect(verifyRevisedTransaction('invalid', 'also-invalid')).toBe(false);
+      expect(verifyRevisedTransaction('invalid', valid)).toBe(false);
+      expect(verifyRevisedTransaction(valid, 'invalid')).toBe(false);
+      expect(verifyRevisedTransaction('', '')).toBe(false);
     });
   });
 

@@ -25,7 +25,7 @@ import { getWalletAddress } from '../../lib/walletStore';
 import { knownDepositAddresses } from '../../lib/offramp';
 import { fetchContractAssetBalance, getFeePayerAddress } from '../../lib/activity';
 
-const NAMES: Record<string, string> = { XLM: 'Stellar Lumens', USDC: 'USD Coin', EURC: 'Euro Coin' };
+const NAMES: Record<string, string> = { XLM: 'Stellar Lumens', USDC: 'USD Coin' };
 
 function fmtAmount(raw: string): string {
   const n = Number(raw);

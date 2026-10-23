@@ -14,11 +14,17 @@
  * - `window.open` is neutralised in the page, and a popup can never become a
  *   second in-app context that inherits the opener's permissions.
  * - The address bar always shows the origin that is actually loaded.
- * - No wallet API, key or address is injected. This shell can browse and
- *   nothing more; a signing provider is a later, separate issue (V213).
+ * - A SEP-43 wallet provider is injected, and only into the approved origin's top
+ *   frame. It exposes an address and signatures — never a key, a secret, or a
+ *   credential id, because none of those ever enter the page or the message.
+ * - Every signature request is shown to the user and approved there, on every
+ *   call, even for an origin that already holds the signing grant. The grant
+ *   means the site may ask; only the user's answer means it may sign.
+ * - Every message is origin-checked again on the app side, per message, so a
+ *   provider that a page somehow kept after navigating cannot answer for another.
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -27,10 +33,14 @@ import type { WebViewMessageEvent, WebViewNavigation } from 'react-native-webvie
 import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
 
 import { ConfirmModal } from '../components/ConfirmModal';
+import { DappApprovalModal } from '../components/DappApprovalModal';
 import { NoticeModal } from '../components/NoticeModal';
 import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
 import { openExternalUrl } from '../lib/about';
+import type { PermissionPrompt, PermissionRequest } from '../lib/dappBridge';
+import { handleProviderMessage, type ProviderContext } from '../lib/dappProviderBridge';
+import { dappProviderScript } from '../lib/dappProvider';
 import { getDappForUrl } from '../lib/dappAllowlist';
 import {
   chromeOrigin,
@@ -39,10 +49,17 @@ import {
   parseWindowOpenMessage,
   WINDOW_OPEN_BLOCKER_JS,
 } from '../lib/dappNavigation';
+import { getNetwork } from '../lib/network';
+import { hydrateOriginPermissions, isOriginPermissionGranted } from '../lib/permissions';
+import { hasAuthEntrySigner, signAuthEntryPayload, signXdrPayload } from '../lib/walletConnect';
+import { getWalletAddress } from '../lib/walletStore';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 
 type PendingExternal = { origin: string; url: string };
+
+/** One approval request waiting on the user, with the promise it answers. */
+type QueuedPrompt = { request: PermissionRequest; resolve: (approved: boolean) => void };
 
 export default function DappBrowserScreen() {
   const router = useRouter();
@@ -63,6 +80,104 @@ export default function DappBrowserScreen() {
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null);
 
   const shownOrigin = approvedOrigin ? chromeOrigin(approvedOrigin, loadedUrl) : '';
+
+  // ── The provider ──────────────────────────────────────────────────────────
+
+  // Grants are read from the live store in `lib/permissions.ts`, which starts
+  // hydrating at import; asking again here costs nothing and covers the case
+  // where this screen is the first thing the app ever opened.
+  useEffect(() => {
+    void hydrateOriginPermissions();
+  }, []);
+
+  // The injected script is generated once per approved origin. It carries that
+  // origin inside it and declines to install anywhere else, so a document the
+  // WebView lands on that is not the granted page gets no provider at all — on
+  // top of the app-side check, which is the one that actually decides.
+  const providerScript = useMemo(
+    () => (approvedOrigin ? dappProviderScript(approvedOrigin) : ''),
+    [approvedOrigin],
+  );
+  const injectedBeforeLoad = useMemo(
+    () => `${WINDOW_OPEN_BLOCKER_JS}\n${providerScript}`,
+    [providerScript],
+  );
+
+  const promptQueueRef = useRef<QueuedPrompt[]>([]);
+  const [activePrompt, setActivePrompt] = useState<QueuedPrompt | null>(null);
+
+  /**
+   * Present the approval sheet and wait for the user.
+   *
+   * Requests are queued rather than overlapped: a second sheet replacing the one
+   * the user is reading would hide a request they had not finished looking at.
+   */
+  const prompt = useCallback<PermissionPrompt>((request) => {
+    return new Promise<boolean>((resolve) => {
+      const wasEmpty = promptQueueRef.current.length === 0;
+      promptQueueRef.current.push({ request, resolve });
+      if (wasEmpty) setActivePrompt(promptQueueRef.current[0]);
+    });
+  }, []);
+
+  const answerActivePrompt = useCallback(
+    (approved: boolean) => {
+      const [current, ...rest] = promptQueueRef.current;
+      promptQueueRef.current = rest;
+      if (!current) return;
+      current.resolve(approved);
+      setActivePrompt(rest[0] ?? null);
+    },
+    [],
+  );
+
+  /**
+   * Decline everything still waiting on the user.
+   *
+   * Left unresolved, a `signTransaction` promise would hang in the page forever
+   * and a later grant check could not tell the difference between "the user said
+   * no" and "the user never asked". Navigating away and closing the screen are
+   * both a no, so both answer the queue that way.
+   */
+  const declinePendingPrompts = useCallback(() => {
+    const queued = promptQueueRef.current;
+    promptQueueRef.current = [];
+    for (const pending of queued) pending.resolve(false);
+    setActivePrompt(null);
+  }, []);
+
+  // Leaving the screen — by back gesture, by the header, or by a route change —
+  // ends every request the page had outstanding.
+  useEffect(() => declinePendingPrompts, [declinePendingPrompts]);
+
+  // A different approved origin is a different site: nothing it asks may inherit
+  // a prompt the previous one left open.
+  useEffect(() => {
+    declinePendingPrompts();
+  }, [approvedOrigin, declinePendingPrompts]);
+
+  const providerContext = useCallback(
+    (messageOrigin: string | null): ProviderContext => ({
+      approvedOrigin: approvedOrigin ?? '',
+      messageOrigin,
+      dappName: entry?.name,
+      prompt,
+      isGranted: isOriginPermissionGranted,
+      getAddress: getWalletAddress,
+      signTransactionXdr: signXdrPayload,
+      signAuthEntryXdr: signAuthEntryPayload,
+      hasSigner: hasAuthEntrySigner,
+      network: () => {
+        const network = getNetwork();
+        return {
+          name: network.name,
+          displayName: network.displayName,
+          networkPassphrase: network.networkPassphrase,
+        };
+      },
+    }),
+    [approvedOrigin, entry?.name, prompt],
+  );
 
   const onShouldStartLoadWithRequest = useCallback(
     (request: ShouldStartLoadRequest): boolean => {
@@ -93,37 +208,55 @@ export default function DappBrowserScreen() {
       // the page where it was, so the bar must not describe the destination.
       if (decideNavigation(approvedOrigin, navState.url).action === 'allow') {
         setLoadedUrl(navState.url);
+        return;
       }
+      // A request from a document this page is no longer is not answerable, and
+      // a sheet describing it would be a lie about what the user is looking at.
+      declinePendingPrompts();
     },
-    [approvedOrigin],
+    [approvedOrigin, declinePendingPrompts],
   );
 
   const onMessage = useCallback(
-    (event: WebViewMessageEvent) => {
+    async (event: WebViewMessageEvent) => {
       if (!approvedOrigin) return;
-      const message = parseWindowOpenMessage(event.nativeEvent.data);
-      if (!message) return;
+      const data = event.nativeEvent.data;
 
-      const decision = decidePopup(approvedOrigin, message.url);
-      if (decision.action === 'navigate') {
-        // Fold a same-origin popup back into this view rather than opening a
-        // second one that would share the opener's permissions.
-        const target = message.url;
-        webRef.current?.injectJavaScript(
-          `window.location.href = ${JSON.stringify(target)}; true;`,
-        );
+      const message = parseWindowOpenMessage(data);
+      if (message) {
+        const decision = decidePopup(approvedOrigin, message.url);
+        if (decision.action === 'navigate') {
+          // Fold a same-origin popup back into this view rather than opening a
+          // second one that would share the opener's permissions.
+          const target = message.url;
+          webRef.current?.injectJavaScript(
+            `window.location.href = ${JSON.stringify(target)}; true;`,
+          );
+          return;
+        }
+        if (decision.action === 'external') {
+          setPendingExternal({ origin: decision.origin, url: message.url });
+          return;
+        }
+        setNotice({
+          title: 'Popup blocked',
+          message: 'This dApp tried to open a window Veil cannot allow.',
+        });
         return;
       }
-      if (decision.action === 'external') {
-        setPendingExternal({ origin: decision.origin, url: message.url });
-        return;
-      }
-      setNotice({
-        title: 'Popup blocked',
-        message: 'This dApp tried to open a window Veil cannot allow.',
-      });
+
+      // The provider's own envelope. `nativeEvent.url` is the frame that posted
+      // it, as the WebView reports it — passed through untouched so the bridge
+      // can compare it against the approved origin rather than trusting this
+      // screen to have normalised it the same way.
+      const handled = await handleProviderMessage(data, providerContext(event.nativeEvent.url ?? null));
+      if (handled.kind === 'ignored') return;
+
+      // Answering is one function call with one JSON string; the bridge escapes
+      // what could otherwise be evaluated as page code.
+      webRef.current?.injectJavaScript(handled.javascript);
     },
-    [approvedOrigin],
+    [approvedOrigin, providerContext],
   );
 
   const confirmExternal = useCallback(() => {
@@ -187,8 +320,12 @@ export default function DappBrowserScreen() {
         onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
         onNavigationStateChange={onNavigationStateChange}
         onMessage={onMessage}
-        injectedJavaScriptBeforeContentLoaded={WINDOW_OPEN_BLOCKER_JS}
-        injectedJavaScript={WINDOW_OPEN_BLOCKER_JS}
+        // The window-open blocker runs first and the provider second: both are
+        // before the page's own scripts, which is the only way a dApp's wallet
+        // discovery (`window.freighterApi`) finds anything at all. After-load
+        // injection is the retry for a page that probed during a navigation.
+        injectedJavaScriptBeforeContentLoaded={injectedBeforeLoad}
+        injectedJavaScript={injectedBeforeLoad}
         // No second in-app window may be created from page JavaScript.
         setSupportMultipleWindows={false}
         javaScriptCanOpenWindowsAutomatically={false}
@@ -231,6 +368,14 @@ export default function DappBrowserScreen() {
         message={notice?.message ?? ''}
         tone="error"
         onClose={() => setNotice(null)}
+      />
+
+      {/* The gate: a provider request that needs the user waits here for an
+          answer, and the bridge signs nothing until this resolves true. */}
+      <DappApprovalModal
+        request={activePrompt?.request ?? null}
+        networkName={getNetwork().displayName}
+        onDecision={answerActivePrompt}
       />
     </SafeAreaView>
   );

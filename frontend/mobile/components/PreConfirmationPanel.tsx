@@ -11,6 +11,12 @@ export interface PreConfirmationData {
   priceImpactPct: number;
   spreadPct: number;
   totalImpactPct: number;
+  /** null when the order book could not be read — not the same as zero. */
+  spreadPct: number | null;
+  /** null when the spread is unknown, so no total can honestly be given. */
+  totalImpactPct: number | null;
+  /** Why a figure is missing, shown verbatim when one is. */
+  disclosure?: string | null;
   bestBid?: number;
   bestAsk?: number;
   sellbackAmount?: number;
@@ -38,6 +44,26 @@ export function PreConfirmationPanel({ data, colors }: Props) {
 
   const impactColor =
     impactStatus === 'error' ? '#FF3B30' : impactStatus === 'warning' ? '#FF9500' : '#34C759';
+  // An unknown total is its own state. It must not fall through to the green
+  // "ok" branch, which is how a figure nobody measured ends up looking
+  // confirmed (#732).
+  const impactStatus =
+    data.totalImpactPct === null
+      ? 'unknown'
+      : data.totalImpactPct > 5
+        ? 'error'
+        : data.totalImpactPct > 2
+          ? 'warning'
+          : 'ok';
+
+  const impactColor =
+    impactStatus === 'error'
+      ? '#FF3B30'
+      : impactStatus === 'warning'
+        ? '#FF9500'
+        : impactStatus === 'unknown'
+          ? colors.textSecondary
+          : '#34C759';
 
   return (
     <ScrollView style={styles.container} scrollEnabled={false}>
@@ -73,6 +99,12 @@ export function PreConfirmationPanel({ data, colors }: Props) {
             <Text style={styles.value}>{formatNumber(data.spreadPct, 2)}%</Text>
           </View>
         )}
+        <View style={styles.row}>
+          <Text style={styles.label}>Bid-ask spread</Text>
+          <Text style={data.spreadPct === null ? styles.valueUnknown : styles.value}>
+            {data.spreadPct === null ? 'Not measured' : `${formatNumber(data.spreadPct, 2)}%`}
+          </Text>
+        </View>
         {data.bestBid && data.bestAsk && (
           <View style={styles.row}>
             <Text style={styles.label}>Book depth</Text>
@@ -87,6 +119,10 @@ export function PreConfirmationPanel({ data, colors }: Props) {
             {formatNumber(data.totalImpactPct, 2)}%
           </Text>
         </View>
+            {data.totalImpactPct === null ? 'Unavailable' : `${formatNumber(data.totalImpactPct, 2)}%`}
+          </Text>
+        </View>
+        {data.disclosure ? <Text style={styles.disclosure}>{data.disclosure}</Text> : null}
       </View>
 
       {data.sellbackAmount !== undefined && (
@@ -94,6 +130,7 @@ export function PreConfirmationPanel({ data, colors }: Props) {
           <Text style={styles.sectionTitle}>Round-Trip Cost (if sold immediately)</Text>
           <View style={styles.row}>
             <Text style={styles.label}>You'd get back</Text>
+            <Text style={styles.label}>You&apos;d get back</Text>
             <Text style={styles.value}>
               {formatNumber(data.sellbackAmount, 7)} {data.tokenIn}
             </Text>
@@ -112,12 +149,14 @@ export function PreConfirmationPanel({ data, colors }: Props) {
           </View>
           <Text style={styles.disclaimer}>
             This shows what you'd receive if you sold the output immediately at the current market price.
+            This shows what you&apos;d receive if you sold the output immediately at the current market price.
             Actual results depend on market conditions at execution time.
           </Text>
         </View>
       )}
 
       {data.totalImpactPct > 5 && (
+      {data.totalImpactPct !== null && data.totalImpactPct > 5 && (
         <View style={[styles.section, styles.warningSection]}>
           <Text style={styles.warningTitle}>⚠️ High Impact</Text>
           <Text style={styles.warningText}>
@@ -164,6 +203,18 @@ function createStyles(colors: ThemeColors) {
       fontSize: 13,
       fontWeight: '500',
       color: colors.textPrimary,
+    },
+    valueUnknown: {
+      fontSize: 13,
+      fontWeight: '500',
+      color: colors.textSecondary,
+      fontStyle: 'italic',
+    },
+    disclosure: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: 8,
+      lineHeight: 17,
     },
     valueWarning: {
       fontSize: 13,

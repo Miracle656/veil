@@ -53,6 +53,42 @@ export const TRUSTLINE_RESERVE_COST_XLM = 0.5;
 export const TRUSTLINE_RESERVE_EXPLANATION =
   'Adding a trustline locks 0.5 XLM of your account reserve. This XLM is locked, not spent, and is released back to your available balance if the trustline is removed.';
 
+/**
+ * XLM kept free for the network fee on top of the reserve a trustline locks.
+ * A trustline needs TRUSTLINE_RESERVE_COST_XLM of reserve AND must pay a fee, so
+ * an account with exactly the reserve cannot submit it (tx_insufficient_balance).
+ */
+export const TRUSTLINE_TX_FEE_BUFFER_XLM = 0.1;
+
+export interface TrustlineReserveImpact {
+  reserveCost: number;
+  currentSpendable: number;
+  projectedSpendable: number;
+  /** True when the account can fund the reserve and still pay the fee. */
+  canAfford: boolean;
+}
+
+/**
+ * Reserve cost and remaining spendable XLM before adding trustlines, so a UI can
+ * show the impact up front and refuse a transaction that cannot succeed.
+ */
+export function calculateSpendableAfterTrustline(
+  spendableXlm: string | number,
+  additionalTrustlines = 1,
+): TrustlineReserveImpact {
+  const current = Math.max(0, Number(spendableXlm) || 0);
+  const reserveCost = additionalTrustlines * TRUSTLINE_RESERVE_COST_XLM;
+  const projected = Math.max(0, current - reserveCost);
+  const canAfford = current >= reserveCost + TRUSTLINE_TX_FEE_BUFFER_XLM;
+  return {
+    reserveCost,
+    currentSpendable: current,
+    // Truncate, never round up: see spendableNativeXlm.
+    projectedSpendable: Number((Math.floor(projected * 1e7) / 1e7).toFixed(7)),
+    canAfford,
+  };
+}
+
 export type AccountReserveBreakdown = {
   /** Total XLM held by the account */
   totalBalance: number;

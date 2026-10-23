@@ -5,11 +5,13 @@ import { useRouter } from 'next/navigation'
 import { Horizon, Keypair } from '@stellar/stellar-sdk'
 
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { getNetwork } from '@/lib/network'
+import { getNetwork, getUsdcIssuer } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { PasskeyCeremonyError, isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import {
   buildChangeTrustTx,
   canRemoveTrustline,
+  getRemovalRefusalReason,
   hasTrustline,
   parseTrustlines,
   resolveAnchorAssets,
@@ -18,7 +20,13 @@ import {
   type Trustline,
 } from '@/lib/trustlines'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
-import { TRUSTLINE_RESERVE_COST_XLM, TRUSTLINE_RESERVE_EXPLANATION } from '@/lib/reserves'
+import {
+  calculateSpendableAfterTrustline,
+  TRUSTLINE_RESERVE_COST_XLM,
+  TRUSTLINE_RESERVE_EXPLANATION,
+  spendableNativeXlm,
+  type HorizonAccountLike,
+} from '@/lib/reserves'
 
 import {
   USDY_MAINNET_ISSUER,
@@ -58,6 +66,7 @@ export default function AssetsPage() {
 
   const [signerAddress, setSignerAddress] = useState<string | null>(null)
   const [balances, setBalances] = useState<HorizonBalanceLike[]>([])
+  const [spendableXlm, setSpendableXlm] = useState<string>('0')
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [prices, setPrices] = useState<Record<string, number | null>>({})
@@ -74,6 +83,7 @@ export default function AssetsPage() {
   const [searching, setSearching] = useState(false)
   const [manualCode, setManualCode] = useState('')
   const [manualIssuer, setManualIssuer] = useState('')
+  const [pendingAsset, setPendingAsset] = useState<{ code: string; issuer: string } | null>(null)
 
   const trustlines: Trustline[] = useMemo(() => parseTrustlines(balances), [balances])
 
@@ -125,6 +135,8 @@ export default function AssetsPage() {
       const account = await server.loadAccount(pubKey)
       const rawBalances = account.balances as unknown as HorizonBalanceLike[]
       setBalances(rawBalances)
+      setSpendableXlm(spendableNativeXlm(account as unknown as HorizonAccountLike))
+      setLoading(false)
 
       const parsedLines = parseTrustlines(rawBalances)
       const priceMap: Record<string, number | null> = {}
@@ -191,7 +203,7 @@ export default function AssetsPage() {
 
   const submitChangeTrust = useCallback(
     async (code: string, issuer: string, remove: boolean) => {
-      setStatus({ kind: 'busy', message: remove ? 'Removing trustline…' : 'Adding trustline…' })
+      setStatus({ kind: 'busy', message: remove ? `Removing trustline and reclaiming ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve…` : `Adding trustline and locking ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve…` })
       try {
         await requirePasskey()
         const secret = getSignerSecret()
@@ -207,15 +219,27 @@ export default function AssetsPage() {
           remove,
         })
         tx.sign(signer)
-        await server.submitTransaction(tx)
+        const res = await server.submitTransaction(tx)
 
         setStatus({
           kind: 'success',
-          message: remove ? `Removed trustline for ${code}.` : `Now trusting ${code}.`,
+          message: remove
+            ? `Removed trustline for ${code}. ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve returned to your spendable balance! (Tx: ${res.hash.slice(0, 8)}…)`
+            : `Now trusting ${code}. ${TRUSTLINE_RESERVE_COST_XLM} XLM locked as reserve. (Tx: ${res.hash.slice(0, 8)}…)`,
         })
+        setPendingAsset(null)
         await loadAccount()
       } catch (err) {
-        setStatus({ kind: 'error', message: errorMessage(err) })
+        // Dismissing the prompt changes nothing on chain, so it is not an
+        // error state on the trustline screen either.
+        if (isPasskeyCancellation(err)) {
+          setStatus({ kind: 'idle' })
+          return
+        }
+        setStatus({
+          kind: 'error',
+          message: err instanceof PasskeyCeremonyError ? err.message : errorMessage(err),
+        })
       }
     },
     [server, loadAccount],
@@ -255,18 +279,24 @@ export default function AssetsPage() {
   }, [domain, server])
 
   const handleManualAdd = useCallback(() => {
-    const code = manualCode.trim()
+    const code = manualCode.trim().toUpperCase()
     const issuer = manualIssuer.trim()
     if (!code || !issuer) {
       setStatus({ kind: 'error', message: 'Enter both an asset code and issuer address.' })
       return
     }
-    void submitChangeTrust(code, issuer, false)
-  }, [manualCode, manualIssuer, submitChangeTrust])
+    setPendingAsset({ code, issuer })
+  }, [manualCode, manualIssuer])
 
   const busy = status.kind === 'busy'
+  // The issuer the rest of the app already uses, rather than a constant typed
+  // here — it is network-aware, so this card is correct on testnet too.
+  const usdcIssuer = getUsdcIssuer()
+  const hasUsdc = hasTrustline(balances, 'USDC', usdcIssuer)
   const hasUsdy = hasTrustline(balances, 'USDY', USDY_MAINNET_ISSUER)
   const hasUsdt0 = hasTrustline(balances, 'USDT0', USDT0_MAINNET_ISSUER)
+  const usdyImpact = calculateSpendableAfterTrustline(spendableXlm, 1)
+  const pendingImpact = pendingAsset ? calculateSpendableAfterTrustline(spendableXlm, 1) : null
 
   return (
     <div className="wallet-shell">
@@ -285,12 +315,15 @@ export default function AssetsPage() {
 
       <main className="wallet-main">
         <div style={{ marginBottom: '1.5rem' }}>
-          <p style={eyebrowStyle}>TRUSTLINES</p>
+          <p style={eyebrowStyle}>TRUSTLINES &amp; RESERVES</p>
           <h1 style={headingStyle}>Manage the assets you hold</h1>
           <p style={{ color: 'rgba(246,247,248,0.52)', fontSize: '0.875rem', lineHeight: 1.6, maxWidth: 460 }}>
-            Classic Stellar assets need a trustline before they can be received. Add one from an
-            anchor&apos;s stellar.toml or by issuer, and remove any you no longer need.
+            Classic Stellar assets need a trustline before they can be received. {TRUSTLINE_RESERVE_EXPLANATION}
           </p>
+          <div style={{ marginTop: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(246,247,248,0.06)', padding: '0.375rem 0.75rem', borderRadius: '0.5rem', fontSize: '0.8125rem', color: 'var(--off-white)' }}>
+            <span style={{ color: 'var(--warm-grey)' }}>Spendable XLM:</span>
+            <strong>{spendableXlm} XLM</strong>
+          </div>
         </div>
 
         {status.message && (
@@ -305,6 +338,41 @@ export default function AssetsPage() {
           >
             <p style={{ fontSize: '0.875rem', color: 'var(--off-white)' }}>{status.message}</p>
           </div>
+        )}
+
+        {/* USDC first, and with a button at all.
+
+            This page offered one-click trustlines for USDY and USDT0 and
+            nothing for USDC — the asset cash-out settles in, the one the
+            platform fee is denominated in, and the one a Nigerian user actually
+            wants. It was reachable only by typing a 56-character issuer into
+            the manual form at the bottom, which nobody has memorised: in
+            practice that means pasting an address from a search result, which
+            is exactly how someone ends up trusting a counterfeit USDC. */}
+        {!hasUsdc && !loading && (
+          <section className="card" style={{ marginBottom: '2rem', padding: '1.25rem', borderColor: 'rgba(38,111,214,0.3)', background: 'rgba(38,111,214,0.05)' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
+              <RegisteredAssetMark code="USDC" meta={issuerMeta[`USDC:${usdcIssuer}`]} />
+              <div style={{ minWidth: 0 }}>
+                <h2 style={{ ...sectionHeadingStyle, color: '#2775CA' }}>USDC (Circle)</h2>
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+                  The dollar stablecoin Veil cashes out to naira in, and the one most senders will pay you in. Adding the trustline locks <strong>0.5 XLM</strong> of refundable reserve, returned if you ever remove it.
+                </p>
+                {issuerMeta[`USDC:${usdcIssuer}`]?.description ? (
+                  <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
+                    {issuerMeta[`USDC:${usdcIssuer}`].description}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <button
+              onClick={() => setPendingAsset({ code: 'USDC', issuer: usdcIssuer })}
+              disabled={busy}
+              style={primaryButtonStyle(busy)}
+            >
+              {busy ? 'Enabling USDC…' : 'Enable USDC (0.5 XLM reserve)'}
+            </button>
+          </section>
         )}
 
         {/* Featured USDT0 enable card. Mainnet only — USDT0's issuer does not
@@ -331,13 +399,64 @@ export default function AssetsPage() {
               </div>
             </div>
             <button
-              onClick={() => void submitChangeTrust('USDT0', USDT0_MAINNET_ISSUER, false)}
+              onClick={() => setPendingAsset({ code: 'USDT0', issuer: USDT0_MAINNET_ISSUER })}
               disabled={busy}
               style={primaryButtonStyle(busy)}
             >
               {busy ? 'Enabling USDT0…' : 'Enable USDT0 (0.5 XLM reserve)'}
             </button>
           </section>
+        )}
+
+        {/* Confirmation Modal / Breakdown before enabling any asset */}
+        {pendingAsset && pendingImpact && (
+          <div className="card" style={{ marginBottom: '1.5rem', border: '1px solid var(--gold)', background: 'rgba(212,175,55,0.08)', padding: '1.25rem' }}>
+            <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--gold)', marginBottom: '0.5rem' }}>
+              Confirm Enabling {pendingAsset.code}
+            </h3>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.7)', marginBottom: '0.75rem' }}>
+              {TRUSTLINE_RESERVE_EXPLANATION} You can remove it any time its balance is zero and it has no open offers.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', background: 'rgba(0,0,0,0.25)', padding: '0.75rem', borderRadius: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8125rem' }}>
+              <div>
+                <p style={{ color: 'var(--warm-grey)' }}>Reserve cost:</p>
+                <p style={{ fontWeight: 600, color: '#e5484d' }}>-{TRUSTLINE_RESERVE_COST_XLM} XLM (locked)</p>
+              </div>
+              <div>
+                <p style={{ color: 'var(--warm-grey)' }}>Spendable now:</p>
+                <p style={{ fontWeight: 600, color: 'var(--off-white)' }}>{pendingImpact.currentSpendable} XLM</p>
+              </div>
+              <div style={{ gridColumn: '1 / -1', borderTop: '1px solid rgba(246,247,248,0.1)', paddingTop: '0.5rem' }}>
+                <p style={{ color: 'var(--warm-grey)' }}>Spendable balance after enabling:</p>
+                <p style={{ fontWeight: 600, color: pendingImpact.canAfford ? 'var(--teal)' : '#e5484d' }}>
+                  {pendingImpact.projectedSpendable} XLM {!pendingImpact.canAfford ? '(Insufficient balance)' : ''}
+                </p>
+              </div>
+            </div>
+
+            {!pendingImpact.canAfford && (
+              <p style={{ color: '#e5484d', fontSize: '0.8125rem', marginBottom: '0.75rem' }}>
+                You do not have enough spendable XLM to fund the {TRUSTLINE_RESERVE_COST_XLM} XLM reserve plus the network fee. Top up your wallet with XLM first.
+              </p>
+            )}
+
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => void submitChangeTrust(pendingAsset.code, pendingAsset.issuer, false)}
+                disabled={busy || !pendingImpact.canAfford}
+                style={primaryButtonStyle(busy || !pendingImpact.canAfford)}
+              >
+                {busy ? 'Enabling…' : `Confirm & Enable (locks ${TRUSTLINE_RESERVE_COST_XLM} XLM)`}
+              </button>
+              <button
+                onClick={() => setPendingAsset(null)}
+                disabled={busy}
+                style={removeButtonStyle(busy)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Featured USDY enable card. Mainnet only — USDY's issuer does not
@@ -348,9 +467,13 @@ export default function AssetsPage() {
               <RegisteredAssetMark code="USDY" meta={issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]} />
               <div style={{ minWidth: 0 }}>
                 <h2 style={{ ...sectionHeadingStyle, color: 'var(--gold)' }}>Featured Asset: USDY (Ondo US Dollar Yield)</h2>
-                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-                  Ondo&apos;s US Treasuries-backed, yield-bearing token. Adding a USDY trustline requires locking <strong>0.5 XLM</strong> of refundable reserve upfront.
+                <p style={{ color: 'rgba(246,247,248,0.7)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                  Ondo&apos;s US Treasuries-backed, yield-bearing token.
                 </p>
+                <div style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', marginBottom: '0.75rem', lineHeight: 1.5 }}>
+                  <p>• Reserve cost: <strong>{TRUSTLINE_RESERVE_COST_XLM} XLM</strong> (locked, returned when removed)</p>
+                  <p>• Spendable now: <strong>{spendableXlm} XLM</strong> &rarr; After enabling: <strong>{usdyImpact.projectedSpendable} XLM</strong></p>
+                </div>
                 {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`]?.description ? (
                   <p style={{ ...clampedNoteStyle, marginBottom: '0.75rem' }}>
                     {issuerMeta[`USDY:${USDY_MAINNET_ISSUER}`].description}
@@ -359,11 +482,11 @@ export default function AssetsPage() {
               </div>
             </div>
             <button
-              onClick={() => void submitChangeTrust('USDY', USDY_MAINNET_ISSUER, false)}
-              disabled={busy}
-              style={primaryButtonStyle(busy)}
+              onClick={() => setPendingAsset({ code: 'USDY', issuer: USDY_MAINNET_ISSUER })}
+              disabled={busy || !usdyImpact.canAfford}
+              style={primaryButtonStyle(busy || !usdyImpact.canAfford)}
             >
-              {busy ? 'Enabling USDY…' : 'Enable USDY (0.5 XLM reserve)'}
+              {busy ? 'Enabling USDY…' : !usdyImpact.canAfford ? `Insufficient XLM (needs ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve plus fee)` : `Enable USDY (${TRUSTLINE_RESERVE_COST_XLM} XLM reserve)`}
             </button>
           </section>
         )}
@@ -384,6 +507,9 @@ export default function AssetsPage() {
               const registered = isRegisteredIssuer(line.code, line.issuer) && getRegisteredAsset(line.code)?.code === line.code
                 ? getRegisteredAsset(line.code)
                 : null
+              const canRemove = canRemoveTrustline(line)
+              const refusalReason = getRemovalRefusalReason(line)
+
               return (
                 <div key={`${line.code}-${line.issuer}`} className="card" style={trustlineRowStyle}>
                   <div style={{ display: 'flex', gap: '0.75rem', minWidth: 0, alignItems: 'center' }}>
@@ -426,6 +552,14 @@ export default function AssetsPage() {
                             </div>
                           ) : null;
                         })()
+                      <p style={{ ...mutedTextStyle, color: 'var(--gold)', marginTop: '0.25rem' }}>
+                        Locked reserve: {TRUSTLINE_RESERVE_COST_XLM} XLM (returns to spendable balance upon removal)
+                      </p>
+                      {refusalReason && (
+                        <p style={{ fontSize: '0.75rem', color: '#e5484d', marginTop: '0.25rem' }}>
+                          {refusalReason}
+                        </p>
+                      )}
                       {rowDisclosure && (
                         <p style={{ ...mutedTextStyle, fontSize: '0.75rem', marginTop: '0.25rem', color: 'rgba(246,247,248,0.6)' }}>
                           {rowDisclosure}
@@ -435,11 +569,11 @@ export default function AssetsPage() {
                   </div>
                   <button
                     onClick={() => void submitChangeTrust(line.code, line.issuer, true)}
-                    disabled={busy || !canRemoveTrustline(line)}
-                    title={canRemoveTrustline(line) ? 'Remove trustline' : 'Balance must be zero to remove'}
-                    style={removeButtonStyle(busy || !canRemoveTrustline(line))}
+                    disabled={busy || !canRemove}
+                    title={canRemove ? `Remove trustline and reclaim ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve` : refusalReason || 'Balance must be zero to remove'}
+                    style={removeButtonStyle(busy || !canRemove)}
                   >
-                    Remove
+                    {canRemove ? `Remove (reclaim ${TRUSTLINE_RESERVE_COST_XLM} XLM)` : 'Remove'}
                   </button>
                 </div>
               )
@@ -482,7 +616,7 @@ export default function AssetsPage() {
                   )}
                 </div>
                 <button
-                  onClick={() => void submitChangeTrust(asset.code, asset.issuer, false)}
+                  onClick={() => setPendingAsset({ code: asset.code, issuer: asset.issuer })}
                   disabled={busy || already}
                   style={primaryButtonStyle(busy || already)}
                 >

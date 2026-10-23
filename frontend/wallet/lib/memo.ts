@@ -3,6 +3,10 @@
  *
  * `Memo.text()` on Stellar is capped at exactly 28 bytes UTF-8 (not UTF-16 code units / characters).
  * Multi-byte Unicode characters (e.g. accented letters, Cyrillic, CJK, emojis) consume 2-4 bytes each.
+ *
+ * This 28-byte cap applies to text memos only — a MEMO_HASH is 64 hex characters and isn't
+ * covered here. CSV-driven flows (e.g. bulk payout) can't currently express a memo type per
+ * row, so treating every memo as text is correct for them today.
  */
 
 export const MAX_MEMO_TEXT_BYTES = 28

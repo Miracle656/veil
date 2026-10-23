@@ -27,7 +27,9 @@ tags:
 # already reverted to "Copy".
 - tapOn:
     id: "receive-copy"
-- assertVisible: "Copied"
+- extendedWaitUntil:
+    visible: "Copied"
+    timeout: 5000
 
 # Share opens the system sheet, which is OS UI outside the app. Asserting the
 # tile exists and is tappable is as far as a flow can go without depending on

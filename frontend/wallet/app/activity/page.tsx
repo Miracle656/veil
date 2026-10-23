@@ -17,6 +17,7 @@ import { useState } from 'react'
 import { PageHeader } from '@/components/ui/primitives'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useActivityFeed } from '@/lib/activityFeed'
+import { useReverseName } from '@/hooks/useReverseName'
 
 type Filter = 'all' | 'sent' | 'received' | 'swapped'
 
@@ -33,6 +34,43 @@ function label(tx: TxRecord): string {
 
 function short(value: string): string {
   return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-6)}` : value
+}
+
+function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
+  const { name } = useReverseName(tx.counterparty)
+  const displayParty = name ?? short(tx.counterparty)
+
+  return (
+    <button
+      type="button"
+      className="vw-listrow"
+      onClick={onSelect}
+    >
+      <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+        <span style={{ fontSize: '14px', fontWeight: 500 }}>{label(tx)}</span>
+        <span className="vw-meta">{displayParty}</span>
+      </span>
+      <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', flexShrink: 0 }}>
+        {tx.type === 'swapped' ? (
+          <>
+            <span className="font-mono" style={{ fontSize: '14px' }}>
+              -{tx.amount} {tx.asset}
+            </span>
+            <span className="font-mono" style={{ fontSize: '13px', color: 'var(--teal)' }}>
+              +{tx.destAmount} {tx.destAsset}
+            </span>
+          </>
+        ) : (
+          <span
+            className="font-mono"
+            style={{ fontSize: '14px', color: tx.type === 'received' ? 'var(--teal)' : 'var(--off-white)' }}
+          >
+            {tx.type === 'sent' ? '-' : '+'}{tx.amount} {tx.asset}
+          </span>
+        )}
+      </span>
+    </button>
+  )
 }
 
 export default function ActivityPage() {
@@ -69,36 +107,11 @@ export default function ActivityPage() {
           </p>
         ) : (
           rows.map((tx) => (
-            <button
+            <ActivityRow
               key={tx.id}
-              type="button"
-              className="vw-listrow"
-              onClick={() => setSelected(tx)}
-            >
-              <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                <span style={{ fontSize: '14px', fontWeight: 500 }}>{label(tx)}</span>
-                <span className="vw-meta">{short(tx.counterparty)}</span>
-              </span>
-              <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', flexShrink: 0 }}>
-                {tx.type === 'swapped' ? (
-                  <>
-                    <span className="font-mono" style={{ fontSize: '14px' }}>
-                      -{tx.amount} {tx.asset}
-                    </span>
-                    <span className="font-mono" style={{ fontSize: '13px', color: 'var(--teal)' }}>
-                      +{tx.destAmount} {tx.destAsset}
-                    </span>
-                  </>
-                ) : (
-                  <span
-                    className="font-mono"
-                    style={{ fontSize: '14px', color: tx.type === 'received' ? 'var(--teal)' : 'var(--off-white)' }}
-                  >
-                    {tx.type === 'sent' ? '-' : '+'}{tx.amount} {tx.asset}
-                  </span>
-                )}
-              </span>
-            </button>
+              tx={tx}
+              onSelect={() => setSelected(tx)}
+            />
           ))
         )}
       </div>

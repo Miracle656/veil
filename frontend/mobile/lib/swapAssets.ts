@@ -28,8 +28,15 @@ export interface SwapAsset {
   issuer: string | null;
 }
 
-/** Issued assets the receive side offers, when registered on the network. */
-export const SWAP_DEST_CODES = ['USDC', 'USDT0'] as const;
+/**
+ * Issued assets the receive side offers, when registered on the network.
+ *
+ * USDY is Ondo's yield-bearing dollar (#732). Its issuer comes from
+ * `ASSET_REGISTRY` like every other code here — it is registered mainnet-only,
+ * so `swapDestinations` drops it on testnet, where the issuer account does not
+ * exist and a trustline would fail with op_no_issuer.
+ */
+export const SWAP_DEST_CODES = ['USDC', 'USDT0', 'USDY'] as const;
 
 export const NATIVE: SwapAsset = { code: 'XLM', issuer: null };
 

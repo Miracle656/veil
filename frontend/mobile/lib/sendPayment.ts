@@ -17,10 +17,8 @@
 import { rejectionFromResult } from './networkErrors';
 import {
   Asset,
-  BASE_FEE,
   Contract,
   Horizon,
-  Memo,
   Operation,
   StrKey,
   TransactionBuilder,
@@ -32,6 +30,7 @@ import {
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
 import { horizonErrorMessage } from './horizonError';
+import { buildStellarMemo, validateMemo } from './sep7';
 import { validateMemoText, MAX_MEMO_TEXT_BYTES, MEMO_EXCEEDS_LIMIT_MESSAGE } from './memo';
 import { assertFeePayerCanCoverFee } from './feePayerCheck';
 
@@ -84,8 +83,8 @@ export function toStroops(amount: string): bigint {
   return BigInt(Math.round(parseFloat(amount) * STROOPS_PER_XLM));
 }
 
-/** Validates a recipient + amount + optional memo. Returns an empty object when all are valid. */
-export function validateSend(recipient: string, amount: string, memo?: string): SendValidation {
+/** Validates a recipient + amount + optional memo and memoType. Returns an empty object when all are valid. */
+export function validateSend(recipient: string, amount: string, memo?: string, memoType?: string): SendValidation {
   const errors: SendValidation = {};
 
   const to = recipient.trim();
@@ -98,8 +97,8 @@ export function validateSend(recipient: string, amount: string, memo?: string): 
     errors.amount = 'Enter an amount greater than zero.';
   }
 
-  if (memo) {
-    const memoErr = validateMemoText(memo);
+  if (memo && memo.trim()) {
+    const memoErr = memoType ? validateMemo(memo, memoType) : validateMemoText(memo);
     if (memoErr) {
       errors.memo = memoErr;
     }
@@ -152,8 +151,22 @@ export async function sendPayment(
   signer: WalletSigner,
   memo?: string,
   asset?: { code: string; issuer: string | null },
+  memoType?: string,
+  /**
+   * A Veil fee, paid in the same transaction as the payment it belongs to.
+   *
+   * Classic operations only, which is the whole reason this lives here and
+   * not on the smart-wallet path: a Stellar transaction may hold at most one
+   * Soroban operation, so a SAC transfer out of the `C…` address has no room
+   * for a second op. A classic transaction may carry a hundred.
+   *
+   * Atomic by construction — one signature, both operations settle or
+   * neither does. There is no state where the user has paid us and not the
+   * person they were paying.
+   */
+  platformFee?: { amount: string; assetCode: string; assetIssuer: string | null; destination: string },
 ): Promise<SendResult> {
-  const errors = validateSend(recipient, amount, memo);
+  const errors = validateSend(recipient, amount, memo, memoType);
   if (errors.recipient) throw new Error(errors.recipient);
   if (errors.amount) throw new Error(errors.amount);
   if (errors.memo) throw new Error(errors.memo);
@@ -202,9 +215,26 @@ export async function sendPayment(
           : Operation.createAccount({ destination: to, startingBalance: amount.trim() }),
       )
       .setTimeout(30);
-    // Classic memos: attach text if present (length validated above).
+    // Appended, never prepended: if the operations are applied in order and
+    // something is short, the payment the user actually asked for is the one
+    // that goes through first.
+    if (platformFee) {
+      builder.addOperation(
+        Operation.payment({
+          destination: platformFee.destination,
+          // Native has no issuer, and `new Asset('XLM', undefined)` is not it.
+          asset: platformFee.assetIssuer
+            ? new Asset(platformFee.assetCode, platformFee.assetIssuer)
+            : Asset.native(),
+          amount: platformFee.amount,
+        }),
+      );
+    }
     if (memoText) {
-      builder.addMemo(Memo.text(memoText));
+      const stellarMemo = buildStellarMemo(memoText, memoType);
+      if (stellarMemo) {
+        builder.addMemo(stellarMemo);
+      }
     }
     const tx = builder.build();
     signer.sign(tx);

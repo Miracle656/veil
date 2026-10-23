@@ -6,6 +6,7 @@ import { deployWalletIfNeeded, type DeployFn } from './deployWallet';
 import { planDeposit } from './depositPlan';
 import { getNetwork } from './network';
 import { requirePasskey } from './passkey';
+import { fetchPlatformFee, type PlatformFee } from './platformFee';
 import { sendPayment } from './sendPayment';
 import { requireSigner } from './signer';
 import { getWalletAddress } from './walletStore';
@@ -62,6 +63,49 @@ async function spendingAssetBalance(
   ).find((b) => b.asset_code === asset.code && b.asset_issuer === asset.issuer);
   if (!line) return null;
   return Math.max(0, Number(line.balance) - Number(line.selling_liabilities ?? '0'));
+}
+
+/**
+ * What `spendAsset` would charge for this payment, without sending anything.
+ *
+ * Exists so a screen can show the fee before the passkey prompt. A charge the
+ * user only discovers in their transaction history is not a fee, it is a
+ * surprise — and the amount shown has to be the amount taken, so the decision
+ * is made the same way in both places.
+ *
+ * Read-only, and it mirrors the branch below: the smart wallet pays no fee
+ * because a Soroban transaction has no room for a second operation, so only a
+ * payment from the spending account can carry one. If that branch changes,
+ * this has to change with it — hence the comment on both.
+ */
+export async function previewSpendFee(params: {
+  amount: string;
+  asset?: { code: string; issuer: string };
+}): Promise<PlatformFee | null> {
+  const { amount, asset } = params;
+  const amountNumber = Number(amount);
+  if (!Number.isFinite(amountNumber) || amountNumber <= 0) return null;
+
+  const feePayer = await getFeePayerAddress().catch(() => null);
+  if (!feePayer) return null;
+
+  const stored = await getWalletAddress().catch(() => null);
+  const contract = stored?.startsWith('C') ? stored : null;
+  const inWallet = contract ? await fetchContractAssetBalance(contract, asset).catch(() => 0) : 0;
+
+  // The free path: the smart wallet can cover it alone.
+  if (contract && inWallet > 0 && amountNumber <= inWallet) return null;
+
+  const fee = await fetchPlatformFee(asset?.code ?? 'XLM', amountNumber);
+  if (!fee) return null;
+
+  const inSpending = asset
+    ? await spendingAssetBalance(feePayer, asset).catch(() => null)
+    : (await getFeePayerXlm().catch(() => null))?.spendable ?? null;
+
+  // Not shown when it will not be charged.
+  if ((inSpending ?? 0) < amountNumber + Number(fee.amount)) return null;
+  return fee;
 }
 
 export async function spendAsset(params: {
@@ -159,6 +203,38 @@ export async function spendAsset(params: {
   // above has just asked for it.
   if (!passkeyShown) await requirePasskey();
   const signer = await requireSigner();
-  const result = await sendPayment(to, amount, signer, undefined, asset);
+
+  // The fee rides only on this path, and that is a product decision as much
+  // as a technical one.
+  //
+  // Technically: a transaction may hold at most one Soroban operation, so a
+  // SAC transfer out of the smart wallet above has no room for a second op,
+  // and charging there would mean a separate transaction — a second passkey
+  // prompt, and a window where one settles and the other does not.
+  //
+  // So spending from the smart wallet is free, and spending from the
+  // spending account carries the fee. Since `spendAsset` prefers the wallet
+  // whenever it can cover the amount, free is the ordinary case.
+  //
+  // Null whenever anything is wrong — unset, unreachable, malformed. A fee is
+  // a payment the user did not ask for, and no fee is always a better answer
+  // than a blocked transaction or a guessed amount.
+  // Denominated in whatever is being sent, so affording the payment means
+  // affording the fee: no second balance, no extra trustline, and no way for
+  // a missing fee asset to take the real payment down with it.
+  const fee = await fetchPlatformFee(code, amountNumber);
+  const feeAffordable = fee ? (inSpending ?? 0) >= amountNumber + Number(fee.amount) : false;
+
+  const result = await sendPayment(
+    to,
+    amount,
+    signer,
+    undefined,
+    asset,
+    undefined,
+    // Not charged when the balance would not cover both. Losing the thing
+    // they came to do, in order to collect ten cents, is a bad trade.
+    feeAffordable && fee ? fee : undefined,
+  );
   return result.hash;
 }

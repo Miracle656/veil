@@ -41,7 +41,15 @@ export type WalletConnectRequest = {
 };
 
 /** Methods this wallet advertises to dApps during session negotiation. */
-export const WALLET_CONNECT_METHODS = ['stellar_signXDR', 'stellar_signAndSubmitXDR'];
+export const WALLET_CONNECT_METHODS = [
+  'stellar_signXDR',
+  'stellar_signAndSubmitXDR',
+  'stellar_signAuthEntry',
+  'stellar_signMessage',
+  'stellar_getAccount',
+  'stellar_getAddress',
+  'stellar_getNetwork',
+];
 
 export const WALLET_CONNECT_EVENTS = ['accountsChanged', 'chainChanged'];
 
@@ -153,17 +161,55 @@ export function buildWcError(id: number, code: number, message: string) {
 }
 
 /**
+ * Words only a person's own decision produces. Read as a whole phrase on
+ * purpose: bare "cancel", "timeout", "timed out" and "dismiss" also belong to
+ * aborted requests and Horizon timeouts ("timeout of 30000ms exceeded"), and
+ * calling one of those a user rejection told a dApp the user declined when the
+ * network had failed.
+ */
+const USER_DECISION_MARKERS = [
+  'user_rejected',
+  'user rejected',
+  'usercancelled',
+  'usercanceled',
+  'user_cancelled',
+  'user_canceled',
+  'user cancelled',
+  'user canceled',
+  'cancelled by the user',
+  'canceled by the user',
+] as const;
+
+/** The WebAuthn DOMException names that mean the user closed the prompt. */
+const CANCELLATION_ERROR_NAMES = ['notallowederror', 'aborterror'] as const;
+
+/**
  * Whether a thrown error means the user declined rather than something
  * genuinely failing — those two cases get different JSON-RPC error codes.
+ *
+ * A cancellation is only recognised by name (`NotAllowedError` / `AbortError`,
+ * or the `USER_REJECTED` code WalletConnect itself raises) or by an explicit
+ * "the user cancelled" phrase. Never by the words "timeout" or "dismiss"
+ * alone: see lib/passkeyOutcome.ts, which spend screens use instead.
  */
 export function isUserRejection(error: unknown): boolean {
   // errorMessage, not String(error): native modules reject with plain objects,
   // and String({}) is "[object Object]" — which matches none of the markers
   // below, so a deliberate cancellation was reported to the user as a failure.
   const message = errorMessage(error);
-  return (
-    message.includes('USER_REJECTED') ||
-    message.includes('NotAllowedError') ||
-    message.toLowerCase().includes('cancel')
-  );
+  if (message.includes('USER_REJECTED')) return true;
+
+  const name =
+    typeof error === 'object' && error !== null && typeof (error as { name?: unknown }).name === 'string'
+      ? (error as { name: string }).name.trim().toLowerCase()
+      : '';
+  if (CANCELLATION_ERROR_NAMES.some((candidate) => name === candidate)) return true;
+
+  // Native modules prefix the DOMException name to their message.
+  const lower = message.trim().toLowerCase();
+  if (CANCELLATION_ERROR_NAMES.some((candidate) => lower === candidate || lower.startsWith(`${candidate}:`))) {
+    return true;
+  }
+
+  return USER_DECISION_MARKERS.some((marker) => lower.includes(marker));
 }

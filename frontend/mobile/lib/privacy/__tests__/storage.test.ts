@@ -31,6 +31,7 @@ describe('SPP State Storage', () => {
       execAsync: jest.fn().mockResolvedValue(undefined),
       runAsync: jest.fn().mockResolvedValue({ lastInsertRowid: 1 }),
       allAsync: jest.fn().mockResolvedValue([]),
+      getAllAsync: jest.fn().mockResolvedValue([]),
       getFirstAsync: jest.fn().mockResolvedValue(null),
       closeAsync: jest.fn().mockResolvedValue(undefined),
     };
@@ -41,6 +42,12 @@ describe('SPP State Storage', () => {
   afterEach(() => {
     // Reset module state
     jest.resetModules();
+  afterEach(async () => {
+    // storage.ts caches the open SQLCipher handle at module scope. Neither
+    // clearAllMocks nor resetModules reaches it (the `storage` import is already
+    // bound), so without an explicit close the first test to open the database
+    // leaves it cached and every later test sees zero driver calls.
+    await storage.closeSppDatabase();
   });
 
   describe('Encryption Key Management', () => {
@@ -95,6 +102,53 @@ describe('SPP State Storage', () => {
         expect.stringContaining("PRAGMA key = \"x'"),
       );
       expect(mockDb.execAsync).toHaveBeenCalledWith('PRAGMA integrity_check');
+      // Should set the PRAGMA key and verify the key actually decrypts the file
+      expect(mockDb.execAsync).toHaveBeenCalledWith(
+        expect.stringContaining("PRAGMA key = \"x'"),
+      );
+      expect(mockDb.getFirstAsync).toHaveBeenCalledWith(
+        'SELECT count(*) AS count FROM sqlite_master',
+      );
+    });
+
+    it('refuses to hand back a database the stored key cannot decrypt', async () => {
+      (secureStore.getSecureItem as jest.Mock).mockResolvedValue('0'.repeat(64));
+      mockDb.getFirstAsync.mockRejectedValueOnce(new Error('file is not a database'));
+
+      await expect(storage.getSppDatabase(mockWalletAddress)).rejects.toThrow(
+        /could not be decrypted/,
+      );
+    });
+
+    it('does not leak the encryption key when the key pragma fails', async () => {
+      const secret = 'a'.repeat(64);
+      (secureStore.getSecureItem as jest.Mock).mockResolvedValue(secret);
+      // The driver echoes the offending SQL, which contains the raw key.
+      mockDb.execAsync.mockRejectedValueOnce(
+        new Error(`near "PRAGMA key = \"x'${secret}'\"": syntax error`),
+      );
+
+      const error = await storage.getSppDatabase(mockWalletAddress).then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+
+      expect(error?.message).toMatch(/failed to apply the database encryption key/);
+      // The raw key must not survive into the message we raise in its place.
+      expect(error?.message).not.toContain(secret);
+    });
+
+    it('re-opens for a different wallet instead of reusing the cached handle', async () => {
+      (secureStore.getSecureItem as jest.Mock).mockResolvedValue('0'.repeat(64));
+      const otherWallet = 'CBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+
+      await storage.getSppDatabase(mockWalletAddress);
+      await storage.getSppDatabase(otherWallet);
+
+      // Each wallet has its own SQLCipher key, so one wallet must never be
+      // served the other wallet's open connection.
+      expect(mockDb.closeAsync).toHaveBeenCalled();
+      expect(SQLite.openDatabaseAsync).toHaveBeenCalledTimes(2);
     });
 
     it('creates schema on first open', async () => {
@@ -178,6 +232,11 @@ describe('SPP State Storage', () => {
       const notes = await storage.getUnspentNotes(mockWalletAddress, 'pool_123');
 
       expect(mockDb.allAsync).toHaveBeenCalledWith(
+      mockDb.getAllAsync.mockResolvedValue(mockNotes);
+
+      const notes = await storage.getUnspentNotes(mockWalletAddress, 'pool_123');
+
+      expect(mockDb.getAllAsync).toHaveBeenCalledWith(
         expect.stringContaining('SELECT commitment, secret, public_key'),
         'pool_123',
       );
@@ -274,6 +333,7 @@ describe('SPP State Storage', () => {
       ];
 
       mockDb.allAsync.mockResolvedValue(mockStates);
+      mockDb.getAllAsync.mockResolvedValue(mockStates);
 
       const states = await storage.getAllSyncStates(mockWalletAddress);
 
@@ -330,6 +390,7 @@ describe('SPP State Storage', () => {
       ];
 
       mockDb.allAsync.mockResolvedValue(mockNullifiers);
+      mockDb.getAllAsync.mockResolvedValue(mockNullifiers);
 
       const nullifiers = await storage.getAllNullifiers(mockWalletAddress);
 
@@ -371,6 +432,7 @@ describe('SPP State Storage', () => {
       ];
 
       mockDb.allAsync.mockResolvedValue(mockEvents);
+      mockDb.getAllAsync.mockResolvedValue(mockEvents);
 
       const events = await storage.getCachedPoolEvents(
         mockWalletAddress,
@@ -380,6 +442,7 @@ describe('SPP State Storage', () => {
       );
 
       expect(mockDb.allAsync).toHaveBeenCalledWith(
+      expect(mockDb.getAllAsync).toHaveBeenCalledWith(
         expect.stringContaining('SELECT ledger_height, event_data FROM event_cache'),
         'pool_123',
         1000,
@@ -416,6 +479,7 @@ describe('SPP State Storage', () => {
 
     it('clears SPP database on wallet removal', async () => {
       (secureStore.deleteSecureItem as jest.Mock).mockResolvedValue(undefined);
+      await storage.getSppDatabase(mockWalletAddress);
 
       await storage.clearSppDatabase(mockWalletAddress);
 
@@ -423,6 +487,9 @@ describe('SPP State Storage', () => {
         `veil_spp_db_key_${mockWalletAddress}`,
       );
       expect(mockDb.closeAsync).toHaveBeenCalled();
+      // The file has to go too: the key alone leaves the removed wallet's notes
+      // on disk, and the next wallet's fresh key could never open them.
+      expect(SQLite.deleteDatabaseAsync).toHaveBeenCalledWith('veil_spp_state.db');
     });
 
     it('handles errors during database cleanup gracefully', async () => {
@@ -483,6 +550,9 @@ describe('SPP State Storage', () => {
       expect(schemaSql).toContain('CREATE TABLE IF NOT EXISTS sync_state');
       expect(schemaSql).toContain('CREATE TABLE IF NOT EXISTS nullifiers');
       expect(schemaSql).toContain('CREATE TABLE IF NOT EXISTS event_cache');
+      // i128 amounts are held as decimal strings; an integer column would be
+      // 64-bit and silently coerce anything larger to a lossy REAL.
+      expect(schemaSql).toContain('amount TEXT NOT NULL');
     });
 
     it('creates required indexes', async () => {
@@ -546,6 +616,21 @@ describe('SPP State Storage', () => {
         expect.anything(),
         expect.anything(),
         expect.anything(),
+      // Bound as the exact decimal string, into a TEXT column: an INTEGER
+      // column would not hold this (it is above i64) and SQLite would coerce it
+      // to a lossy REAL.
+      expect(mockDb.runAsync).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT OR REPLACE INTO notes'),
+        'commitment_hash',
+        note.secret,
+        note.publicKey,
+        'pool_123',
+        'token_abc',
+        '18446744073709551615',
+        null, // no encryptedMetadata
+        0, // not spent
+        expect.any(Number),
+        expect.any(Number),
       );
     });
   });

@@ -1,4 +1,4 @@
-import type { Memo } from '@stellar/stellar-sdk'
+import { Memo } from '@stellar/stellar-sdk'
 
 export type Sep7MemoType = 'MEMO_TEXT' | 'MEMO_ID' | 'MEMO_HASH' | 'MEMO_RETURN'
 
@@ -8,23 +8,7 @@ export type Sep7Parsed = {
   assetCode?: string
   assetIssuer?: string
   memo?: string
-  memoType?: Sep7MemoType
-}
-
-let cachedMemoClass: typeof Memo | null = null
-function getMemoClass(): typeof Memo {
-  if (!cachedMemoClass) {
-    if (typeof globalThis !== 'undefined' && typeof (globalThis as any).TextEncoder === 'undefined') {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const { TextEncoder: TE, TextDecoder: TD } = require('util')
-        Object.assign(globalThis, { TextEncoder: TE, TextDecoder: TD })
-      } catch {}
-    }
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    cachedMemoClass = require('@stellar/stellar-sdk').Memo
-  }
-  return cachedMemoClass!
+  memoType?: Sep7MemoType | string
 }
 
 function to32ByteHex(value: string): string | null {
@@ -47,9 +31,8 @@ function to32ByteHex(value: string): string | null {
  * If memoType is unknown or malformed, refuses with an error naming the unknown type.
  */
 export function buildSep7Memo(memo: string, memoType?: string | null): Memo {
-  const MemoClass = getMemoClass()
   if (!memoType || memoType.toUpperCase() === 'MEMO_TEXT' || memoType.toLowerCase() === 'text') {
-    return MemoClass.text(memo)
+    return Memo.text(memo)
   }
 
   const normalized = memoType.toUpperCase()
@@ -60,7 +43,7 @@ export function buildSep7Memo(memo: string, memoType?: string | null): Memo {
       if (!/^\d+$/.test(trimmed)) {
         throw new Error(`Invalid MEMO_ID: "${memo}" must be an unsigned integer`)
       }
-      return MemoClass.id(trimmed)
+      return Memo.id(trimmed)
     }
     case 'MEMO_HASH':
     case 'HASH': {
@@ -68,7 +51,7 @@ export function buildSep7Memo(memo: string, memoType?: string | null): Memo {
       if (!hex) {
         throw new Error(`Invalid MEMO_HASH: "${memo}" must be 32 bytes (hex or base64)`)
       }
-      return MemoClass.hash(hex)
+      return Memo.hash(hex)
     }
     case 'MEMO_RETURN':
     case 'RETURN': {
@@ -76,18 +59,10 @@ export function buildSep7Memo(memo: string, memoType?: string | null): Memo {
       if (!hex) {
         throw new Error(`Invalid MEMO_RETURN: "${memo}" must be 32 bytes (hex or base64)`)
       }
-      return MemoClass.return(hex)
+      return Memo.return(hex)
     }
     default:
       throw new Error(`Unknown memo_type: "${memoType}"`)
-  }
-}
-
-function decodeComponentSafe(v: string): string {
-  try {
-    return decodeURIComponent(v.replace(/\+/g, ' '))
-  } catch {
-    return v
   }
 }
 
@@ -150,6 +125,7 @@ export function parseSep7Uri(input: string): Sep7Parsed | null {
     buildSep7Memo(memo, memoType)
   }
 
+
   const assetCode = toMaybeString(params.get('asset_code'))
   const assetIssuer = toMaybeString(params.get('asset_issuer'))
 
@@ -198,5 +174,85 @@ export function buildSep7PayUri(opts: {
   if (opts.memoType) params.set('memo_type', opts.memoType)
 
   return `web+stellar:pay?${params.toString()}`
+}
+
+/**
+ * Safely parse and build a Stellar SDK Memo instance from a memo value and optional memo type.
+ *
+ * Supports standard SEP-7 memo types:
+ * - 'text' / 'MEMO_TEXT' (default): UTF-8 text up to 28 bytes.
+ * - 'id' / 'MEMO_ID': Unsigned 64-bit integer string.
+ * - 'hash' / 'MEMO_HASH': 32-byte hash (64 hex characters or base64 encoded).
+ * - 'return' / 'MEMO_RETURN': 32-byte hash (64 hex characters or base64 encoded).
+ *
+ * Throws an explicit, user-readable Error if the memo value or type is invalid or unsupported.
+ */
+export function buildStellarMemo(memo: string, memoType?: string | null): Memo | null {
+  const trimmed = memo.trim()
+  if (!trimmed) return null
+
+  const rawType = (memoType || 'text').trim()
+  const lower = rawType.toLowerCase()
+  const normalized = lower.startsWith('memo_') ? lower.slice(5) : lower
+
+  switch (normalized) {
+    case 'text': {
+      const bytes = new TextEncoder().encode(trimmed)
+      if (bytes.length > 28) {
+        throw new Error(`Text memo exceeds 28 bytes limit (${bytes.length} bytes).`)
+      }
+      return Memo.text(trimmed)
+    }
+    case 'id': {
+      if (!/^\d+$/.test(trimmed)) {
+        throw new Error('ID memo must be an unsigned 64-bit integer.')
+      }
+      let val: bigint
+      try {
+        val = BigInt(trimmed)
+      } catch {
+        throw new Error('ID memo must be an unsigned 64-bit integer.')
+      }
+      if (val < 0n || val > 18446744073709551615n) {
+        throw new Error('ID memo exceeds 64-bit unsigned integer range.')
+      }
+      return Memo.id(trimmed)
+    }
+    case 'hash':
+    case 'return': {
+      let buf: Buffer
+      if (/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+        buf = Buffer.from(trimmed, 'hex')
+      } else {
+        try {
+          const normalizedB64 = trimmed.replace(/-/g, '+').replace(/_/g, '/')
+          const padded = normalizedB64 + '='.repeat((4 - (normalizedB64.length % 4)) % 4)
+          buf = Buffer.from(padded, 'base64')
+        } catch {
+          throw new Error(`${normalized.toUpperCase()} memo must be a valid 32-byte hash (hex or base64).`)
+        }
+      }
+      if (buf.length !== 32) {
+        throw new Error(`${normalized.toUpperCase()} memo must decode to 32 bytes (got ${buf.length}).`)
+      }
+      const hex = buf.toString('hex')
+      return normalized === 'hash' ? Memo.hash(hex) : Memo.return(hex)
+    }
+    default:
+      throw new Error(`Unsupported memo type: "${memoType}".`)
+  }
+}
+
+/**
+ * Validate a memo without throwing, returning a human-readable error or null if valid.
+ */
+export function validateMemo(memo: string, memoType?: string | null): string | null {
+  if (!memo || !memo.trim()) return null
+  try {
+    buildStellarMemo(memo, memoType)
+    return null
+  } catch (err: unknown) {
+    return err instanceof Error ? err.message : String(err)
+  }
 }
 

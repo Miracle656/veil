@@ -256,6 +256,41 @@ export async function submitSep8Transaction(options: Sep8SubmitOptions): Promise
  * @param originalXdr - Base64-encoded original transaction XDR (user-created).
  * @param revisedXdr - Base64-encoded revised transaction XDR (from approval server).
  * @returns true if revision appears safe to sign, false if changes look suspicious.
+ * SEP-8 lets an approval server **add** operations around the user's — the
+ * normal revision sandwiches a payment between `setTrustLineFlags` calls that
+ * authorize the destination and then revoke it again. What it may never do is
+ * alter what the user actually asked for.
+ *
+ * So the rule enforced here is: **every original operation must still be
+ * present, in the same relative order, byte for byte.** Added operations may
+ * appear anywhere — before, between or after. That allows the sandwich and
+ * refuses everything else.
+ *
+ * Comparing the serialised operation rather than its type is the whole point.
+ * An earlier version of this function compared `body().switch()` only, which
+ * accepted a "revised" payment whose destination and amount had both been
+ * replaced, because the operation was still a payment. The fields that move
+ * money were never looked at. Byte equality covers destination, amount, asset
+ * and per-operation source together, and cannot drift as new operation types
+ * appear.
+ *
+ * Matching as a subsequence rather than index-by-index matters just as much:
+ * index alignment rejects the standard SEP-8 revision, because inserting an
+ * authorize operation at the front shifts the user's payment from index 0 to
+ * index 1.
+ *
+ * The transaction source account and the memo are also compared. The memo is
+ * not incidental — for a payment to an exchange it selects which account gets
+ * credited, so a changed memo can redirect funds without touching an operation.
+ * The fee deliberately is **not** compared: more operations legitimately cost
+ * more.
+ *
+ * Fails closed. Anything unparseable, any envelope shape not understood, any
+ * original operation that cannot be matched — all return false.
+ *
+ * @param originalXdr - Base64-encoded original transaction XDR (user-created).
+ * @param revisedXdr - Base64-encoded revised transaction XDR (from approval server).
+ * @returns true only if the revision left the user's own operations intact.
  *
  * @example
  * ```typescript
@@ -264,6 +299,8 @@ export async function submitSep8Transaction(options: Sep8SubmitOptions): Promise
  *   if (!await getUserConfirmation('Continue?')) {
  *     throw new Error('User rejected revised transaction');
  *   }
+ *   // Do not sign. The server changed something it was not entitled to change.
+ *   throw new Error('Approval server altered the transaction');
  * }
  * ```
  */
@@ -342,7 +379,63 @@ export function verifyRevisedTransaction(originalXdr: string, revisedXdr: string
     return true;
   } catch (error) {
     // If we can't parse the XDR or compare, treat as unsafe
+    if (!originalXdr || !revisedXdr) return false;
+
+    const originalTx = innerTransaction(originalXdr);
+    const revisedTx = innerTransaction(revisedXdr);
+    if (!originalTx || !revisedTx) return false;
+
+    // The account on the hook for the whole transaction must not change.
+    if (
+      originalTx.sourceAccount().toXDR('base64') !== revisedTx.sourceAccount().toXDR('base64')
+    ) {
+      return false;
+    }
+
+    // A changed memo can redirect a payment at an exchange without altering
+    // any operation, so it is part of the user's intent.
+    if (originalTx.memo().toXDR('base64') !== revisedTx.memo().toXDR('base64')) {
+      return false;
+    }
+
+    const originalOps = originalTx.operations().map((op) => op.toXDR('base64'));
+    const revisedOps = revisedTx.operations().map((op) => op.toXDR('base64'));
+
+    // A revision that drops operations is not a revision.
+    if (revisedOps.length < originalOps.length) return false;
+
+    // Order-preserving subsequence match: walk the revised operations once,
+    // consuming each original in turn.
+    let cursor = 0;
+    for (const original of originalOps) {
+      const found = revisedOps.indexOf(original, cursor);
+      if (found === -1) return false;
+      cursor = found + 1;
+    }
+
+    return true;
+  } catch {
+    // Unparseable input is not evidence of safety.
     return false;
+  }
+}
+
+/**
+ * The transaction whose operations the user is authorising, for either envelope
+ * shape. Returns null for anything else, including v0 envelopes, so an
+ * unrecognised shape is refused rather than waved through.
+ */
+function innerTransaction(envelopeXdr: string): xdr.Transaction | null {
+  const envelope = xdr.TransactionEnvelope.fromXDR(envelopeXdr, 'base64');
+  switch (envelope.switch().name) {
+    case 'envelopeTypeTx':
+      return envelope.v1().tx();
+    case 'envelopeTypeTxFeeBump': {
+      const inner = envelope.feeBump().tx().innerTx();
+      return inner.switch().name === 'envelopeTypeTx' ? inner.v1().tx() : null;
+    }
+    default:
+      return null;
   }
 }
 

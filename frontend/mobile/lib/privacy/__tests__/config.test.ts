@@ -7,6 +7,7 @@ import { getNetworkName } from '../../network';
 import {
   SPP_NETWORKS,
   getSppConfig,
+  getSppBootnodeUrl,
   isPrivacyEnabled,
   DEFAULT_ASSOCIATION_SET_POLICY,
   getAssociationSetPolicy,
@@ -64,6 +65,11 @@ describe('per-network SPP config', () => {
       publicKeyRegistry: 'CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZDDLCMNPWXIH4',
       bootnodeUrl: 'https://bootnode.dev-nethermind.xyz',
     });
+  });
+
+  it('uses Veil’s configured archive URL when supplied', () => {
+    expect(getSppBootnodeUrl('https://bootnode.veil.app/ ')).toBe('https://bootnode.veil.app/');
+    expect(getSppBootnodeUrl('')).toBe('https://bootnode.dev-nethermind.xyz');
   });
 
   it('matches the pinned deployments.json verifiers on testnet', () => {

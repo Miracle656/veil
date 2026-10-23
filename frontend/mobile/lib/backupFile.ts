@@ -32,7 +32,8 @@ import { getNetwork } from './network';
 // Wallet credential keys written by the SDK (`useInvisibleWallet`).
 const ADDRESS_KEY = 'invisible_wallet_address';
 const PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
-const SETTINGS_KEY = 'veil_wallet_settings';
+/** Non-secret wallet settings, mirrored from the web wallet. Wallet-derived: cleared on reset. */
+export const WALLET_SETTINGS_STORAGE_KEY = 'veil_wallet_settings';
 export const BACKUP_LAST_EXPORTED_KEY = 'veil_backup_last_exported_at';
 
 /** Sub-directory of the cache dir that exported envelopes are staged in. */
@@ -44,7 +45,7 @@ export const BACKUP_FILE_EXTENSION = '.veilbackup.json';
 // ── Wallet state -> metadata ─────────────────────────────────────────────────────
 
 async function readSettings(): Promise<Record<string, unknown> | undefined> {
-  const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+  const raw = await AsyncStorage.getItem(WALLET_SETTINGS_STORAGE_KEY);
   if (!raw) return undefined;
   try {
     return JSON.parse(raw) as Record<string, unknown>;
@@ -276,7 +277,7 @@ export async function persistRestoredState(metadata: WalletBackupMetadata): Prom
 
   const primary = metadata.signers[0]?.publicKey;
   if (primary) entries[PUBLIC_KEY_KEY] = primary;
-  if (metadata.settings) entries[SETTINGS_KEY] = JSON.stringify(metadata.settings);
+  if (metadata.settings) entries[WALLET_SETTINGS_STORAGE_KEY] = JSON.stringify(metadata.settings);
 
   // `multiSet` (array of [key, value] tuples) is the batch API in async-storage
   // 2.x (SDK 54); the record-shaped `setMany` only existed in 3.x.

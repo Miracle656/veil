@@ -4,6 +4,8 @@
   "description": "Root scripts — smoke tests and tooling for Veil",
   "scripts": {
     "smoke": "npx ts-node scripts/smoke_test.ts",
+    "test:usdy": "node scripts/test-usdy-explainer.mjs",
+    "test:privacy:guide": "node scripts/privacy-guide.test.mjs",
     "release-notes": "conventional-changelog -p angular -i CHANGELOG.md -s",
     "changeset": "changeset",
     "version-packages": "changeset version && node scripts/sync-package-lockfiles.mjs",
@@ -11,6 +13,9 @@
     "verify:lockfile": "node scripts/verify-root-lockfile.mjs",
     "verify:lockfiles": "node scripts/verify-all-lockfiles.mjs",
     "verify:assets": "node scripts/verify-asset-registry.mjs",
+    "verify:assets:offline": "node scripts/verify-assets-offline.mjs",
+    "verify:assets:online": "node scripts/verify-assets-online.mjs",
+    "verify:deployed": "node scripts/verify-deployed-hashes.mjs",
     "test:scripts": "node --test scripts/tests/*.test.mjs"
   },
   "dependencies": {

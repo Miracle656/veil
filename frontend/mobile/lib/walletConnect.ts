@@ -19,12 +19,17 @@ import {
 } from '@stellar/stellar-sdk';
 import { Core } from '@walletconnect/core';
 import { getSdkError } from '@walletconnect/utils';
-import { Web3Wallet, type IWeb3Wallet } from '@walletconnect/web3wallet';
+import { WalletKit, type IWalletKit } from '@reown/walletkit';
 import { Buffer } from 'buffer';
 import * as Crypto from 'expo-crypto';
 
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
+import {
+  PASSKEY_CANCELLED_MESSAGE,
+  PasskeyCeremonyError,
+  isPasskeyCancellation,
+} from './passkeyOutcome';
 import {
   WALLET_CONNECT_EVENTS,
   WALLET_CONNECT_METHODS,
@@ -37,7 +42,12 @@ import {
   parseWalletConnectRequest,
   parseWalletConnectSession,
 } from './walletConnectHelpers';
-import { getSignerSecret } from './walletStore';
+import { getSignerSecret, getWalletAddress } from './walletStore';
+import {
+  createSep43Wallet,
+  signSorobanAuthEntry,
+  type Sep43Wallet,
+} from 'invisible-wallet-sdk';
 
 export type {
   WalletConnectPeer,
@@ -69,7 +79,8 @@ import type {
  *   DOM events, so a modal that mounts after the request still sees it.
  */
 
-const SESSION_STORAGE_KEY = 'veil_walletconnect_sessions';
+/** AsyncStorage key holding negotiated WalletConnect sessions. Wallet-derived: cleared on reset. */
+export const WALLETCONNECT_SESSIONS_KEY = 'veil_walletconnect_sessions';
 
 /** Assertion produced by the device passkey over a Soroban auth-entry hash. */
 export type WebAuthnSignature = {
@@ -89,8 +100,8 @@ type SessionListener = (sessions: WalletConnectSession[]) => void;
 type ProposalListener = (proposal: WalletConnectProposal | null) => void;
 type RequestListener = (requests: WalletConnectRequest[]) => void;
 
-let _client: IWeb3Wallet | null = null;
-let _clientPromise: Promise<IWeb3Wallet> | null = null;
+let _client: IWalletKit | null = null;
+let _clientPromise: Promise<IWalletKit> | null = null;
 let _sessions: WalletConnectSession[] = [];
 let _pendingProposal: WalletConnectProposal | null = null;
 let _pendingRequests: WalletConnectRequest[] = [];
@@ -140,7 +151,7 @@ function getChainId(): string {
 
 async function loadStoredSessions(): Promise<WalletConnectSession[]> {
   try {
-    const raw = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
+    const raw = await AsyncStorage.getItem(WALLETCONNECT_SESSIONS_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? (parsed as WalletConnectSession[]) : [];
@@ -151,13 +162,13 @@ async function loadStoredSessions(): Promise<WalletConnectSession[]> {
 
 async function persistSessions(sessions: WalletConnectSession[]): Promise<void> {
   try {
-    await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions));
+    await AsyncStorage.setItem(WALLETCONNECT_SESSIONS_KEY, JSON.stringify(sessions));
   } catch (error) {
     console.warn('[walletConnect] failed to persist sessions', error);
   }
 }
 
-async function syncSessionsFromClient(client: IWeb3Wallet): Promise<void> {
+async function syncSessionsFromClient(client: IWalletKit): Promise<void> {
   const fallbackChainId = getChainId();
   _sessions = Object.values(client.getActiveSessions()).map((session) =>
     parseWalletConnectSession(session, fallbackChainId)
@@ -263,6 +274,82 @@ async function signAuthEntry(payloadHash: Uint8Array): Promise<WebAuthnSignature
 }
 
 /**
+ * Build the payload the wallet contract's `__check_auth` expects and attach the
+ * resulting credential to one authorization entry, in place.
+ *
+ * This is the *only* place that composes a passkey signature vector. The
+ * transaction path and the standalone `signAuthEntry` path both call it, because
+ * a second implementation of the preimage is how a wallet ends up with a
+ * signature that verifies on one path and not the other.
+ *
+ * Returns false when the entry carries no address credential — a caller-supplied
+ * or contract-group credential is not ours to sign.
+ */
+async function attachPasskeyCredential(
+  entry: xdr.SorobanAuthorizationEntry,
+  options: {
+    rpc: SorobanRpc.Server;
+    networkPassphrase: string;
+    networkId: Uint8Array<ArrayBuffer>;
+    validUntilLedger: number;
+    probeSource: string;
+  }
+): Promise<boolean> {
+  const { rpc, networkPassphrase, networkId, validUntilLedger, probeSource } = options;
+  const credentials = entry.credentials();
+  if (credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+    return false;
+  }
+
+  const addressCredentials = credentials.address();
+  const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
+  const currentNonce = await getWalletNonce(rpc, contractAddress, networkPassphrase, probeSource);
+
+  const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+    new xdr.HashIdPreimageSorobanAuthorization({
+      networkId: Buffer.from(networkId),
+      nonce: addressCredentials.nonce(),
+      invocation: entry.rootInvocation(),
+      signatureExpirationLedger: validUntilLedger,
+    })
+  );
+  const payloadHash = await sha256(new Uint8Array(preimage.toXDR()));
+
+  const webAuthnSig = await signAuthEntry(payloadHash);
+  if (!webAuthnSig) {
+    // The contract path signs inside the ceremony, so a dismissed sheet must
+    // still arrive as a cancellation rather than a generic rejection: the
+    // WalletConnect handler maps isPasskeyCancellation to USER_REJECTED, and
+    // the dApp bridge maps it to DappRequestRejected. A bare Error reaches
+    // neither, and the spend screen shows a failure for a user who simply
+    // changed their mind.
+    throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+  }
+
+  const sigElements = [
+    nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
+    nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
+    nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
+    nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+  ];
+  if (currentNonce !== null) {
+    sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
+  }
+
+  entry.credentials(
+    xdr.SorobanCredentials.sorobanCredentialsAddress(
+      new xdr.SorobanAddressCredentials({
+        address: addressCredentials.address(),
+        nonce: addressCredentials.nonce(),
+        signatureExpirationLedger: validUntilLedger,
+        signature: xdr.ScVal.scvVec(sigElements),
+      })
+    )
+  );
+  return true;
+}
+
+/**
  * Sign a dApp-supplied transaction with the wallet passkey and the fee payer.
  *
  * Mirrors the browser wallet: simulate in recording mode, sign each Soroban
@@ -307,55 +394,16 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   const authEntries = successSim.result?.auth;
 
   if (authEntries) {
-    const networkIdBytes = await sha256(new TextEncoder().encode(network.networkPassphrase));
+    const networkId = await sha256(new TextEncoder().encode(network.networkPassphrase));
 
-    for (const parsed of authEntries) {
-      const credentials = parsed.credentials();
-      if (
-        credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value
-      ) {
-        continue;
-      }
-
-      const addressCredentials = credentials.address();
-      const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
-      const currentNonce = await getWalletNonce(rpc, contractAddress, network.networkPassphrase, feePayerKeypair.publicKey());
-
-      const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
-        new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addressCredentials.nonce(),
-          invocation: parsed.rootInvocation(),
-          signatureExpirationLedger: validUntilLedger,
-        })
-      );
-      const payloadHash = await sha256(new Uint8Array(preimage.toXDR()));
-
-      const webAuthnSig = await signAuthEntry(payloadHash);
-      if (!webAuthnSig) {
-        throw new Error('USER_REJECTED');
-      }
-
-      const sigElements = [
-        nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
-        nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
-        nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
-        nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
-      ];
-      if (currentNonce !== null) {
-        sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
-      }
-
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
-          new xdr.SorobanAddressCredentials({
-            address: addressCredentials.address(),
-            nonce: addressCredentials.nonce(),
-            signatureExpirationLedger: validUntilLedger,
-            signature: xdr.ScVal.scvVec(sigElements),
-          })
-        )
-      );
+    for (const entry of authEntries) {
+      await attachPasskeyCredential(entry, {
+        rpc,
+        networkPassphrase: network.networkPassphrase,
+        networkId,
+        validUntilLedger,
+        probeSource: feePayerKeypair.publicKey(),
+      });
     }
   }
 
@@ -385,6 +433,53 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   return assembled.toXDR();
 }
 
+/**
+ * Sign one standalone Soroban authorization entry with the wallet passkey.
+ *
+ * SEP-43 `signAuthEntry` hands the wallet an entry rather than a transaction:
+ * the dApp has already simulated, already built the footprint, and wants only the
+ * credential filled in so it can assemble and submit the envelope itself. So
+ * there is no re-simulation and no fee-payer signature here — the entry goes back
+ * exactly as it arrived, with a signed credential attached.
+ *
+ * The credential is built by `attachPasskeyCredential`, the same code the
+ * transaction path uses, so a provider signature and a WalletConnect signature
+ * for the same payload are the same bytes. The caller (the dApp bridge) has
+ * already confirmed the entry names *this* wallet account; this function will
+ * happily sign any address credential it is given, which is why it is not the
+ * place for that check.
+ *
+ * @throws when the entry carries no address credential, when the passkey is
+ * unavailable, or when the user declines the prompt (`USER_REJECTED`).
+ */
+export async function signAuthEntryPayload(authEntryXdr: string): Promise<string> {
+  const network = getNetwork();
+  const rpc = getRpcServer();
+  const feePayerKeypair = await getFeePayerKeypair();
+
+  const entry = xdr.SorobanAuthorizationEntry.fromXDR(authEntryXdr, 'base64');
+
+  // Same rule as the transaction path: recording-mode entries arrive with
+  // expiration 0, and the host reads that as already expired. The value that
+  // goes into the preimage and the value attached to the credential must match.
+  const latestLedger = await rpc.getLatestLedger();
+  const validUntilLedger = latestLedger.sequence + 100;
+  const networkId = await sha256(new TextEncoder().encode(network.networkPassphrase));
+
+  const signed = await attachPasskeyCredential(entry, {
+    rpc,
+    networkPassphrase: network.networkPassphrase,
+    networkId,
+    validUntilLedger,
+    probeSource: feePayerKeypair.publicKey(),
+  });
+  if (!signed) {
+    throw new Error('This authorization entry has no wallet credential to sign.');
+  }
+
+  return entry.toXDR('base64');
+}
+
 async function signAndSubmitXdr(xdrString: string): Promise<string> {
   const network = getNetwork();
   const rpc = getRpcServer();
@@ -400,6 +495,54 @@ async function signAndSubmitXdr(xdrString: string): Promise<string> {
   return sendResult.hash;
 }
 
+export function getMobileSep43Wallet(): Sep43Wallet {
+  return createSep43Wallet({
+    getAddress: async () => getWalletAddress(),
+    getNetwork: () => {
+      const net = getNetwork();
+      return {
+        network: net.name === 'mainnet' ? 'PUBLIC' : 'TESTNET',
+        networkPassphrase: net.networkPassphrase,
+        rpcUrl: net.rpcUrl,
+      };
+    },
+    signTransaction: async (xdrString) => {
+      return signXdrPayload(xdrString);
+    },
+    signAuthEntry: async (authEntryXdr, opts) => {
+      const walletAddress = await getWalletAddress();
+      if (!walletAddress) throw new Error('No wallet registered');
+      const network = getNetwork();
+      const rpc = getRpcServer();
+      const latestLedger = await rpc.getLatestLedger();
+      const feePayerKeypair = await getFeePayerKeypair();
+      return signSorobanAuthEntry(authEntryXdr, {
+        signerAddress: walletAddress,
+        networkPassphrase: opts?.networkPassphrase ?? network.networkPassphrase,
+        signPayload: async (payloadHash) => {
+          if (!_authEntrySigner) {
+            throw new Error('No auth entry signer registered in mobile wallet.');
+          }
+          return _authEntrySigner(payloadHash);
+        },
+        validUntilLedger: latestLedger.sequence + 100,
+        getNonce: async (contractAddress) =>
+          getWalletNonce(rpc, contractAddress, network.networkPassphrase, feePayerKeypair.publicKey()),
+      });
+    },
+    submitTransaction: async (signedXdr) => {
+      const network = getNetwork();
+      const rpc = getRpcServer();
+      const tx = TransactionBuilder.fromXDR(signedXdr, network.networkPassphrase);
+      const res = await rpc.sendTransaction(tx);
+      if (res.status === 'ERROR') {
+        throw new Error(rejectionFromResult(res.errorResult));
+      }
+      return res.hash;
+    },
+  });
+}
+
 // ── Request handling ──────────────────────────────────────────────────────────
 
 /**
@@ -410,31 +553,104 @@ async function signAndSubmitXdr(xdrString: string): Promise<string> {
 export async function approveWalletConnectRequest(request: WalletConnectRequest): Promise<void> {
   const client = await getWalletConnectClient();
   const { topic, id, method, params } = request;
+  const sep43Wallet = getMobileSep43Wallet();
 
-  if (method !== 'stellar_signXDR' && method !== 'stellar_signAndSubmitXDR') {
+  try {
+    if (method === 'stellar_signXDR') {
+      const xdrString = extractRequestXdr(params);
+      if (!xdrString) {
+        throw new Error('Missing XDR payload in WalletConnect request.');
+      }
+      const result = await sep43Wallet.signTransaction(xdrString);
+      if (result.error) throw new Error(result.error.message);
+      await client.respondSessionRequest({
+        topic,
+        response: buildWcResult(id, { signedXDR: result.signedTxXdr }),
+      });
+      removePendingRequest(id, topic);
+      return;
+    }
+
+    if (method === 'stellar_signAndSubmitXDR') {
+      const xdrString = extractRequestXdr(params);
+      if (!xdrString) {
+        throw new Error('Missing XDR payload in WalletConnect request.');
+      }
+      const txHash = await signAndSubmitXdr(xdrString);
+      await client.respondSessionRequest({
+        topic,
+        response: buildWcResult(id, { txHash }),
+      });
+      removePendingRequest(id, topic);
+      return;
+    }
+
+    if (method === 'stellar_signAuthEntry') {
+      const authEntryXdr =
+        typeof params === 'string'
+          ? params
+          : (params as any)?.authEntry ?? (params as any)?.entry ?? (Array.isArray(params) ? params[0] : '');
+      const result = await sep43Wallet.signAuthEntry(authEntryXdr);
+      if (result.error) throw new Error(result.error.message);
+      await client.respondSessionRequest({
+        topic,
+        response: buildWcResult(id, { signedAuthEntry: result.signedAuthEntry, signerAddress: result.signerAddress }),
+      });
+      removePendingRequest(id, topic);
+      return;
+    }
+
+    if (method === 'stellar_signMessage') {
+      const message =
+        typeof params === 'string'
+          ? params
+          : (params as any)?.message ?? (Array.isArray(params) ? params[0] : '');
+      const result = await sep43Wallet.signMessage(message);
+      if (result.error) throw new Error(result.error.message);
+      await client.respondSessionRequest({
+        topic,
+        response: buildWcResult(id, { signedMessage: result.signedMessage, signerAddress: result.signerAddress }),
+      });
+      removePendingRequest(id, topic);
+      return;
+    }
+
+    if (method === 'stellar_getAccount' || method === 'stellar_getAddress') {
+      const result = await sep43Wallet.getAddress();
+      if (result.error) throw new Error(result.error.message);
+      await client.respondSessionRequest({
+        topic,
+        response: buildWcResult(id, { address: result.address }),
+      });
+      removePendingRequest(id, topic);
+      return;
+    }
+
+    if (method === 'stellar_getNetwork') {
+      const result = await sep43Wallet.getNetwork();
+      if (result.error) throw new Error(result.error.message);
+      await client.respondSessionRequest({
+        topic,
+        response: buildWcResult(id, result),
+      });
+      removePendingRequest(id, topic);
+      return;
+    }
+
     await client.respondSessionRequest({
       topic,
       response: buildWcError(id, 10001, `Unsupported method: ${String(method)}`),
     });
     removePendingRequest(id, topic);
     throw new Error(`Unsupported method: ${String(method)}`);
-  }
-
-  try {
-    const xdrString = extractRequestXdr(params);
-    if (!xdrString) {
-      throw new Error('Missing XDR payload in WalletConnect request.');
-    }
-
-    const result =
-      method === 'stellar_signXDR'
-        ? { signedXDR: await signXdrPayload(xdrString) }
-        : { txHash: await signAndSubmitXdr(xdrString) };
-
-    await client.respondSessionRequest({ topic, response: buildWcResult(id, result) });
-    removePendingRequest(id, topic);
   } catch (error: unknown) {
-    const reason = isUserRejection(error) ? getSdkError('USER_REJECTED') : null;
+    // A ceremony cancellation is the user declining; a ceremony refusal is not.
+    // isUserRejection covers WalletConnect's own USER_REJECTED code, so both are
+    // checked rather than widening either helper's text matching.
+    const reason =
+      isUserRejection(error) || isPasskeyCancellation(error)
+        ? getSdkError('USER_REJECTED')
+        : null;
     const response = reason
       ? buildWcError(id, reason.code, reason.message)
       : buildWcError(id, 5000, errorMessage(error));
@@ -496,7 +712,7 @@ export function getPendingWalletConnectRequests(): WalletConnectRequest[] {
 
 // ── Client lifecycle ──────────────────────────────────────────────────────────
 
-async function initClient(): Promise<IWeb3Wallet> {
+async function initClient(): Promise<IWalletKit> {
   const projectId = process.env['EXPO_PUBLIC_WC_PROJECT_ID']?.trim();
   if (!projectId) {
     throw new Error('EXPO_PUBLIC_WC_PROJECT_ID is missing.');
@@ -507,7 +723,7 @@ async function initClient(): Promise<IWeb3Wallet> {
   _sessions = await loadStoredSessions();
   notifySessions();
 
-  const client = await Web3Wallet.init({
+  const client = await WalletKit.init({
     core: new Core({ projectId }),
     metadata: {
       name: 'Veil Wallet',
@@ -542,7 +758,7 @@ async function initClient(): Promise<IWeb3Wallet> {
  * Lazily initialise the WalletConnect client. Concurrent callers share one
  * in-flight init; a failed init is not cached, so a later call can retry.
  */
-export function getWalletConnectClient(): Promise<IWeb3Wallet> {
+export function getWalletConnectClient(): Promise<IWalletKit> {
   if (_client) return Promise.resolve(_client);
   if (!_clientPromise) {
     _clientPromise = initClient().catch((error) => {

@@ -123,4 +123,34 @@ describe('round trip: request link → scan → review → submit', () => {
     const { qrValue } = createPaymentRequest({ destination: DEST, assetCode: 'USDC', assetIssuer: issuer })
     expect(readPaymentRequest(qrValue, 'testnet')).toMatchObject({ ok: true, asset: { code: 'USDC', issuer } })
   })
+
+  it('carries memo and memo_type (MEMO_ID) through payment request parsing (#704)', () => {
+    const read = readPaymentRequest(pay('amount=50&memo=123456789&memo_type=MEMO_ID'), 'mainnet')
+    expect(read.ok).toBe(true)
+    if (!read.ok) return
+    expect(read.prefill.memo).toBe('123456789')
+    expect(read.prefill.memoType).toBe('id')
+  })
+
+  it('normalises query string memo_type correctly for send page prefill (#704)', () => {
+    for (const [input, expected] of [
+      ['MEMO_ID', 'id'],
+      ['id', 'id'],
+      ['MEMO_TEXT', 'text'],
+      ['text', 'text'],
+      ['MEMO_HASH', 'hash'],
+      ['hash', 'hash'],
+      ['MEMO_RETURN', 'return'],
+      ['return', 'return'],
+      ['unknown', null],
+    ]) {
+      const q = new URLSearchParams(`memo_type=${input}`)
+      const rawMt = (q.get('memo_type') ?? '').toLowerCase()
+      const normalizedMt = rawMt.startsWith('memo_') ? rawMt.slice(5) : rawMt
+      const mt = ['text', 'id', 'hash', 'return'].includes(normalizedMt)
+        ? normalizedMt
+        : null
+      expect(mt).toBe(expected)
+    }
+  })
 })

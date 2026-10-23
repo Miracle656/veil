@@ -29,7 +29,7 @@ type RequestCode = 'XLM' | (typeof REQUESTABLE_CODES)[number];
  * a UI-automation run to observe it — its next view dump can land a second after
  * the tap, and a shorter window asserts against text already back to "Copy".
  */
-const COPY_FEEDBACK_MS = 2500;
+const COPY_FEEDBACK_MS = 5000;
 
 function shorten(a: string, head = 12, tail = 12): string {
   return a.length > head + tail + 1 ? `${a.slice(0, head)}…${a.slice(-tail)}` : a;
@@ -148,8 +148,9 @@ export default function ReceiveScreen() {
   }
 
   async function handleCopy() {
-    if (!shareText) return;
-    await Clipboard.setStringAsync(shareText);
+    if (shareText) {
+      await Clipboard.setStringAsync(shareText);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
   }

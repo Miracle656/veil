@@ -2,6 +2,7 @@ export type * from './types';
 export * from './useInvisibleWallet';
 export * from './utils';
 export * from './outbox';
+export { encodeApproveArgs } from './allowance';
 export {
     encryptBackup,
     decryptBackup,
@@ -54,6 +55,12 @@ export type {
 export * from './webauthn/attestation';
 export * from './recovery/sep30';
 export * from './crypto/prf';
+// An assertion carries a signature, not a key — these recover the key from it.
+export {
+    recoverAssertionPublicKeys,
+    assertionPublicKeyCandidates,
+} from './crypto/assertionKey';
+export type { AssertionMaterial } from './crypto/assertionKey';
 export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';
@@ -65,5 +72,6 @@ export * from './reserves';
 export * from './deriveFeePayer';
 export * from './feePayer';
 export * from './walletStorage';
+export * from './sep43';
 
 

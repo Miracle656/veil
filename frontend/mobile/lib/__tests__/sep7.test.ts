@@ -11,6 +11,7 @@ describe('parseSep7Uri', () => {
       assetCode: undefined,
       assetIssuer: undefined,
       memo: undefined,
+      memoType: undefined,
     });
   });
 
@@ -25,6 +26,22 @@ describe('parseSep7Uri', () => {
       assetCode: 'USDC',
       assetIssuer: ISSUER,
       memo: 'invoice-42',
+      memoType: undefined,
+    });
+  });
+
+  it('parses memo_type (MEMO_ID) correctly', () => {
+    const uri =
+      `web+stellar:pay?destination=${DESTINATION}` +
+      `&amount=25&memo=123456789&memo_type=MEMO_ID`;
+
+    expect(parseSep7Uri(uri)).toEqual({
+      destination: DESTINATION,
+      amount: '25',
+      assetCode: undefined,
+      assetIssuer: undefined,
+      memo: '123456789',
+      memoType: 'MEMO_ID',
     });
   });
 
@@ -87,6 +104,7 @@ describe('buildSep7PayUri', () => {
       assetCode: 'USDC',
       assetIssuer: ISSUER,
       memo: 'invoice-42',
+      memoType: 'MEMO_TEXT',
     });
 
     expect(parseSep7Uri(uri)).toEqual({
@@ -95,6 +113,25 @@ describe('buildSep7PayUri', () => {
       assetCode: 'USDC',
       assetIssuer: ISSUER,
       memo: 'invoice-42',
+      memoType: 'MEMO_TEXT',
+    });
+  });
+
+  it('supports MEMO_ID in buildSep7PayUri', () => {
+    const uri = buildSep7PayUri({
+      destination: DESTINATION,
+      amount: '50',
+      memo: '123456789',
+      memoType: 'MEMO_ID',
+    });
+
+    expect(parseSep7Uri(uri)).toEqual({
+      destination: DESTINATION,
+      amount: '50',
+      assetCode: undefined,
+      assetIssuer: undefined,
+      memo: '123456789',
+      memoType: 'MEMO_ID',
     });
   });
 

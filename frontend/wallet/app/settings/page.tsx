@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
+import { TRUSTLINE_RESERVE_COST_XLM } from '@/lib/reserves'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
 import { ensureWalletDeployed, getDeploymentState } from '@/lib/walletDeployment'
@@ -21,6 +22,19 @@ import {
 } from '@/lib/recovery'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
+import {
+  GUARDIAN_CAN,
+  GUARDIAN_CANNOT,
+  GUARDIAN_DELAY_SECONDS,
+  RECOVERY_SERVER_DELAY_SECONDS,
+  cancelPendingRecovery,
+  completeRecoveryPermissionless,
+  initiateRecoveryAsGuardian,
+  isGuardianRecoveryUnlocked,
+  readGuardian,
+  readPendingRecovery,
+  type PendingGuardianRecovery,
+} from '@/lib/guardian'
 
 type Section = 'overview' | 'add-signer' | 'guardian' | 'recovery-backup'
 
@@ -156,8 +170,13 @@ export default function SettingsPage() {
   const [signers, setSigners] = useState<SignerInfo[]>([])
   const [localPublicKey, setLocalPublicKey] = useState<string | null>(null)
 
-  // Guardian form
+  // Guardian section: the on-chain state plus the two forms (nominate /
+  // act-as-guardian). `undefined` = still loading, null = none set.
   const [guardianAddress, setGuardianAddress] = useState('')
+  const [currentGuardian, setCurrentGuardian] = useState<string | null | undefined>(undefined)
+  const [pendingRecovery, setPendingRecovery] = useState<PendingGuardianRecovery | null>(null)
+  const [recoverWallet, setRecoverWallet] = useState('')
+  const [recoverNewKeyHex, setRecoverNewKeyHex] = useState('')
 
   // Paper Backup state
   const [hasBackup, setHasBackup] = useState(false)
@@ -343,6 +362,23 @@ export default function SettingsPage() {
     }
   }
 
+  const loadGuardianState = useCallback(async () => {
+    if (!address) return
+    const [guardian, pending] = await Promise.all([
+      readGuardian(address, walletConfig.rpcUrl),
+      readPendingRecovery(address, walletConfig.rpcUrl, walletConfig.networkPassphrase),
+    ])
+    setCurrentGuardian(guardian)
+    setPendingRecovery(pending)
+  }, [address])
+
+  useEffect(() => {
+    if (section === 'guardian') {
+      setCurrentGuardian(undefined)
+      void loadGuardianState()
+    }
+  }, [section, loadGuardianState])
+
   async function handleSetGuardian() {
     if (!guardianAddress.startsWith('G') || guardianAddress.length !== 56) {
       setStatus('Enter a valid Stellar G... address')
@@ -355,8 +391,85 @@ export default function SettingsPage() {
       // Setting a guardian is stored by the contract, so it has to be on chain.
       await ensureWalletDeployed(wallet.deploy, address)
       await wallet.setGuardian(signerKeypair, guardianAddress)
-      setStatus('Guardian set successfully')
+      setStatus(currentGuardian ? 'Guardian changed successfully' : 'Guardian set successfully')
       setGuardianAddress('')
+      await loadGuardianState()
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleCancelRecovery() {
+    if (!address) return
+    setLoading(true)
+    setStatus(null)
+    try {
+      await cancelPendingRecovery({
+        walletAddress: address,
+        feePayer: getSignerKeypair(),
+        signAuthEntry: wallet.signAuthEntry,
+        rpcUrl: walletConfig.rpcUrl,
+        networkPassphrase: walletConfig.networkPassphrase,
+      })
+      setStatus('Recovery cancelled successfully — your current keys stay in control.')
+      await loadGuardianState()
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleCompleteRecovery() {
+    if (!address) return
+    setLoading(true)
+    setStatus(null)
+    try {
+      await completeRecoveryPermissionless({
+        walletAddress: address,
+        payer: getSignerKeypair(),
+        rpcUrl: walletConfig.rpcUrl,
+        networkPassphrase: walletConfig.networkPassphrase,
+      })
+      setStatus('Recovery completed successfully — the wallet now answers to the new key only.')
+      await loadGuardianState()
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleInitiateAsGuardian() {
+    const target = recoverWallet.trim()
+    const keyHex = recoverNewKeyHex.trim().toLowerCase()
+    if (!target.startsWith('C') || target.length !== 56) {
+      setStatus('Enter the wallet to recover as a C... contract address')
+      return
+    }
+    if (!/^04[0-9a-f]{128}$/.test(keyHex)) {
+      setStatus('The new key must be 130 hex characters starting with 04 (an uncompressed P-256 public key)')
+      return
+    }
+    setLoading(true)
+    setStatus(null)
+    try {
+      const guardianKeypair = getSignerKeypair()
+      await initiateRecoveryAsGuardian({
+        walletAddress: target,
+        guardian: guardianKeypair,
+        newPublicKey: new Uint8Array((keyHex.match(/.{2}/g) ?? []).map((b) => parseInt(b, 16))),
+        rpcUrl: walletConfig.rpcUrl,
+        networkPassphrase: walletConfig.networkPassphrase,
+      })
+      setStatus(
+        'Recovery initiated successfully. It can be completed after the 3-day waiting period — '
+        + 'during which the wallet owner can still cancel it.',
+      )
+      setRecoverWallet('')
+      setRecoverNewKeyHex('')
     } catch (err: unknown) {
       setStatus(err instanceof Error ? err.message : String(err))
     } finally {
@@ -416,6 +529,44 @@ export default function SettingsPage() {
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Passkeys</p>
                     <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
                       View and manage passkeys registered on this wallet
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Spending permissions card */}
+              <button
+                className="card"
+                onClick={() => router.push('/settings/allowances')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Spending permissions</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Apps and contracts allowed to move your tokens without asking
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* Trustlines & Reserves card */}
+              <button
+                className="card"
+                onClick={() => router.push('/assets')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Trustlines &amp; Reserves</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Manage enabled assets, view locked reserves ({TRUSTLINE_RESERVE_COST_XLM} XLM each), and reclaim reserves from empty trustlines
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
@@ -615,6 +766,25 @@ export default function SettingsPage() {
                 </button>
               ) : null}
 
+              {/* Bulk Payout */}
+              <button
+                className="card"
+                onClick={() => router.push('/bulk-payout')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Bulk Payout</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Pay many recipients from one CSV
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
               <button
                 className="card"
                 onClick={() => router.push('/vault')}
@@ -625,6 +795,25 @@ export default function SettingsPage() {
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>Time-Locked Vault</p>
                     <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
                       Protect long-term XLM with queued, cancellable withdrawals
+                    </p>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
+                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+              </button>
+
+              {/* About */}
+              <button
+                className="card"
+                onClick={() => router.push('/settings/about')}
+                style={{ textAlign: 'left', cursor: 'pointer', width: '100%', border: '1px solid var(--border-dim)', background: 'var(--surface)' }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>About</p>
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      Build, network, and contract addresses
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
@@ -728,14 +917,102 @@ export default function SettingsPage() {
             <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '0.75rem' }}>
               Guardian recovery
             </h2>
-            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '2rem', lineHeight: 1.6 }}>
-              A guardian can initiate a 3-day timelock recovery if you lose all your devices. They cannot access your wallet without your confirmation.
+            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+              A guardian is a Stellar account you trust to get you back in after you lose every
+              device. Recovery replaces your wallet&apos;s keys after a {Math.round(GUARDIAN_DELAY_SECONDS / 86_400)}-day
+              waiting period — a window in which you can cancel it from any signed-in device.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Pending recovery — shown before anything else, because nothing
+                  on this screen matters more than a countdown that ends in a
+                  key replacement. */}
+              {pendingRecovery && (
+                <div
+                  data-testid="pending-recovery"
+                  className="card-md"
+                  style={{ border: '1px solid rgba(220,38,38,0.5)' }}
+                >
+                  <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'rgb(248,113,113)' }}>
+                    Recovery in progress
+                  </p>
+                  <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', marginTop: '0.375rem', lineHeight: 1.6 }}>
+                    {pendingRecovery.source === 'guardian'
+                      ? 'Started by your guardian.'
+                      : 'Started through your recovery servers (the separate 7-day mechanism).'}{' '}
+                    {isGuardianRecoveryUnlocked(pendingRecovery)
+                      ? 'The waiting period has elapsed: it can be completed at any moment.'
+                      : `It can be completed after ${new Date(pendingRecovery.unlockTime * 1000).toLocaleString()}.`}{' '}
+                    If you did not expect this, cancel it now — completion hands the wallet to the
+                    key below.
+                  </p>
+                  <p className="mono" style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.45)', marginTop: '0.5rem', wordBreak: 'break-all', userSelect: 'all' }}>
+                    {pendingRecovery.newPublicKeyHex}
+                  </p>
+                  <div style={{ display: 'flex', gap: '0.625rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
+                    <button className="btn-gold" onClick={handleCancelRecovery} disabled={loading}>
+                      {loading ? <span className="spinner" /> : 'Cancel this recovery'}
+                    </button>
+                    {isGuardianRecoveryUnlocked(pendingRecovery) && (
+                      <button className="btn-gold" onClick={handleCompleteRecovery} disabled={loading}>
+                        {loading ? <span className="spinner" /> : 'Complete recovery'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Current guardian */}
+              <div className="card-md" data-testid="current-guardian">
+                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
+                  CURRENT GUARDIAN
+                </p>
+                {currentGuardian === undefined ? (
+                  <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)' }}>Checking on-chain…</p>
+                ) : currentGuardian ? (
+                  <p className="mono" style={{ fontSize: '0.75rem', color: 'var(--off-white)', wordBreak: 'break-all', userSelect: 'all' }}>
+                    {currentGuardian}
+                  </p>
+                ) : (
+                  <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)' }}>
+                    No guardian set. Without one (or a recovery server, or a backup), losing every
+                    device means losing the wallet.
+                  </p>
+                )}
+              </div>
+
+              {/* What the trust means — consequences, not mechanism. */}
+              <div className="card-md" data-testid="guardian-powers">
+                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
+                  WHAT A GUARDIAN CAN DO
+                </p>
+                {GUARDIAN_CAN.map((line) => (
+                  <p key={line} style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', lineHeight: 1.6, marginTop: '0.25rem' }}>
+                    • {line}
+                  </p>
+                ))}
+                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', margin: '0.75rem 0 0.375rem' }}>
+                  WHAT A GUARDIAN CANNOT DO
+                </p>
+                {GUARDIAN_CANNOT.map((line) => (
+                  <p key={line} style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', lineHeight: 1.6, marginTop: '0.25rem' }}>
+                    • {line}
+                  </p>
+                ))}
+                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.45)', lineHeight: 1.6, marginTop: '0.75rem' }}>
+                  Pick someone who would refuse a stranger&apos;s request — anyone who can convince your
+                  guardian can start a takeover, and your only defence is cancelling within the{' '}
+                  {Math.round(GUARDIAN_DELAY_SECONDS / 86_400)} days. This is separate from recovery
+                  servers, which drive the same key replacement through their own{' '}
+                  {Math.round(RECOVERY_SERVER_DELAY_SECONDS / 86_400)}-day waiting period; the two share
+                  one recovery slot, and a pending recovery from either shows above.
+                </p>
+              </div>
+
+              {/* Nominate / change */}
               <div>
                 <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
-                  GUARDIAN STELLAR ADDRESS
+                  {currentGuardian ? 'CHANGE GUARDIAN TO' : 'GUARDIAN STELLAR ADDRESS'}
                 </label>
                 <input
                   className="input-field mono"
@@ -757,8 +1034,46 @@ export default function SettingsPage() {
               )}
 
               <button className="btn-gold" onClick={handleSetGuardian} disabled={loading}>
-                {loading ? <span className="spinner" /> : 'Set guardian'}
+                {loading ? <span className="spinner" /> : currentGuardian ? 'Change guardian' : 'Set guardian'}
               </button>
+
+              {/* Acting as someone else's guardian */}
+              <div className="card-md" data-testid="act-as-guardian" style={{ marginTop: '1rem' }}>
+                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
+                  SOMEONE NOMINATED YOU?
+                </p>
+                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.6, marginBottom: '0.75rem' }}>
+                  Start a recovery for a wallet that nominated this account
+                  {' '}(<span className="mono" style={{ fontSize: '0.6875rem', userSelect: 'all' }}>{(() => { try { return getSignerKeypair().publicKey() } catch { return 'no session key' } })()}</span>)
+                  {' '}as its guardian. The owner sends you their wallet address and the new public
+                  key from their fresh device; the replacement only takes effect after the{' '}
+                  {Math.round(GUARDIAN_DELAY_SECONDS / 86_400)}-day waiting period, and they can
+                  cancel it until then.
+                </p>
+                <input
+                  className="input-field mono"
+                  type="text"
+                  placeholder="Wallet to recover (C...)"
+                  value={recoverWallet}
+                  onChange={e => setRecoverWallet(e.target.value.trim())}
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={{ marginBottom: '0.625rem' }}
+                />
+                <input
+                  className="input-field mono"
+                  type="text"
+                  placeholder="New public key (130 hex chars, starts 04…)"
+                  value={recoverNewKeyHex}
+                  onChange={e => setRecoverNewKeyHex(e.target.value.trim())}
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={{ marginBottom: '0.75rem' }}
+                />
+                <button className="btn-gold" onClick={handleInitiateAsGuardian} disabled={loading}>
+                  {loading ? <span className="spinner" /> : 'Initiate recovery'}
+                </button>
+              </div>
             </div>
           </>
         )}

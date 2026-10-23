@@ -161,6 +161,36 @@ CI will run these on every PR — see `.github/workflows/ci.yml`.
 - **Wallet** — end-to-end tests are still being set up; see [`area:tests`](https://github.com/Miracle656/veil/labels/area%3Atests) for tracked work
 - **Agent** — unit tests for tool handlers, integration tests for WebSocket session
 
+## Known failing checks (temporary defect register)
+
+Six scheduled workflows are currently failing on `main`. This list is a
+**temporary defect register**, not a permanent feature of Veil. It exists so
+contributors opening pull requests can tell which failures are pre-existing
+and not introduced by their changes.
+
+As each issue below is resolved, its entry should be removed from this list.
+When all entries are resolved, this entire section should be deleted.
+
+### Currently failing scheduled checks
+
+- `release.yml` (`Release`) — failing in `Version or publish`: tracked in [#1148](https://github.com/Miracle656/veil/issues/1148)
+- `wallet-e2e.yml` (`Wallet E2E Tests`) — failing in `issuer-metadata.spec.ts`: tracked in [#1149](https://github.com/Miracle656/veil/issues/1149)
+- `testnet-smoke.yml` (`Testnet Smoke Test (Nightly)`) — nightly testnet contract / smoke failures: tracked in [#1150](https://github.com/Miracle656/veil/issues/1150)
+- `mutation.yml` (`Mutation Tests`) — Stryker mutation test threshold failures: tracked in [#1151](https://github.com/Miracle656/veil/issues/1151)
+- `memory-leak-nightly.yml` (`Memory Leak Nightly`) — nightly memory leak test failures: tracked in [#1152](https://github.com/Miracle656/veil/issues/1152)
+- `asset-registry-verify.yml` (`Asset Registry Verify`) — daily registry verification failures: tracked in [#978](https://github.com/Miracle656/veil/issues/978)
+- `spp-drift.yml` (`SPP Config Drift Check`) — intermittent configuration drift failures: tracked in [#1153](https://github.com/Miracle656/veil/issues/1153)
+
+### Checks a PR author is responsible for
+
+PR authors **are** responsible for all checks covering the code their PR modifies:
+- **Rust / Contracts** (`contracts/`): `cargo fmt --check`, `cargo clippy`, and contract unit tests must pass.
+- **SDK** (`sdk/`): `npm test`, lint, and `npm run build` must pass.
+- **Web Wallet** (`frontend/wallet/`): `npm run typecheck` (`tsc --noEmit`), `npm test`, and `npm run build` must pass.
+- **Mobile** (`frontend/mobile/`): `npm test` and `registryParity.test.ts` must pass.
+- **Repo root lockfile** (`#670`): `npm run verify:lockfile` must pass cleanly without modifying `package-lock.json`.
+- **New / modified tests**: Any test introduced or edited in the PR must pass deterministically.
+
 ## Picking up an issue
 
 1. Comment on the issue saying you'd like to work on it
@@ -182,6 +212,18 @@ npm run changeset
 Commit the generated file in `.changeset/`. On merge to `main`,
 `.github/workflows/release.yml` opens or updates a "Version Packages" PR that
 bumps the versions and changelogs.
+
+When that PR is merged, the same workflow publishes the released versions only
+when the repository variable `ENABLE_NPM_PUBLISH` is `true`. Before enabling
+it, both public package names (`invisible-wallet-sdk` and
+`create-veil-wallet`) must resolve on npm and each package must have a Trusted
+Publisher configured for GitHub Actions (`Miracle656` / `veil` / `release.yml`,
+with direct publishing allowed). The release job uses Node 24 so npm's OIDC
+trusted publishing support is available. The workflow checks package
+availability first and reports the package name plus the required maintainer
+action if one is missing. Keep `ENABLE_NPM_PUBLISH` unset or `false` while the
+npm ownership or publisher configuration is incomplete; version PRs will
+continue to be created without attempting a publish.
 
 Because each package owns its own lockfile, the version bump has to reach the
 lockfile too — `npm run version-packages` runs `changeset version` and then

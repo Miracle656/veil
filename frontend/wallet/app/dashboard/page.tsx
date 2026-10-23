@@ -1,10 +1,11 @@
 'use client'
+import { isNonSafariIOS } from '@/lib/iosBrowser'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 export const dynamic = 'force-dynamic'
 
 import { inclusionFee } from '@/lib/fees'
-import { Suspense, useEffect, useRef, useCallback, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
@@ -29,22 +30,21 @@ import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 import { useInvisibleWallet, type WebAuthnSignature } from '@veil/sdk'
 import { ensureWalletDeployed } from '@/lib/walletDeployment'
 import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule } from '@/lib/schedules'
-import { VeilMark } from '@/components/ui/VeilMark'
-import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
+import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 import { enhanceAssetsWithYield } from '@/lib/costBasisTracker'
 import { YieldBadge } from '@/components/YieldDisplay'
+import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
+import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
+import { buildPortfolio } from '@/lib/portfolio'
+import { PortfolioSummary } from '@/components/PortfolioSummary'
 
 const network = getNetwork()
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface WalletAsset {
-  code: string
-  issuer: string | null
-  balance: string
-}
+import type { WalletAsset } from '@/lib/walletTypes'
 
 /**
  * WalletAsset extended with cost basis and yield metrics
@@ -127,9 +127,12 @@ function mapHorizonOps(ops: HorizonOp[], signerPublicKey: string): import('@/com
 // Survives component unmount/remount within the SPA so navigating away and
 // back doesn't flash the skeleton state. Cleared on hard refresh (intentional).
 // Refetch still happens in the background to keep data fresh.
+// cachedPricesTimestamp travels with cachedPrices: a cached quote must present
+// itself with the time it was actually fetched, not the time it is rendered.
 let cachedAssets:      WalletAsset[]                 | null = null
 let cachedContractXlm: number                        | null = null
 let cachedPrices:      Record<string, number | null>        = {}
+let cachedPricesTimestamp: number | null = null
 
 // ── Dashboard page ────────────────────────────────────────────────────────────
 function DashboardPageContent() {
@@ -146,6 +149,10 @@ function DashboardPageContent() {
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
   const [loading, setLoading]             = useState(cachedAssets === null)
   const [prices, setPrices]               = useState<Record<string, number | null>>(() => cachedPrices)
+  // Seeded from the price cache, never Date.now(): the timestamp belongs to
+  // the moment the cached prices were collected.
+  const [pricesTimestamp, setPricesTimestamp] = useState<number>(() => cachedPricesTimestamp ?? 0)
+  const [blendPositions, setBlendPositions]   = useState<BlendPosition[]>([])
   const [isFunding, setIsFunding]         = useState(false)
   const [fundingError, setFundingError]   = useState<string | null>(null)
   const [copied, setCopied]               = useState(false)
@@ -165,6 +172,9 @@ function DashboardPageContent() {
   // PRF downgrade: surfaced as a dismissible banner (issue #629).
   const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
   const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
+  // Only used to pick a sentence in the banner below — never to decide whether
+  // to attempt PRF, which is always attempted and judged on its real outcome.
+  const [suggestSafari, setSuggestSafari]                 = useState(false)
   // #711: true when this wallet's privacy keys cannot be re-derived from a
   // passkey elsewhere — the private-balance card warns before anything shields.
   const privacyRecoveryUnsupported = usePrivacyRecoveryNotice()
@@ -202,14 +212,13 @@ function DashboardPageContent() {
   useEffect(() => { hydrateCurrency() }, [])
   const usd = (n: number) => formatFiat(n, currencyCode, fxRate)
 
+  // Priced-asset totals feed the 24h-change history only; the number the user
+  // sees is the portfolio card's total, computed once below (#740: one source).
   const pricedAssets = assets.filter((a) => priceOf(a) != null)
   const totalUsd = pricedAssets.reduce(
     (sum, a) => sum + parseFloat(a.balance) * (priceOf(a) as number),
     0,
   )
-  // Only show a total once at least one asset has a price. A partial sum
-  // rendered as "the" balance understates the wallet without saying so.
-  const totalLabel = pricedAssets.length > 0 ? usd(totalUsd) : '—'
 
   // 24h change on the total. Recorded locally rather than fetched: Lens serves
   // a spot price and nothing historical, so this is the change in what the
@@ -230,12 +239,28 @@ function DashboardPageContent() {
     setDayChange(change24h(history, totalUsd, now))
   }, [walletAddress, totalUsd, assets.length, pricedAssets.length])
 
-  const balanceLine = assets
-    .slice()
-    .sort((a, b) => parseFloat(b.balance) - parseFloat(a.balance))
-    .slice(0, 2)
-    .map((a) => `${parseFloat(a.balance).toFixed(2)} ${a.code}`)
-    .join(' · ')
+  // Resolve the verified registry's SAC contract IDs to their price keys once,
+  // so Blend positions priced by contract ID can share the wallet's price map.
+  // Merged under the fetched keys — fetched code:issuer entries win, and the
+  // SAC fallback only fills the gaps (#740: lending positions were unpriced).
+  const contractKeys = useMemo(() => {
+    const merged: Record<string, string> = {}
+    for (const [code, sac] of Object.entries(KNOWN_SAC_CONTRACT_IDS[getNetworkName()])) {
+      const issuer = getAssetIssuer(code, getNetworkName())
+      if (issuer) merged[sac] = `${code}:${issuer}`
+    }
+    for (const key of Object.keys(prices)) {
+      merged[key] = key
+    }
+    return merged
+  }, [prices])
+
+  // The portfolio is built once per (assets, positions, prices, contractKeys)
+  // change, not inline in JSX — building it there re-sorted on every render.
+  const portfolio = useMemo(
+    () => buildPortfolio(assets, blendPositions, prices, pricesTimestamp, { contractKeys }),
+    [assets, blendPositions, prices, pricesTimestamp, contractKeys],
+  )
 
   const recent = transactions.slice(0, 4)
 
@@ -261,6 +286,7 @@ function DashboardPageContent() {
       // After the fee-payer is established, check whether a silent PRF→legacy
       // downgrade occurred (issue #629). Show a banner if so.
       setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
+      setSuggestSafari(isNonSafariIOS())
     })
   }, [router])
 
@@ -420,7 +446,6 @@ function DashboardPageContent() {
     ]
     cachedAssets = finalAssets
     setAssets(finalAssets)
-
     // Seed the live feed with history and start streaming from now.
     // hydrateActivityFeed notifies all subscribers (including useActivityFeed),
     // so no separate setTransactions call is needed.
@@ -525,12 +550,28 @@ function DashboardPageContent() {
     let cancelled = false
     fetchPrices(assets.map(a => ({ code: a.code, issuer: a.issuer }))).then(result => {
       if (!cancelled) {
+        // The timestamp travels with the price map into the module cache, so a
+        // remount shows the moment these quotes were collected, not "now".
+        const collectedAt = Date.now()
         cachedPrices = result
+        cachedPricesTimestamp = collectedAt
         setPrices(result)
+        setPricesTimestamp(collectedAt)
       }
     })
     return () => { cancelled = true }
   }, [assets])
+
+  // Load Blend lending positions whenever the wallet address is known.
+  // Best-effort: an empty array is a valid portfolio state (no positions).
+  useEffect(() => {
+    if (!walletAddress) return
+    let cancelled = false
+    loadBlendPositions(walletAddress).then(positions => {
+      if (!cancelled) setBlendPositions(positions)
+    }).catch(() => { /* Blend offline — positions stay empty */ })
+    return () => { cancelled = true }
+  }, [walletAddress])
 
   // ── Service worker registration + background polling ─────────────────────
   useEffect(() => {
@@ -572,12 +613,18 @@ function DashboardPageContent() {
       if (!feePayer) throw new Error('No passkey found. Please register again.')
       const signerPublicKey = feePayer.publicKey()
 
-      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
-      if (!friendbotUrl) {
+      if (getNetwork().name !== 'testnet') {
         await fetchData()
         setFundingError(
           `Fee-payer restored. Fund ${signerPublicKey} with XLM from an external wallet to send or swap on mainnet.`
         )
+        return
+      }
+
+      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
+      if (!friendbotUrl) {
+        await fetchData()
+        setFundingError('Friendbot is unavailable.')
         return
       }
 
@@ -781,7 +828,7 @@ function DashboardPageContent() {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
-                Fee payer: PRF unavailable on this device
+                Gas account: this browser can&apos;t derive the preferred one
               </p>
               <button
                 id="dashboard-prf-downgrade-dismiss"
@@ -793,7 +840,7 @@ function DashboardPageContent() {
               </button>
             </div>
             <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
-              This wallet requested a WebAuthn PRF result but the authenticator didn&apos;t provide one. It fell back to the legacy fee payer, which will look like a different wallet on a PRF-capable device. If this is unexpected, copy the diagnostics in Settings → Fee Payer and share them.
+              Your wallet address is unaffected — it comes from the passkey itself, not from this. What changed is the account that pays network fees: this browser gave no WebAuthn PRF result, so an older derivation was used. Every device still derives that one too and prefers whichever account actually holds a balance, so once this one is funded it stays yours.{suggestSafari ? ' On iPhone and iPad only Safari offers PRF — open this page in Safari before funding anything if you would rather have the preferred derivation.' : ' Safari on iOS 18.4 or later supports PRF, if you would rather have the preferred derivation.'}
             </p>
             <button
               id="dashboard-prf-downgrade-details"
@@ -853,24 +900,33 @@ function DashboardPageContent() {
             rail rendered full width under the activity feed instead of beside
             it. The CSS for the layout was there the whole time; nothing put the
             two columns in a row. */}
-        {/* ── Balance plate and earning: full width, above the columns ── */}
+        {/* ── Balance plate and earning: full width, above the columns ──
+            One total, one source: the plate and the portfolio card both read
+            the memoized buildPortfolio result (#740), so the headline number
+            and the bucket split can never disagree with each other. */}
           <div className="vw-balance-row">
             <div className="vw-silver">
               <div className="vw-silver__sheen" />
-              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div className="vw-silver__label">Total balance</div>
-                <VeilMark size={28} color="#0F0F0F" />
-              </div>
+              <div className="vw-silver__label">Total balance</div>
               <div className="vw-silver__amountrow">
-                <div className="vw-silver__amount">{hideAmounts ? '••••' : totalLabel}</div>
+                <div className="vw-silver__amount">
+                  {hideAmounts ? '••••' : (portfolio.totalUsd !== null ? usd(portfolio.totalUsd) : '—')}
+                </div>
                 {!hideAmounts && dayChange !== null && (
                   <span className={'vw-silver__delta ' + (dayChange >= 0 ? 'vw-silver__delta--up' : 'vw-silver__delta--down')}>
                     {dayChange >= 0 ? '▲' : '▼'} {Math.abs(dayChange).toFixed(2)}% · 24h
                   </span>
                 )}
               </div>
-              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', gap: '12px' }}>
-                <div className="vw-silver__sub">{hideAmounts ? '••••' : (balanceLine || 'No assets yet')}</div>
+              <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px', gap: '12px', flexWrap: 'wrap' }}>
+                {([['Cash', portfolio.cashUsd], ['Lending', portfolio.lendingUsd], ['Invest', portfolio.investUsd]] as const).map(([label, bucketUsd]) => (
+                  <div key={label} style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: '10px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'rgba(15,15,15,0.6)', fontWeight: 700 }}>{label}</div>
+                    <div style={{ fontSize: '15px', fontWeight: 700, color: '#0F0F0F', whiteSpace: 'nowrap' }}>
+                      {hideAmounts ? '••••' : (bucketUsd !== null ? usd(bucketUsd) : '—')}
+                    </div>
+                  </div>
+                ))}
               </div>
               {reserveInfo && !hideAmounts && (
                 <div style={{ position: 'relative', marginTop: '10px', fontSize: '11px', color: '#0F0F0F', opacity: 0.8, lineHeight: 1.4 }}>
@@ -903,6 +959,17 @@ function DashboardPageContent() {
           hideAmounts={hideAmounts}
           recoveryWarning={privacyRecoveryUnsupported}
         />
+
+        {/* ── Portfolio summary: total value split by cash, lending, invest ── */}
+        {(assets.length > 0 || blendPositions.length > 0) && (
+          <PortfolioSummary
+            portfolio={portfolio}
+            currencyCode={currencyCode}
+            fxRate={fxRate}
+            hideAmounts={hideAmounts}
+            walletAddress={walletAddress}
+          />
+        )}
 
         {/* ── Two columns below the balance: assets wide on the left,
             activity and the agent narrow on the right, as the design has it.
@@ -964,16 +1031,18 @@ function DashboardPageContent() {
           </div>
         </div>
 
-        {/* ── Right rail: assets with live fiat values ── */}
+        {/* ── Right rail: the single asset list. Fed by the same portfolio
+            lines the buckets above use — one implementation, one source of
+            truth (#740). */}
         <div className="vw-rail">
           <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
-              <Label className="vw-label">Assets</Label>
+              <div className="vw-label">Assets</div>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
             </div>
-            {loading && assets.length === 0 ? (
+            {loading && portfolio.lines.length === 0 ? (
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>Loading…</p>
-            ) : assets.length === 0 ? (
+            ) : portfolio.lines.length === 0 ? (
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>
                 No assets yet. Fund this address to get started.
               </p>
@@ -1023,6 +1092,34 @@ function DashboardPageContent() {
               });
             })()
 }
+            ) : portfolio.lines.map((line) => (
+              <Row
+                key={line.code + '-' + (line.issuer ?? 'native')}
+                className="vw-listrow"
+                onClick={() => router.push(
+                  line.issuer && line.status !== 'unresolved'
+                    ? '/token/' + line.code + '?issuer=' + line.issuer
+                    : '/token/' + line.code,
+                )}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+                  <TokenIcon code={line.code} size={38} />
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                    <span style={{ fontSize: '15px', fontWeight: 600 }}>{line.code}</span>
+                    <span className="vw-meta">
+                      {hideAmounts
+                        ? '••••'
+                        : line.status === 'unresolved'
+                          ? 'Unknown contract'
+                          : parseFloat(line.amount).toFixed(4) + ' ' + line.code}
+                    </span>
+                  </span>
+                </span>
+                <Amount className="text-[15px] font-semibold shrink-0">
+                  {hideAmounts ? '••••' : (line.valueUsd !== null ? usd(line.valueUsd) : '—')}
+                </Amount>
+              </Row>
+            ))}
           </div>
         </div>
         </div>

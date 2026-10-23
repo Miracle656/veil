@@ -25,6 +25,12 @@ fn advance_ledger_time(env: &Env, seconds: u64) {
     env.ledger().set(ledger_info);
 }
 
+// ============================================================================
+// Recovery lifecycle: the happy path a guardian is meant to walk.
+// ============================================================================
+
+// Guards the end-to-end recovery path: if this fails, a guardian can no longer
+// hand control of the wallet to a new key, and a lost passkey means lost funds.
 #[test]
 fn test_full_guardian_recovery_flow() {
     let (env, contract_id) = setup_env();
@@ -46,6 +52,12 @@ fn test_full_guardian_recovery_flow() {
     client.complete_recovery();
 }
 
+// ============================================================================
+// Limits: the timelock is the only window the owner has to react.
+// ============================================================================
+
+// Guards the 3-day timelock: if this fails, a compromised guardian can swap the
+// signing key instantly and drain the wallet before the owner notices.
 #[test]
 fn test_timelock_enforcement() {
     let (env, contract_id) = setup_env();
@@ -71,6 +83,12 @@ fn test_timelock_enforcement() {
     client.complete_recovery();
 }
 
+// ============================================================================
+// Authorisation: who is allowed to start a recovery at all.
+// ============================================================================
+
+// Guards against recovery with no guardian configured: if this fails, anyone
+// could initiate a key swap on a wallet that never opted into social recovery.
 #[test]
 fn test_no_guardian_rejection() {
     let (env, contract_id) = setup_env();
@@ -83,6 +101,12 @@ fn test_no_guardian_rejection() {
     assert!(result.is_err(), "initiate_recovery should fail when no guardian is set");
 }
 
+// ============================================================================
+// Recovery: cancellation is the owner's escape hatch from a hostile recovery.
+// ============================================================================
+
+// Guards the owner's ability to abort a pending recovery: if this fails, a
+// malicious guardian's key swap completes even after the owner cancels it.
 #[test]
 fn test_cancel_recovery() {
     let (env, contract_id) = setup_env();
@@ -103,6 +127,8 @@ fn test_cancel_recovery() {
     assert!(result.is_err(), "complete_recovery should fail after cancellation");
 }
 
+// Guards against cancelling a non-existent recovery: if this fails, the
+// cancellation state can be corrupted without any recovery actually pending.
 #[test]
 fn test_cancel_without_pending_recovery() {
     let (env, contract_id) = setup_env();
@@ -113,6 +139,8 @@ fn test_cancel_without_pending_recovery() {
     assert!(result.is_err(), "cancel_recovery should fail when no recovery is pending");
 }
 
+// Guards against completing a non-existent recovery: if this fails, a key swap
+// could be finalised without ever passing through initiate_recovery.
 #[test]
 fn test_complete_without_pending_recovery() {
     let (env, contract_id) = setup_env();
@@ -123,6 +151,8 @@ fn test_complete_without_pending_recovery() {
     assert!(result.is_err(), "complete_recovery should fail when no recovery is pending");
 }
 
+// Guards against overlapping recoveries: if this fails, a second initiate can
+// overwrite the pending key and reset the timelock, defeating the delay.
 #[test]
 fn test_duplicate_initiate_recovery_rejected() {
     let (env, contract_id) = setup_env();

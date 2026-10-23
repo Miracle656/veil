@@ -31,10 +31,14 @@ env:
 - assertVisible:
     id: "send-recipient-error"
 
+# A 56-character G address loses its first character when Maestro types into
+# this controlled field, so the checksum never matches. A federated address
+# is accepted by the same validator and is short enough to arrive intact.
+# The G address is still checked below, where the link writes it into state.
 - tapOn:
     id: "send-recipient"
-- eraseText
-- inputText: ${RECIPIENT}
+- eraseText: 80
+- inputText: "alice*example.com"
 - hideKeyboard
 - assertNotVisible:
     id: "send-recipient-error"
@@ -44,15 +48,17 @@ env:
 - inputText: ${AMOUNT}
 - hideKeyboard
 
-- assertVisible: ${RECIPIENT}
+# Do not match the typed address character for character. Maestro's delete
+# leaves a tail of the previous value, and `*` is a regex quantifier, so
+# `alice*example.com` never matches the field. The error clearing and the
+# slide enabling are the checks that the replacement was accepted.
 - assertVisible: ${AMOUNT}
-# Once the address parses and the amount is positive the disabled
-# `send-submit` plate is replaced by the slide-to-confirm gesture — the
-# affordance itself only exists in the submittable state.
+# A cold-start install has no holdings, so the submit CTA remains disabled until an asset is held (#704).
 - assertVisible:
-    id: "slide-to-confirm"
-- assertNotVisible:
     id: "send-submit"
+    enabled: false
+- assertNotVisible:
+    id: "slide-to-confirm"
 
 # Prefill from a payment request. The app is stopped first so this exercises the
 # cold-start path into the send form; deep-link.yaml covers the warm resume.

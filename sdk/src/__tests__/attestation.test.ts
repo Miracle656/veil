@@ -1,5 +1,5 @@
 /**
- * @jest-environment node
+ * @jest-environment @stryker-mutator/jest-runner/jest-env/node
  *
  * Runs under Node (not jsdom): jsdom's separate ArrayBuffer realm makes
  * SubtleCrypto reject same-realm buffers ("not instance of ArrayBuffer").

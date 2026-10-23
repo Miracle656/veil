@@ -37,12 +37,16 @@ const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wa
  * AsyncStorage key for the record, namespaced per network like the rest of the
  * wallet identifiers. It holds a public key and a label — nothing secret.
  */
-const SOURCE_KEY = 'veil_fee_payer_source';
+/**
+ * Base AsyncStorage key for the record. The active network's suffix is appended
+ * by {@link storageKey}. Wallet-derived: cleared on reset.
+ */
+export const FEE_PAYER_SOURCE_KEY = 'veil_fee_payer_source';
 
 type SourceRecord = { address: string; source: 'prf' | 'random' };
 
 function storageKey(): string {
-  return getNetworkName() === 'mainnet' ? `${SOURCE_KEY}_mainnet` : SOURCE_KEY;
+  return getNetworkName() === 'mainnet' ? `${FEE_PAYER_SOURCE_KEY}_mainnet` : FEE_PAYER_SOURCE_KEY;
 }
 
 /**

@@ -47,6 +47,7 @@ export function ContactPicker({ onSelect, onClose }: ContactPickerProps) {
             </h3>
             <button
               onClick={onClose}
+              aria-label="Close"
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(246,247,248,0.4)', padding: '0.5rem' }}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none">

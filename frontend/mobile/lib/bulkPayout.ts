@@ -32,41 +32,6 @@ export function isRowValid(row: PayoutRow): boolean {
   return Object.keys(errors).length === 0;
 }
 
-export type BatchSubmitResult = {
-  txHash: string;
-  rowIndices: number[];
-};
-
-export type PayoutResult = {
-  txHash: string;
-  completedRows: number[];
-  failedRows: number[];
-};
-
-/**
- * Submit every recipient row as a single authorized batch.
- * `submitBatch` is called once for the whole list — one signature covers all rows.
- */
-export async function executeBulkPayout(
-  rows: PayoutRow[],
-  submitBatch: (batch: PayoutRow[]) => Promise<BatchSubmitResult>
-): Promise<PayoutResult> {
-  try {
-    const result = await submitBatch(rows);
-    return {
-      txHash: result.txHash,
-      completedRows: result.rowIndices,
-      failedRows: [],
-    };
-  } catch {
-    return {
-      txHash: '',
-      completedRows: [],
-      failedRows: rows.map((_, i) => i),
-    };
-  }
-}
-
 // ── Real submission ───────────────────────────────────────────────────────────
 //
 // Why one transaction per row rather than one for the whole list: a Soroban
@@ -141,14 +106,21 @@ export function batchProblems(rows: PayoutRow[]): string[] {
  *
  * - A row is `submitted` only when `sendRow` resolved to a real transaction
  *   hash; anything else is `failed`.
- * - The first failure (including a cancelled passkey prompt) stops the run, so
- *   the user is not prompted to sign for the remaining rows after something went
- *   wrong. Those rows are reported `not_attempted` and none of them was sent.
+ * - The first failure stops the run, so the user is not prompted to sign for the
+ *   remaining rows after something went wrong. Those rows are reported
+ *   `not_attempted` and none of them was sent.
+ * - A cancelled passkey prompt is not a failed row. When `isCancellation` says
+ *   so before anything was submitted, the error is re-thrown to the screen,
+ *   which returns to the batch untouched instead of showing a failure for a
+ *   payment nobody authorised. If earlier rows already settled, the run stops
+ *   and those remaining are `not_attempted` — the report stays honest rather
+ *   than losing transactions that really happened.
  */
 export async function executeRowByRow(
   rows: PayoutRow[],
   sendRow: (row: PayoutRow, index: number) => Promise<string>,
   describeError: (e: unknown) => string = (e) => (e instanceof Error ? e.message : String(e)),
+  opts: { isCancellation?: (e: unknown) => boolean } = {},
 ): Promise<RowByRowResult> {
   const problems = batchProblems(rows);
   if (problems.length > 0) throw new Error(problems.join('\n'));
@@ -165,6 +137,13 @@ export async function executeRowByRow(
       if (!isTxHash(txHash)) throw new Error('The network returned no transaction hash for this payment.');
       outcomes.push({ index, status: 'submitted', txHash });
     } catch (e) {
+      if (opts.isCancellation?.(e)) {
+        const submitted = outcomes.some((outcome) => outcome.status === 'submitted');
+        if (!submitted) throw e;
+        outcomes.push({ index, status: 'not_attempted' });
+        stopped = true;
+        continue;
+      }
       outcomes.push({ index, status: 'failed', error: describeError(e) });
       stopped = true;
     }

@@ -11,6 +11,19 @@
  * - Key: 32-byte random, persisted in secure keychain
  * - Cipher: AES-256 with HMAC authentication
  * - Key derives from wallet address so notes are lost if wallet address changes
+ * Database encryption uses SQLCipher (via the expo-sqlite config plugin):
+ * - Key: 32 random bytes, held in the OS secure store, never derived from
+ *   anything the wallet address or a passkey can reproduce — so losing the
+ *   secure-store entry loses the notes. That is deliberate: the alternative is
+ *   a key an attacker with the address could recompute.
+ * - Cipher: SQLCipher defaults (AES-256-CBC with per-page HMAC).
+ * - The secure-store entry is scoped per wallet address, so each wallet (and so
+ *   each network) has its own key.
+ *
+ * SPP itself is an unaudited, testnet-only developer preview: `isPrivacyEnabled`
+ * in ./config.ts returns false on mainnet unconditionally. This module only
+ * persists state and makes no privacy guarantee of its own beyond encryption at
+ * rest — it does not hide anything from an attacker who has the unlocked device.
  *
  * Schema mirrors the upstream SPP SDK:
  * - notes: commitment → secret + metadata
@@ -20,6 +33,9 @@
  */
 
 import * as SQLite from 'expo-sqlite';
+import { getRandomBytes } from 'expo-crypto';
+import * as SQLite from 'expo-sqlite';
+
 import { deleteSecureItem, getSecureItem, setSecureItem } from '../storage';
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -94,6 +110,11 @@ async function initializeSppSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       pool_id TEXT NOT NULL,
       token_contract TEXT NOT NULL,
       amount BIGINT NOT NULL,
+      -- TEXT, not an integer type. SPP amounts are i128 and SQLite's INTEGER
+      -- affinity is 64-bit: a decimal string that does not fit i64 is silently
+      -- coerced to REAL, which loses low-order digits. Holding the decimal
+      -- string keeps the value exact and BigInt(row.amount) reads it back.
+      amount TEXT NOT NULL,
       encrypted_metadata BLOB,
       spent INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL,
@@ -141,6 +162,7 @@ async function initializeSppSchema(db: SQLite.SQLiteDatabase): Promise<void> {
 // ── Database Access ─────────────────────────────────────────────────────────
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
+let dbInstanceAddress: string | null = null;
 let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 /**
@@ -148,12 +170,21 @@ let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
  * Opens it once per app instance; subsequent calls return the cached connection.
  * Database is automatically encrypted via SQLCipher when this is the first open.
  *
+ * The cache is keyed on the wallet address, because each wallet has its own
+ * encryption key: switching network or recreating the wallet changes the address,
+ * and handing back the previous wallet's connection would read the wrong notes.
+ *
  * @param walletAddress Required to derive the encryption key.
  * @returns The open database connection.
  */
 export async function getSppDatabase(walletAddress: string): Promise<SQLite.SQLiteDatabase> {
   // Reuse the cached instance if already open.
   if (dbInstance) return dbInstance;
+  // Reuse the cached instance only when it belongs to this wallet.
+  if (dbInstance && dbInstanceAddress === walletAddress) return dbInstance;
+
+  // A different wallet is asking: drop the old connection before opening its database.
+  if (dbInstance) await closeSppDatabase();
 
   // Serialize initialization so only one open attempt proceeds.
   if (initPromise) return initPromise;
@@ -172,6 +203,26 @@ export async function getSppDatabase(walletAddress: string): Promise<SQLite.SQLi
       // Verify encryption is working by trying a simple operation.
       // If the key is wrong, this will fail.
       await db.execAsync('PRAGMA integrity_check');
+      // The key is interpolated into the statement, so a failure here must never
+      // surface the driver's error text — it echoes the SQL, key included.
+      try {
+        await db.execAsync(`PRAGMA key = "x'${encryptionKey}'"`);
+      } catch {
+        throw new Error('[spp-storage] failed to apply the database encryption key');
+      }
+
+      // Verify the key actually decrypts the file. Reading the schema is the
+      // cheap canonical SQLCipher check: with a wrong key SQLite cannot parse
+      // the header and raises "file is not a database". A full integrity_check
+      // would also work but scans the whole file on every cold start.
+      try {
+        await db.getFirstAsync('SELECT count(*) AS count FROM sqlite_master');
+      } catch (error) {
+        throw new Error(
+          '[spp-storage] the SPP database could not be decrypted with the stored key',
+          { cause: error },
+        );
+      }
 
       // Initialize schema.
       await initializeSppSchema(db);
@@ -181,6 +232,10 @@ export async function getSppDatabase(walletAddress: string): Promise<SQLite.SQLi
     } catch (error) {
       initPromise = null; // Reset so next attempt tries again.
       throw error;
+      dbInstanceAddress = walletAddress;
+      return db;
+    } finally {
+      initPromise = null; // Reset so a later attempt re-reads the cache or retries.
     }
   })();
 
@@ -188,6 +243,39 @@ export async function getSppDatabase(walletAddress: string): Promise<SQLite.SQLi
 }
 
 // ── Note Storage Operations ──────────────────────────────────────────────────
+
+/**
+ * Shapes of the rows the queries below select, so the mapping back to the
+ * public types is checked rather than cast through `any`. BLOB columns arrive
+ * as `Uint8Array` on device; `amount` is the exact decimal string written by
+ * {@link storeNote}.
+ */
+interface NoteRow {
+  commitment: string;
+  secret: Uint8Array;
+  public_key: Uint8Array;
+  pool_id: string;
+  token_contract: string;
+  amount: string;
+  encrypted_metadata: Uint8Array | null;
+  created_at: number;
+}
+
+interface SyncStateRow {
+  pool_id: string;
+  ledger_height: number;
+  cursor: number;
+  status: SyncState['status'] | null;
+}
+
+interface NullifierRow {
+  nullifier: Uint8Array;
+}
+
+interface EventCacheRow {
+  ledger_height: number;
+  event_data: Uint8Array;
+}
 
 export interface SppNote {
   commitment: string;
@@ -235,6 +323,7 @@ export async function getUnspentNotes(
   const db = await getSppDatabase(walletAddress);
 
   const rows = await db.allAsync<any>(
+  const rows = await db.getAllAsync<NoteRow>(
     `SELECT commitment, secret, public_key, pool_id, token_contract, amount, encrypted_metadata, created_at
      FROM notes
      WHERE pool_id = ? AND spent = 0
@@ -279,6 +368,7 @@ export async function getSyncState(walletAddress: string, poolId: string): Promi
   const db = await getSppDatabase(walletAddress);
 
   const row = await db.getFirstAsync<any>(
+  const row = await db.getFirstAsync<SyncStateRow>(
     `SELECT pool_id, ledger_height, cursor, status FROM sync_state WHERE pool_id = ?`,
     poolId,
   );
@@ -324,6 +414,7 @@ export async function getAllSyncStates(walletAddress: string): Promise<SyncState
   const db = await getSppDatabase(walletAddress);
 
   const rows = await db.allAsync<any>(
+  const rows = await db.getAllAsync<SyncStateRow>(
     `SELECT pool_id, ledger_height, cursor, status FROM sync_state ORDER BY pool_id`,
   );
 
@@ -377,6 +468,9 @@ export async function getAllNullifiers(walletAddress: string): Promise<Uint8Arra
   const db = await getSppDatabase(walletAddress);
 
   const rows = await db.allAsync<any>(`SELECT nullifier FROM nullifiers ORDER BY spent_at DESC`);
+  const rows = await db.getAllAsync<NullifierRow>(
+    `SELECT nullifier FROM nullifiers ORDER BY spent_at DESC`,
+  );
 
   return rows.map((row) => new Uint8Array(row.nullifier));
 }
@@ -416,6 +510,7 @@ export async function getCachedPoolEvents(
   const db = await getSppDatabase(walletAddress);
 
   const rows = await db.allAsync<any>(
+  const rows = await db.getAllAsync<EventCacheRow>(
     `SELECT ledger_height, event_data FROM event_cache
      WHERE pool_id = ? AND ledger_height BETWEEN ? AND ?
      ORDER BY ledger_height ASC`,
@@ -437,6 +532,13 @@ export async function getCachedPoolEvents(
  * Called before deleting the database file.
  */
 async function closeSppDatabase(): Promise<void> {
+ * Close the database connection and forget the cached handle.
+ *
+ * Called before deleting the database file, and whenever the app wants to drop
+ * the SQLCipher connection without wiping anything — backgrounding, or a
+ * switch to a different wallet. The next getSppDatabase() re-opens it.
+ */
+export async function closeSppDatabase(): Promise<void> {
   if (dbInstance) {
     try {
       await dbInstance.closeAsync();
@@ -444,6 +546,7 @@ async function closeSppDatabase(): Promise<void> {
       console.warn('[spp-storage] failed to close database', error);
     }
     dbInstance = null;
+    dbInstanceAddress = null;
     initPromise = null;
   }
 }
@@ -452,11 +555,17 @@ async function closeSppDatabase(): Promise<void> {
  * Delete the SPP database file and clear the encryption key.
  * Called when the wallet is removed.
  *
+ * The file itself has to go, not just the key. Leaving it behind would keep the
+ * removed wallet's notes and nullifiers on disk, and the next wallet on the
+ * device generates a fresh key that cannot open the old ciphertext — so SPP
+ * would be permanently unopenable rather than simply empty.
+ *
  * @param walletAddress The wallet address (used to find the encryption key).
  */
 export async function clearSppDatabase(walletAddress: string): Promise<void> {
   try {
     // Close the connection first.
+    // Close the connection first; the file cannot be removed while it is open.
     await closeSppDatabase();
 
     // Delete the database file.
@@ -468,6 +577,8 @@ export async function clearSppDatabase(walletAddress: string): Promise<void> {
       // database will be created. If per-device cleanup is needed, it would require
       // native code to call sqlite3_delete or remove the file from disk.
     } catch (error) {
+      await SQLite.deleteDatabaseAsync(SPP_DATABASE_NAME);
+    } catch {
       // Database may not exist yet; that's fine.
     }
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Alert,
   Dimensions,
   Easing,
   Modal,
@@ -17,7 +18,7 @@ import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { VeilLogo } from './VeilLogo';
-import { BILL_SERVICES, type BillService } from './PayForGrid';
+import { BILL_SERVICES, getServiceAvailabilityMessage, type BillService } from './PayForGrid';
 
 const PANEL_WIDTH = Math.min(320, Dimensions.get('window').width * 0.84);
 
@@ -39,10 +40,9 @@ const FLING_CLOSE_VX = -0.5;
 /**
  * The services drawer, opened from the drape mark in the dashboard header.
  *
- * Everything Veil intends to offer but has not shipped lives here behind a
- * "coming soon" badge, so the Pay-for grid on the dashboard only ever shows
- * things that actually work. A tile that does nothing when tapped is worse
- * than one the user was told is not ready yet.
+ * Future services and categories the provider does not support are separated
+ * here, so the dashboard only shows flows that actually work. Unavailable rows
+ * explain their status when tapped.
  *
  * Services move between the two surfaces by flipping `status` in
  * BILL_SERVICES — there is no second list to keep in sync.
@@ -163,8 +163,9 @@ export function ServicesDrawer({
   );
 
   const live = services.filter((s) => s.status === 'live');
-  const soon = services.filter((s) => s.status !== 'live');
-  const ordered = [...live, ...soon];
+  const soon = services.filter((s) => s.status === 'soon');
+  const notPlanned = services.filter((s) => s.status === 'not-planned');
+  const ordered = [...live, ...soon, ...notPlanned];
 
   return (
     <Modal
@@ -218,20 +219,39 @@ export function ServicesDrawer({
               </>
             ) : null}
 
-            <Stagger anim={anim} index={live.length}>
-              <Text style={[styles.sectionLabel, live.length > 0 && styles.sectionLabelSpaced]}>
-                Coming soon
-              </Text>
-            </Stagger>
-            {soon.map((s) => (
-              <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
-                <Row service={s} colors={colors} styles={styles} soon />
-              </Stagger>
-            ))}
+            {soon.length > 0 ? (
+              <>
+                <Stagger anim={anim} index={live.length + (live.length > 0 ? 1 : 0)}>
+                  <Text style={[styles.sectionLabel, live.length > 0 && styles.sectionLabelSpaced]}>
+                    Coming soon
+                  </Text>
+                </Stagger>
+                {soon.map((s) => (
+                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
+                    <Row service={s} colors={colors} styles={styles} />
+                  </Stagger>
+                ))}
+              </>
+            ) : null}
+
+            {notPlanned.length > 0 ? (
+              <>
+                <Stagger anim={anim} index={ordered.indexOf(notPlanned[0])}>
+                  <Text style={[styles.sectionLabel, (live.length > 0 || soon.length > 0) && styles.sectionLabelSpaced]}>
+                    Not planned
+                  </Text>
+                </Stagger>
+                {notPlanned.map((s) => (
+                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
+                    <Row service={s} colors={colors} styles={styles} />
+                  </Stagger>
+                ))}
+              </>
+            ) : null}
 
             <Stagger anim={anim} index={ordered.length + 1}>
               <Text style={styles.footnote}>
-                These arrive as each provider goes live. Nothing here is chargeable yet.
+                Upcoming services will appear when providers launch them. Unsupported bill categories are not planned, and nothing unavailable here can be charged.
               </Text>
             </Stagger>
           </ScrollView>
@@ -281,30 +301,41 @@ function Row({
   service,
   colors,
   styles,
-  soon = false,
 }: {
   service: BillService;
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
-  soon?: boolean;
 }) {
+  const availability = service.status === 'live' ? null : service.status;
+  const statusLabel = availability === 'soon' ? 'coming soon' : 'not planned';
+  const badgeLabel = availability === 'soon' ? 'SOON' : 'NOT PLANNED';
   return (
-    <View style={styles.row} accessibilityLabel={`${service.label}${soon ? ', coming soon' : ''}`}>
-      <View style={[styles.rowIcon, soon && styles.rowIconSoon]}>
-        <service.Icon size={18} color={soon ? colors.textMuted : colors.textPrimary} />
+    <Pressable
+      onPress={() => {
+        if (availability) {
+          Alert.alert(`${service.label} — ${statusLabel}`, getServiceAvailabilityMessage(service), [{ text: 'Got it' }]);
+        }
+      }}
+      disabled={!availability}
+      accessibilityRole={availability ? 'button' : undefined}
+      accessibilityLabel={availability ? `${service.label}, ${statusLabel}. Tap for details.` : service.label}
+      style={styles.row}
+    >
+      <View style={[styles.rowIcon, availability && styles.rowIconSoon]}>
+        <service.Icon size={18} color={availability ? colors.textMuted : colors.textPrimary} />
       </View>
       <View style={styles.rowText}>
-        <Text style={[styles.rowLabel, soon && styles.rowLabelSoon]}>{service.label}</Text>
+        <Text style={[styles.rowLabel, availability && styles.rowLabelSoon]}>{service.label}</Text>
         <Text style={styles.rowHint} numberOfLines={1}>
           {service.hint}
         </Text>
       </View>
-      {soon ? (
+      {availability ? (
         <View style={styles.badge}>
-          <Text style={styles.badgeText}>SOON</Text>
+          <Text style={styles.badgeText}>{badgeLabel}</Text>
         </View>
       ) : null}
-    </View>
+    </Pressable>
   );
 }
 

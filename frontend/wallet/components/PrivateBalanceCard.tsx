@@ -1,6 +1,9 @@
 'use client'
 
+import { useState } from 'react'
+
 import { Amount } from '@/components/ui/primitives'
+import { PrivacyExplainerModal } from '@/components/PrivacyExplainerModal'
 import { PRIVACY_RECOVERY_WARNING } from '@/lib/privacy/keys'
 
 export type PrivateSyncState = 'syncing' | 'up-to-date' | 'needs-history'
@@ -40,6 +43,9 @@ export function PrivateBalanceCard({
   hideAmounts?: boolean
   recoveryWarning?: boolean
 }) {
+  // Declared above the flag check so the hook order stays unconditional.
+  const [explainerOpen, setExplainerOpen] = useState(false)
+
   if (!isV131Enabled()) return null
 
   const statusCopy =
@@ -69,7 +75,25 @@ export function PrivateBalanceCard({
         </p>
       ) : null}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
-        <div className="vw-label">Private</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+          <div className="vw-label">Private</div>
+          <button
+            type="button"
+            onClick={() => setExplainerOpen(true)}
+            aria-label="What does private mean?"
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              fontSize: '12px',
+              color: 'rgba(246,247,248,0.5)',
+              textDecoration: 'underline',
+            }}
+          >
+            What does this mean?
+          </button>
+        </div>
         <span className="vw-meta">{statusCopy}</span>
       </div>
       {syncState === 'syncing' ? (
@@ -94,6 +118,7 @@ export function PrivateBalanceCard({
           </div>
         ))
       )}
+      <PrivacyExplainerModal isOpen={explainerOpen} onClose={() => setExplainerOpen(false)} />
     </div>
   )
 }

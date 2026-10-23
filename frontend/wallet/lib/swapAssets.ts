@@ -26,7 +26,7 @@ export interface SwapAsset {
 }
 
 /** Issued assets the receive side offers, when registered on the network. */
-export const SWAP_DEST_CODES = ['USDC', 'USDT0'] as const
+export const SWAP_DEST_CODES = ['USDC', 'USDT0', 'USDY'] as const
 
 export const NATIVE: SwapAsset = { code: 'XLM', issuer: null }
 

@@ -3,59 +3,351 @@ name: Fuzz — weekly cargo-fuzz run
 on:
   schedule:
     - cron: '0 3 * * 1'  # Every Monday at 03:00 UTC
-  workflow_dispatch:      # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      duration_secs:
+        description: 'libFuzzer budget per target, seconds'
+        required: false
+        type: number
+        default: 60
+      simulate_crash:
+        description: 'TESTING ONLY — fabricate a crash file to exercise the crash-reporting path'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   fuzz:
     name: cargo-fuzz (${{ matrix.target }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
-      # Open issue on panic (github-script), failure path only.
+      # Open an issue on a real crash, or to report a broken run. Failure
+      # reporting is deliberate: a silent red X is how this job lied for
+      # six weeks (issue #1051).
       contents: read
       issues: write
     strategy:
       fail-fast: false
       matrix:
         target: [fuzz_check_auth, fuzz_webauthn]
+    env:
+      # Pinned so a weekly run never re-resolves a dependency graph.
+      # To bump: change the two lines below and let this workflow prove it.
+      CARGO_FUZZ_VERSION: 0.13.2
+      NIGHTLY_TOOLCHAIN: nightly-2026-10-01
+      FUZZ_DURATION: ${{ inputs.duration_secs || 60 }}
     defaults:
       run:
         working-directory: contracts
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Checkout
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
+      - name: Install pinned nightly toolchain
+        id: toolchain
+        uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly
+        with:
+          toolchain: ${{ env.NIGHTLY_TOOLCHAIN }}
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Rust dependency cache
+        id: cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: contracts
 
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz
+      - name: Install cargo-fuzz (pinned, --locked)
+        id: install
+        run: |
+          # Must build with the *pinned* toolchain's rustc, not whatever the
+          # runner image leaves in PATH (its apt cargo/rustc 1.85 shadowed the
+          # nightly through both a bare `cargo` and an explicit `rustup which
+          # cargo` path — observed twice on CI). `rustup run` prepends the
+          # toolchain's own bin dir, which is the only invocation immune to
+          # that PATH roulette. cargo-fuzz 0.13.2 bundles a Cargo.lock pinning
+          # cargo-platform 0.3.3 (needs rustc >= 1.91), so the wrong compiler
+          # fails here loudly — a broken workflow, never a fake panic.
+          set -euo pipefail
+          echo "PATH resolves: cargo=$(command -v cargo || true) rustc=$(command -v rustc || true)"
+          rustup run "$NIGHTLY_TOOLCHAIN" rustc --version
+          rustup run "$NIGHTLY_TOOLCHAIN" cargo --version
+          rustup run "$NIGHTLY_TOOLCHAIN" cargo install cargo-fuzz --version "$CARGO_FUZZ_VERSION" --locked
+          # cargo-fuzz installs into $CARGO_HOME/bin; make the subcommand
+          # discoverable and prove the pinned version answers.
+          export PATH="$HOME/.cargo/bin:$PATH"
+          rustup run "$NIGHTLY_TOOLCHAIN" cargo fuzz --version
 
-      - name: Run ${{ matrix.target }} (60 s)
-        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60
+      - name: Run ${{ matrix.target }} for ${{ env.FUZZ_DURATION }} s
+        id: fuzz
+        continue-on-error: true
         working-directory: contracts/fuzz
+        run: |
+          set -o pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          # Explicit toolchain via rustup, not PATH ordering or rustup's
+          # default toolchain: runner images disagree on both (see install
+          # step). cargo-fuzz was installed into $HOME/.cargo/bin above.
+          rustup run "$NIGHTLY_TOOLCHAIN" cargo fuzz run "${{ matrix.target }}" -- -max_total_time="$FUZZ_DURATION" 2>&1 \
+            | tee "$RUNNER_TEMP/fuzz-log.txt"
 
+      - name: Fabricate crash evidence (simulate_crash dispatch only)
+        if: ${{ inputs.simulate_crash }}
+        run: |
+          mkdir -p fuzz/artifacts/${{ matrix.target }}
+          printf 'simulated-crash-input-not-a-real-finding' \
+            > fuzz/artifacts/${{ matrix.target }}/crash-0000000000000000000000000000000000000000
+          echo 'simulate_crash=true — this run exercises the crash-reporting path only.'
+
+      # Classify with `always()` so a failed install/toolchain step is still
+      # classified — as BROKEN, never as a crash. The old workflow gated issue
+      # creation on if: failure(), which turned a broken `cargo install` into a
+      # fake "Fuzz panic" against __check_auth (issue #1051).
+      - name: Classify outcome
+        id: classify
+        if: ${{ always() }}
+        working-directory: .
+        run: |
+          crash_dir="contracts/fuzz/artifacts/${{ matrix.target }}"
+          crash_file="$(find "$crash_dir" -maxdepth 1 -type f \
+            \( -name 'crash-*' -o -name 'timeout-*' -o -name 'oom-*' \) 2>/dev/null | head -n 1 || true)"
+          if [ -n "$crash_file" ]; then
+            verdict=crash
+          elif [ "${{ steps.fuzz.outcome }}" != 'success' ]; then
+            # The fuzzer never completed and produced no crash artifact:
+            # a broken workflow, not a security finding.
+            verdict=broken
+          else
+            verdict=ok
+          fi
+          crash_base="$(basename "$crash_file" 2>/dev/null || echo none)"
+          {
+            echo "verdict=$verdict"
+            echo "crash_file=$crash_base"
+            echo "date=$(date -u +%Y-%m-%d)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Verdict: $verdict (crash file: $crash_base)"
+
+      # NOTE: these three steps need `always()` — a bare condition is
+      # implicitly AND-ed with success(), so after a failed install they
+      # would silently skip, and the honest "broken workflow" report would
+      # never be filed (observed in the self-test run on the fork).
       - name: Upload crash artifacts
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ always() && steps.classify.outputs.verdict == 'crash' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuzz-crashes-${{ matrix.target }}
+          name: fuzz-crash-${{ matrix.target }}-run${{ github.run_id }}
           path: contracts/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 90
 
-      - name: Open issue on panic
-        if: failure()
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      - name: Open issue for a real crash
+        if: ${{ always() && steps.classify.outputs.verdict == 'crash' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET: ${{ matrix.target }}
+          CRASH_FILE: ${{ steps.classify.outputs.crash_file }}
+          RUN_DATE: ${{ steps.classify.outputs.date }}
+          SIMULATED: ${{ inputs.simulate_crash }}
+          TOOLCHAIN: ${{ env.NIGHTLY_TOOLCHAIN }}
+          FUZZ_VERSION: ${{ env.CARGO_FUZZ_VERSION }}
         with:
           script: |
-            github.rest.issues.create({
+            const fs = require('fs');
+            const path = require('path');
+            const target = process.env.TARGET;
+            const crashFile = process.env.CRASH_FILE;
+            const simulated = process.env.SIMULATED === 'true';
+
+            const crashPath = path.join(process.env.GITHUB_WORKSPACE,
+              'contracts/fuzz/artifacts', target, crashFile);
+            const crashBytes = fs.readFileSync(crashPath);
+            const b64 = crashBytes.toString('base64').replace(/(.{76})/g, '$1\n');
+
+            let logTail = '';
+            const logPath = path.join(process.env.RUNNER_TEMP, 'fuzz-log.txt');
+            if (fs.existsSync(logPath)) {
+              logTail = fs.readFileSync(logPath, 'utf8').slice(-8000);
+            }
+            const errLine = (logTail.match(/^==ERROR:.*$/m) || ['(see log below)'])[0];
+
+            const body = [
+              simulated
+                ? '> **SIMULATED RUN** — this issue was created by a `workflow_dispatch` ' +
+                  'with `simulate_crash=true` to verify the crash-reporting path. ' +
+                  'It is **not** a real finding. Safe to close.\n'
+                : '',
+              `## Real crash found by cargo-fuzz in \`${target}\``,
+              '',
+              `The weekly fuzz job ran \`${target}\` against \`${context.sha}\` ` +
+                `and libFuzzer stopped on an input it could not survive. ` +
+                `First error line: \`${errLine}\``,
+              '',
+              '**This is a security-relevant signal.** `fuzz_check_auth` exercises the ' +
+              'byte-parsing helpers behind `__check_auth`, which authorises every spend ' +
+              'on a mainnet wallet. No Veil contract is upgradeable.',
+              '',
+              '### Reproducer (self-contained)',
+              '',
+              '```bash',
+              'git clone https://github.com/' + context.repo.owner + '/' + context.repo.repo + ' && cd ' + context.repo.repo,
+              'rustup toolchain install ' + process.env.TOOLCHAIN + ' && rustup default ' + process.env.TOOLCHAIN,
+              'cargo install cargo-fuzz --version ' + process.env.FUZZ_VERSION + ' --locked',
+              'cd contracts/fuzz',
+              'mkdir -p artifacts/' + target,
+              'base64 -d > artifacts/' + target + '/' + crashFile + " <<'B64'",
+              b64,
+              'B64',
+              'cargo fuzz run ' + target + ' artifacts/' + target + '/' + crashFile,
+              '```',
+              '',
+              'Crash input: `' + crashFile + '` (' + crashBytes.length + ' bytes, ' +
+                'embedded in base64 above — no need to open the run).',
+              '',
+              '### Fuzzer output (tail)',
+              '',
+              '```',
+              logTail,
+              '```',
+              '',
+              `Run: <${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}>`,
+            ].join('\n');
+
+            await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Fuzz panic: ${{ matrix.target }} — ${new Date().toISOString().slice(0,10)}`,
-              body: `cargo-fuzz target \`${{ matrix.target }}\` found a panic.\nSee the [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for crash artifacts.`,
-              labels: ['bug', 'fuzz']
-            })
+              title: `Fuzz crash: ${target} — ${process.env.RUN_DATE}`,
+              body,
+              labels: ['bug', 'fuzz'],
+            });
+
+      - name: Report broken fuzz workflow (NOT a panic)
+        if: ${{ always() && steps.classify.outputs.verdict == 'broken' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          TARGET: ${{ matrix.target }}
+          RUN_DATE: ${{ steps.classify.outputs.date }}
+          TOOLCHAIN: ${{ env.NIGHTLY_TOOLCHAIN }}
+          FUZZ_VERSION: ${{ env.CARGO_FUZZ_VERSION }}
+          OUT_CHECKOUT: ${{ steps.checkout.outcome }}
+          OUT_TOOLCHAIN: ${{ steps.toolchain.outcome }}
+          OUT_CACHE: ${{ steps.cache.outcome }}
+          OUT_INSTALL: ${{ steps.install.outcome }}
+          OUT_FUZZ: ${{ steps.fuzz.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const target = process.env.TARGET;
+
+            let logTail = '(the fuzzer never produced a log)';
+            const logPath = path.join(process.env.RUNNER_TEMP, 'fuzz-log.txt');
+            if (fs.existsSync(logPath)) {
+              logTail = fs.readFileSync(logPath, 'utf8').slice(-8000);
+            }
+
+            const outcomes = [
+              ['checkout', process.env.OUT_CHECKOUT],
+              ['toolchain', process.env.OUT_TOOLCHAIN],
+              ['rust-cache', process.env.OUT_CACHE],
+              ['install cargo-fuzz', process.env.OUT_INSTALL],
+              ['run ' + target, process.env.OUT_FUZZ],
+            ].map(([s, o]) => `| ${s} | ${o} |`).join('\n');
+
+            const title = `Fuzz workflow broken: ${target} — weekly fuzz job is not fuzzing`;
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'fuzz-broken-workflow',
+              per_page: 100,
+            });
+            const dup = openIssues.find(i => i.title === title);
+            const runLink =
+              `<${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}>`;
+
+            if (dup) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                body: `Still broken on ${process.env.RUN_DATE}. No fuzz coverage that week. ${runLink}`,
+              });
+              core.notice(`Commented on existing issue #${dup.number} instead of opening a duplicate`);
+              return;
+            }
+
+            const body = [
+              '## This is NOT a crash report',
+              '',
+              `The weekly fuzz job for \`${target}\` failed *before* completing a fuzz ` +
+                'run, and no crash artifact exists. **Nothing in the contracts was shown ' +
+                'to be broken — but nothing was tested either.** Treat this as broken CI, ' +
+                'not as a security finding.',
+              '',
+              'A previous version of this workflow mislabelled exactly this situation as ' +
+              '"Fuzz panic" six times in a row (issue #1051). While this issue is open, ' +
+              'the auth path has no fuzz coverage.',
+              '',
+              '### Step outcomes',
+              '',
+              '| step | outcome |',
+              '| --- | --- |',
+              outcomes,
+              '',
+              '### Likely causes',
+              '',
+              `- \`cargo install cargo-fuzz --version ${process.env.FUZZ_VERSION} --locked\` failed (toolchain vs crate MSRV),`,
+              `- pinned \`${process.env.TOOLCHAIN}\` unavailable or broken,`,
+              '- or the fuzz targets no longer build. Check the failing step in the run below.',
+              '',
+              '### Fuzzer log (tail, if it got that far)',
+              '',
+              '```',
+              logTail,
+              '```',
+              '',
+              `Run: ${runLink}`,
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['fuzz', 'fuzz-broken-workflow'],
+            });
+
+      # Surface the verdict in the job status itself: only a real crash or a
+      # broken run goes red; a clean fuzz run goes green.
+      - name: Job result reflects the verdict
+        if: ${{ always() }}
+        working-directory: .
+        env:
+          VERDICT: ${{ steps.classify.outputs.verdict }}
+        run: |
+          case "$VERDICT" in
+            ok)
+              echo "cargo-fuzz ${{ matrix.target }}: completed, no crash found."
+              ;;
+            crash)
+              echo "::error::cargo-fuzz found a REAL crash in ${{ matrix.target }} — see the opened issue."
+              exit 1
+              ;;
+            broken)
+              echo "::error::fuzz workflow BROKEN for ${{ matrix.target }} — no fuzzing happened. Not a panic; see the opened issue."
+              exit 1
+              ;;
+            *)
+              echo "::error::fuzz job failed before classification (verdict='$VERDICT') — treat as broken workflow."
+              exit 1
+              ;;
+          esac

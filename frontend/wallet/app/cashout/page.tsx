@@ -34,6 +34,7 @@ import {
   rememberActiveOrder,
   rememberDepositAddress,
   verifyBankAccount,
+  type OfframpCoin,
   type OfframpOrder,
   type VerifiedBank,
 } from '@/lib/offramp'
@@ -42,6 +43,16 @@ type Step = 'amount' | 'bank' | 'review' | 'deposit' | 'done'
 
 /** Linq expires an unpaid order ten minutes after it is created. */
 const DEPOSIT_WINDOW_MS = 10 * 60 * 1000
+
+/**
+ * The asset this screen cashes out.
+ *
+ * Named because every quote on screen is naira per one unit of it: `ngn / rate`
+ * is only the right number of asset if `rate` was asked for this asset, which the
+ * backend now requires rather than guesses. A second asset here turns this into
+ * per-selection state — it must not stay a constant while two assets are offered.
+ */
+const CASH_OUT_COIN: OfframpCoin = 'usdc'
 
 const QUICK_AMOUNTS = [20_000, 50_000, 100_000, 250_000]
 
@@ -87,6 +98,14 @@ export default function CashOutPage() {
 
   const [order, setOrder] = useState<OfframpOrder | null>(null)
   const [createdAt, setCreatedAt] = useState<number | null>(null)
+  /**
+   * Held, not regenerated per click. The backend refuses to generate this on
+   * purpose — a new key on a retry is how one order becomes two and both get
+   * paid for — so a retry of the SAME order has to carry the same key. Cleared
+   * whenever the user goes back to change the amount or the bank, because that
+   * is a different order.
+   */
+  const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null)
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const [status, setStatus] = useState('initiated')
   const [copied, setCopied] = useState(false)
@@ -131,7 +150,7 @@ export default function CashOutPage() {
       setAvailable(ok)
       setProbed(true)
       if (!ok) return
-      getOfframpRate()
+      getOfframpRate(CASH_OUT_COIN)
         .then((r) => !cancelled && setRate(r.rate))
         .catch((err) => !cancelled && setRateError(errorMessage(err)))
     })
@@ -212,17 +231,26 @@ export default function CashOutPage() {
       if (!verified) throw new Error('Verify the bank account first.')
       if (!feePayer) throw new Error('This browser has no classic account to refund to.')
 
+      // Kept across retries of this same order, and only this one.
+      const key = idempotencyKey ?? crypto.randomUUID()
+      if (!idempotencyKey) setIdempotencyKey(key)
+
       const created = await createOrder({
         amountNGN: ngn,
         bankAccount: verified.accountNumber,
         bankCode: verified.bankCode,
         bankName: verified.bankName || bankName(verified.bankCode),
         accountName: verified.accountName,
+        // The wallet placing the order. Required, and previously not sent at
+        // all — which is why every web cash-out failed validation.
+        walletAddress: feePayer,
         refundAddress: feePayer,
+        idempotencyKey: key,
       })
       setOrder(created)
       setStatus(created.status)
       setCreatedAt(Date.now())
+      setIdempotencyKey(null)
       rememberActiveOrder(created.id)
       // So activity can call this "Cashed out" instead of "Sent".
       rememberDepositAddress(created.walletAddress)
@@ -430,7 +458,7 @@ export default function CashOutPage() {
             </div>
 
             <button
-              onClick={() => setStep('bank')}
+              onClick={() => { setIdempotencyKey(null); setStep('bank') }}
               disabled={!(ngn > 0) || rate === null}
               style={ngn > 0 && rate !== null ? { ...primary, marginTop: '1.75rem' } : { ...primaryOff, marginTop: '1.75rem' }}
             >
@@ -519,7 +547,7 @@ export default function CashOutPage() {
             ) : null}
 
             <div style={{ display: 'flex', gap: 10, marginTop: '1.75rem' }}>
-              <button onClick={() => setStep('amount')} style={secondary}>
+              <button onClick={() => { setIdempotencyKey(null); setStep('amount') }} style={secondary}>
                 Back
               </button>
               <button
@@ -553,7 +581,7 @@ export default function CashOutPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 10, marginTop: '1.75rem' }}>
-              <button onClick={() => setStep('bank')} style={secondary} disabled={busy}>
+              <button onClick={() => { setIdempotencyKey(null); setStep('bank') }} style={secondary} disabled={busy}>
                 Back
               </button>
               <button onClick={handleCreateOrder} disabled={busy} style={{ ...primary, flex: 1 }}>

@@ -6,6 +6,7 @@ import { Account, Keypair, Networks, type Operation } from '@stellar/stellar-sdk
 import {
   buildChangeTrustTx,
   canRemoveTrustline,
+  getRemovalRefusalReason,
   hasTrustline,
   normalizeDomain,
   parseTrustlines,
@@ -37,10 +38,43 @@ describe('hasTrustline', () => {
   })
 })
 
-describe('canRemoveTrustline', () => {
+describe('parseTrustlines open offers', () => {
+  it('flags a line with non-zero buying or selling liabilities', () => {
+    const [withOffers, without] = parseTrustlines([
+      { asset_type: 'credit_alphanum4', asset_code: 'AAA', asset_issuer: ISSUER, balance: '0', limit: '1', selling_liabilities: '2.0000000' },
+      { asset_type: 'credit_alphanum4', asset_code: 'BBB', asset_issuer: ISSUER, balance: '0', limit: '1', buying_liabilities: '0.0000000', selling_liabilities: '0.0000000' },
+    ])
+    expect(withOffers?.hasOpenOffers).toBe(true)
+    expect(without?.hasOpenOffers).toBeUndefined()
+  })
+})
+
+describe('canRemoveTrustline & getRemovalRefusalReason', () => {
   it('only allows removal at a zero balance', () => {
     expect(canRemoveTrustline({ code: 'A', issuer: ISSUER, balance: '0', limit: '1', assetType: 'credit_alphanum4' })).toBe(true)
     expect(canRemoveTrustline({ code: 'A', issuer: ISSUER, balance: '5', limit: '1', assetType: 'credit_alphanum4' })).toBe(false)
+  })
+
+  it('provides detailed refusal reason when balance is non-zero', () => {
+    const refusal = getRemovalRefusalReason({ code: 'USDC', issuer: ISSUER, balance: '12.5000000', limit: '100', assetType: 'credit_alphanum4' })
+    expect(refusal).toBe('Cannot remove trustline for USDC: balance is 12.5000000 (must be 0 to remove and reclaim 0.5 XLM reserve).')
+  })
+
+  it('says the balance could not be read, rather than calling it non-zero', () => {
+    const refusal = getRemovalRefusalReason({ code: 'USDC', issuer: ISSUER, balance: 'garbage', limit: '100', assetType: 'credit_alphanum4' })
+    expect(refusal).toContain('could not be read')
+    expect(refusal).not.toContain('must be 0')
+  })
+
+  it('refuses removal while open offers hold liabilities, even at a zero balance', () => {
+    const line = { code: 'USDC', issuer: ISSUER, balance: '0', limit: '100', assetType: 'credit_alphanum4', hasOpenOffers: true }
+    expect(canRemoveTrustline(line)).toBe(false)
+    expect(getRemovalRefusalReason(line)).toContain('open offers')
+  })
+
+  it('returns null refusal reason when balance is zero', () => {
+    const refusal = getRemovalRefusalReason({ code: 'USDC', issuer: ISSUER, balance: '0', limit: '100', assetType: 'credit_alphanum4' })
+    expect(refusal).toBeNull()
   })
 })
 

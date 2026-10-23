@@ -28,10 +28,10 @@ import { getNetwork, getNetworkName } from './network';
 import { getSignerSecret } from './walletStore';
 import { usdcIssuerFor } from './receiveReadiness';
 import { getAssetIssuer } from './assets';
+import { TRUSTLINE_RESERVE_COST_XLM } from './reserves';
 
 /** Reserve for one trustline (0.5 XLM) plus room for the fee. */
 export const MIN_XLM_FOR_TRUSTLINE = 0.6;
-
 export class NotEnoughXlm extends Error {
   constructor(readonly have: number, readonly address: string, readonly assetCode: string = 'USDC') {
     super(
@@ -54,6 +54,15 @@ export class MissingTrustline extends Error {
       `You need to enable ${assetCode} to hold it. Adding a trustline requires 0.5 XLM of refundable reserve.`,
     );
     this.name = 'MissingTrustline';
+  }
+}
+
+export class NonZeroBalanceError extends Error {
+  constructor(readonly balance: string, readonly assetCode: string) {
+    super(
+      `Cannot remove ${assetCode} trustline: balance is ${balance} (must be 0 to remove and reclaim ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve).`,
+    );
+    this.name = 'NonZeroBalanceError';
   }
 }
 
@@ -146,4 +155,77 @@ export async function enableUsdt0(): Promise<string | null> {
   return enableTrustline('USDT0');
 }
 
+/**
+ * Remove a trustline for an asset when its balance is zero.
+ * Setting the trustline limit to 0 removes it and returns 0.5 XLM reserve to the account.
+ */
+export async function removeTrustline(assetCode: string): Promise<string> {
+  const secret = await getSignerSecret();
+  if (!secret) throw new Error('This device has no signing key for the classic account.');
+
+  const upperCode = assetCode.toUpperCase();
+  const networkName = getNetworkName();
+
+  let issuer: string | null = null;
+  if (upperCode === 'USDC') {
+    issuer = usdcIssuerFor(networkName);
+  } else {
+    issuer = getAssetIssuer(upperCode, networkName);
+  }
+
+  if (!issuer) {
+    throw new Error(`Unregistered asset code "${assetCode}". Cannot verify issuer against registry.`);
+  }
+
+  const network = getNetwork();
+  const kp = Keypair.fromSecret(secret);
+  const asset = new Asset(upperCode, issuer);
+  const server = new Horizon.Server(network.horizonUrl);
+
+  const account = await server.loadAccount(kp.publicKey());
+  const balances = account.balances as Array<{
+    asset_type: string;
+    asset_code?: string;
+    asset_issuer?: string;
+    balance: string;
+    buying_liabilities?: string;
+    selling_liabilities?: string;
+  }>;
+
+  const line = balances.find(
+    (b) => b.asset_code === upperCode && b.asset_issuer === asset.issuer,
+  );
+  if (!line) {
+    throw new Error(`No trustline found for ${upperCode}.`);
+  }
+
+  const balNum = Number(line.balance);
+  if (!Number.isFinite(balNum)) {
+    throw new Error(
+      `Could not read the ${upperCode} balance ("${line.balance}"), so the trustline was not removed. Refresh and try again.`,
+    );
+  }
+  if (balNum > 0) {
+    throw new NonZeroBalanceError(line.balance, upperCode);
+  }
+  // Open DEX offers hold liabilities against the line, and Stellar refuses to
+  // remove a trustline while any remain, even at a zero balance.
+  if (Number(line.buying_liabilities ?? 0) > 0 || Number(line.selling_liabilities ?? 0) > 0) {
+    throw new Error(
+      `Cannot remove ${upperCode} trustline: you still have open offers on this asset. Cancel them first, then remove the trustline.`,
+    );
+  }
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: network.networkPassphrase,
+  })
+    .addOperation(Operation.changeTrust({ asset, limit: '0' }))
+    .setTimeout(60)
+    .build();
+
+  tx.sign(kp);
+  const res = await server.submitTransaction(tx);
+  return res.hash;
+}
 

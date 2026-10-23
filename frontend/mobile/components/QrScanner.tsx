@@ -13,34 +13,55 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { isValidStellarAddress } from '../lib/address';
 import { parseQrValue } from '../lib/sep7';
 
+export interface QrScanDetails {
+  memo?: string;
+  memoType?: string;
+  amount?: string;
+  assetCode?: string;
+  assetIssuer?: string;
+}
+
 interface QrScannerProps {
   visible: boolean;
-  onScan: (address: string) => void;
+  onScan: (address: string, details?: QrScanDetails) => void;
   onClose: () => void;
 }
 
 /**
- * Pull a destination out of a scanned value. Accepts a bare G…/C… address or a
- * SEP-7 `web+stellar:pay?...` URI — #468 requires both, and payment-request QR
- * codes are the SEP-7 form. Returns null for anything unrecognised so the
- * camera keeps scanning rather than latching onto junk.
+ * Parse a scanned value into a recipient destination and optional payment details.
+ * Accepts a bare G…/C… address or a SEP-7 `web+stellar:pay?...` URI.
+ * Extracts memo, memo_type, amount, asset code, and asset issuer if present.
  */
-function destinationFromScan(value: string): string | null {
-  // parseQrValue refuses a SEP-7 URI whose memo_type is unknown or whose memo
-  // does not fit the type it declares (#817) — by throwing. Inside the camera
-  // callback that would be an unhandled exception, so a refused code is simply
-  // not a destination and the scanner keeps looking.
+export function parseScanResult(value: string): { address: string; details?: QrScanDetails } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (isValidStellarAddress(trimmed)) {
+    return { address: trimmed };
+  }
+
   let parsed: ReturnType<typeof parseQrValue> = null;
   try {
-    parsed = parseQrValue(value);
+    parsed = parseQrValue(trimmed);
   } catch {
     parsed = null;
   }
-  const destination = parsed && 'destination' in parsed ? parsed.destination : undefined;
-  if (destination && isValidStellarAddress(destination)) return destination;
 
-  const trimmed = value.trim();
-  return isValidStellarAddress(trimmed) ? trimmed : null;
+  if (parsed && 'destination' in parsed && parsed.destination && isValidStellarAddress(parsed.destination)) {
+    const details: QrScanDetails = {};
+    if ('memo' in parsed && parsed.memo) details.memo = parsed.memo;
+    if ('memoType' in parsed && parsed.memoType) details.memoType = parsed.memoType;
+    if ('amount' in parsed && parsed.amount) details.amount = parsed.amount;
+    if ('assetCode' in parsed && parsed.assetCode) details.assetCode = parsed.assetCode;
+    if ('assetIssuer' in parsed && parsed.assetIssuer) details.assetIssuer = parsed.assetIssuer;
+    return { address: parsed.destination, details: Object.keys(details).length > 0 ? details : undefined };
+  }
+
+  return null;
+}
+
+function destinationFromScan(value: string): string | null {
+  return parseScanResult(value)?.address ?? null;
 }
 
 export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
@@ -55,10 +76,10 @@ export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
   const handleBarcodeScanned = useCallback(
     ({ data }: { data: string }) => {
       if (!scanEnabled) return;
-      const addr = destinationFromScan(data);
-      if (addr) {
+      const res = parseScanResult(data);
+      if (res) {
         setScanEnabled(false);
-        onScan(addr);
+        onScan(res.address, res.details);
       }
     },
     [scanEnabled, onScan]
@@ -69,15 +90,15 @@ export function QrScanner({ visible, onScan, onClose }: QrScannerProps) {
   }, [requestPermission]);
 
   const handleManualSubmit = useCallback(() => {
-    const addr = destinationFromScan(manualAddress);
-    if (!addr) {
+    const res = parseScanResult(manualAddress);
+    if (!res) {
       setManualError(
-        'Enter a valid Stellar address (G... or C..., 56 characters).'
+        'Enter a valid Stellar address (G... or C..., 56 characters) or SEP-7 URI.'
       );
       return;
     }
     setManualError(null);
-    onScan(addr);
+    onScan(res.address, res.details);
   }, [manualAddress, onScan]);
 
   // Reset scan throttle when modal opens

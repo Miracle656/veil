@@ -46,7 +46,9 @@ import {
 } from '../../lib/agentMessages';
 import { useNetwork } from '../../hooks/useNetwork';
 import { historyFromMessages, sendAgentMessage, type AgentReply } from '../../lib/agentClient';
+import { setCashOutHandoff } from '../../lib/cashOutHandoff';
 import { signPayloadWithPasskey } from '../../lib/passkey';
+import { isPasskeyCancellation } from '../../lib/passkeyOutcome';
 import { getPasskeyId, getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
@@ -135,6 +137,26 @@ export default function AgentScreen() {
           kind: 'swap',
           text: reply.response,
           intent: reply.swapIntent,
+        });
+        return;
+      }
+
+      if (reply.investIntent) {
+        appendMessage({
+          id: nextMessageId('invest'),
+          kind: 'invest',
+          text: reply.response,
+          intent: reply.investIntent,
+        });
+        return;
+      }
+
+      if (reply.cashOutIntent) {
+        appendMessage({
+          id: nextMessageId('cashout'),
+          kind: 'cashout',
+          text: reply.response,
+          intent: reply.cashOutIntent,
         });
         return;
       }
@@ -277,6 +299,12 @@ export default function AgentScreen() {
       const result = await new Horizon.Server(network.horizonUrl).submitTransaction(tx);
       updateProposal(message.id, { state: 'submitted', hash: result.hash });
     } catch (error) {
+      // Closing the prompt is a decline, not a failure: the proposal was never
+      // signed. Recognised by the ceremony's outcome, not by message text.
+      if (isPasskeyCancellation(error)) {
+        updateProposal(message.id, { state: 'declined' });
+        return;
+      }
       updateProposal(message.id, { state: 'failed', reason: describeSubmissionError(error) });
     }
   }
@@ -437,6 +465,26 @@ function MessageRow({
           </View>
         </View>
       );
+
+    case 'invest':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <InvestHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
+
+    case 'cashout':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <CashOutHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
   }
 }
 
@@ -457,6 +505,50 @@ function SwapHandoff({ intent }: { intent: { from: string; to: string; amount?: 
             params: { from: intent.from, to: intent.to, ...(intent.amount ? { amount: intent.amount } : {}) },
           })
         }
+      />
+    </View>
+  );
+}
+
+/**
+ * Invest hand-off to the Earn/Invest section.
+ */
+function InvestHandoff({ intent }: { intent: import('../../lib/agentMessages').InvestIntent }) {
+  const router = useRouter();
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Button
+label="Open Earn Section"
+        onPress={() => {
+          const code = intent.code ?? intent.asset?.code ?? '';
+          const issuer = intent.issuer ?? intent.asset?.issuer ?? '';
+          const amount = intent.amount ?? '';
+          router.push({
+            pathname: '/earn',
+            params: {
+              ...(code ? { code, asset: code } : {}),
+              ...(issuer ? { issuer } : {}),
+              ...(amount ? { amount } : {}),
+              ...(intent.quoteCurrency ? { quoteCurrency: intent.quoteCurrency } : {}),
+            },
+          });
+        }}
+      />
+    </View>
+  );
+}
+
+/** Carries only the amount and rate; bank details remain on the Cash Out screen. */
+function CashOutHandoff({ intent }: { intent: import('../../lib/agentMessages').CashOutIntent }) {
+  const router = useRouter();
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Button
+        label={`Open Cash Out · ₦${intent.amountNGN.toLocaleString('en-NG')}`}
+        onPress={() => {
+          setCashOutHandoff(intent);
+          router.push('/cash-out');
+        }}
       />
     </View>
   );

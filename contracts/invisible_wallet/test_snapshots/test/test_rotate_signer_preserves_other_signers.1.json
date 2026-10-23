@@ -89,6 +89,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "NextSignerIndex"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 2
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "Nonce"
                             }
                           ]

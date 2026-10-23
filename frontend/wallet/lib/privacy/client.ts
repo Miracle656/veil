@@ -3,7 +3,8 @@
 import { TransactionBuilder, hash } from '@stellar/stellar-sdk'
 import { ensureFeePayer } from '@/lib/feePayer'
 import { getNetwork } from '@/lib/network'
-import { getSppConfig } from './config'
+import { getConfiguredBootnodeUrl, getSppConfig } from './config'
+import { resolveBootnodeWithFallback } from './bootnode'
 
 export type PrivacyStatus = 'idle' | 'syncing' | 'ready' | 'error'
 
@@ -21,7 +22,43 @@ export interface PrivacyClient {
   shield: (amount: bigint | number | string) => Promise<string>
   privateSend: (recipient: string, amount: bigint | number | string) => Promise<string>
   unshield: (amount: bigint | number | string, recipient?: string) => Promise<string>
+  recipientLookup: (address: string) => Promise<RecipientRegistration>
   stop: () => void
+}
+
+/**
+ * What the SPP public-key registry says about one address (V137).
+ *
+ * `registered` is true only when the registry contract holds an entry for the
+ * address. `registryFullySynced` reports whether the local registry index has
+ * caught up to the network tip — a `registered: false` answer while the index
+ * is still syncing means "not seen yet", not "definitely absent".
+ */
+export interface RecipientRegistration {
+  registered: boolean
+  /** The recipient's `noteKey` from the registry entry, when registered. */
+  noteKey?: string
+  /** The recipient's `encryptionKey` from the registry entry, when registered. */
+  encryptionKey?: string
+  /** Ledger the registry entry was last modified on, when registered. */
+  ledger?: number
+  /** Whether the local registry index is caught up to the network tip. */
+  registryFullySynced: boolean
+}
+
+/**
+ * The transaction hash of a completed pool execution, or throws.
+ *
+ * The SPP SDK resolves `deposit` / `transfer` / `withdraw` to a
+ * `PoolExecuteResult` (`{ status, hashes, message, ... }`), not to a hash
+ * string — `String(result)` would render `[object Object]`. The hash is the
+ * first entry of `hashes`, and it only exists when `status === 'ok'`.
+ */
+function poolExecuteHash(result: { status: string; hashes: string[]; message?: string }): string {
+  if (result.status !== 'ok' || !result.hashes.length) {
+    throw new Error(result.message || 'The private transaction was not accepted by the pool.')
+  }
+  return result.hashes[0]
 }
 
 function toBigInt(value: bigint | number | string): bigint {
@@ -104,7 +141,12 @@ async function initClient(): Promise<PrivacyClient> {
     storage,
     contractConfig: getContractConfig(sppConfig),
     circuitsBaseUrl: `${window.location.origin}/spp/circuits/`,
-    bootnodeUrl: sppConfig.bootnodeUrl,
+    // Probe Veil's own archive and fall back to Nethermind's when it is
+    // unreachable (#719). Resolving here rather than trusting the static
+    // config is what makes the BootnodeBanner's claim true: the banner
+    // reports the outcome of this same cached probe, so without it the
+    // UI could say "using Nethermind" while the client used a dead URL.
+    bootnodeUrl: await resolveBootnodeWithFallback(getConfiguredBootnodeUrl()),
   })
 
   const signer = await getSigner()
@@ -126,17 +168,28 @@ async function initClient(): Promise<PrivacyClient> {
     async shield(amount) {
       const value = toBigInt(amount)
       if (value <= 0n) throw new Error('Shield amount must be greater than zero.')
-      return String(await pool.deposit(value))
+      return poolExecuteHash(await pool.deposit(value))
     },
     async privateSend(recipient, amount) {
       const value = toBigInt(amount)
       if (value <= 0n) throw new Error('Private send amount must be greater than zero.')
-      return String(await pool.transfer(recipient, value))
+      return poolExecuteHash(await pool.transfer(recipient, value))
     },
     async unshield(amount, recipient) {
       const value = toBigInt(amount)
       if (value <= 0n) throw new Error('Unshield amount must be greater than zero.')
-      return String(await pool.withdraw(value, recipient ?? undefined))
+      return poolExecuteHash(await pool.withdraw(value, recipient ?? undefined))
+    },
+    async recipientLookup(address) {
+      const lookup = await client.recipientLookup(address)
+      const entry = lookup.entry
+      return {
+        registered: entry !== undefined && entry !== null,
+        noteKey: entry?.noteKey,
+        encryptionKey: entry?.encryptionKey,
+        ledger: entry?.ledger,
+        registryFullySynced: lookup.registryFullySynced,
+      }
     },
     stop() {
       client.stopBackgroundSync()

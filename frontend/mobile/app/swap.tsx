@@ -37,6 +37,7 @@ import { getNetwork } from '../lib/network';
 import { signAndSubmitSorobanXdr } from '../lib/sorobanTx';
 import { useNetwork } from '../hooks/useNetwork';
 import { requirePasskey } from '../lib/passkey';
+import { isPasskeyCancellation, PasskeyCeremonyError } from '../lib/passkeyOutcome';
 import { getWalletAddress, getSignerSecret } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 
@@ -52,7 +53,7 @@ const TOKENS: Token[] = [
 ];
 /** A swappable asset: a registry-checked code:issuer (issuer null = XLM). */
 type Token = SwapAsset & { name: string };
-type Step = 'form' | 'signing' | 'submitting' | 'done' | 'error';
+type Step = 'form' | 'review' | 'signing' | 'submitting' | 'done' | 'error';
 
 /**
  * The tokens on offer, built from the verified registry for the network — XLM
@@ -268,6 +269,12 @@ export default function SwapScreen() {
   // ── Enhance quotes with spread and price impact data ──────────────────────
   useEffect(() => {
     if (!quote || onTestnet) {
+  // ── Spread and price-impact disclosure (#732) ──────────────────────────────
+  // Runs on both networks: the venue differs (Soroswap on mainnet, the classic
+  // DEX on testnet) but the order book is Horizon's either way. The assets go
+  // in as registry-checked code:issuer pairs, never as bare codes.
+  useEffect(() => {
+    if (!quote) {
       setHonestQuote(null);
       return;
     }
@@ -280,6 +287,12 @@ export default function SwapScreen() {
           quote,
           tokenIn.code,
           tokenOut.code,
+      const parsed = parseFloat(amountIn);
+      try {
+        const enhanced = await enhanceQuoteWithSpread(
+          quote,
+          tokenIn,
+          tokenOut,
           parsed,
           PRICE_IMPACT_THRESHOLD_PCT,
         );
@@ -291,6 +304,16 @@ export default function SwapScreen() {
     })();
     return () => { alive = false; };
   }, [quote, tokenIn.code, tokenOut.code, amountIn, onTestnet]);
+      } catch {
+        // Leave it null rather than casting the bare quote to a HonestSwapQuote:
+        // that would render a review screen whose impact figures read as
+        // measured when nothing was measured. The review screen handles null by
+        // saying the disclosure is unavailable.
+        if (alive) setHonestQuote(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [quote, tokenIn, tokenOut, amountIn]);
 
   /**
    * Make sure the spending account can cover an XLM swap, moving the shortfall
@@ -343,6 +366,18 @@ export default function SwapScreen() {
     // Check if order exceeds price impact threshold
     if (honestQuote?.shouldRefuse && honestQuote?.refusalReason) {
       setExecError(honestQuote.refusalReason);
+  // ── Execution — with the impact threshold enforced ─────────────────────────
+  async function handleExecute() {
+    setExecError(null);
+
+    // Last line of defence: the review screen hides the confirm control for a
+    // refused order, but the threshold is re-checked here so no other entry
+    // point can get past it.
+    if (honestQuote?.shouldRefuse) {
+      setExecError(
+        honestQuote.refusalReason ??
+          'This order exceeds the price-impact threshold, so it was not submitted.',
+      );
       setStep('error');
       return;
     }
@@ -472,7 +507,14 @@ export default function SwapScreen() {
       setTxHash(hash);
       setStep('done');
     } catch (err: unknown) {
-      const msg = errorMessage(err);
+      // Closing the prompt returns to the review the user was on. It is not an
+      // execution error, and no swap was built or submitted.
+      if (isPasskeyCancellation(err)) {
+        setExecError(null);
+        setStep('review');
+        return;
+      }
+      const msg = err instanceof PasskeyCeremonyError ? err.message : errorMessage(err);
       const name = err instanceof Error ? err.name : '';
       const friendly =
         name === 'NotFoundError' || /^not found$/i.test(msg.trim())
@@ -539,6 +581,11 @@ export default function SwapScreen() {
   if (step === 'review' && honestQuote && quote) {
     const amountOut = Number(quote.amountOut) / 1e7;
     const currentRate = amountOut / Number(amountIn);
+  if (step === 'review' && quote) {
+    const amountOut = Number(quote.amountOut) / 1e7;
+    const paid = Number(amountIn);
+    const currentRate = paid > 0 ? amountOut / paid : 0;
+    const analysis = honestQuote?.impactAnalysis ?? null;
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="swap-review-screen">
         <View style={styles.body}>
@@ -563,6 +610,22 @@ export default function SwapScreen() {
                 sellbackAmount: honestQuote.reverseQuote?.sellbackAmount,
                 spreadLossPct: honestQuote.reverseQuote?.spreadLossPct,
                 roundTripImpactPct: honestQuote.reverseQuote?.roundTripImpactPct,
+                // The quote's own price impact is always real. The spread and
+                // the total are null unless they were actually measured, so the
+                // panel shows "Not measured" rather than a confident 0.00%.
+                priceImpactPct: analysis?.priceImpactPct ?? quote.priceImpact * 100,
+                spreadPct: analysis?.spreadPct ?? null,
+                totalImpactPct: analysis?.totalImpactPct ?? null,
+                disclosure:
+                  analysis?.disclosure ??
+                  (honestQuote
+                    ? null
+                    : 'The bid-ask spread could not be checked for this pair, so the total cost is not shown.'),
+                bestBid: honestQuote?.spread?.bestBid,
+                bestAsk: honestQuote?.spread?.bestAsk,
+                sellbackAmount: honestQuote?.reverseQuote?.sellbackAmount,
+                spreadLossPct: honestQuote?.reverseQuote?.spreadLossPct,
+                roundTripImpactPct: honestQuote?.reverseQuote?.roundTripImpactPct,
               }}
               colors={colors}
             />
@@ -571,6 +634,7 @@ export default function SwapScreen() {
           <View style={styles.spacer} />
 
           {honestQuote.shouldRefuse ? (
+          {honestQuote?.shouldRefuse ? (
             <View>
               <Text style={styles.refusalBanner}>{honestQuote.refusalReason}</Text>
               <Pressable
@@ -709,7 +773,11 @@ export default function SwapScreen() {
           </View>
         </View>
 
-        {execError ? <Text style={styles.errorBanner}>{execError}</Text> : null}
+        {execError ? (
+          <Text style={styles.errorBanner} testID="swap-error">
+            {execError}
+          </Text>
+        ) : null}
 
         <View style={styles.spacer} />
 
@@ -720,6 +788,7 @@ export default function SwapScreen() {
           </View>
         ) : canReview ? (
           <Pressable
+            testID="swap-review-button"
             style={styles.primaryBtn}
             onPress={() => setStep('review')}
           >

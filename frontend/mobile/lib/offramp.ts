@@ -42,9 +42,25 @@ export class OfframpUnavailable extends Error {}
  */
 export class OfframpTimeout extends Error {}
 
+/**
+ * The assets the cash-out rails price.
+ *
+ * `coin` is required by the backend now, so it is part of this client's API
+ * rather than something the server guesses. It is still read back off every
+ * response — see `getOfframpRate`.
+ */
+export type OfframpCoin = 'xlm' | 'usdc';
+
 export interface OfframpRate {
   rate: number;
-  currency: string;
+  /**
+   * Which asset `rate` is naira-per-one-unit-of.
+   *
+   * A string rather than `OfframpCoin`: an older backend passed Linq's own
+   * `USDC` straight through, and an installed APK has to keep working against
+   * one. What protects the money is the runtime check in `getOfframpRate`, not
+   * this type.
+   */
   coin: string;
   /** Always true: the binding rate is the one locked into an order. */
   indicative: boolean;
@@ -143,10 +159,21 @@ async function call<T>(
  * Used to gate the entry point: the backend holds the key, so if it is asleep
  * or unconfigured there is no order to create and the CTA should say so before
  * the user types an amount.
+ *
+ * This used to call `/offramp/rate`, which made a pricing endpoint the health
+ * check for the feature: once the backend started requiring `coin`, a 400 read
+ * as "cash-out is down" and the tile disappeared for every build that had not
+ * been updated. `/offramp/availability` answers the question actually being
+ * asked, makes no provider call, and so spends none of the rate allowance every
+ * user shares.
  */
 export async function isOfframpAvailable(): Promise<boolean> {
   try {
-    await call<OfframpRate>('/offramp/rate');
+    const answer = await call<{ available?: boolean }>('/offramp/availability');
+    // A 200 whose body cannot be read is not an answer. `call` resolves whatever
+    // parsed, and treating that as available would offer a flow that fails on
+    // the first tap.
+    if (answer?.available !== true) throw new Error('Unrecognised availability answer');
     void AsyncStorage.setItem(AVAILABILITY_KEY, '1');
     return true;
   } catch {
@@ -175,8 +202,26 @@ export async function lastKnownAvailability(): Promise<boolean> {
   }
 }
 
-export function getOfframpRate(): Promise<OfframpRate> {
-  return call<OfframpRate>('/offramp/rate');
+/**
+ * The naira-per-coin quote for the asset being cashed out.
+ *
+ * `coin` is sent, not assumed. The backend used to answer with naira per
+ * **dollar** whatever was asked, so a USDC-only screen divided by it correctly
+ * by coincidence and any other asset by a factor of that asset's price.
+ *
+ * The answer is then checked against the question. The server names the coin it
+ * priced for, and cash-out divides naira by that number to work out how much
+ * asset the user has to send — so a response for anything other than what was
+ * asked must not be used, however plausible it looks. Compared
+ * case-insensitively because an older backend returned Linq's `USDC`.
+ */
+export async function getOfframpRate(coin: OfframpCoin): Promise<OfframpRate> {
+  const answer = await call<OfframpRate>(`/offramp/rate?coin=${encodeURIComponent(coin)}`);
+  if (String(answer?.coin).toLowerCase() !== coin) {
+    throw new Error('The service priced a different asset than the one asked for.');
+  }
+  if (!(answer.rate > 0)) throw new Error('The service returned an unusable rate.');
+  return answer;
 }
 
 export function verifyBankAccount(bankCode: string, accountNumber: string): Promise<VerifiedBank> {
@@ -234,11 +279,12 @@ export function getOrderStatus(orderId: string): Promise<OfframpStatus> {
  * form while real money was already on its way to Linq. The order id is enough
  * to recover everything: the backend holds the rest.
  */
-const ACTIVE_ORDER_KEY = 'veil_offramp_active_order';
+/** AsyncStorage key holding the in-flight cash-out order. Wallet-derived: cleared on reset. */
+export const OFFRAMP_ACTIVE_ORDER_KEY = 'veil_offramp_active_order';
 
 export async function rememberActiveOrder(orderId: string): Promise<void> {
   try {
-    await AsyncStorage.setItem(ACTIVE_ORDER_KEY, orderId);
+    await AsyncStorage.setItem(OFFRAMP_ACTIVE_ORDER_KEY, orderId);
   } catch {
     // Losing the pointer is survivable — the order still settles server-side —
     // so this must never take the creation flow down with it.
@@ -247,7 +293,7 @@ export async function rememberActiveOrder(orderId: string): Promise<void> {
 
 export async function activeOrderId(): Promise<string | null> {
   try {
-    return await AsyncStorage.getItem(ACTIVE_ORDER_KEY);
+    return await AsyncStorage.getItem(OFFRAMP_ACTIVE_ORDER_KEY);
   } catch {
     return null;
   }
@@ -255,7 +301,7 @@ export async function activeOrderId(): Promise<string | null> {
 
 export async function forgetActiveOrder(): Promise<void> {
   try {
-    await AsyncStorage.removeItem(ACTIVE_ORDER_KEY);
+    await AsyncStorage.removeItem(OFFRAMP_ACTIVE_ORDER_KEY);
   } catch {
     // ignore
   }
@@ -273,7 +319,8 @@ export async function forgetActiveOrder(): Promise<void> {
  * Addresses only, no amounts or bank details: enough to label a row, and
  * nothing that would turn the device into a record of who was paid.
  */
-const DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses';
+/** AsyncStorage key holding deposit addresses sent to. Wallet-derived: cleared on reset. */
+export const OFFRAMP_DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses';
 
 export async function rememberDepositAddress(address: string): Promise<void> {
   try {
@@ -282,7 +329,7 @@ export async function rememberDepositAddress(address: string): Promise<void> {
     // Bounded: a wallet that offramps often should not grow this forever, and
     // the oldest entries are the least likely to still be on screen.
     const next = [address, ...known].slice(0, 50);
-    await AsyncStorage.setItem(DEPOSIT_ADDRESSES_KEY, JSON.stringify(next));
+    await AsyncStorage.setItem(OFFRAMP_DEPOSIT_ADDRESSES_KEY, JSON.stringify(next));
   } catch {
     // Labelling is a nicety; never let it fail an order.
   }
@@ -290,7 +337,7 @@ export async function rememberDepositAddress(address: string): Promise<void> {
 
 export async function knownDepositAddresses(): Promise<string[]> {
   try {
-    const raw = await AsyncStorage.getItem(DEPOSIT_ADDRESSES_KEY);
+    const raw = await AsyncStorage.getItem(OFFRAMP_DEPOSIT_ADDRESSES_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === 'string') : [];
   } catch {
