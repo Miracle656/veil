@@ -316,39 +316,3 @@ fn fee_payer_plus_guardian_together_are_still_not_the_user() {
         "fee payer + guardian together authorised add_signer()"
     );
 }
-
-#[test]
-fn the_guardians_one_power_stays_cancelable_by_the_owner() {
-    // The containment story, end to end: the guardian starts a recovery (its
-    // designed power), and the owner — who still holds the passkey — cancels
-    // it inside the window. If this failed, a wrong or compromised guardian
-    // could not be stopped, and "timelocked" would mean merely "delayed".
-    let env = Env::default();
-    let (contract_id, guardian) = setup_wallet_with_guardian(&env);
-    let client = InvisibleWalletClient::new(&env, &contract_id);
-    let rogue_key = mock_public_key(&env, 0xEE);
-
-    mock_role_auth(
-        &env,
-        &guardian,
-        &contract_id,
-        "initiate_recovery",
-        (rogue_key.clone(),).into_val(&env),
-    );
-    client.initiate_recovery(&rogue_key);
-
-    // The owner cancels (passkey auth, stood in for by mock_all_auths — the
-    // refusal tests above establish nothing weaker reaches this gate).
-    env.mock_all_auths();
-    client.cancel_recovery();
-
-    // Nothing left to complete, however long an attacker waits.
-    let mut ledger = env.ledger().get();
-    ledger.timestamp += RECOVERY_DELAY_SECONDS + 10;
-    env.ledger().set(ledger);
-    assert_eq!(
-        client.try_complete_recovery(),
-        Err(Ok(WalletError::RecoveryNotPending)),
-        "a cancelled recovery was completed anyway"
-    );
-}

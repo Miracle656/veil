@@ -1,0 +1,21 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "fix/issue-1170-a-wallet-cannot-be-upgraded-and-that-should-be",
+    "fix/issue-1180-nothing-tells-a-user-when-their-money-arrives",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "fix/issue-1170-a-wallet-cannot-be-upgraded-and-that-should-be": "main",
+    "fix/issue-1180-nothing-tells-a-user-when-their-money-arrives": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "fix/issue-1170-a-wallet-cannot-be-upgraded-and-that-should-be",
+    "fix/issue-1180-nothing-tells-a-user-when-their-money-arrives",
+    "origin"
+  ]
+}
