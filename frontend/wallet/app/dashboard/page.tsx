@@ -33,6 +33,8 @@ import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule }
 import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { enhanceAssetsWithYield } from '@/lib/costBasisTracker'
+import { YieldBadge } from '@/components/YieldDisplay'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
@@ -43,6 +45,24 @@ const network = getNetwork()
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 import type { WalletAsset } from '@/lib/walletTypes'
+
+/**
+ * WalletAsset extended with cost basis and yield metrics
+ */
+export interface WalletAssetWithYield extends WalletAsset {
+  /** Weighted average purchase price (USDC per unit) */
+  weightedAveragePrice?: number;
+  /** Total amount invested in this asset (USDC) */
+  costBasis?: number;
+  /** Unrealized gain/loss in USDC */
+  gainLoss?: number;
+  /** Unrealized gain/loss as percentage */
+  gainLossPercent?: number;
+  /** Date of oldest purchase (start of period covered) */
+  periodStart?: string;
+  /** Date of latest purchase (end of period covered) */
+  periodEnd?: string;
+}
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -1026,6 +1046,52 @@ function DashboardPageContent() {
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '16px 0' }}>
                 No assets yet. Fund this address to get started.
               </p>
+            ) : (() => {
+              // Enhance assets with yield data if wallet address is available
+              const assetsWithYield = walletAddress 
+                ? enhanceAssetsWithYield(assets, getNetworkName(), walletAddress, prices)
+                : assets;
+              
+              return assetsWithYield.map((asset) => {
+                const price = priceOf(asset);
+                const value = price != null ? parseFloat(asset.balance) * price : null;
+                const yieldMetrics = (asset as any).yieldMetrics;
+                
+                return (
+                  <Row
+                    key={asset.code + '-' + (asset.issuer ?? 'native')}
+                    className="vw-listrow"
+                    onClick={() => router.push(asset.issuer ? '/token/' + asset.code + '?issuer=' + asset.issuer : '/token/' + asset.code)}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0, flex: 1 }}>
+                      <TokenIcon code={asset.code} size={38} />
+                      <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, flex: 1 }}>
+                        <span style={{ fontSize: '15px', fontWeight: 600 }}>{asset.code}</span>
+                        <span className="vw-meta">
+                          {hideAmounts ? '••••' : parseFloat(asset.balance).toFixed(4) + ' ' + asset.code}
+                        </span>
+                        {yieldMetrics && (
+                          <span className="vw-meta" style={{ fontSize: '12px', marginTop: '2px' }}>
+                            Cost basis: {hideAmounts ? '••••' : usd((asset as any).costBasis ?? 0)}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                    <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', shrink: 0 }}>
+                      <Amount className="text-[15px] font-semibold">
+                        {hideAmounts ? '••••' : (value != null ? usd(value) : '—')}
+                      </Amount>
+                      {yieldMetrics && (
+                        <div style={{ fontSize: '12px' }}>
+                          <YieldBadge metrics={yieldMetrics} />
+                        </div>
+                      )}
+                    </span>
+                  </Row>
+                );
+              });
+            })()
+}
             ) : portfolio.lines.map((line) => (
               <Row
                 key={line.code + '-' + (line.issuer ?? 'native')}

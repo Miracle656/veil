@@ -6,6 +6,8 @@ import { inclusionFee } from '@/lib/fees'
 import { fetchPlatformFee } from '@/lib/platformFee'
 import { canAffordSdexSwapFee } from '@/lib/sdexSwapFeeAttach'
 import { PageHeader, Card, SectionLabel, Pill } from '@/components/ui/primitives'
+import { recordPurchase } from '@/lib/costBasisTracker'
+import { fetchPrices } from '@/lib/fetchPrice'
 import {
   assetKey,
   parseSwapPrefill,
@@ -351,6 +353,33 @@ export default function SwapPage() {
           networkPassphrase: network.networkPassphrase,
         })
         setTxHash(hash)
+        
+        // Record cost basis for the destination asset received
+        if (walletAddress && destAsset && destAmount) {
+          try {
+            // Fetch current price of destination asset
+            const prices = await fetchPrices([`${destAsset.code}:${destAsset.issuer}`])
+            const destPrice = prices[`${destAsset.code}:${destAsset.issuer}`]
+            
+            if (destPrice) {
+              await recordPurchase(
+                network.networkPassphrase,
+                walletAddress,
+                destAsset.code,
+                destAsset.issuer || '',
+                parseFloat(destAmount),
+                destPrice,
+                'swap',
+                hash,
+                `Swapped ${sourceAmount} ${sourceAsset?.code || 'XLM'} for ${destAsset.code}`,
+              )
+            }
+          } catch (err) {
+            // Log error but don't block swap completion
+            console.warn('Failed to record cost basis:', err)
+          }
+        }
+        
         setStep('done')
         return
       }
@@ -431,6 +460,33 @@ export default function SwapPage() {
       tx.sign(signerKeypair)
       const result = await server.submitTransaction(tx)
       setTxHash(result.hash)
+      
+      // Record cost basis for the destination asset received
+      if (walletAddress && destAsset && destAmount) {
+        try {
+          // Fetch current price of destination asset
+          const prices = await fetchPrices([`${destAsset.code}:${destAsset.issuer}`])
+          const destPrice = prices[`${destAsset.code}:${destAsset.issuer}`]
+          
+          if (destPrice) {
+            await recordPurchase(
+              network.networkPassphrase,
+              walletAddress,
+              destAsset.code,
+              destAsset.issuer || '',
+              parseFloat(destAmount),
+              destPrice,
+              'swap',
+              result.hash,
+              `Swapped ${sourceAmount} ${sourceAsset?.code || 'XLM'} for ${destAsset.code}`,
+            )
+          }
+        } catch (err) {
+          // Log error but don't block swap completion
+          console.warn('Failed to record cost basis:', err)
+        }
+      }
+      
       setStep('done')
     } catch (err: unknown) {
       // A dismissed prompt is not a failed swap: go back to the confirmation

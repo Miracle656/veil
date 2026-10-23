@@ -30,6 +30,7 @@ describe('SPP State Storage', () => {
     mockDb = {
       execAsync: jest.fn().mockResolvedValue(undefined),
       runAsync: jest.fn().mockResolvedValue({ lastInsertRowid: 1 }),
+      allAsync: jest.fn().mockResolvedValue([]),
       getAllAsync: jest.fn().mockResolvedValue([]),
       getFirstAsync: jest.fn().mockResolvedValue(null),
       closeAsync: jest.fn().mockResolvedValue(undefined),
@@ -38,6 +39,9 @@ describe('SPP State Storage', () => {
     (SQLite.openDatabaseAsync as jest.Mock).mockResolvedValue(mockDb);
   });
 
+  afterEach(() => {
+    // Reset module state
+    jest.resetModules();
   afterEach(async () => {
     // storage.ts caches the open SQLCipher handle at module scope. Neither
     // clearAllMocks nor resetModules reaches it (the `storage` import is already
@@ -93,6 +97,11 @@ describe('SPP State Storage', () => {
         useNewConnection: false,
       });
 
+      // Should set the PRAGMA key and verify encryption
+      expect(mockDb.execAsync).toHaveBeenCalledWith(
+        expect.stringContaining("PRAGMA key = \"x'"),
+      );
+      expect(mockDb.execAsync).toHaveBeenCalledWith('PRAGMA integrity_check');
       // Should set the PRAGMA key and verify the key actually decrypts the file
       expect(mockDb.execAsync).toHaveBeenCalledWith(
         expect.stringContaining("PRAGMA key = \"x'"),
@@ -218,6 +227,11 @@ describe('SPP State Storage', () => {
         },
       ];
 
+      mockDb.allAsync.mockResolvedValue(mockNotes);
+
+      const notes = await storage.getUnspentNotes(mockWalletAddress, 'pool_123');
+
+      expect(mockDb.allAsync).toHaveBeenCalledWith(
       mockDb.getAllAsync.mockResolvedValue(mockNotes);
 
       const notes = await storage.getUnspentNotes(mockWalletAddress, 'pool_123');
@@ -318,6 +332,7 @@ describe('SPP State Storage', () => {
         },
       ];
 
+      mockDb.allAsync.mockResolvedValue(mockStates);
       mockDb.getAllAsync.mockResolvedValue(mockStates);
 
       const states = await storage.getAllSyncStates(mockWalletAddress);
@@ -374,6 +389,7 @@ describe('SPP State Storage', () => {
         { nullifier: Buffer.from([4, 5, 6]) },
       ];
 
+      mockDb.allAsync.mockResolvedValue(mockNullifiers);
       mockDb.getAllAsync.mockResolvedValue(mockNullifiers);
 
       const nullifiers = await storage.getAllNullifiers(mockWalletAddress);
@@ -415,6 +431,7 @@ describe('SPP State Storage', () => {
         },
       ];
 
+      mockDb.allAsync.mockResolvedValue(mockEvents);
       mockDb.getAllAsync.mockResolvedValue(mockEvents);
 
       const events = await storage.getCachedPoolEvents(
@@ -424,6 +441,7 @@ describe('SPP State Storage', () => {
         1001,
       );
 
+      expect(mockDb.allAsync).toHaveBeenCalledWith(
       expect(mockDb.getAllAsync).toHaveBeenCalledWith(
         expect.stringContaining('SELECT ledger_height, event_data FROM event_cache'),
         'pool_123',
@@ -586,6 +604,18 @@ describe('SPP State Storage', () => {
 
       await storage.storeNote(mockWalletAddress, note);
 
+      expect(mockDb.runAsync).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        '18446744073709551615', // Amount should be stringified
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
       // Bound as the exact decimal string, into a TEXT column: an INTEGER
       // column would not hold this (it is above i64) and SQLite would coerce it
       // to a lossy REAL.

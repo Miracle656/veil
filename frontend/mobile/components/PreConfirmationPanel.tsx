@@ -9,6 +9,8 @@ export interface PreConfirmationData {
   amountOut: number;
   rate: number;
   priceImpactPct: number;
+  spreadPct: number;
+  totalImpactPct: number;
   /** null when the order book could not be read — not the same as zero. */
   spreadPct: number | null;
   /** null when the spread is unknown, so no total can honestly be given. */
@@ -33,6 +35,15 @@ export function PreConfirmationPanel({ data, colors }: Props) {
   const formatNumber = (n: number, decimals: number = 4) =>
     n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
 
+  const impactStatus =
+    data.totalImpactPct > 5
+      ? 'error'
+      : data.totalImpactPct > 2
+        ? 'warning'
+        : 'ok';
+
+  const impactColor =
+    impactStatus === 'error' ? '#FF3B30' : impactStatus === 'warning' ? '#FF9500' : '#34C759';
   // An unknown total is its own state. It must not fall through to the green
   // "ok" branch, which is how a figure nobody measured ends up looking
   // confirmed (#732).
@@ -82,6 +93,12 @@ export function PreConfirmationPanel({ data, colors }: Props) {
           <Text style={styles.label}>Soroswap impact</Text>
           <Text style={styles.value}>{formatNumber(data.priceImpactPct, 2)}%</Text>
         </View>
+        {data.spreadPct > 0 && (
+          <View style={styles.row}>
+            <Text style={styles.label}>Bid-ask spread</Text>
+            <Text style={styles.value}>{formatNumber(data.spreadPct, 2)}%</Text>
+          </View>
+        )}
         <View style={styles.row}>
           <Text style={styles.label}>Bid-ask spread</Text>
           <Text style={data.spreadPct === null ? styles.valueUnknown : styles.value}>
@@ -99,6 +116,9 @@ export function PreConfirmationPanel({ data, colors }: Props) {
         <View style={[styles.row, styles.totalImpactRow, { borderColor: impactColor }]}>
           <Text style={styles.label}>Total impact</Text>
           <Text style={[styles.value, { color: impactColor, fontWeight: '600' }]}>
+            {formatNumber(data.totalImpactPct, 2)}%
+          </Text>
+        </View>
             {data.totalImpactPct === null ? 'Unavailable' : `${formatNumber(data.totalImpactPct, 2)}%`}
           </Text>
         </View>
@@ -109,6 +129,7 @@ export function PreConfirmationPanel({ data, colors }: Props) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Round-Trip Cost (if sold immediately)</Text>
           <View style={styles.row}>
+            <Text style={styles.label}>You'd get back</Text>
             <Text style={styles.label}>You&apos;d get back</Text>
             <Text style={styles.value}>
               {formatNumber(data.sellbackAmount, 7)} {data.tokenIn}
@@ -127,12 +148,14 @@ export function PreConfirmationPanel({ data, colors }: Props) {
             </Text>
           </View>
           <Text style={styles.disclaimer}>
+            This shows what you'd receive if you sold the output immediately at the current market price.
             This shows what you&apos;d receive if you sold the output immediately at the current market price.
             Actual results depend on market conditions at execution time.
           </Text>
         </View>
       )}
 
+      {data.totalImpactPct > 5 && (
       {data.totalImpactPct !== null && data.totalImpactPct > 5 && (
         <View style={[styles.section, styles.warningSection]}>
           <Text style={styles.warningTitle}>⚠️ High Impact</Text>

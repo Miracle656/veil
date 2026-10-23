@@ -13,6 +13,8 @@ import { SlideToConfirm } from '../components/SlideToConfirm';
 import { SwapVerticalIcon } from '../components/icons';
 import { TokenIcon } from '../components/TokenIcon';
 import { SuccessAnimation } from '../components/SuccessAnimation';
+import { getSoroswapQuote, buildSoroswapSwapXdr, ensureSwapOutTrustline, resolveTokenAddress, type SwapQuote } from '../lib/soroswap';
+import { getSdexQuote, sdexSwap, sdexSupported } from '../lib/sdexSwap';
 import { enhanceQuoteWithSpread, type HonestSwapQuote } from '../lib/soroswapEnhanced';
 import { PreConfirmationPanel } from '../components/PreConfirmationPanel';
 import { getSoroswapQuote, buildSoroswapSwapXdr, ensureSwapOutTrustline, type SwapQuote } from '../lib/soroswap';
@@ -39,6 +41,16 @@ import { isPasskeyCancellation, PasskeyCeremonyError } from '../lib/passkeyOutco
 import { getWalletAddress, getSignerSecret } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 
+type Token = { code: string; name: string };
+type Step = 'form' | 'review' | 'signing' | 'submitting' | 'done' | 'error';
+
+const TOKENS: Token[] = [
+  { code: 'XLM', name: 'Stellar Lumens' },
+  { code: 'USDC', name: 'USD Coin' },
+  { code: 'USDY', name: 'USD Yield' },
+  { code: 'EURC', name: 'Euro Coin' },
+  { code: 'AQUA', name: 'Aquarius' },
+];
 /** A swappable asset: a registry-checked code:issuer (issuer null = XLM). */
 type Token = SwapAsset & { name: string };
 type Step = 'form' | 'review' | 'signing' | 'submitting' | 'done' | 'error';
@@ -254,6 +266,9 @@ export default function SwapScreen() {
     };
   }, [amountIn, tokenIn, tokenOut, networkName, onTestnet]);
 
+  // ── Enhance quotes with spread and price impact data ──────────────────────
+  useEffect(() => {
+    if (!quote || onTestnet) {
   // ── Spread and price-impact disclosure (#732) ──────────────────────────────
   // Runs on both networks: the venue differs (Soroswap on mainnet, the classic
   // DEX on testnet) but the order book is Horizon's either way. The assets go
@@ -266,6 +281,12 @@ export default function SwapScreen() {
 
     let alive = true;
     (async () => {
+      try {
+        const parsed = parseFloat(amountIn);
+        const enhanced = await enhanceQuoteWithSpread(
+          quote,
+          tokenIn.code,
+          tokenOut.code,
       const parsed = parseFloat(amountIn);
       try {
         const enhanced = await enhanceQuoteWithSpread(
@@ -276,6 +297,13 @@ export default function SwapScreen() {
           PRICE_IMPACT_THRESHOLD_PCT,
         );
         if (alive) setHonestQuote(enhanced);
+      } catch (err) {
+        console.warn('[swap] Failed to enhance quote with spread:', err);
+        if (alive) setHonestQuote(quote as HonestSwapQuote);
+      }
+    })();
+    return () => { alive = false; };
+  }, [quote, tokenIn.code, tokenOut.code, amountIn, onTestnet]);
       } catch {
         // Leave it null rather than casting the bare quote to a HonestSwapQuote:
         // that would render a review screen whose impact figures read as
@@ -331,6 +359,13 @@ export default function SwapScreen() {
     setContractXlm(Math.max(0, inContract - Number(move)));
   }
 
+  // ── Execution — with honest threshold check ───────────────────────────────
+  async function handleExecute() {
+    setExecError(null);
+    
+    // Check if order exceeds price impact threshold
+    if (honestQuote?.shouldRefuse && honestQuote?.refusalReason) {
+      setExecError(honestQuote.refusalReason);
   // ── Execution — with the impact threshold enforced ─────────────────────────
   async function handleExecute() {
     setExecError(null);
@@ -543,6 +578,9 @@ export default function SwapScreen() {
   const lockedXlm = feePayerXlm ? Math.max(0, feePayerXlm.balance - feePayerXlm.spendable) : null;
 
   // ── Review screen with honest spread and impact ─────────────────────────────
+  if (step === 'review' && honestQuote && quote) {
+    const amountOut = Number(quote.amountOut) / 1e7;
+    const currentRate = amountOut / Number(amountIn);
   if (step === 'review' && quote) {
     const amountOut = Number(quote.amountOut) / 1e7;
     const paid = Number(amountIn);
@@ -564,6 +602,14 @@ export default function SwapScreen() {
                 amountIn: Number(amountIn),
                 amountOut,
                 rate: currentRate,
+                priceImpactPct: (honestQuote.impactAnalysis?.priceImpactPct ?? 0),
+                spreadPct: (honestQuote.impactAnalysis?.spreadPct ?? 0),
+                totalImpactPct: (honestQuote.impactAnalysis?.totalImpactPct ?? 0),
+                bestBid: honestQuote.spread?.bestBid,
+                bestAsk: honestQuote.spread?.bestAsk,
+                sellbackAmount: honestQuote.reverseQuote?.sellbackAmount,
+                spreadLossPct: honestQuote.reverseQuote?.spreadLossPct,
+                roundTripImpactPct: honestQuote.reverseQuote?.roundTripImpactPct,
                 // The quote's own price impact is always real. The spread and
                 // the total are null unless they were actually measured, so the
                 // panel shows "Not measured" rather than a confident 0.00%.
@@ -587,6 +633,7 @@ export default function SwapScreen() {
 
           <View style={styles.spacer} />
 
+          {honestQuote.shouldRefuse ? (
           {honestQuote?.shouldRefuse ? (
             <View>
               <Text style={styles.refusalBanner}>{honestQuote.refusalReason}</Text>

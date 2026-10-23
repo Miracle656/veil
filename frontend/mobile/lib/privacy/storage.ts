@@ -7,6 +7,10 @@
  * restarts (so sync resumes where it stopped and notes persist), but is wiped
  * when the wallet is removed.
  *
+ * Database encryption uses SQLCipher (via expo-sqlite config plugin):
+ * - Key: 32-byte random, persisted in secure keychain
+ * - Cipher: AES-256 with HMAC authentication
+ * - Key derives from wallet address so notes are lost if wallet address changes
  * Database encryption uses SQLCipher (via the expo-sqlite config plugin):
  * - Key: 32 random bytes, held in the OS secure store, never derived from
  *   anything the wallet address or a passkey can reproduce — so losing the
@@ -28,6 +32,7 @@
  * - event cache: scanned pool events for recovery
  */
 
+import * as SQLite from 'expo-sqlite';
 import { getRandomBytes } from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
 
@@ -59,6 +64,8 @@ export async function getSppEncryptionKey(walletAddress: string): Promise<string
 
   if (!key) {
     // Generate a new 32-byte key and persist it.
+    // Using crypto module from expo-crypto (already a dependency).
+    const { getRandomBytes } = require('expo-crypto');
     const keyBytes = getRandomBytes(32);
     // Convert bytes to hex: each byte becomes 2 hex digits.
     key = Buffer.from(keyBytes).toString('hex');
@@ -102,6 +109,7 @@ async function initializeSppSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       public_key BLOB NOT NULL,
       pool_id TEXT NOT NULL,
       token_contract TEXT NOT NULL,
+      amount BIGINT NOT NULL,
       -- TEXT, not an integer type. SPP amounts are i128 and SQLite's INTEGER
       -- affinity is 64-bit: a decimal string that does not fit i64 is silently
       -- coerced to REAL, which loses low-order digits. Holding the decimal
@@ -170,6 +178,8 @@ let initPromise: Promise<SQLite.SQLiteDatabase> | null = null;
  * @returns The open database connection.
  */
 export async function getSppDatabase(walletAddress: string): Promise<SQLite.SQLiteDatabase> {
+  // Reuse the cached instance if already open.
+  if (dbInstance) return dbInstance;
   // Reuse the cached instance only when it belongs to this wallet.
   if (dbInstance && dbInstanceAddress === walletAddress) return dbInstance;
 
@@ -188,6 +198,11 @@ export async function getSppDatabase(walletAddress: string): Promise<SQLite.SQLi
 
       // Apply encryption key via PRAGMA (SQLCipher syntax).
       // The pragma must be the first command after opening, before any reads/writes.
+      await db.execAsync(`PRAGMA key = "x'${encryptionKey}'"`);
+
+      // Verify encryption is working by trying a simple operation.
+      // If the key is wrong, this will fail.
+      await db.execAsync('PRAGMA integrity_check');
       // The key is interpolated into the statement, so a failure here must never
       // surface the driver's error text — it echoes the SQL, key included.
       try {
@@ -213,6 +228,10 @@ export async function getSppDatabase(walletAddress: string): Promise<SQLite.SQLi
       await initializeSppSchema(db);
 
       dbInstance = db;
+      return db;
+    } catch (error) {
+      initPromise = null; // Reset so next attempt tries again.
+      throw error;
       dbInstanceAddress = walletAddress;
       return db;
     } finally {
@@ -303,6 +322,7 @@ export async function getUnspentNotes(
 ): Promise<SppNote[]> {
   const db = await getSppDatabase(walletAddress);
 
+  const rows = await db.allAsync<any>(
   const rows = await db.getAllAsync<NoteRow>(
     `SELECT commitment, secret, public_key, pool_id, token_contract, amount, encrypted_metadata, created_at
      FROM notes
@@ -347,6 +367,7 @@ export interface SyncState {
 export async function getSyncState(walletAddress: string, poolId: string): Promise<SyncState | null> {
   const db = await getSppDatabase(walletAddress);
 
+  const row = await db.getFirstAsync<any>(
   const row = await db.getFirstAsync<SyncStateRow>(
     `SELECT pool_id, ledger_height, cursor, status FROM sync_state WHERE pool_id = ?`,
     poolId,
@@ -392,6 +413,7 @@ export async function updateSyncState(walletAddress: string, state: SyncState): 
 export async function getAllSyncStates(walletAddress: string): Promise<SyncState[]> {
   const db = await getSppDatabase(walletAddress);
 
+  const rows = await db.allAsync<any>(
   const rows = await db.getAllAsync<SyncStateRow>(
     `SELECT pool_id, ledger_height, cursor, status FROM sync_state ORDER BY pool_id`,
   );
@@ -445,6 +467,7 @@ export async function hasNullifier(walletAddress: string, nullifier: Uint8Array)
 export async function getAllNullifiers(walletAddress: string): Promise<Uint8Array[]> {
   const db = await getSppDatabase(walletAddress);
 
+  const rows = await db.allAsync<any>(`SELECT nullifier FROM nullifiers ORDER BY spent_at DESC`);
   const rows = await db.getAllAsync<NullifierRow>(
     `SELECT nullifier FROM nullifiers ORDER BY spent_at DESC`,
   );
@@ -486,6 +509,7 @@ export async function getCachedPoolEvents(
 ): Promise<Array<{ ledgerHeight: number; eventData: Uint8Array }>> {
   const db = await getSppDatabase(walletAddress);
 
+  const rows = await db.allAsync<any>(
   const rows = await db.getAllAsync<EventCacheRow>(
     `SELECT ledger_height, event_data FROM event_cache
      WHERE pool_id = ? AND ledger_height BETWEEN ? AND ?
@@ -504,6 +528,10 @@ export async function getCachedPoolEvents(
 // ── Database Cleanup (wallet removal) ────────────────────────────────────────
 
 /**
+ * Close the database connection (frees resources).
+ * Called before deleting the database file.
+ */
+async function closeSppDatabase(): Promise<void> {
  * Close the database connection and forget the cached handle.
  *
  * Called before deleting the database file, and whenever the app wants to drop
@@ -536,11 +564,19 @@ export async function closeSppDatabase(): Promise<void> {
  */
 export async function clearSppDatabase(walletAddress: string): Promise<void> {
   try {
+    // Close the connection first.
     // Close the connection first; the file cannot be removed while it is open.
     await closeSppDatabase();
 
     // Delete the database file.
     try {
+      const db = await SQLite.openDatabaseAsync(SPP_DATABASE_NAME);
+      await db.closeAsync();
+      // Note: expo-sqlite doesn't have a direct delete API yet, so we'll rely on the
+      // encryption key deletion below to prevent access. On app reinstall, a new
+      // database will be created. If per-device cleanup is needed, it would require
+      // native code to call sqlite3_delete or remove the file from disk.
+    } catch (error) {
       await SQLite.deleteDatabaseAsync(SPP_DATABASE_NAME);
     } catch {
       // Database may not exist yet; that's fine.

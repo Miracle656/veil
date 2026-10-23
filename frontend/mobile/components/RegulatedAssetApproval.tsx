@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { submitSep8Transaction, verifyRevisedTransaction, type Sep8Response } from '../../sdk';
 import { submitSep8Transaction, verifyRevisedTransaction, type Sep8Response } from '@veil/sdk';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
@@ -190,6 +191,7 @@ export function RegulatedAssetApproval({
                 </Pressable>
 
                 <Text style={styles.hint}>
+                  You'll be taken to {asset.issuerName || 'the issuer'}'s verification page.
                   You&apos;ll be taken to {asset.issuerName || 'the issuer'}&apos;s verification page.
                 </Text>
 
@@ -197,6 +199,7 @@ export function RegulatedAssetApproval({
                   style={[styles.secondaryBtn, { marginTop: 12 }]}
                   onPress={handleRetryAfterAction}
                 >
+                  <Text style={styles.secondaryText}>I've Completed Verification</Text>
                   <Text style={styles.secondaryText}>I&apos;ve Completed Verification</Text>
                 </Pressable>
               </View>
@@ -361,6 +364,7 @@ function createStyles(colors: ThemeColors) {
     },
     warningText: {
       fontSize: 13,
+      color: colors.text,
       color: colors.textPrimary,
       lineHeight: 18,
     },
