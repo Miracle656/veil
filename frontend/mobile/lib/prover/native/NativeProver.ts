@@ -74,6 +74,13 @@ import { MockSppTx, ProofResult } from '../types';
 // Simulation parameters
 // ---------------------------------------------------------------------------
 
+/**
+ * This prover is a timing simulation only. It cannot produce a valid proof.
+ * Capability gates must treat `NATIVE_PROVER_AVAILABLE` as false until a
+ * real Nitro/JSI module replaces `simulateNativeProof`.
+ */
+export const NATIVE_PROVER_AVAILABLE = false;
+
 /** Cold-start overhead: module load + circuit deserialisation (ms). */
 const COLD_START_MS_RANGE: [number, number] = [600, 900];
 

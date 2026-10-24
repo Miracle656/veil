@@ -7,6 +7,9 @@ import { readCredentialId, readSignerSecret, readWalletAddress } from '../lib/st
 
 const HorizonServer = Horizon.Server
 
+// The Electron wallet signs locally with a passkey-derived key and does not
+// depend on the browser-only privacy SDK, so no privacy prover is required here.
+
 export function SendPage() {
   const wallet = useElectronWallet()
   const [recipient, setRecipient] = useState('')

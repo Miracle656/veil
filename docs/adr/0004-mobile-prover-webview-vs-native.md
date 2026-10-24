@@ -19,6 +19,8 @@ downloaded on first use.
 React Native's **Hermes engine has no WebAssembly**.  The browser SDK therefore cannot
 run directly inside the `frontend/mobile` Expo app.  Two options exist:
 
+> **Constraint:** the published `stellar-private-payments` SDK is browser-only (`Storage.open()` throws under Node). It is not a dependency of `frontend/mobile`, so no privacy flow can prove until a prover is wired in. Until then, the privacy screens must gate on prover availability and show a plain "not available on this device yet" state rather than failing mid-flow.
+
 | Option | Description |
 |--------|-------------|
 | **A — WebView** | Load the browser SDK in a hidden `react-native-webview` (0×0, opacity 0). Post the transaction in via `postMessage`; receive the proof back the same way. The WebView runs Chromium's V8, which has WASM. |
@@ -116,7 +118,7 @@ Sources:
 
 ## Decision
 
-> **Preliminary recommendation: prototype Option A (WebView) first.** This is a
+> **Decision: Option A (WebView) is the route for the mobile prover.** The browser-only SDK constraint rules out a direct import, and the WebView route is the lower-risk path. This is still a choice of the next experiment, not a production sign-off: the measurements required by issue #720 are outstanding.
 > choice of the next experiment, not a production decision: the measurements
 > required by issue #720 are still outstanding.
 

@@ -1,5 +1,5 @@
 /**
- * Unshield screen (PREVIEW) — Amount → Review → pending notice.
+ * Unshield screen — Amount → Review → pending notice when no prover is available.
  *
  * Design preview of the "withdraw XLM from the private pool back to the public
  * wallet" flow. There is no SPP engine yet (see lib/privacy.ts), so confirming
@@ -34,6 +34,7 @@ import { UnshieldIcon } from '../../components/icons';
 import { unshieldXlm } from '../../lib/privacy';
 import { isPrivacyEnabled } from '../../lib/privacy/config';
 import { fetchPrice } from '../../lib/fetchPrice';
+import { PROVER_UNAVAILABLE_MESSAGE, isProverAvailable } from '../../lib/prover/capability';
 
 type Step = 'form' | 'error';
 
@@ -73,8 +74,13 @@ export default function UnshieldScreen() {
 
   const handleConfirm = useCallback(async () => {
     setError(null);
+    if (!isProverAvailable()) {
+      setError(PROVER_UNAVAILABLE_MESSAGE);
+      setStep('error');
+      return;
+    }
     try {
-      // No SPP engine yet — this always rejects with ENGINE_PENDING_MESSAGE.
+      // Proving is gated above; unshieldXlm rejects until the prover is wired.
       // Nothing is signed, withdrawn, or broadcast.
       await unshieldXlm();
     } catch (e: unknown) {
@@ -141,6 +147,10 @@ export default function UnshieldScreen() {
   }
 
   // ── Form ──────────────────────────────────────────────────────────────────
+  if (!isProverAvailable()) {
+    // Keep the form visible, but say plainly that this device cannot prove.
+  }
+
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
@@ -160,6 +170,10 @@ export default function UnshieldScreen() {
             build yet — confirming will not move any funds or broadcast a
             transaction.
           </Text>
+
+          {!isProverAvailable() ? (
+            <Text style={styles.description}>{PROVER_UNAVAILABLE_MESSAGE}</Text>
+          ) : null}
 
           {/* Private balance is unknown until a pool scanner exists. */}
           <View style={styles.balanceRow}>
@@ -219,7 +233,7 @@ export default function UnshieldScreen() {
           <SlideToConfirm
             label="Slide to unshield"
             onConfirm={handleConfirm}
-            disabled={!canSubmit || recovery.needsAck}
+            disabled={!canSubmit || recovery.needsAck || !isProverAvailable()}
           />
         </View>
       </KeyboardAvoidingView>
