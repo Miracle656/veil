@@ -1,5 +1,6 @@
 # Veil mascot — direction
 
+_Written 2026-10-03. A direction, not a decision. Nothing here has been drawn yet._
 _Written 2026-10-03. Drawn 2026-10-06, twice — see **Round one** and **Round
 two** at the end. The direction below stands; the shape is settled, the aperture
 is not._
@@ -80,6 +81,11 @@ Before this goes anywhere public — app icon, store listing, marketing — it s
 be run past someone Nigerian whose judgement on this is trusted. That is cheaper
 to do now than after it ships on an icon.
 
+## Next step
+
+Silhouette studies before anything else: hem length, taper rate, with and
+without any suggestion of eyes, rendered at 22px and large on `#0F0F0F`. The
+22px test is what kills most mascots, so it should come first rather than last.
 ## Round one — drawn 2026-10-06
 
 Silhouette studies: <https://claude.ai/artifact/THHzrRWB9brFQ1UpFb1tUx> (private).

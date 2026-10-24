@@ -33,6 +33,8 @@ secret_scans:
     - frontend/wallet/lib/__tests__/feeBump.test.ts
     - frontend/wallet/lib/__tests__/issuerKeysValid.test.ts
     - frontend/wallet/lib/__tests__/sep10.test.ts
+    - frontend/wallet/lib/__tests__/sep45.test.ts
+    - frontend/mobile/lib/__tests__/offrampOrderAccess.test.ts
     - frontend/wallet/components/__tests__/AnchorDirectoryModal.test.ts
     - frontend/wallet/tests/sep10.test.ts
     - .github/workflows/ci.yml

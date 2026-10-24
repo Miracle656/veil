@@ -1,0 +1,13 @@
+# Shell scripts run on Linux build agents — EAS Build, GitHub Actions runners,
+# and the pinned Docker image behind the reproducible contract build. On Windows
+# `core.autocrlf=true` checks them out with CRLF, and `sh` then reads `set -eu\r`
+# and dies with "set: Illegal option -". The EAS CLI archives the *working tree*
+# rather than the committed blob, so a clean commit is not enough to prevent it:
+# an EAS build failed exactly this way at the post-install hook.
+#
+# Keeping these LF in the working tree costs Windows editors nothing — every
+# editor in use here handles LF — and removes a class of failure that only ever
+# appears on a remote machine, minutes into a build.
+*.sh text eol=lf
+gradlew text eol=lf
+*.bash text eol=lf

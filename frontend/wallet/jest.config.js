@@ -35,7 +35,10 @@ const config = {
     '^@veil/prf$':      '<rootDir>/../../sdk/src/crypto/prf',
     // The ONE dApp allow-list — mobile's module, imported by the web wallet
     // (see dappParity.test.ts, which pins this mapping to the real file).
-    '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',
+    '^@veil/dapps$':         '<rootDir>/../mobile/lib/dappAllowlist',
+    // Transaction review/proposal logic shared between the mobile agent tab and
+    // the web wallet agent page.
+    '^@veil/agent-review$':  '<rootDir>/../mobile/lib/agentMessages',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [

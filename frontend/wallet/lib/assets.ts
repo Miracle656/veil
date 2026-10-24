@@ -66,6 +66,10 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     name: 'EUR Coin',
     issuerName: 'Circle',
     homeDomain: 'circle.com',
+    // Verified 2026-10-04: this issuer's Horizon home_domain is circle.com, the
+    // same domain the USDC issuer publishes. Circle serves no stellar.toml at
+    // that path (404), so the registry pin is the verification, exactly as it
+    // is for USDC.
     network: 'mainnet',
     kind: 'stablecoin',
     reserveXlm: 0.5,
@@ -77,6 +81,14 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     name: 'Aquarius',
     issuerName: 'Aquarius',
     homeDomain: 'aqua.network',
+    // Verified 2026-10-04 in both directions: the issuer publishes
+    // home_domain aqua.network, and that domain's stellar.toml declares AQUA
+    // against this exact issuer. The only registry asset that currently
+    // verifies both ways.
+    //
+    // Not a stablecoin — AQUA floats. `fetchPrice` quotes it off the real
+    // AQUA/USDC order book like any other issued asset, so nothing here needs
+    // a hardcoded rate, and it must never get one.
     network: 'mainnet',
     kind: 'governance',
     reserveXlm: 0.5,

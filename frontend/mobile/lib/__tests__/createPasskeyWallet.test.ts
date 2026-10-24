@@ -15,6 +15,8 @@ jest.mock('../passkey', () => ({
 
 jest.mock('../network', () => ({
   getNetwork: jest.fn(),
+  getNetworkName: jest.fn(() => 'testnet'),
+  hydrateNetwork: jest.fn(async () => undefined),
 }));
 
 jest.mock('../classicWallet', () => ({

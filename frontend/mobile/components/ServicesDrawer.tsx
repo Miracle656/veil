@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Alert,
@@ -17,6 +17,8 @@ import {
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
+import { useRouter } from 'expo-router';
+
 import { VeilLogo } from './VeilLogo';
 import { BILL_SERVICES, getServiceAvailabilityMessage, type BillService } from './PayForGrid';
 
@@ -56,6 +58,7 @@ export function ServicesDrawer({
   onClose: () => void;
   services?: BillService[];
 }) {
+  const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // One driver for the whole panel: 0 closed, 1 open. Rows read off the same
@@ -167,6 +170,20 @@ export function ServicesDrawer({
   const notPlanned = services.filter((s) => s.status === 'not-planned');
   const ordered = [...live, ...soon, ...notPlanned];
 
+  /**
+   * Close, then navigate on the next tick.
+   *
+   * Pushing while the Modal is still up leaves the drawer sitting over the
+   * screen it just opened — the same reason the More sheet defers its push.
+   */
+  const pick = useCallback(
+    (route: string) => {
+      onClose();
+      setTimeout(() => router.push(route as Parameters<typeof router.push>[0]), 140);
+    },
+    [onClose, router],
+  );
+
   return (
     <Modal
       visible={mounted}
@@ -213,7 +230,12 @@ export function ServicesDrawer({
                 </Stagger>
                 {live.map((s) => (
                   <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
-                    <Row service={s} colors={colors} styles={styles} />
+                    <Row
+                      service={s}
+                      colors={colors}
+                      styles={styles}
+                      onPick={s.route ? () => pick(s.route as string) : undefined}
+                    />
                   </Stagger>
                 ))}
               </>
@@ -301,26 +323,32 @@ function Row({
   service,
   colors,
   styles,
+  onPick,
 }: {
   service: BillService;
   colors: ThemeColors;
   styles: ReturnType<typeof createStyles>;
+  /** Absent for a service with nowhere to go, which keeps the row inert. */
+  onPick?: () => void;
 }) {
   const availability = service.status === 'live' ? null : service.status;
   const statusLabel = availability === 'soon' ? 'coming soon' : 'not planned';
   const badgeLabel = availability === 'soon' ? 'SOON' : 'NOT PLANNED';
-  return (
-    <Pressable
-      onPress={() => {
-        if (availability) {
-          Alert.alert(`${service.label} — ${statusLabel}`, getServiceAvailabilityMessage(service), [{ text: 'Got it' }]);
-        }
-      }}
-      disabled={!availability}
-      accessibilityRole={availability ? 'button' : undefined}
-      accessibilityLabel={availability ? `${service.label}, ${statusLabel}. Tap for details.` : service.label}
-      style={styles.row}
-    >
+  // A live row is a button that goes somewhere; an unavailable one is a button
+  // that says why it is not there yet. `BillService` has carried a `route` the
+  // entire time, and the drawer used to render every row as inert decoration.
+  const press = onPick
+    ?? (availability
+      ? () =>
+          Alert.alert(
+            `${service.label} — ${statusLabel}`,
+            getServiceAvailabilityMessage(service),
+            [{ text: 'Got it' }],
+          )
+      : undefined);
+  const label = availability ? `${service.label}, ${statusLabel}. Tap for details.` : service.label;
+  const inner = (
+    <>
       <View style={[styles.rowIcon, availability && styles.rowIconSoon]}>
         <service.Icon size={18} color={availability ? colors.textMuted : colors.textPrimary} />
       </View>
@@ -335,6 +363,32 @@ function Row({
           <Text style={styles.badgeText}>{badgeLabel}</Text>
         </View>
       ) : null}
+    </>
+  );
+
+  // Written out twice rather than through one `Wrapper` component, because the
+  // two take different `style` types and sharing one JSX node meant passing a
+  // FUNCTION style to a View. Only Pressable resolves those, so on every inert
+  // row `styles.row` was dropped entirely — the icon, the text and the badge
+  // fell into the default column layout with the badge stretched edge to edge.
+  // A View that silently ignores an unsupported style prop gives no warning,
+  // which is why it looked like a layout bug rather than a type one.
+  if (!press) {
+    return (
+      <View style={styles.row} accessibilityLabel={label}>
+        {inner}
+      </View>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={press}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.row, pressed && styles.pressed]}
+    >
+      {inner}
     </Pressable>
   );
 }

@@ -18,6 +18,9 @@ import * as wallet from '../assets'
 // AsyncStorage, a React Native module the web wallet does not install. The
 // registry itself never touches it.
 jest.mock('@react-native-async-storage/async-storage', () => ({ getItem: jest.fn() }), { virtual: true })
+// Same reason for the fee-payer lookup used by `fetchHeldAssets`: `activity`
+// pulls in the RN secure store, and no registry export reaches it.
+jest.mock('../../../mobile/lib/activity', () => ({ getFeePayerAddress: jest.fn() }))
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mobile = require('../../../mobile/lib/assets') as typeof wallet
 

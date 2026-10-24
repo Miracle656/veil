@@ -40,8 +40,11 @@ jest.mock('../walletBreadcrumbs', () => ({
   readBreadcrumbs: jest.fn(),
   writeBreadcrumbs: (...a: unknown[]) => mockWriteBreadcrumbs(...a),
 }));
+// `sdkStorage` is deliberately NOT mocked: letting it run keeps these
+// assertions pinned to the real per-network key names the SDK adapter writes.
 jest.mock('../network', () => ({
   getNetworkName: () => mockGetNetworkName(),
+  hydrateNetwork: jest.fn(async () => undefined),
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,

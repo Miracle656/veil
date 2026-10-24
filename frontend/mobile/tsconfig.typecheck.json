@@ -28,7 +28,9 @@
       "@veil/sep7": ["../../sdk/src/sep7"],
       "react": ["./node_modules/@types/react"],
       "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
-      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"]
+      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"],
+      "@sentry/react-native": ["./node_modules/@sentry/react-native"],
+      "@react-native-async-storage/async-storage": ["./node_modules/@react-native-async-storage/async-storage"]
     }
   }
 }

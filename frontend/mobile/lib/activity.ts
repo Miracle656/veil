@@ -14,7 +14,7 @@ import { Asset, Horizon, Keypair, StrKey, rpc as SorobanRpc } from '@stellar/ste
 
 import { getNetwork } from './network';
 import { getSignerSecret } from './walletStore';
-import { calculateAccountReserve } from './reserves';
+import { calculateAccountReserve, type AccountReserveBreakdown } from './reserves';
 
 /** AsyncStorage key holding the active wallet's public key (shared with backupFile). */
 export const WALLET_PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
@@ -116,6 +116,26 @@ export function mapPayments(records: HorizonPaymentLike[], account: string): Act
 /** Reads the active wallet's public key, or `null` when no wallet is stored. */
 export async function loadWalletAddress(): Promise<string | null> {
   return AsyncStorage.getItem(WALLET_PUBLIC_KEY_KEY);
+}
+
+/**
+ * The reserve breakdown for one classic account, or null when Horizon cannot
+ * answer for it — an unfunded account, a contract address, or a failed request.
+ *
+ * `fetchDashboardData` already reports `reserveXlm` and `reserveReason`, but
+ * the XLM asset page shows the arithmetic (base, subentries, spendable), and
+ * that is the whole breakdown rather than two fields of it.
+ */
+export async function fetchAccountReserve(
+  publicKey: string,
+): Promise<AccountReserveBreakdown | null> {
+  if (!publicKey || StrKey.isValidContract(publicKey)) return null;
+  try {
+    const account = await new Horizon.Server(horizonUrl()).loadAccount(publicKey);
+    return calculateAccountReserve(account as unknown as Parameters<typeof calculateAccountReserve>[0]);
+  } catch {
+    return null;
+  }
 }
 
 /** A Horizon 404 means the account isn't funded yet — empty dashboard, not an error. */

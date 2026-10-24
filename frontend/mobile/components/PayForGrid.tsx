@@ -9,6 +9,7 @@ import {
   BankIcon,
   BettingIcon,
   BillsIcon,
+  BuyIcon,
   DataIcon,
   GridIcon,
   PowerIcon,
@@ -46,6 +47,8 @@ export type BillService = {
  */
 export const BILL_SERVICES: BillService[] = [
   // Live: the flow exists and the deposit is crypto from this wallet, so it
+  // never leaves the app. Like the others it stays hidden when the backend
+  // holding the Linq key is unreachable — there is no order without it.
   // never leaves the app. Like `transfer` below it stays hidden when the
   // backend holding the Linq key is unreachable — there is no order without it.
   { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'live', route: '/airtime' },
@@ -58,6 +61,10 @@ export const BILL_SERVICES: BillService[] = [
   // hides it when the backend that holds the API key is unreachable, since
   // there is no order to create without it.
   { id: 'transfer', label: 'Cash out', hint: 'To any bank', Icon: BankIcon, status: 'live', route: '/cash-out' },
+  // The onramp: naira in, XLM or USDC out, via Linq. Nothing is signed — the
+  // user transfers from their own bank app and Linq delivers to the wallet's
+  // classic account, whose balances the holdings list already includes.
+  { id: 'buy-ngn', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn' },
   { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
 ];
 

@@ -113,10 +113,8 @@ export async function ensureBreadcrumbs(): Promise<void> {
   if (healAttempted) return;
   healAttempted = true;
   try {
-    const [{ getWalletAddress, getSignerSecret, getPasskeyPublicKey }, AsyncStorage] = await Promise.all([
-      import('./walletStore'),
-      import('@react-native-async-storage/async-storage').then((m) => m.default),
-    ]);
+    const [{ getWalletAddress, getSignerSecret, getPasskeyPublicKey }, { SDK_PUBLIC_KEY, getSdkItem }] =
+      await Promise.all([import('./walletStore'), import('./sdkStorage')]);
     const [address, secret] = await Promise.all([getWalletAddress(), getSignerSecret()]);
     if (!address || !secret || !address.startsWith('C')) return;
 
@@ -132,7 +130,7 @@ export async function ensureBreadcrumbs(): Promise<void> {
     // Public key: prefer the secure store's mirror, fall back to the SDK's copy.
     const pkHex =
       (await getPasskeyPublicKey().catch(() => null)) ||
-      (await AsyncStorage.getItem('invisible_wallet_public_key').catch(() => null));
+      (await getSdkItem(SDK_PUBLIC_KEY));
     const pkBytes = pkHex && /^[0-9a-fA-F]{130}$/.test(pkHex) ? new Uint8Array(Buffer.from(pkHex, 'hex')) : null;
 
     await writeBreadcrumbs(secret, address, pkBytes);

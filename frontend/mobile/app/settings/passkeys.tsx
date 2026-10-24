@@ -15,6 +15,7 @@
  * so this screen shows what is registered and says plainly what is missing.
  */
 
+import { Buffer } from 'buffer';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,6 +24,7 @@ import { FlowHeader } from '../../components/FlowHeader';
 import { useTheme } from '../../hooks/useTheme';
 import { isWalletDeployed } from '../../lib/contractSpend';
 import { errorMessage } from '../../lib/errorMessage';
+import { recoverWalletPublicKey } from '../../lib/recoverPasskeyKey';
 import { readSigners, type WalletSigner } from '../../lib/signers';
 import type { ThemeColors } from '../../lib/theme';
 import { getPasskeyPublicKey, getWalletAddress } from '../../lib/walletStore';
@@ -45,12 +47,40 @@ export default function PasskeysScreen() {
 
   const [signers, setSigners] = useState<WalletSigner[]>([]);
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
-  const [thisDeviceKey, setThisDeviceKey] = useState<string | null>(null);
+  // `undefined` while the secure store is still being read, so the repair card
+  // below never flashes at someone whose key is simply not loaded yet.
+  const [thisDeviceKey, setThisDeviceKey] = useState<string | null | undefined>(undefined);
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [repair, setRepair] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
+
+  /**
+   * Recover the wallet's public key from the passkey itself.
+   *
+   * Offered only when nothing on this device has it, which is the state that
+   * makes a funded wallet unspendable: `deploy()` needs the key, and WebAuthn
+   * reveals it only at registration. One signature is enough to get it back.
+   */
+  const runRepair = useCallback(async () => {
+    if (!walletAddress) return;
+    setRepair('running');
+    try {
+      const key = await recoverWalletPublicKey(walletAddress);
+      if (key) {
+        setThisDeviceKey(Buffer.from(key).toString('hex').toLowerCase());
+        setRepair('done');
+      } else {
+        setRepair('failed');
+      }
+    } catch {
+      setRepair('failed');
+    }
+  }, [walletAddress]);
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
     try {
       const address = await getWalletAddress();
+      setWalletAddress(address);
       if (!address) {
         setState({ kind: 'error', message: 'No wallet on this device yet.' });
         return;
@@ -71,7 +101,7 @@ export default function PasskeysScreen() {
     void load();
     void getPasskeyPublicKey()
       .then((key) => setThisDeviceKey(key?.toLowerCase() ?? null))
-      .catch(() => undefined);
+      .catch(() => setThisDeviceKey(null));
   }, [load]);
 
   return (
@@ -96,6 +126,29 @@ export default function PasskeysScreen() {
               This wallet is created on chain the first time it spends. Your passkey already
               controls it; the signer list appears here after that first transaction.
             </Text>
+            {thisDeviceKey === null ? (
+              <>
+                <Text style={styles.hint}>
+                  {repair === 'done'
+                    ? 'Recovered. This wallet can be set up on chain now — try your payment again.'
+                    : repair === 'failed'
+                      ? 'That passkey does not match this wallet. Approve the prompt with the passkey this wallet was created with.'
+                      : 'This device has no record of which passkey controls this wallet, so it can’t set it up on chain. Your passkey can prove it — one check fixes this for good.'}
+                </Text>
+                {repair === 'done' ? null : (
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={repair === 'running'}
+                    onPress={() => void runRepair()}
+                    style={({ pressed }) => [styles.secondary, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.secondaryText}>
+                      {repair === 'running' ? 'Checking…' : 'Check with passkey'}
+                    </Text>
+                  </Pressable>
+                )}
+              </>
+            ) : null}
           </View>
         ) : state.kind === 'error' ? (
           <View style={styles.card}>

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { useTheme } from "../hooks/useTheme";
 import type { ThemeColors } from "../lib/theme";
 import { fontFamily } from "../theme/typography";
-import { VeilLogo } from "../components/VeilLogo";
+import { VeilLogoAnimated } from "../components/VeilLogoAnimated";
 import { getWalletAddress, getSignerSecret, getPasskeyId } from "../lib/walletStore";
 
 // Whether the intro has been seen is presentation state, not a secret, so it
@@ -42,7 +42,7 @@ async function readEntryState(
 }
 
 /**
- * App entry — the splash (design "4a"). The Drape mark breathes on near-black
+ * App entry — the splash (design "4a"). The Drape mark forms on near-black
  * while the wallet state is read, then routes to the dashboard (wallet exists)
  * or the welcome landing (no wallet yet).
  */
@@ -53,18 +53,15 @@ export default function Index() {
   const navigated = useRef(false);
   const [, setLoading] = useState(true);
 
-  // Slow breathing pulse on the mark while we resolve entry state.
-  const breathe = useRef(new Animated.Value(0.35)).current;
+  // The mark forms top to bottom, then re-forms while entry state resolves.
+  // A pulse would have read as a generic loading throb; the drape falling says
+  // what the logo already means. Usually only the first pass is seen — the read
+  // resolves in well under the ~1.1s a full fall takes.
+  const [cycle, setCycle] = useState(0);
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(breathe, { toValue: 1, duration: 950, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(breathe, { toValue: 0.35, duration: 950, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [breathe]);
+    const id = setInterval(() => setCycle((c) => c + 1), 1900);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -85,9 +82,9 @@ export default function Index() {
 
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.mark, { opacity: breathe }]}>
-        <VeilLogo size={96} color={colors.accent} />
-      </Animated.View>
+      <View style={styles.mark}>
+        <VeilLogoAnimated size={96} color={colors.accent} cycle={cycle} />
+      </View>
       <Text style={styles.wordmark}>VEIL</Text>
       <Text style={styles.status}>Securing your session…</Text>
     </View>

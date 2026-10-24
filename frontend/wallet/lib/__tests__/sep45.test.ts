@@ -592,6 +592,7 @@ describe('SEP-45 JWT used in place of the SEP-10 token (issue #683 acceptance cr
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
+      // gitguardian:ignore=true — inert stub JWT from a mocked fetch, not a real credential
       json: async () => ({ token: 'sep45.jwt.for-c-account' }),
     })
     const jwt = await submitSep45Challenge(WEB_AUTH_ENDPOINT, signed)

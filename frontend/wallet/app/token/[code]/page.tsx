@@ -20,6 +20,8 @@ const network = getNetwork()
 const TOKEN_META: Record<string, { name: string; logo: string; color: string; bg: string }> = {
   XLM:  { name: 'Stellar Lumens', logo: '/tokens/xlm.png', color: '#fff',    bg: '#000' },
   USDC: { name: 'USD Coin',       logo: '/tokens/usdc.png', color: '#2775CA', bg: '#EEF4FF' },
+  EURC: { name: 'Euro Coin',      logo: '/tokens/eurc.png', color: '#2775CA', bg: '#EEF4FF' },
+  USDT0: { name: 'Tether USD',    logo: '/tokens/usdt0.png', color: '#00805F', bg: '#E6F3EF' },
 }
 
 // ── Simple SVG sparkline ──────────────────────────────────────────────────────

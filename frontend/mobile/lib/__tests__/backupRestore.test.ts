@@ -53,6 +53,7 @@ jest.mock('../walletBreadcrumbs', () => ({
 }));
 jest.mock('../network', () => ({
   getNetworkName: () => mockGetNetworkName(),
+  hydrateNetwork: jest.fn(async () => undefined),
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,

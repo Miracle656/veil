@@ -26,7 +26,10 @@ import {
   setSentryOptIn,
 } from '../sentry';
 
-const DSN = 'https://public-key@example.com/1';
+// A placeholder that matches the DSN shape (`https://<key>@<host>/<id>`) but
+// uses a hostname with no TLD so it cannot be mistaken for a real credential.
+// `example.invalid` is an RFC 2606 reserved name that cannot resolve.
+const DSN = 'https://public-key@sentry.example.invalid/1';
 
 // Full-length stand-ins: G + 55 base32 chars, S + 55 base32 chars. Elided
 // fixtures would let a too-greedy or too-shy pattern pass.
