@@ -68,6 +68,22 @@ export function configuredPoolIds(): string[] {
   return ids
 }
 
+/**
+ * Compute the displayed supply APY from a reserve's estimated supply APY.
+ *
+ * Blend reports rates as fractions (0.042 = 4.2%). The display layer expects a
+ * percentage, so this is the single place the factor of 100 is applied. If the
+ * scaling is removed or doubled, the published figure is wrong by 100x.
+ *
+ * Returns null when the rate is not a usable number (NaN, Infinity, negative),
+ * so callers render "unavailable" instead of a plausible-looking figure.
+ */
+export function supplyApyPercent(fractionalApy: unknown): number | null {
+  if (typeof fractionalApy !== 'number' || !Number.isFinite(fractionalApy)) return null
+  if (fractionalApy < 0) return null
+  return Math.round(fractionalApy * 100 * 100) / 100
+}
+
 export interface BlendPool {
   id: string
   name: string
