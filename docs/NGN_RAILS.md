@@ -362,8 +362,8 @@ The **Executive Order on Virtual Assets Coordination (signed 17 July 2026)** spl
 
 | Half | Posture | Status |
 |---|---|---|
-| **Spend crypto on airtime / data / bills** | The aggregator holds the NCC/NERC licence and the vend runs under it. We are a reseller buying a product, closer to merchant acceptance than to intermediation. `reseller-needs-no-licence` remains an **inference, not a verified rule** — but it is the same posture other Nigerian crypto-bills platforms already operate under | **Build now** |
-| **Crypto → naira in a user's bank account** | The *arranging* limb of ISA 2025 Sch.2 Pt.II ¶2, no exclusions schedule, s.61 criminal liability. Self-custody does not help here | **Gated** on the SEC letter or the CBN sandbox |
+| **Spend crypto on airtime / data / bills** | The aggregator holds the NCC/NERC licence and the vend runs under it. We are a reseller buying a product, closer to merchant acceptance than to intermediation. `reseller-needs-no-licence` remains an **inference, not a verified rule** — but it is the same posture other Nigerian crypto-bills platforms already operate under | **Shipped on Linq** (`wraith/src/linq/bills.ts`, `/ngn/bills`; airtime live in mobile and web wallets) |
+| **Crypto → naira in a user's bank account** | The *arranging* limb of ISA 2025 Sch.2 Pt.II ¶2, no exclusions schedule, s.61 criminal liability. Self-custody does not help here | **Gated** on the SEC letter or the CBN sandbox (closed internal testing only) |
 
 All the weight in "The licensing question" above attaches to the **second** row. Nothing in this document says a reseller buying airtime needs a VASP registration.
 
@@ -381,9 +381,11 @@ The SCF application currently has to describe the naira story rather than show i
 
 **Not a revenue line.** Verified first-hand: median margin is **1%** on MTN and Airtel, and every MTN and Airtel SME plan is currently `Unavailable` — the tiers that carry Nigerian volume cannot be sold at any margin. Glo SME is the only 10% inventory and Glo is a distant third by subscriber share. Bills is a **retention feature**. No model may assume otherwise.
 
-### First blocker
+### First blocker (superseded 2026-10-02)
 
-**The eBills "reseller role"** — transactional endpoints require it, and how it is granted is behind the login wall. Thirty minutes of clicking settles it and nothing else starts until it does.
+~~**The eBills "reseller role"** — transactional endpoints require it, and how it is granted is behind the login wall. Thirty minutes of clicking settles it and nothing else starts until it does.~~
+
+**Superseded by Linq.** The naira leg and `/ngn/bills` (`airtime`, `data`, `electricity`, `cabletv`, `betting`) shipped on Linq (`wraith/src/linq/bills.ts` and `wraith/src/api/ngn.ts`), and airtime is live in both the mobile and web wallets. No eBills wallet float is needed.
 
 ### UI consequence, already shipped
 
@@ -429,7 +431,7 @@ dashboards for the two prefunded wallets.
 > bill rather than a failed order.
 
 **Needs a human with a login (cannot be desk-researched):**
-- ~~**eBills "reseller role"**~~ — **SETTLED 2026-08-26: the role is gated on funding the eBills wallet.** Probed directly: `/jwt-auth/v1/token` authenticates fine on an unfunded account, `GET /api/v2/balance` returns `403 rest_forbidden`. So the role is not a support request or a form — it is a deposit. **This is now a money blocker, not a paperwork one**, and the airtime build is parked until there is float to fund. Probe kept at `scripts/ebills-probe.mjs`; re-run it after funding to confirm.
+- ~~**eBills "reseller role"** — SETTLED 2026-08-26: the role is gated on funding the eBills wallet.~~ **SUPERSEDED 2026-10-02:** the naira leg and bills (`POST /ngn/bills`, `GET /ngn/bills/:orderId`) shipped on Linq, and airtime is live in the wallet (`frontend/mobile/app/airtime.tsx`, `frontend/wallet/app/bills/page.tsx`). The eBills float blocker no longer applies (`scripts/ebills-probe.mjs` is historical only).
 - **eBills duplicate semantics** — does replaying a `request_id` after the 3-minute `duplicate_order` window create a **second vend**? Ask support before any retry logic ships.
 - **eBills margins on a funded account** — confirm the live 1%-median finding before any revenue model depends on it.
 - **eBills top-up mechanism** — undocumented publicly.
