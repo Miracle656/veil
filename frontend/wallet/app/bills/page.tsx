@@ -38,6 +38,14 @@ import {
   type NairaCoin,
 } from '@/lib/ngn'
 import type { PlatformFee } from '@/lib/platformFee'
+import { validateIdentifierBeforeConfirm } from '@/lib/billCategories'
+import {
+  getBillOrders,
+  recheckPendingBillOrders,
+  saveBillOrder,
+  updateBillOrderStatus,
+  type PersistedBillOrder,
+} from '@/lib/billOrders'
 import { beginTx, endTx } from '@/lib/txState'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
@@ -97,6 +105,9 @@ export default function BillsPage() {
   const [veilFee, setVeilFee] = useState<PlatformFee | null>(null)
   const [spent, setSpent] = useState<number | null>(null)
   const [waitingForPasskey, setWaitingForPasskey] = useState(false)
+  const [prepaidToken, setPrepaidToken] = useState<string | null>(null)
+  const [tokenCopied, setTokenCopied] = useState(false)
+  const [recentOrders, setRecentOrders] = useState<PersistedBillOrder[]>([])
 
   // Status polling state
   const [pollErrorCount, setPollErrorCount] = useState(0)
@@ -104,6 +115,22 @@ export default function BillsPage() {
   const [isRechecking, setIsRechecking] = useState(false)
 
   const pollerRef = useRef<BillPoller | null>(null)
+
+  const refreshOrders = useCallback(() => {
+    try {
+      const orders = getBillOrders()
+      setRecentOrders(orders)
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshOrders()
+    void recheckPendingBillOrders().then((updated) => {
+      setRecentOrders(updated)
+    }).catch(() => undefined)
+  }, [refreshOrders])
 
   const phoneDigits = useMemo(() => phone.replace(/\D/g, ''), [phone])
   const detected = useMemo(() => detectNetwork(phone), [phone])
@@ -198,13 +225,19 @@ export default function BillsPage() {
 
   const phoneValid = phoneDigits.length === 11 && phoneDigits.startsWith('0')
 
-  const continueFromForm = useCallback(() => {
+  const continueFromForm = useCallback(async () => {
+    const validation = await validateIdentifierBeforeConfirm('airtime', phone, { provider })
+    if (!validation.valid) {
+      setError(validation.error ?? 'Please check the phone number.')
+      return
+    }
+    setError(null)
     if (!isNairaVerified()) {
       router.push('/verify?returnTo=/bills')
       return
     }
     setStep('confirm')
-  }, [router])
+  }, [router, phone, provider])
 
   const pay = useCallback(async () => {
     if (!customerRef || !feePayerAddress || !rate || ngn <= 0) return
@@ -240,6 +273,25 @@ export default function BillsPage() {
       setOrderId(order.id)
       setSpent(amountStableCoin)
 
+      // Persist bill order locally so it survives app restarts and re-queries
+      try {
+        saveBillOrder({
+          orderId: order.id,
+          customerRef,
+          category: 'airtime',
+          provider,
+          identifier: phoneDigits,
+          amount: ngn,
+          amountCrypto: amountStableCoin,
+          asset: coin,
+          status: 'pending',
+          time: Date.now(),
+        })
+        refreshOrders()
+      } catch {
+        /* storage write failure shouldn't abort spend */
+      }
+
       // 2. Spend second
       setWaitingForPasskey(true)
       const hash = await sendBillPayment({
@@ -256,8 +308,18 @@ export default function BillsPage() {
         customerRef,
         order.id,
         {
-          onDone: () => setStep('done'),
-          onFailed: () => setStep('failed'),
+          onDone: (status) => {
+            const token = status?.token ?? status?.prepaidToken
+            if (token) setPrepaidToken(token)
+            updateBillOrderStatus(order.id, 'completed', token)
+            refreshOrders()
+            setStep('done')
+          },
+          onFailed: () => {
+            updateBillOrderStatus(order.id, 'failed')
+            refreshOrders()
+            setStep('failed')
+          },
           onUnconfirmed: (reason) => {
             setUnconfirmedReason(reason)
             setStep('unconfirmed')
@@ -502,6 +564,94 @@ export default function BillsPage() {
             </Card>
           )}
 
+          {step === 'form' && recentOrders.length > 0 && (
+            <Card>
+              <div className="flex justify-between items-center mb-3">
+                <SectionLabel>Recent purchases</SectionLabel>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void recheckPendingBillOrders()
+                      .then((u) => setRecentOrders(u))
+                      .catch(() => undefined)
+                  }}
+                  className="text-[12px] text-gold hover:underline cursor-pointer"
+                >
+                  Refresh
+                </button>
+              </div>
+              <div className="flex flex-col divide-y divide-border-dim">
+                {recentOrders.map((ord) => {
+                  const isPending = ord.status === 'pending'
+                  const isDone = /complete|success|delivered/i.test(ord.status)
+                  return (
+                    <div key={ord.orderId} className="py-3 flex flex-col gap-2">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <span className="text-[13px] font-semibold text-off-white uppercase">
+                            {ord.provider ? `${ord.provider} · ` : ''}
+                            {ord.category}
+                          </span>
+                          <span className="text-[12px] font-mono text-white/50 ml-2">
+                            {ord.identifier}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[13px] font-semibold text-off-white">
+                            ₦{ord.amount.toLocaleString('en-NG')}
+                          </span>
+                          <span className="text-[11px] font-mono text-gold ml-2">
+                            {ord.amountCrypto
+                              ? `${ord.amountCrypto.toFixed(ord.asset === 'xlm' ? 4 : 2)} ${ord.asset.toUpperCase()}`
+                              : ''}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center text-[12px]">
+                        <span
+                          className={
+                            isDone ? 'text-[#00D092]' : isPending ? 'text-gold' : 'text-red-400'
+                          }
+                        >
+                          {isDone ? 'Completed' : isPending ? 'Pending' : 'Failed'}
+                        </span>
+                        <span className="text-white/40 font-mono text-[11px]">
+                          {new Date(ord.time).toLocaleDateString('en-NG', {
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                        </span>
+                      </div>
+
+                      {ord.token && (
+                        <div className="bg-[rgba(255,255,255,0.03)] border border-border-dim rounded-[10px] p-2.5 flex justify-between items-center mt-1">
+                          <div>
+                            <div className="text-[10px] uppercase tracking-wider text-white/40">
+                              Prepaid Token
+                            </div>
+                            <div className="text-[13px] font-mono font-bold text-gold tracking-wide mt-0.5 select-all">
+                              {ord.token}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void navigator.clipboard?.writeText(ord.token!)
+                            }}
+                            className="px-2.5 py-1 rounded-[8px] bg-white/5 hover:bg-white/10 text-[11px] text-white/70 hover:text-white border border-border-dim transition-colors cursor-pointer"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </Card>
+          )}
+
           {/* ── b2 · confirm ──────────────────────────────────────────────── */}
           {step === 'confirm' && (
             <div className="flex flex-col gap-5">
@@ -628,6 +778,32 @@ export default function BillsPage() {
                 </div>
               </Card>
 
+              {prepaidToken && (
+                <Card data-testid="success-prepaid-token-card">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wider text-white/40">
+                        Prepaid Token
+                      </div>
+                      <div className="text-[18px] font-mono font-bold text-gold tracking-wide mt-1 select-all">
+                        {prepaidToken}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(prepaidToken)
+                        setTokenCopied(true)
+                        setTimeout(() => setTokenCopied(false), 2500)
+                      }}
+                      className="px-3 py-1.5 rounded-[10px] bg-white/5 hover:bg-white/10 text-[12px] text-white/80 hover:text-white border border-border-dim transition-colors cursor-pointer"
+                    >
+                      {tokenCopied ? 'Copied' : 'Copy Token'}
+                    </button>
+                  </div>
+                </Card>
+              )}
+
               <div className="flex flex-col gap-3">
                 <PrimaryAction
                   onClick={() => {
@@ -636,6 +812,9 @@ export default function BillsPage() {
                     setOrderId(null)
                     setPayHash(null)
                     setSpent(null)
+                    setPrepaidToken(null)
+                    setTokenCopied(false)
+                    refreshOrders()
                     void loadRate()
                   }}
                 >

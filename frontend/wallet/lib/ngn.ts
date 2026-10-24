@@ -553,6 +553,27 @@ export function getBillStatus(customerRef: string, orderId: string): Promise<Bil
   )
 }
 
+export interface BillCustomerLookup {
+  valid: boolean;
+  customerName?: string;
+  accountHolderName?: string;
+  currentPackage?: string;
+  dueDate?: string;
+  error?: string;
+}
+
+/**
+ * Look up a bill customer / account holder before taking money.
+ *
+ * For categories that support provider lookup (electricity, cable TV, betting),
+ * returns the verified account holder's name so the user can confirm it is theirs
+ * before confirming the payment.
+ */
+export function lookupBillCustomer(params: {
+  billCategory: BillCategory | string;
+  provider: string;
+  customerId: string;
+  customerRef?: string;
 export interface MeterVerification {
   valid: boolean
   customerName?: string

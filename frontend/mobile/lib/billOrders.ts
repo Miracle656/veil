@@ -7,6 +7,21 @@
  * the prepaid token shown on the success screen is the thing the purchase was for,
  * and leaving the screen loses it.
  *
+ * GET /ngn/bills/:orderId exists, so the backend can answer about an order the
+ * app knows the ID of.
+ *
+ * ## What We Store
+ * - category: BillCategory ('airtime', 'data', 'electricity', 'cabletv', 'betting')
+ * - identifier: phone number, meter number, smartcard number, betting user ID
+ * - amount: NGN amount
+ * - amountCrypto: crypto / stablecoin amount spent
+ * - asset: coin used ('usdc', 'xlm')
+ * - orderId: Linq order ID
+ * - status: 'pending', 'completed', 'failed', etc.
+ * - time: Unix timestamp in ms
+ * - token: prepaid token where one was returned (especially for electricity)
+ * - customerRef: Linq customer reference (needed to re-query /ngn/bills/:orderId)
+ * - provider: e.g. 'MTN', 'IKEDC'
  * `GET /ngn/bills/:orderId` exists, so the backend can answer about an order the
  * app knows the ID of.
  *
@@ -83,6 +98,7 @@ export type BillOrderInput = {
  * Strips any identity data or unneeded properties.
  *
  * A meter number or phone number is the customer identifier for the bill.
+ * NIN, BVN, names, email, and other personal data must NEVER be stored.
  * NIN, BVN, password, and sensitive identity data must NEVER be stored.
  */
 export function sanitizeBillOrder(raw: BillOrderInput): PersistedBillOrder {
@@ -128,12 +144,16 @@ export function isTerminalStatus(status: string): boolean {
   return outcome === 'done' || outcome === 'failed';
 }
 
+export async function getBillOrders(): Promise<PersistedBillOrder[]> {
 export async function getBillOrders(category?: BillCategory): Promise<PersistedBillOrder[]> {
   try {
     const raw = await AsyncStorage.getItem(BILL_ORDERS_KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => sanitizeBillOrder(item as BillOrderInput))
+      .sort((a, b) => b.time - a.time);
     const list = parsed
       .map((item) => sanitizeBillOrder(item as BillOrderInput))
       .sort((a, b) => b.time - a.time);
@@ -218,6 +238,7 @@ export interface RecheckOptions {
  * Re-check status for anything not in a terminal state, so an order that was
  * pending when the app closed resolves rather than staying pending forever.
  *
+ * Non-terminal orders are re-checked on next open.
  * Non-terminal orders are re-checked on open.
  */
 export async function recheckPendingBillOrders(
@@ -239,6 +260,8 @@ export async function recheckPendingBillOrders(
       const statusRes = await fetchStatus(order.customerRef, order.orderId);
       const newStatus = statusRes.status;
       const newToken = statusRes.token ?? statusRes.prepaidToken ?? order.token;
+
+      if (newStatus !== order.status || (newToken && newToken !== order.token)) {
       const newUnits = statusRes.units ?? order.units;
 
       if (

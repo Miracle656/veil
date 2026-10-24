@@ -556,6 +556,18 @@ export type BillTerminalOutcome = 'done' | 'failed' | 'pending';
 /**
  * Classifies a bill order status into terminal or in-flight states.
  *
+ * Success statuses: 'complete', 'completed', 'success', 'delivered'.
+ * Failure statuses: 'failed', 'refunded', 'reversed', 'cancelled'.
+ * All other / unrecognized statuses default to 'pending' so requerying
+ * can settle them rather than assuming a false failure.
+ */
+export function classifyBillStatus(status: string): BillTerminalOutcome {
+  const s = status.trim().toLowerCase();
+  if (/complete|success|delivered/.test(s)) return 'done';
+  if (/fail|refund|revers|cancel/.test(s)) return 'failed';
+  return 'pending';
+}
+
  * Success: 'complete', 'completed', 'success', 'delivered', 'settled',
  * 'disbursed'. Failure: 'failed', 'refunded', 'reversed', 'cancelled',
  * 'expired', 'timeout'. Anything still moving, and anything unrecognised,
@@ -615,6 +627,8 @@ export interface BillCustomerLookup {
   valid: boolean;
   customerName?: string;
   accountHolderName?: string;
+  currentPackage?: string;
+  dueDate?: string;
   address?: string;
   meterNumber?: string;
   currentPackage?: string;
