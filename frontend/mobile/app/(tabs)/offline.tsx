@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppState, type AppStatus, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
-import { listUnconfirmed, type UnconfirmedAction } from '../../src/lib/unconfirmed';
+import { listUnconfirmed, type UnconfirmedAction } from '../../lib/unconfirmed';
 
 /**
  * The offline screen is a considered state at the app level. It
@@ -69,6 +69,6 @@ const styles = StyleSheet.create({
   warningTitle: { color: '#f59e0b', fontWeight: '700' },
   warningBody: { color: '#fde470' },
   item: { color: '#e2e8f0', fontSize: 14 },
-  button: { backgroundColor: '#6366i1', borderRadius: 10, padding: 14, alignItems: 'center' },
+  button: { backgroundColor: '#6366f1', borderRadius: 10, padding: 14, alignItems: 'center' },
   buttonText: { color: '#fff', fontWeight: '600' },
 });

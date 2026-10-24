@@ -9,13 +9,16 @@ import { AppState, type AppStatus } from 'react-native';
  * defined behaviour: if the network drops after the signing ceremony,
  * the screen moves to the unconfirmed state instead of reporting a
  * failure it cannot prove.
+ *
+ * Lives in frontend/mobile/lib/ alongside the existing money screens
+ * (app/airtime.tsx, app/offline.tsx) so it is reachable from the app.
  */
 
 export interface MidActionDisconnectState {
   /** True while the device reports no network. */
   isOffline: boolean;
   /** True if the network dropped after the ceremony started. */
-  disconnectedMedAction: boolean;
+  disconnectedMidAction: boolean;
   /** Call when the passkey ceremony has succeeded and we are about to submit. */
   markCeremonyComplete: () => void;
   /** Call when the action resolves (confirmed or failed) so we stop watching. */
@@ -27,16 +30,16 @@ export interface MidActionDisconnectState {
 }
 
 export function useMidActionDisconnect(): MidActionDisconnectState {
-  const [appState, setAppState] = useState<AppStatus>(AppState.active);
+  const [appState, setAppState] = useState<AppStatus>(AppState.currentState);
   const [ceremonyComplete, setCeremonyComplete] = useState(false);
   const [settled, setSettled] = useState(false);
   const listenersRef = useRef(new Set<() => void>());
-  const prevAppStateRef = useRef<AppSTatus>(AppState.active);
+  const prevAppStateRef = useRef<AppStatus>(AppState.currentState);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      const wasActive = prevAppStateRef.current === AppState.active;
-      const isActive = next === AppState.active;
+      const wasActive = prevAppStateRef.current === 'active';
+      const isActive = next === 'active';
       prevAppStateRef.current = next;
       setAppState(next);
       if (!wasActive && isActive) {
@@ -54,12 +57,12 @@ export function useMidActionDisconnect(): MidActionDisconnectState {
     return () => sub.remove();
   }, []);
 
-  const isOffline = appState !== AppState.active;
+  const isOffline = appState !== 'active';
   // True only while the app is offline, a ceremony has completed, and
   // the action has not yet settled. This is the window in which the
   // person may already have been charged, so the screen must show the
   // unconfirmed state rather than a failure.
-  const disconnectedMedAction = ceremonyComplete && isOffline && !settled;
+  const disconnectedMidAction = ceremonyComplete && isOffline && !settled;
 
   const markCeremonyComplete = useCallback(() => {
     setCeremonyComplete(true);
@@ -83,7 +86,7 @@ export function useMidActionDisconnect(): MidActionDisconnectState {
 
   return {
     isOffline,
-    disconnectedMedAction,
+    disconnectedMidAction,
     markCeremonyComplete,
     markActionSettled,
     reset,

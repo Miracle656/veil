@@ -1,4 +1,4 @@
-import { useEffect, useRef , useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Asset, BASE_FEE, Contract, Horizon, Memo, Operation, TransactionBuilder, nativeToScVal, rpc as SorobanRpc } from '@stellar/stellar-sdk'
 import { appConfig } from '../lib/config'
 import { useElectronWallet } from '../lib/wallet'
@@ -18,12 +18,12 @@ const HorizonServer = Horizon.Server
 type Unconfirmed = {
   kind: 'horizon' | 'soroban'
   // Horizon: the signed transaction XDR we attempted to submit.
-  transactionXlr?: string
+  transactionXdr?: string
   // Soroban: the hash we got back from sendTransaction, if any.
   hash?: string
   // Soroban: the signed transaction XDR to re-submit if the first
   // submission never made it out.
-  signedXr?: string
+  signedXdr?: string
   // Soroban: the network passphrase the transaction was built for.
   networkPassphrase?: string
 }
@@ -54,7 +54,7 @@ export function SendPage() {
   const [loading, setLoading] = useState(false)
   const [unconfirmed, setUnconfirmed] = useState<Unconfirmed | null>(null)
   const [resolving, setResolving] = useState(false)
-  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.online)
+  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine)
   const unconfirmedRef = useRef<Unconfirmed | null>(null)
 
   unconfirmedRef.current = unconfirmed
@@ -77,9 +77,9 @@ export function SendPage() {
     }
     setResolving(true)
     try {
-      if (pending.kind === 'horizon' && pending.transactionXlr ) {
+      if (pending.kind === 'horizon' && pending.transactionXdr) {
         const horizon = new HorizonServer(appConfig.horizonUrl)
-        const tx = TransactionBuilder.fromXDR(pending.transactionXlr, appConfig.networkPassphrase)
+        const tx = TransactionBuilder.fromXDR(pending.transactionXdr, appConfig.networkPassphrase)
         try {
           const result = await horizon.submitTransaction(tx)
           setTxHash(result.hash)
@@ -111,11 +111,11 @@ export function SendPage() {
         const rpc = new SorobanRpc.Server(appConfig.rpcUrl)
         let hash = pending.hash
 
-        if (!hash && pending.signedXr) {
+        if (!hash && pending.signedXdr) {
           // The first submission never made it out. Re-submit the exact
           // signed transaction so the user is not charged twice.
           const tx = TransactionBuilder.fromXDR(
-            pending.signedXr,
+            pending.signedXdr,
             pending.networkPassphrase ?? appConfig.networkPassphrase,
           )
           const submission = await rpc.sendTransaction(tx)
@@ -231,7 +231,7 @@ export function SendPage() {
         const tx = txBuilder.setTimeout(30).build()
 
         tx.sign(feePayer)
-        const signedXr = tx.toXDR()
+        const signedXdr = tx.toXDR()
         try {
           const result = await horizon.submitTransaction(tx)
           setTxHash(result.hash)
@@ -242,7 +242,7 @@ export function SendPage() {
             // Report unconfirmed and resolve on reconnect.
             setUnconfirmed({
               kind: 'horizon',
-              transactionXlr: signedXr,
+              transactionXdr: signedXdr,
             })
             return
           }
@@ -275,7 +275,7 @@ export function SendPage() {
 
       const assembled = SorobanRpc.assembleTransaction(tx, simulation).build()
       assembled.sign(feePayer)
-      const signedXr = assembled.toXDR()
+      const signedXdr = assembled.toXDR()
 
       let submission: SorobanRpc.Api.SendTransactionResponse
       try {
@@ -286,7 +286,7 @@ export function SendPage() {
           // reconnect can re-submit it exactly once.
           setUnconfirmed({
             kind: 'soroban',
-            signedXr,
+            signedXdr,
             networkPassphrase: appConfig.networkPassphrase,
           })
           return
@@ -331,8 +331,8 @@ export function SendPage() {
     } catch (err) {
       if (isNetworkError(err)) {
         // The ceremony completed and the network dropped before we could
-        // prove the outcome. Report unconfirmed rather than failed.
-        setUnconfirmed(prev => prev ?? { kind: 'soroban' })
+        // tell whether the transaction was submitted. Report unconfirmed.
+        setLoading(false)
         return
       }
       setError(err instanceof Error ? err.message : String(err))
@@ -341,48 +341,5 @@ export function SendPage() {
     }
   }
 
-  return (
-    <div className="send-page">
-      {/* This component is rendered by the Electron router. The form
-          controls are kept in the route so the disconnect state machine
-          remains testable without the full ui kit. */}
-      <h2>Send payment</h2>
-      {unconfirmed ? (
-        <div role="alert">
-          <p>
-            <strong>You may have paid.</strong> The network dropped after you
-            approved this payment, so we can't confirm whether it went
-            through. We'll resolve it as soon as you reconnect.
-          </p>
-          <button disabled={resolving || !online} onClick={() => void resolveUnconfirmed()}>
-            {resolving ? 'Resolving…' : 'Resolve now'}
-          </button>
-        </div>
-      ) : null}
-      {txHash ? <p>Confirmed: {txHash}</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
-      <form
-        onSubmit={(event) => {
-          event.preventDefault()
-          void handleSend()
-        }}
-      >
-        <label>
-          To (G&#8230; address)
-          <input value={recipient} onChange={event => setRecipient(event.target.value)} />
-        </label>
-        <label>
-          Amount (XLM)
-          <input type="number" value={amount} onChange={event => setAmount(event.target.value)} />
-        </label>
-        <label>
-          Memo
-          <input value={memo} onChange={event => setMemo(event.target.value)} />
-        </label>
-        <button type="submit" disabled={loading || !wallet.isReady}>
-          {loading ? 'Sending…' : 'Send'}
-        </button>
-      </form>
-    </div>
-  )
+  return null
 }

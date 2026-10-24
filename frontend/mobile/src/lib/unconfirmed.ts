@@ -8,6 +8,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * charged. If the network drops after the transaction has been submitted
  * (but before we read the result), the user may already have been
  * charged. The honest state is "unconfirmed".
+ *
+ * NOTE: this module is being moved to frontend/mobile/lib/unconfirmed.ts
+ * to match the app's module layout (no src/ tree exists in this project).
  */
 
 export type UnconfirmedKind = 'airtime' | 'payment' | 'transfer';

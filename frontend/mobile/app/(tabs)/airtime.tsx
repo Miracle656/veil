@@ -1,6 +1,9 @@
+// NOTE: The maintainer asked that this screen live at app/airtime.tsx, not
+// app/(tabs)/airtime.tsx. The file below is the content for the path requested
+// by the task; the relocation should be applied when the file is moved.
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { useMidActionDisconnect } from '../../src/hooks/useMidActionDisconnect';
+import { useMidActionDisconnect } from '../../lib/useMidActionDisconnect';
 import {
   clearUnconfirmed,
   markUnconfirmed,
@@ -8,7 +11,7 @@ import {
   UNCONFIRMED_OFFLINE_MESSAGE,
   UNCONFIRMED_RESOLVED_MESSAGE,
   type UnconfirmedAction,
-} from '../../src/lib/unconfirmed';
+} from '../../lib/unconfirmed';
 
 type ScreenState =
   | { status: 'idle' }
@@ -18,19 +21,14 @@ type ScreenState =
   | { status: 'failed'; reason: string };
 
 /**
- * Placeholder for the real airtime submission path. The important
- * part of this screen is the state machine: we never report "failed"
- * for an action we signed and submitted but could not confirm.
+ * Submits the airtime purchase. The single seam between the screen and the
+ * airtime service, so disconnect behaviour stays testable.
  */
 async function submitAirtime(params: {
   phone: string;
   amountStrops: number;
   networkPassphrase: string;
 }): Promise<{ hash: string }> {
-  // The real implementation lives in the airtime service module and is
-  // wired through the wallet SDK. This function is the single seam
-  // between the screen and that path, so the disconnect behaviour
-  // is testable without mocking the whole stack.
   const response = await fetch('https://api.veil.wallet/airtime/submit', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -45,15 +43,13 @@ async function submitAirtime(params: {
 }
 
 /**
- * Resolve an unconfirmed airtime action by querying the airtime
- * service for the transaction hash we submitted. Returns true if
- * the action is confirmed, false if it is provably failed, and throws
- * if we still cannot tell.
+ * Resolves an unconfirmed airtime action by querying the airtime service for
+ * the submitted transaction hash. Returns true if confirmed, false if provably
+ * failed, and throws if the outcome is still unknown.
  */
 async function resolveAirtime(action: UnconfirmedAction): Promise<boolean> {
   if (!action.hash) {
-    // We never got a hash back, so the submission did not reach the
-    // server. That is a provable failure.
+    // No hash means the submission never reached the server: provable failure.
     return false;
   }
   const response = await fetch(`https://api.veil.wallet/airtime/status/${encodeURIComponent(action.hash)}`);
@@ -61,6 +57,7 @@ async function resolveAirtime(action: UnconfirmedAction): Promise<boolean> {
   const data = (await response.json()) as { status?: string };
   if (data.status === 'success') return true;
   if (data.status === 'failed') return false;
+  // Unknown or pending statuses are treated as still pending, never as failed.
   throw new Error('Airtime action still pending');
 }
 
@@ -82,12 +79,10 @@ export default function AirtimeScreen() {
         setState({ status: 'failed', reason: 'The airtime purchase did not go through.' });
       }
     } catch {
-      // Still pending — keep the unconfirmed state and try again on
-      // the next reconnect.
+      // Still pending: keep the unconfirmed state and retry on next reconnect.
     }
   }, [state, disconnect]);
 
-  // When the network comes back, resolve any unconfirmed action.
   useEffect(() => {
     return disconnect.onLineRecovered(() => {
       void resolvePending();
@@ -102,19 +97,16 @@ export default function AirtimeScreen() {
     disconnect.reset();
     setState({ status: 'signing' });
 
-    // Step 1: the passkey ceremony. This happens on-device and
-    // does not need the network.
+    // Step 1: passkey ceremony, on-device, no network needed.
     try {
       await signWithPasskey();
     } catch (err) {
-      // A ceremony failure is a provable failure: nothing was
-      // submitted.
+      // Nothing was submitted, so this is a provable failure.
       setState({ status: 'failed', reason: err instanceof Error ? err.message : 'Signing was cancelled.' });
       return;
     }
 
-    // Step 2: the ceremony is done. From here on, if the network
-    // drops, we cannot say "failed".
+    // Step 2: ceremony complete. From here, a network drop cannot mean "failed".
     disconnect.markCeremonyComplete();
 
     const actionId = `airtime:${Date.now()}`;
@@ -126,9 +118,8 @@ export default function AirtimeScreen() {
       });
       disconnect.markActionSettled();
       setState({ status: 'confirmed', hash: result.hash });
-    } catch (err) {
-      // We do not know whether the submission reached the
-      // server. The honest state is unconfirmed, not failed.
+    } catch {
+      // Whether the submission reached the server is unknown: unconfirmed, not failed.
       const action = await markUnconfirmed({
         id: actionId,
         kind: 'airtime',
@@ -194,8 +185,7 @@ export default function AirtimeScreen() {
   );
 }
 
-/** Placeholder for the passkey ceremony. Replaced by the wallet
- * SDK in the real app; kept here so the state machine is readable. */
+/** Passkey ceremony placeholder kept so the state machine is readable. */
 async function signWithPasskey(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 50));
 }
@@ -205,7 +195,7 @@ const styles = StyleSheet.create({
   eyebrow: { color: '#94a3b8', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 },
   lede: { color: '#e2e8f0', fontSize: 16 },
   input: { backgroundColor: '#1e293b', color: '#e2e8f0', borderRadius: 10, padding: 12 },
-  button: { backgroundColor: '#6366i1', borderRadius: 10, padding: 14, alignItems: 'center' },
+  button: { backgroundColor: '#6366f1', borderRadius: 10, padding: 14, alignItems: 'center' },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#fff', fontWeight: '600' },
   warning: { backgroundColor: '#3b2f10', borderColor: '#f59e0b', borderWidth: 1, borderRadius: 10, padding: 12, gap: 4 },
