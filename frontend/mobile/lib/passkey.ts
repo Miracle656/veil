@@ -43,7 +43,14 @@ import {
   toPasskeyCeremonyError,
 } from './passkeyOutcome';
 import { getPasskeyId, getPasskeyPublicKey, getSignerSecret } from './walletStore';
-import { base64UrlToUint8Array, derToRawSignature, hexToUint8Array, uint8ArrayToBase64Url } from './webauthn';
+import { listActiveAdditionalSigners } from './additionalSigners';
+import {
+  base64UrlToUint8Array,
+  derToRawSignature,
+  hexToUint8Array,
+  spkiToUncompressedP256,
+  uint8ArrayToBase64Url,
+} from './webauthn';
 
 /**
  * Device passkey signer.
@@ -69,12 +76,29 @@ export function isPasskeySupported(): boolean {
   }
 }
 
+/** The credential-descriptor list react-native-passkeys accepts. */
+type CredentialDescriptors = NonNullable<Parameters<typeof PasskeysModule.get>[0]['allowCredentials']>;
+
+function descriptors(list: { id: string; transports?: string[] }[]): CredentialDescriptors {
+  return list.map(({ id, transports }) => ({
+    id,
+    type: 'public-key',
+    ...(transports?.length ? { transports } : {}),
+  })) as CredentialDescriptors;
+}
+
 /**
  * Prompt the device passkey to sign one Soroban authorization-entry hash.
  *
  * Throws a {@link PasskeyCeremonyError} whose outcome says which of the three
  * things happened — the user cancelled, the authenticator refused, or the
  * ceremony failed — so a caller decides from the outcome, never from prose.
+ *
+ * The primary passkey is always offered. Additional passkeys are offered too
+ * once they are confirmed in the wallet's on-chain signer list, and the public
+ * key placed in the credential is the one belonging to whichever credential
+ * answered — `__check_auth` checks that key against the signer list and the
+ * signature against that key, so a mismatch would fail on chain.
  */
 export async function signPayloadWithPasskey(
   payloadHash: Uint8Array
@@ -91,12 +115,18 @@ export async function signPayloadWithPasskey(
     throw new PasskeyCeremonyError('refused', 'Passkeys are not supported on this device.');
   }
 
+  // An unreadable list must not stop the primary passkey from signing.
+  const additional = await listActiveAdditionalSigners().catch(() => []);
+
   let assertion: Awaited<ReturnType<typeof PasskeysModule.get>>;
   try {
     assertion = await passkeys().get({
       challenge: uint8ArrayToBase64Url(payloadHash),
       rpId: getRelyingPartyId(),
-      allowCredentials: [{ id: keyId, type: 'public-key' }],
+      allowCredentials: descriptors([
+        { id: keyId },
+        ...additional.map((signer) => ({ id: signer.credentialId, transports: signer.transports })),
+      ]),
       userVerification: 'required',
       timeout: 60_000,
     });
@@ -116,11 +146,114 @@ export async function signPayloadWithPasskey(
   // The platform returns null when the sheet is dismissed without a selection.
   if (!assertion) throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
 
+  // With only the primary offered there is nothing to choose between, and this
+  // stays exactly the path every existing wallet has always taken.
+  let signingKeyHex = publicKeyHex;
+  if (additional.length > 0) {
+    const answered = (assertion as { id?: string; rawId?: string }).id
+      ?? (assertion as { id?: string; rawId?: string }).rawId;
+    if (answered !== keyId) {
+      const match = additional.find((signer) => signer.credentialId === answered);
+      if (!match) {
+        throw new PasskeyCeremonyError('refused', 'The passkey that answered is not one this wallet knows. Nothing was sent.');
+      }
+      signingKeyHex = match.publicKey;
+    }
+  }
+
   return {
-    publicKey: hexToUint8Array(publicKeyHex),
+    publicKey: hexToUint8Array(signingKeyHex),
     authData: base64UrlToUint8Array(assertion.response.authenticatorData),
     clientDataJSON: base64UrlToUint8Array(assertion.response.clientDataJSON),
     signature: derToRawSignature(base64UrlToUint8Array(assertion.response.signature)),
+  };
+}
+
+/** A credential minted to be added to the wallet as an extra signer. */
+export type CreatedSignerPasskey = {
+  credentialId: string;
+  /** Uncompressed P-256 public key (65 bytes). */
+  publicKey: Uint8Array;
+  transports?: string[];
+};
+
+/** What the platform says when an excluded credential lives on the authenticator. */
+function isExcludedCredential(error: unknown): boolean {
+  const message = (error instanceof Error ? `${error.name} ${error.message}` : String(error ?? '')).toLowerCase();
+  return message.includes('excluded') || message.includes('invalidstateerror') || message.includes('already registered');
+}
+
+export const SIGNER_ALREADY_ON_AUTHENTICATOR_MESSAGE =
+  'That passkey manager already holds this wallet’s passkey, so it would not be a second device. ' +
+  'When your phone asks where to save the new passkey, choose another phone, tablet or a security key.';
+
+export const SIGNER_CREATION_CANCELLED_MESSAGE = 'Passkey creation cancelled. Nothing was added.';
+
+/**
+ * Create a NEW passkey to add to the wallet — never a replacement for the
+ * primary one.
+ *
+ * Two details carry the safety:
+ *
+ *  - A fresh random WebAuthn user handle. A passkey manager that already holds
+ *    a credential for the same rp.id + user.id overwrites it; reusing the
+ *    primary's handle could replace the first device's passkey on the
+ *    authenticator.
+ *  - `excludeCredentials` lists every credential this wallet already knows, so
+ *    an authenticator holding one of them refuses instead of minting a second
+ *    key in the same place, which would add no second device at all.
+ *
+ * Resident (discoverable) with PRF, like the primary: the other device signs in
+ * with `loginWithAddress`, which needs a discoverable credential, and PRF is
+ * what lets that device derive its own recoverable fee payer.
+ *
+ * Writes nothing. The caller decides what to record.
+ */
+export async function createSignerPasskey(
+  exclude: { id: string; transports?: string[] }[],
+): Promise<CreatedSignerPasskey> {
+  if (!isPasskeySupported()) {
+    throw new PasskeyCeremonyError('refused', 'Passkeys are not supported on this device.');
+  }
+
+  let created: Awaited<ReturnType<typeof PasskeysModule.create>>;
+  try {
+    created = await passkeys().create({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rp: { id: getRelyingPartyId(), name: 'Invisible Wallet' },
+      user: {
+        id: uint8ArrayToBase64Url(Crypto.getRandomBytes(16)),
+        name: 'Veil additional passkey',
+        displayName: 'Veil additional passkey',
+      },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      timeout: 60_000,
+      excludeCredentials: descriptors(exclude),
+      authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+      extensions: { prf: {} },
+    });
+  } catch (error: unknown) {
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', SIGNER_CREATION_CANCELLED_MESSAGE);
+    }
+    if (isExcludedCredential(error)) {
+      throw new PasskeyCeremonyError('refused', SIGNER_ALREADY_ON_AUTHENTICATOR_MESSAGE);
+    }
+    throw toPasskeyCeremonyError(error);
+  }
+
+  if (!created) throw new PasskeyCeremonyError('cancelled', SIGNER_CREATION_CANCELLED_MESSAGE);
+
+  const spki = created.response.getPublicKey();
+  if (!spki) {
+    throw new PasskeyCeremonyError('failed', 'The new passkey did not report its public key. Nothing was added.');
+  }
+
+  const transports = created.response.transports;
+  return {
+    credentialId: created.id,
+    publicKey: spkiToUncompressedP256(base64UrlToUint8Array(spki)),
+    ...(transports?.length ? { transports } : {}),
   };
 }
 
