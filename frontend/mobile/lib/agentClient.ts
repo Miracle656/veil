@@ -10,7 +10,7 @@
  */
 
 import { StrKey } from '@stellar/stellar-sdk';
-import type { AgentMessage, CashOutIntent, InvestIntent, SwapIntent } from './agentMessages';
+import type { AgentMessage, CashOutIntent, InvestIntent, NairaIntent, SwapIntent } from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -64,7 +64,8 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
         message.kind === 'proposal' ||
         message.kind === 'swap' ||
         message.kind === 'invest' ||
-        message.kind === 'cashout') &&
+        message.kind === 'cashout' ||
+        message.kind === 'naira') &&
       message.text.trim()
     ) {
       turns.push({ role: 'assistant', content: message.text });
@@ -97,6 +98,7 @@ export type AgentReply = {
   swapIntent?: SwapIntent;
   investIntent?: InvestIntent;
   cashOutIntent?: CashOutIntent;
+  nairaIntent?: NairaIntent;
 };
 
 /**
@@ -156,6 +158,47 @@ export function parseInvestIntent(value: unknown): InvestIntent | undefined {
   return { code, issuer, amount, ...(quoteCurrency ? { quoteCurrency } : {}), asset: { code, issuer } };
 }
 
+/**
+ * A Naira hand-off from the server (airtime, bills, or buy-with-naira), or undefined when invalid.
+ */
+export function parseNairaIntent(value: unknown): NairaIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const kind = typeof v.kind === 'string' ? v.kind : '';
+  if (kind === 'airtime') {
+    const phone = typeof v.phone === 'string' ? v.phone.trim() : '';
+    const amount = typeof v.amount === 'number' ? v.amount : Number(v.amount);
+    if (!phone || isNaN(amount) || amount <= 0) return undefined;
+    return {
+      kind: 'airtime',
+      phone,
+      amount,
+      network: typeof v.network === 'string' ? v.network : undefined,
+    };
+  }
+  if (kind === 'bill') {
+    const service = typeof v.service === 'string' ? v.service.trim() : '';
+    const amount = typeof v.amount === 'number' ? v.amount : Number(v.amount);
+    if (!service || isNaN(amount) || amount <= 0) return undefined;
+    return {
+      kind: 'bill',
+      service,
+      amount,
+      customerId: typeof v.customerId === 'string' ? v.customerId : undefined,
+    };
+  }
+  if (kind === 'buy_naira') {
+    const amount = typeof v.amount === 'number' ? v.amount : Number(v.amount);
+    if (isNaN(amount) || amount <= 0) return undefined;
+    const asset = typeof v.asset === 'string' ? v.asset.toUpperCase() : 'USDC';
+    return { kind: 'buy_naira', amount, asset };
+  }
+  if (kind === 'verify') {
+    return { kind: 'verify' };
+  }
+  return undefined;
+}
+
 export type AgentRequest = {
   message: string;
   walletAddress: string;
@@ -194,6 +237,7 @@ export async function sendAgentMessage(
       swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
       investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
       cashOutIntent: parseCashOutIntent((data as { cashOutIntent?: unknown }).cashOutIntent),
+      nairaIntent: parseNairaIntent((data as { nairaIntent?: unknown }).nairaIntent),
     };
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {
