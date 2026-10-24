@@ -122,6 +122,9 @@ export const SDK_KEYS = [
   'invisible_wallet_public_key',
   'invisible_wallet_address',
   'invisible_wallet_user_id',
+  // Written only if the SDK's registerAdditionalSigner() runs on this device;
+  // the app's own add-a-device flow keeps the list in the secure store.
+  'invisible_wallet_additional_signers',
 ] as const;
 
 /**
@@ -208,6 +211,7 @@ export async function clearWalletStore(): Promise<void> {
     key(SecureKey.passkeyId).then(deleteSecureItem),
     key(SecureKey.passkeyPublicKey).then(deleteSecureItem),
     key(SecureKey.signerSecret).then(deleteSecureItem),
+    key(SecureKey.additionalSigners).then(deleteSecureItem),
     ...SDK_KEYS.map((k) => AsyncStorage.removeItem(`${k}${suffix}`)),
     // Clear SPP state when the wallet is removed.
     walletAddress ? clearSppDatabase(walletAddress) : Promise.resolve(),

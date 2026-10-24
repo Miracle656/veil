@@ -332,11 +332,14 @@ export default function SettingsPage() {
     setStatus(null)
     try {
       const signerKeypair = getSignerKeypair()
-      const result = await wallet.register()
-      if (!result?.publicKeyBytes) throw new Error('Registration returned no public key')
       await ensureWalletDeployed(wallet.deploy, address)
-      const res = await wallet.addSigner(signerKeypair, result.publicKeyBytes)
-      setStatus(`New signer added at index ${res.signerIndex}`)
+      // Not register(): that would rebind this browser to a new, empty wallet.
+      const res = await wallet.registerAdditionalSigner(signerKeypair)
+      setStatus(
+        res.status === 'active'
+          ? `New signer added at index ${res.signerIndex}`
+          : 'Submitted. The wallet has not listed the new signer yet — refresh in a moment.',
+      )
       await fetchSigners()
     } catch (err: unknown) {
       setStatus(err instanceof Error ? err.message : String(err))
