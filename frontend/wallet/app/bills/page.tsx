@@ -38,6 +38,7 @@ import {
   type NairaCoin,
 } from '@/lib/ngn'
 import type { PlatformFee } from '@/lib/platformFee'
+import { validateIdentifierBeforeConfirm } from '@/lib/billCategories'
 import { beginTx, endTx } from '@/lib/txState'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
@@ -198,13 +199,19 @@ export default function BillsPage() {
 
   const phoneValid = phoneDigits.length === 11 && phoneDigits.startsWith('0')
 
-  const continueFromForm = useCallback(() => {
+  const continueFromForm = useCallback(async () => {
+    const validation = await validateIdentifierBeforeConfirm('airtime', phone, { provider })
+    if (!validation.valid) {
+      setError(validation.error ?? 'Please check the phone number.')
+      return
+    }
+    setError(null)
     if (!isNairaVerified()) {
       router.push('/verify?returnTo=/bills')
       return
     }
     setStep('confirm')
-  }, [router])
+  }, [router, phone, provider])
 
   const pay = useCallback(async () => {
     if (!customerRef || !feePayerAddress || !rate || ngn <= 0) return

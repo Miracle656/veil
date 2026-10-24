@@ -615,6 +615,8 @@ export interface BillCustomerLookup {
   valid: boolean;
   customerName?: string;
   accountHolderName?: string;
+  currentPackage?: string;
+  dueDate?: string;
   address?: string;
   meterNumber?: string;
   currentPackage?: string;
