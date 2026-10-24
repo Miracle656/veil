@@ -330,12 +330,8 @@ export function SendPage() {
       setUnconfirmed({ kind: 'soroban', hash })
     } catch (err) {
       if (isNetworkError(err)) {
-        // The ceremony completed and the network dropped before we could
-        // tell whether the transaction was submitted. Report unconfirmed.
-        setLoading(false)
-        return
+        // The ceremony completed and the network dropped
       }
-      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }

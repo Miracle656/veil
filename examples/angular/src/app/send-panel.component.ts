@@ -138,14 +138,16 @@ export class SendPanelComponent {
     this.status.set('pending');
     this.pending = null;
 
+    let secret = '';
     try {
-      const secret = this.feePayer.readSecret();
-      if (!secret) {
-        const funding = await this.feePayer.ensureFunded();
-        await this.wallet.sendPayment(funding.secret(), recipient, stroops);
+      const existing = this.feePayer.readSecret();
+      if (existing) {
+        secret = existing;
       } else {
-        await this.wallet.sendPayment(secret, recipient, stroops);
+        const funding = await this.feePayer.ensureFunded();
+        secret = funding.secret();
       }
+      await this.wallet.sendPayment(secret, recipient, stroops);
       this.status.set('confirmed');
     } catch (err: unknown) {
       // The passkey ceremony has already happened. If the failure is a transport
@@ -153,7 +155,9 @@ export class SendPanelComponent {
       // 'unconfirmed' rather than 'failed'. Only a definitive rejection from the
       // network counts as a failure.
       if (this.isDisconnect(err)) {
-        this.pending = { recipient, stroops, secret: this.feePayer.readSecret() ?? '' };
+        // Keep the secret we actually used (not re-read, which may be empty in the
+        // funded-fallback branch) so resolve() can retry the same payment.
+        this.pending = { recipient, stroops, secret };
         this.status.set('unconfirmed');
         return;
       }
@@ -187,7 +191,7 @@ export class SendPanelComponent {
   private isDisconnect(err: unknown): boolean {
     if (!err || typeof err !== 'object') return false;
     const code = (err as { code?: string }).code;
-    if (code === 'NETWORK_ERROR' || code === 'ECONNREFSET') return true;
+    if (code === 'NETWORK_ERROR' || code === 'ECONNRESET') return true;
     const message = (err as { message?: string }).message ?? '';
     return /failed to fetch|network request failed|offline|timed out/i.test(message);
   }

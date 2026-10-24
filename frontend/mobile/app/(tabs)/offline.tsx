@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppState, type AppStatus, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
-import { listUnconfirmed, type UnconfirmedAction } from '../../lib/unconfirmed';
+import { listUnconfirmed, type UnconfirmedAction } from '../lib/unconfirmed';
 
 /**
  * The offline screen is a considered state at the app level. It
@@ -9,7 +9,7 @@ import { listUnconfirmed, type UnconfirmedAction } from '../../lib/unconfirmed';
  * reconnect.
  */
 export default function OfflineScreen() {
-  const [appState, setAppState] = useState<AppStatus>(AppState.active);
+  const [appState, setAppState] = useState<AppStatus>(AppState.currentState);
   const [unconfirmed, setUnconfirmed] = useState<UnconfirmedAction[]>([]);
 
   useEffect(() => {
