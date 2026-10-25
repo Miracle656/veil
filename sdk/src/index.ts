@@ -54,6 +54,7 @@ export type {
 } from './sep8';
 export * from './webauthn/attestation';
 export * from './recovery/sep30';
+export * from './recovery/signerVerification';
 export * from './crypto/prf';
 // An assertion carries a signature, not a key — these recover the key from it.
 export {
