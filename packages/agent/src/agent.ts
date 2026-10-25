@@ -10,6 +10,7 @@ import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
 import { getTrendingActivity } from './trending.js'
+import { fetchPortfolioSummary, type PortfolioLoaders } from './portfolio.js'
 import { StrKey } from '@stellar/stellar-sdk'
 import { redactSensitive, toModelTools, type VeilTool } from './boundary.js'
 
@@ -214,6 +215,22 @@ export const TOOL_REGISTRY: VeilTool[] = [
     },
   },
   {
+    name: 'get_portfolio',
+    screen: 'Wallet screen',
+    kind: 'read',
+    description:
+      'Assemble the whole portfolio: wallet cash balances, Blend lending positions, invest holdings, and in-flight transfers into one complete picture. ' +
+      'ALWAYS call this whenever the user asks "what do I have", "what do I hold", "show my portfolio", or asks for a total balance breakdown across cash, lending and invest. ' +
+      'Returns each line with its asset, issuer, location (where the value lives: wallet, Blend lending, or invest), amount, USD value, and quote status. ' +
+      'If any component is unreachable (such as Blend, Horizon, or price feeds), it is explicitly listed as missing so the total does not silently omit it.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        address: { type: 'string', description: 'Stellar wallet or fee-payer address (G... or C...)' },
+      },
+    },
+  },
+  {
     name: 'open_swap',
     screen: 'Swap screen',
     kind: 'prepare',
@@ -347,7 +364,7 @@ RULES:
 7. Keep responses concise. Use bullet points for multi-step flows.
 8. Always use the fee-payer address (not the contract address) as wallet_address when calling build_payment.
 9. For asset explanation queries ("What is USDY?"), ALWAYS call get_asset_info. Base your answer strictly on the returned registry data (issuer name, issuer address, home domain, asset kind). NEVER invent or rely on LLM memory for asset issuer details. Asset codes are not identities: several issuers publish the same code (eight publish USDT0). When reporting holdings, name the issuer and report "unverified" holdings as unverified.
-10. For holdings questions ("what do I hold", "how much USDY do I have"), call get_wallet_balance and report exact balances with verified registry labels.
+10. For "what do I have", "show my portfolio", or total wealth questions across cash, lending and invest, call get_portfolio. Answer in one clear sentence giving the total and where value lives, followed by line items with issuer and location. NEVER silently drop an unreachable source from the total: if a component (like Blend or prices) failed or was unreachable, explicitly state what is excluded (e.g. "excluding Blend, which I could not reach"). Every asset must be identified by issuer, with unverified assets clearly labelled as unverified. For specific single-asset holdings questions ("how much USDY do I have"), you may also call get_wallet_balance. Give exact amounts with NO performance figures, projections, or advice.
 11. For buy requests ("buy 50 USDC of USDY"), call open_invest. NEVER construct or sign a transaction for asset purchases. State that you are routing to the Invest section but that the destination screen is being built, not that it will be pre-filled and ready. Your response MUST include the issuer address and a one-line risk disclosure (e.g. "USDY is issued by Ondo Finance — review the asset details on the next screen before confirming"). Do NOT give an opinion on whether to buy.
 12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.
 13. CAPABILITY BOUNDARY: Only claim actions or data available through the registered capabilities above. If a request is outside them, plainly say what you cannot do from this chat and direct the user to the most relevant screen named above. Do not claim that screen supports an action unless its registered capability says so; if no screen applies, say so instead of inventing one.
@@ -437,8 +454,8 @@ export async function runAgent(
   profile: UserProfile | undefined,
   /** The model provider (see llm.ts). Reuse one per process. */
   llm: LlmProvider,
-  /** Service URLs — if not provided, falls back to process.env. */
-  urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string },
+  /** Service URLs and loaders — if not provided, falls back to process.env and default loaders. */
+  urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string; portfolioLoaders?: PortfolioLoaders },
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
@@ -689,6 +706,12 @@ export async function runAgent(
         // Keep the flat balances the model already sees, and add each issued
         // asset classified by issuer. A code match alone is never "verified".
         return JSON.stringify({ ...balances, holdings: classifyBalances(balances) })
+      }
+
+      case 'get_portfolio': {
+        const fpAddress = feePayerAddress ?? (input.address as string)
+        const summary = await fetchPortfolioSummary(fpAddress, walletAddress, urls?.portfolioLoaders)
+        return JSON.stringify(summary)
       }
 
       case 'open_swap': {
