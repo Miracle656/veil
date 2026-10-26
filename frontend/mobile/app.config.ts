@@ -117,6 +117,12 @@ const config: ExpoConfig = {
   },
   plugins: [
     'expo-router',
+    // react-native-passkeys is the single passkey library (issue #1043). On its
+    // own it would drop the resolved androidx.credentials artifacts to
+    // 1.3.0-alpha01; this local plugin pins them to 1.6.0 — the version every
+    // build resolved to before the consolidation — so the Android provider
+    // stack is unchanged.
+    './plugins/withAndroidCredentialsPin',
     // react-native-passkeys contains native code, so Expo Go cannot load it.
     // The dev client is what makes passkey registration testable on a device.
     'expo-dev-client',

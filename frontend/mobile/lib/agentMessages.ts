@@ -42,6 +42,9 @@ export type SwapDepositPlanIntent = {
   usdcIssuer: string;
 };
 
+/** A cash-out hand-off; bank selection and verification stay on the Cash Out screen. */
+export type CashOutIntent = { amountNGN: number; rate: number };
+
 /** What a transaction the agent proposed will actually do, decoded locally. */
 export type ProposalReview = {
   /** Account that pays for and authorises the transaction. */
@@ -65,6 +68,8 @@ export type AgentMessage =
   | { id: string; kind: 'invest'; text: string; intent: InvestIntent }
   /** A complete plan; opening it does not approve either transaction. */
   | { id: string; kind: 'plan'; text: string; intent: SwapDepositPlanIntent }
+  /** A read-rate cash-out hand-off to the screen that verifies and creates orders. */
+  | { id: string; kind: 'cashout'; text: string; intent: CashOutIntent }
   /** A failure, from the service or from this app. */
   | { id: string; kind: 'error'; text: string }
   /** App-generated context, never attributed to the agent. */

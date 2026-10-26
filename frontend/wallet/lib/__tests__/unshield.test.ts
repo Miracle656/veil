@@ -27,10 +27,12 @@ describe('mainnet lockout', () => {
 })
 
 describe('the pools that actually exist', () => {
-  it('pins two testnet pools, both of them XLM', () => {
+  it('pins three testnet pools, all of them XLM', () => {
     const config = getSppConfig('testnet')
     expect(config).not.toBeNull()
-    expect(config!.pools).toHaveLength(2)
+    // Upstream's 2026-10-19 deployment added a view-only GVK pool next to the
+    // plain and traceable ones.
+    expect(config!.pools).toHaveLength(3)
     for (const pool of config!.pools) expect(pool.assetKind).toBe('native')
   })
 

@@ -359,6 +359,21 @@ export function EarnIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_S
 }
 
 /** Plus — the universal pay/send action on the tab bar. */
+/** A close cross. Drawn rather than typed, so it has the same stroke weight
+ *  and optical centre as every other icon — `×` as text sits high and thin. */
+export function CloseIcon({ size, color = 'currentColor', strokeWidth = 2.2 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M6 6l12 12M18 6L6 18"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
 export function PlusIcon({ size, color = 'currentColor', strokeWidth = 2.2 }: IconProps) {
   return (
     <Base size={size}>
@@ -512,6 +527,43 @@ export function UnshieldIcon({ size, color = 'currentColor', strokeWidth = DEFAU
         strokeLinecap="round"
       />
       <Path d="M12 9v6M9 12l3 3 3-3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </Base>
+  );
+}
+
+/** A circled "i" — used beside an explanation, never beside an error. */
+export function InfoIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="12" cy="12" r="9" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M12 11v5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <Path d="M12 8h.01" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </Base>
+  );
+}
+
+/** Magnifier — the search affordance in a filter field. */
+export function SearchIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="11" cy="11" r="7" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M21 21l-4.3-4.3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </Base>
+  );
+}
+
+/** One person — the "pick from contacts" affordance, not the plural UsersIcon. */
+export function ContactIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="12" cy="8" r="4" stroke={color} strokeWidth={strokeWidth} />
+      <Path
+        d="M4 21a8 8 0 0 1 16 0"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </Base>
   );
 }

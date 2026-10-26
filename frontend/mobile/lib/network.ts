@@ -215,7 +215,7 @@ export function describeMissingConfig(network = getNetwork()): string[] {
 
 /** Friendbot funding URL for `address`, or null on networks without a faucet. */
 export function buildFriendbotUrl(address: string, network = getNetwork()): string | null {
-  if (!network.friendbotUrl) return null;
+  if (network.name !== 'testnet' || !network.friendbotUrl) return null;
   const url = new URL(network.friendbotUrl);
   url.searchParams.set('addr', address);
   return url.toString();

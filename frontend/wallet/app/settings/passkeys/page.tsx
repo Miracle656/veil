@@ -78,11 +78,17 @@ export default function PasskeysPage() {
     setStatus(null)
     try {
       const signerKeypair = getSignerKeypair()
-      const result = await wallet.register()
-      if (!result?.publicKeyBytes) throw new Error('Registration returned no public key')
+      // add_signer is answered by the contract, so it has to exist first.
       await ensureWalletDeployed(wallet.deploy, walletSession.getItem('invisible_wallet_address'))
-      const res = await wallet.addSigner(signerKeypair, result.publicKeyBytes)
-      setStatus({ text: `New passkey added at index ${res.signerIndex}`, ok: true })
+      // Never register() here: it rewrites this browser's wallet address and
+      // credential, rebinding it to a new, empty wallet and fee payer.
+      // registerAdditionalSigner() adds a second key and leaves those alone.
+      const res = await wallet.registerAdditionalSigner(signerKeypair)
+      setStatus(
+        res.status === 'active'
+          ? { text: `New passkey added at index ${res.signerIndex}. Your wallet address is unchanged.`, ok: true }
+          : { text: 'Submitted. The wallet has not listed the new passkey yet — refresh in a moment.', ok: true },
+      )
       await fetchSigners()
     } catch (err: unknown) {
       setStatus({ text: err instanceof Error ? err.message : String(err), ok: false })
@@ -134,7 +140,7 @@ export default function PasskeysPage() {
         </div>
 
         <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '1.75rem', lineHeight: 1.6 }}>
-          Each passkey is a separate device credential. Adding a second passkey on a backup laptop or phone lets you recover access if one device is lost.
+          Each passkey is a separate device credential. Adding a second passkey on a backup laptop, phone or security key lets you recover access if one device is lost. It is added to this same wallet: your address, this browser&apos;s passkey and your fee account stay as they are. The wallet accepts passkeys from this website only, so the Veil mobile app cannot sign for it.
         </p>
 
         {/* Section label */}

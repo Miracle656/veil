@@ -28,6 +28,8 @@ export const WALLET_KEYS = [
   'invisible_wallet_key_id',
   'invisible_wallet_public_key',
   'invisible_wallet_portable_signer',
+  // Passkeys added to this wallet beyond its primary one (see additionalSigners.ts).
+  'invisible_wallet_additional_signers',
   'invisible_wallet_recovery_private_key',
   'veil_signer_secret',
   'veil_signer_public_key',

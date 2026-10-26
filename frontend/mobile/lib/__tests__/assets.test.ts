@@ -9,6 +9,8 @@ import {
   getRegisteredAsset,
   isRegisteredIssuer,
   parseHeldAssets,
+  stellarAssetTypeForCode,
+  ETHERFUSE_MAINNET_ISSUER,
   USDT0_MAINNET_ISSUER,
   type HorizonBalanceLike,
 } from '../assets';
@@ -68,6 +70,27 @@ describe('Verified Asset Registry (Mobile)', () => {
     expect(ASSET_REGISTRY.AQUA).toBeDefined();
     expect(ASSET_REGISTRY.USDY).toBeDefined();
     expect(ASSET_REGISTRY.USDT0).toBeDefined();
+  });
+
+  it('registers the verified Etherfuse treasury assets by exact issuer', () => {
+    for (const code of ['CETES', 'USTRY', 'TESOURO']) {
+      expect(ASSET_REGISTRY[code]).toMatchObject({
+        code,
+        issuer: ETHERFUSE_MAINNET_ISSUER,
+        homeDomain: 'etherfuse.com',
+        kind: 'treasury',
+      });
+      expect(getRegisteredAsset(code, ETHERFUSE_MAINNET_ISSUER)?.code).toBe(code);
+    }
+    expect(getRegisteredAsset('TESOURO', 'GFAKE123456789012345678901234567890123456789012345678901')).toBeNull();
+  });
+
+  it.each([
+    ['USDC', 'credit_alphanum4'],
+    ['CETES', 'credit_alphanum12'],
+    ['TESOURO', 'credit_alphanum12'],
+  ] as const)('selects Stellar asset type for %s', (code, type) => {
+    expect(stellarAssetTypeForCode(code)).toBe(type);
   });
 
   it('resolves XLM correctly without an issuer field', () => {

@@ -80,7 +80,8 @@ export const NETWORKS: Record<VeilNetworkName, VeilNetwork> = {
     factoryContractId:
       process.env.NEXT_PUBLIC_FACTORY_CONTRACT_ID_MAINNET?.trim()
       // Deployed 2026-08-21; its own bytecode and the wallet WASM it deploys
-      // (b485f817…) match contracts/expected-hashes.json — verified on-chain.
+      // (b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5) match the
+      // reproducible build of commit ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2 — verified on-chain.
       || 'CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK',
     friendbotUrl: null,
   },
@@ -212,7 +213,9 @@ export function getNativeAssetContractId(): string {
 }
 
 export function buildFriendbotUrl(address: string): string | null {
-  return sdkBuildFriendbotUrl(address, getNetwork().friendbotUrl)
+  const net = getNetwork()
+  if (net.name !== 'testnet' || !net.friendbotUrl) return null
+  return sdkBuildFriendbotUrl(address, net.friendbotUrl)
 }
 
 /**

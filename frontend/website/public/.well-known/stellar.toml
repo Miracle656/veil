@@ -1,0 +1,11 @@
+# SEP-1 public metadata for useveilapp.xyz.
+#
+# The federation URL is the planned production endpoint. The wallet backend
+# still needs to implement and deploy it before SEP-2 name resolution works.
+FEDERATION_SERVER = "https://app.useveilapp.xyz/api/federation"
+
+[DOCUMENTATION]
+ORG_NAME = "Veil"
+ORG_URL = "https://useveilapp.xyz"
+ORG_DESCRIPTION = "A self-custodial smart wallet on Stellar."
+ORG_GITHUB = "https://github.com/Miracle656/veil"

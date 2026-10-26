@@ -4,7 +4,30 @@ export interface FederationResult {
   memo?: string
 }
 
-const cache: Record<string, FederationResult> = {}
+export const DEFAULT_FEDERATION_CACHE_TTL_MS = 60_000 // 60 seconds
+
+interface CacheEntry {
+  result: FederationResult
+  expiresAt: number
+}
+
+const cache = new Map<string, CacheEntry>()
+
+/** Clears all cached federation resolutions. Useful for testing and cache invalidation. */
+export function clearFederationCache(): void {
+  cache.clear()
+}
+
+/** Removes an expired or specific address from the federation cache. */
+export function invalidateFederationCache(address: string): void {
+  cache.delete(address)
+}
+
+export interface ResolveFederationOptions {
+  ttlMs?: number
+  skipCache?: boolean
+  fetchImpl?: typeof fetch
+}
 
 function parseToml(tomlText: string): Record<string, string> {
   const result: Record<string, string> = {}
@@ -26,9 +49,24 @@ function parseToml(tomlText: string): Record<string, string> {
   return result
 }
 
-export async function resolveFederation(address: string): Promise<FederationResult> {
-  if (cache[address]) {
-    return cache[address]
+export async function resolveFederation(
+  address: string,
+  options?: ResolveFederationOptions,
+): Promise<FederationResult> {
+  const ttlMs = options?.ttlMs ?? DEFAULT_FEDERATION_CACHE_TTL_MS
+  const skipCache = options?.skipCache ?? false
+  const fetchFn = options?.fetchImpl ?? fetch
+  const now = Date.now()
+
+  if (!skipCache) {
+    const entry = cache.get(address)
+    if (entry) {
+      if (entry.expiresAt > now) {
+        return entry.result
+      }
+      // Expired: delete before fetching so any subsequent error never serves a stale hit
+      cache.delete(address)
+    }
   }
 
   const parts = address.split('*')
@@ -45,7 +83,7 @@ export async function resolveFederation(address: string): Promise<FederationResu
   let tomlText: string
   try {
     const tomlUrl = `https://${domain}/.well-known/stellar.toml`
-    const res = await fetch(tomlUrl)
+    const res = await fetchFn(tomlUrl)
     if (!res.ok) {
       if (res.status === 404) {
         throw new Error('address not found')
@@ -78,7 +116,7 @@ export async function resolveFederation(address: string): Promise<FederationResu
     url.searchParams.set('q', address)
     url.searchParams.set('type', 'name')
     
-    const res = await fetch(url.toString())
+    const res = await fetchFn(url.toString())
     if (!res.ok) {
       if (res.status === 404) {
         throw new Error('address not found')
@@ -97,6 +135,12 @@ export async function resolveFederation(address: string): Promise<FederationResu
     throw new Error('address not found')
   }
 
-  cache[address] = result
+  if (ttlMs > 0) {
+    cache.set(address, {
+      result,
+      expiresAt: now + ttlMs,
+    })
+  }
+
   return result
 }

@@ -8,7 +8,7 @@ export default {
     type: 'separator',
   },
   'contract-api': 'Contract API',
-  'contract-upgrades': 'Contract Upgrades',
+  'contract-upgrades': 'Contract Upgrades & Immutability',
   'sdk-reference': 'SDK Reference',
   'sdk-errors': 'SDK Error Reference',
   troubleshooting: 'Troubleshooting',

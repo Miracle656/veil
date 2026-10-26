@@ -258,3 +258,106 @@ describe('the active order survives a refresh', () => {
     expect(loadOnrampOrder()).toBeNull()
   })
 })
+
+describe('payBill', () => {
+  it('reserves a bill order against /ngn/bills with mainnet header and post body', async () => {
+    const mockOrder = {
+      id: 'ord_airtime_456',
+      customerRef: 'veil_4sjjjzwamdoe',
+      wallet: 'GB3JS2AJZ3FKIGVOOPXDEYYR3XOHQA474WGCYAMNFSGX6OW5HGWCKUZW',
+      status: 'pending',
+    }
+    respondWith(mockOrder)
+    const { payBill } = loadModule()
+
+    const params = {
+      customerRef: 'veil_4sjjjzwamdoe',
+      billCategory: 'airtime' as const,
+      provider: 'MTN',
+      customerId: '08031234567',
+      amountNgn: 1000,
+      amountStableCoin: 0.67,
+      rate: 1500,
+      coin: 'usdc' as const,
+      refundAddress: 'GB3JS2AJZ3FKIGVOOPXDEYYR3XOHQA474WGCYAMNFSGX6OW5HGWCKUZW',
+    }
+
+    const result = await payBill(params)
+    expect(result).toEqual(mockOrder)
+
+    const req = lastRequest()
+    expect(req.url).toBe(`${WRAITH}/ngn/bills`)
+    expect(req.init.method).toBe('POST')
+    expect(req.init.headers).toMatchObject({ 'x-network': 'mainnet' })
+    expect(JSON.parse(String(req.init.body))).toEqual(params)
+  })
+})
+
+describe('getBillStatus', () => {
+  it('queries /ngn/bills/:orderId with customerRef', async () => {
+    const mockStatus = {
+      orderId: 'ord_airtime_456',
+      customerRef: 'veil_4sjjjzwamdoe',
+      status: 'completed',
+      billCategory: 'airtime',
+      amountNgn: 1000,
+      amountStableCoin: 0.67,
+      wallet: 'GB3JS2AJZ3FKIGVOOPXDEYYR3XOHQA474WGCYAMNFSGX6OW5HGWCKUZW',
+      description: 'MTN Airtime 1000',
+    }
+    respondWith(mockStatus)
+    const { getBillStatus } = loadModule()
+
+    const status = await getBillStatus('veil_4sjjjzwamdoe', 'ord_airtime_456')
+    expect(status).toEqual(mockStatus)
+
+    const req = lastRequest()
+    expect(req.url).toBe(`${WRAITH}/ngn/bills/ord_airtime_456?customerRef=veil_4sjjjzwamdoe`)
+    expect(req.init.headers).toMatchObject({ 'x-network': 'mainnet' })
+  })
+})
+
+describe('classifyBillStatus', () => {
+  it('drives real provider status value "completed" to done state', () => {
+    const { classifyBillStatus } = loadModule()
+    expect(classifyBillStatus('completed')).toBe('done')
+  })
+
+  it('handles status with varying casing or whitespace', () => {
+    const { classifyBillStatus } = loadModule()
+    expect(classifyBillStatus('Completed')).toBe('done')
+    expect(classifyBillStatus('  completed  ')).toBe('done')
+    expect(classifyBillStatus('COMPLETED')).toBe('done')
+  })
+
+  it('recognizes delivered, complete, and success variants as done', () => {
+    const { classifyBillStatus } = loadModule()
+    expect(classifyBillStatus('complete')).toBe('done')
+    expect(classifyBillStatus('completed-api')).toBe('done')
+    expect(classifyBillStatus('delivered')).toBe('done')
+    expect(classifyBillStatus('success')).toBe('done')
+  })
+
+  it.each(['failed', 'refunded', 'reversed', 'cancelled', 'FAILED', 'refund'])(
+    'classifies %s as terminal failure',
+    (status) => {
+      const { classifyBillStatus } = loadModule()
+      expect(classifyBillStatus(status)).toBe('failed')
+    },
+  )
+
+  it.each(['pending', 'processing', 'queued', 'initiated', 'on-hold'])(
+    'keeps %s as pending so caller continues to poll',
+    (status) => {
+      const { classifyBillStatus } = loadModule()
+      expect(classifyBillStatus(status)).toBe('pending')
+    },
+  )
+
+  it('defaults unknown/unrecognized statuses to pending to avoid false failures', () => {
+    const { classifyBillStatus } = loadModule()
+    expect(classifyBillStatus('awaiting_carrier')).toBe('pending')
+    expect(classifyBillStatus('transmitting')).toBe('pending')
+    expect(classifyBillStatus('unknown_code')).toBe('pending')
+  })
+})

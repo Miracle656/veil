@@ -61,8 +61,16 @@ export const DEFAULT_CURRENCY: CurrencyCode = 'USD'
 /** localStorage key holding the user's display-currency preference. */
 export const CURRENCY_STORAGE_KEY = 'veil_currency'
 
+/**
+ * Whether `value` is a currency this module can price.
+ *
+ * `hasOwnProperty`, not `in`: the `in` operator walks the prototype chain, so
+ * 'toString' or 'constructor' passed this check, got persisted by
+ * `setCurrency`, and then resolved to a rate of `undefined` — every balance on
+ * the next visit formatting as NaN.
+ */
 export function isCurrencyCode(value: unknown): value is CurrencyCode {
-  return typeof value === 'string' && value in CURRENCIES
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(CURRENCIES, value)
 }
 
 // ── Pure conversion + formatting ─────────────────────────────────────────────
@@ -88,7 +96,9 @@ export function formatFiat(
 ): string {
   if (usd == null || !isFinite(usd)) return '—'
   const currency = CURRENCIES[code] ?? CURRENCIES[DEFAULT_CURRENCY]
-  const effectiveRate = rate ?? currency.fallbackRate
+  // A rate that is null, NaN or ±Infinity cannot price anything; the bundled
+  // rate is the defined answer, and it keeps "₦NaN" off a balance screen.
+  const effectiveRate = rate != null && isFinite(rate) ? rate : currency.fallbackRate
   const local = usd * effectiveRate
   const formatted = local.toLocaleString('en-US', {
     minimumFractionDigits: currency.decimals,

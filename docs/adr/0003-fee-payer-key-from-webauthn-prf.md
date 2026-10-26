@@ -145,13 +145,20 @@ Other implementation facts:
 - **Single accessor** — create / recover / unlock / dashboard all establish the
   key through `ensureFeePayer()`; the ~30 downstream read sites keep reading
   `sessionStorage` (which the accessor populates), so no address mismatch.
-- **Not yet done:** the mobile app port (`frontend/mobile/lib/deriveFeePayer.ts`
-  — same pattern, `react-native-passkeys` PRF + noble HKDF) and the recovery key
-  (M7) follow in a follow-up. Mobile's exposure is milder (keychain, not
-  `localStorage`).
+- **Mobile app parity:** Mobile (`frontend/mobile/lib/passkeyWallet.ts`) derives
+  fee-payer keys via PRF (`'prf'` source) and uses a random fallback key
+  (`Keypair.random()`, `'random'` source) when PRF is unsupported, avoiding
+  derivation from the credential ID for new wallets.
+- **Web non-PRF fallback:** Web (`frontend/wallet/lib/feePayer.ts`) now matches
+  mobile: for new wallets without PRF, it generates a random keypair (`mode: 'random'`)
+  rather than deriving from the credential ID. Pre-existing wallets funded under the
+  legacy derivation are probed on-chain and preserved (`mode: 'legacy'`).
+  See `docs/NON_PRF_FEE_PAYER_EXPOSURE.md` for the full exposure analysis.
 
-## Status of the interim state
+## Status of the legacy derivation
 
-Until this lands, `lib/deriveFeePayer.ts` carries a `SECURITY` note documenting the real (weak)
-property so no reader mistakes it for passkey-bound. The acute remote-exfiltration chain is already
-closed (C1/H1 fixed); this ADR removes the residual weakness.
+`deriveFeePayerKeypair` in `sdk/src/deriveFeePayer.ts` and its re-exports carry an updated
+`SECURITY` note documenting that the credential ID is a public descriptor in client storage
+and ceremonies. The legacy derivation is retained exclusively for on-chain existence probing
+to protect existing funded accounts from being stranded. New wallets never derive spending keys
+from the credential ID.

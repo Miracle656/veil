@@ -15,6 +15,7 @@
     "verify:assets": "node scripts/verify-asset-registry.mjs",
     "verify:assets:offline": "node scripts/verify-assets-offline.mjs",
     "verify:assets:online": "node scripts/verify-assets-online.mjs",
+    "verify:deployed": "node scripts/verify-deployed-hashes.mjs",
     "test:scripts": "node --test scripts/tests/*.test.mjs"
   },
   "dependencies": {

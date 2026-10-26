@@ -33,6 +33,8 @@ export interface NFTItem {
   standard: 'CAP-46'
   isFixture?: boolean
   collectionName?: string
+  /** If this token carries or is bound to a registered federation name. */
+  boundName?: string | null
   /** Ledger close time of the transfer that put this token in the wallet. */
   acquiredAt?: string
   txHash?: string
@@ -128,6 +130,27 @@ export function truncateAddress(address: string, start = 6, end = 6): string {
 export function formatTokenId(id: string | number): string {
   const s = String(id)
   return s.startsWith('#') ? s : `#${s}`
+}
+
+/**
+ * Returns the federation name bound to a token, or null if the token carries no name.
+ * Checks explicit boundName, or traits with type 'Name', 'Federation Name', 'Domain Name', or 'Username'.
+ */
+export function getTokenBoundName(token: {
+  boundName?: string | null
+  attributes?: Array<{ trait_type?: string; value?: string | number }>
+}): string | null {
+  if (token.boundName && token.boundName.trim()) {
+    return token.boundName.trim()
+  }
+  const trait = token.attributes?.find(a => {
+    const type = (a.trait_type || '').trim().toLowerCase()
+    return type === 'name' || type === 'federation name' || type === 'domain name' || type === 'username'
+  })
+  if (trait && typeof trait.value === 'string' && trait.value.trim()) {
+    return trait.value.trim()
+  }
+  return null
 }
 
 /** IPFS pointers need a gateway before a browser can render them. */
