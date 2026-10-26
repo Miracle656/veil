@@ -59,6 +59,15 @@ An attacker cannot use an arbitrary P-256 key — only keys explicitly registere
 
 `signAuthEntry` sets `userVerification: 'required'` in the WebAuthn assertion request. The authenticator will always prompt for biometric or PIN verification — a passive browser session or stolen cookie cannot authorize transactions.
 
+### 6. Contract Immutability
+
+Deployed Veil contracts (both the factory and individual smart wallets) are **immutable and cannot be upgraded in place**. Neither contract exposes an upgrade entrypoint or operator backdoor (`update_current_contract_wasm` or `set_wasm_hash`).
+
+**What this means:**
+- **No operator takeover:** A compromised operator or admin key cannot replace wallet bytecode or tamper with user authorization logic.
+- **Auditable & deterministic:** Wallets run the exact source code verified at deployment time for their entire lifetime.
+- **Fund safety:** What the user approved at registration remains what runs. Code cannot be swapped out under existing balances.
+
 ---
 
 ## Threat Model
@@ -72,12 +81,16 @@ The table below summarises key threats at a glance. See the full **[Threat Model
 | Phishing (wrong origin) | WebAuthn origin binding | Authenticator embeds origin in `clientDataJSON`; contract can validate |
 | Signature replay | Challenge binding to `signature_payload` | Each tx has unique payload |
 | Rogue signer added | `add_signer` requires existing signer auth | Cannot add without biometric |
-| Contract bug | Full audit (planned) + unit tests | 6 passing tests covering key vectors |
-| Quantum computer | P-256 is classically secure | Post-quantum upgrade path: swap to ML-DSA when Soroban supports it |
+| Contract bug | Full audit (planned) + unit tests | Immutable on-chain: fixes ship as a new factory; existing wallets keep deployed code |
+| Quantum computer | P-256 is classically secure | Post-quantum migration path: deploy new factory/wallets supporting ML-DSA when Soroban supports it |
 
 ---
 
 ## Known Limitations
+
+### No In-Place Contract Upgrades
+
+Because deployed contracts lack in-place upgrade functions, any bug fixes or protocol improvements cannot be patched in place for existing wallets. Fixing an issue requires deploying a new factory at a new address and coordinating user asset migration to new wallet instances. Existing wallets continue running their original code permanently unless funds are moved. See [Contract Immutability & Upgrades](/contract-upgrades) for details.
 
 ### No Origin Verification (Current)
 

@@ -8,6 +8,7 @@ import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import {
   proposalRefusal,
@@ -410,6 +411,14 @@ export default function AgentPage() {
         },
       ])
     } catch (err: any) {
+      // The user closed the prompt; that is not a failed transaction.
+      if (isPasskeyCancellation(err)) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'agent', content: 'Cancelled — nothing was sent.' },
+        ])
+        return
+      }
       // Extract detailed Horizon error codes when available
       let detail = err?.message ?? 'Unknown error'
       try {

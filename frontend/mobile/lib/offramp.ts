@@ -42,9 +42,25 @@ export class OfframpUnavailable extends Error {}
  */
 export class OfframpTimeout extends Error {}
 
+/**
+ * The assets the cash-out rails price.
+ *
+ * `coin` is required by the backend now, so it is part of this client's API
+ * rather than something the server guesses. It is still read back off every
+ * response — see `getOfframpRate`.
+ */
+export type OfframpCoin = 'xlm' | 'usdc';
+
 export interface OfframpRate {
   rate: number;
-  currency: string;
+  /**
+   * Which asset `rate` is naira-per-one-unit-of.
+   *
+   * A string rather than `OfframpCoin`: an older backend passed Linq's own
+   * `USDC` straight through, and an installed APK has to keep working against
+   * one. What protects the money is the runtime check in `getOfframpRate`, not
+   * this type.
+   */
   coin: string;
   /** Always true: the binding rate is the one locked into an order. */
   indicative: boolean;
@@ -143,10 +159,21 @@ async function call<T>(
  * Used to gate the entry point: the backend holds the key, so if it is asleep
  * or unconfigured there is no order to create and the CTA should say so before
  * the user types an amount.
+ *
+ * This used to call `/offramp/rate`, which made a pricing endpoint the health
+ * check for the feature: once the backend started requiring `coin`, a 400 read
+ * as "cash-out is down" and the tile disappeared for every build that had not
+ * been updated. `/offramp/availability` answers the question actually being
+ * asked, makes no provider call, and so spends none of the rate allowance every
+ * user shares.
  */
 export async function isOfframpAvailable(): Promise<boolean> {
   try {
-    await call<OfframpRate>('/offramp/rate');
+    const answer = await call<{ available?: boolean }>('/offramp/availability');
+    // A 200 whose body cannot be read is not an answer. `call` resolves whatever
+    // parsed, and treating that as available would offer a flow that fails on
+    // the first tap.
+    if (answer?.available !== true) throw new Error('Unrecognised availability answer');
     void AsyncStorage.setItem(AVAILABILITY_KEY, '1');
     return true;
   } catch {
@@ -175,8 +202,26 @@ export async function lastKnownAvailability(): Promise<boolean> {
   }
 }
 
-export function getOfframpRate(): Promise<OfframpRate> {
-  return call<OfframpRate>('/offramp/rate');
+/**
+ * The naira-per-coin quote for the asset being cashed out.
+ *
+ * `coin` is sent, not assumed. The backend used to answer with naira per
+ * **dollar** whatever was asked, so a USDC-only screen divided by it correctly
+ * by coincidence and any other asset by a factor of that asset's price.
+ *
+ * The answer is then checked against the question. The server names the coin it
+ * priced for, and cash-out divides naira by that number to work out how much
+ * asset the user has to send — so a response for anything other than what was
+ * asked must not be used, however plausible it looks. Compared
+ * case-insensitively because an older backend returned Linq's `USDC`.
+ */
+export async function getOfframpRate(coin: OfframpCoin): Promise<OfframpRate> {
+  const answer = await call<OfframpRate>(`/offramp/rate?coin=${encodeURIComponent(coin)}`);
+  if (String(answer?.coin).toLowerCase() !== coin) {
+    throw new Error('The service priced a different asset than the one asked for.');
+  }
+  if (!(answer.rate > 0)) throw new Error('The service returned an unusable rate.');
+  return answer;
 }
 
 export function verifyBankAccount(bankCode: string, accountNumber: string): Promise<VerifiedBank> {

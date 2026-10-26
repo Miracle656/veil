@@ -26,12 +26,28 @@ Both rest on protocol upgrades already live on mainnet: X-Ray (Protocol 25, BN25
 
 Read from the chain on 2026-09-14, not from documentation.
 
-`frontend/wallet/lib/privacy/sponsoredSubmit.ts` can resample these numbers from a live
-network: it fee-bumps a private transaction from the wallet's fee payer and, **only when
-the user has opted into diagnostics**, reports the charged fee and the CPU instruction
-count. No transaction hash, address or amount is attached to a sample. The helper is not
-yet called by the shield/send flow — the SPP SDK submits those itself — so no samples are
-being collected today; wiring it up is follow-on work.
+**Regenerating the fee and CPU rows.** `samplePrivateTransactionCosts` in
+`frontend/wallet/lib/privacy/sponsoredSubmit.ts` reads every successful `transact` call
+on the pinned testnet pools from RPC and reports the fee range, the median and the
+instruction ceiling:
+
+```sh
+cd frontend/wallet && SPP_COST_LIVE=1 npx jest lib/privacy/__tests__/sponsoredSubmit.live.test.ts
+```
+
+It scans the window RPC retains (about 7 days; set `SPP_COST_START_LEDGER` to narrow it,
+`SPP_COST_RPC_URL` to use another RPC). A window with no private transactions prints
+"no figure", never zero, and the run fails if RPC answered only part of the window. The
+2026-09-14 figures below were read from pools SPP has since redeployed, and RPC no longer
+holds those ledgers, so a run today measures the current pools, not those 31 calls. On
+2026-10-21 the current pools had no `transact` calls in the retained window.
+
+The same file can also measure the wallet's own submissions: it fee-bumps a private
+transaction from the wallet's fee payer and, **only when the user has opted into
+diagnostics**, reports the charged fee and the CPU instruction count. No transaction
+hash, address or amount is attached to a sample. The helper is not yet called by the
+shield/send flow — the SPP SDK submits those itself — so no samples are being collected
+today; wiring it up is follow-on work.
 
 | Item | Value | How measured |
 |---|---|---|

@@ -593,12 +593,18 @@ function DashboardPageContent() {
       if (!feePayer) throw new Error('No passkey found. Please register again.')
       const signerPublicKey = feePayer.publicKey()
 
-      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
-      if (!friendbotUrl) {
+      if (getNetwork().name !== 'testnet') {
         await fetchData()
         setFundingError(
           `Fee-payer restored. Fund ${signerPublicKey} with XLM from an external wallet to send or swap on mainnet.`
         )
+        return
+      }
+
+      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
+      if (!friendbotUrl) {
+        await fetchData()
+        setFundingError('Friendbot is unavailable.')
         return
       }
 
@@ -941,6 +947,7 @@ function DashboardPageContent() {
             currencyCode={currencyCode}
             fxRate={fxRate}
             hideAmounts={hideAmounts}
+            walletAddress={walletAddress}
           />
         )}
 

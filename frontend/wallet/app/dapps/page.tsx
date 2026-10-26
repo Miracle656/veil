@@ -86,6 +86,16 @@ export default function DappsPage() {
             asks to connect, approve it here through WalletConnect — the
             wallet, not the page, does the signing.
           </p>
+          <p style={{ marginTop: '0.625rem', fontSize: '0.875rem', lineHeight: 1.6, color: 'rgba(246,247,248,0.72)' }}>
+            A dApp you approved to spend your tokens keeps that permission after you disconnect.{' '}
+            <button
+              type="button"
+              onClick={() => router.push('/settings/allowances')}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--gold)', fontSize: 'inherit', textDecoration: 'underline' }}
+            >
+              See spending permissions
+            </button>
+          </p>
         </Card>
 
         {/* Search — matches name and category, like the mobile directory. */}

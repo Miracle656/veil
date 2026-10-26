@@ -1,0 +1,28 @@
+{
+  "name": "Veil Masquerade #01",
+  "description": "A cloth figure for Veil: a crowned mask over layered, patterned cloth falling to an uneven hem. Crown: Plume. Aperture: Twin slits. Ornament: Chevrons. Palette: Lilac. Hem: Beaded fringe. Its hem is shared with 2 others in the set of 20. No face — where the cloth is open, it is cloth removed rather than features drawn on.",
+  "image": "ipfs://REPLACE_WITH_COLLECTION_CID/01.png",
+  "external_url": "https://useveilapp.xyz",
+  "attributes": [
+    {
+      "trait_type": "Crown",
+      "value": "Plume"
+    },
+    {
+      "trait_type": "Aperture",
+      "value": "Twin slits"
+    },
+    {
+      "trait_type": "Ornament",
+      "value": "Chevrons"
+    },
+    {
+      "trait_type": "Palette",
+      "value": "Lilac"
+    },
+    {
+      "trait_type": "Hem",
+      "value": "Beaded fringe"
+    }
+  ]
+}

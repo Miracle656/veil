@@ -1,0 +1,28 @@
+{
+  "name": "Veil Masquerade #16",
+  "description": "A cloth figure for Veil: a crowned mask over layered, patterned cloth falling to an uneven hem. Crown: Loops. Aperture: Slot. Ornament: Spirals. Palette: Lilac. Hem: Pointed fringe. Its hem is the only one of its kind in the set of 20. No face — where the cloth is open, it is cloth removed rather than features drawn on.",
+  "image": "ipfs://REPLACE_WITH_COLLECTION_CID/16.png",
+  "external_url": "https://useveilapp.xyz",
+  "attributes": [
+    {
+      "trait_type": "Crown",
+      "value": "Loops"
+    },
+    {
+      "trait_type": "Aperture",
+      "value": "Slot"
+    },
+    {
+      "trait_type": "Ornament",
+      "value": "Spirals"
+    },
+    {
+      "trait_type": "Palette",
+      "value": "Lilac"
+    },
+    {
+      "trait_type": "Hem",
+      "value": "Pointed fringe"
+    }
+  ]
+}

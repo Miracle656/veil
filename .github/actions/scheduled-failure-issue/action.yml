@@ -1,0 +1,86 @@
+name: Scheduled failure issue
+description: Create, update, or resolve one issue for a scheduled workflow failure
+inputs:
+  key:
+    description: Stable marker key for this workflow
+    required: true
+  status:
+    description: Result of the workflow's test job
+    required: true
+  title-prefix:
+    description: Issue title prefix
+    required: true
+  what-to-check:
+    description: Workflow-specific contributor triage guidance
+    required: true
+  labels:
+    description: Additional comma-separated issue labels
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Find failed job and step
+      id: failure
+      if: ${{ inputs.status == 'failure' }}
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      with:
+        script: |
+          const { prepareFailure } = require('./.github/actions/scheduled-failure-issue/prepare.cjs');
+          await prepareFailure({ github, context, core });
+
+    - name: Download workflow logs
+      if: ${{ inputs.status == 'failure' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        JOB_NAME: ${{ steps.failure.outputs.job_name }}
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/scheduled-failure-logs.zip"
+        logs="$RUNNER_TEMP/scheduled-failure-logs.txt"
+        gh api \
+          "/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/logs" \
+          > "$archive"
+        mapfile -t entries < <(unzip -Z1 "$archive" | grep -F -- "$JOB_NAME" || true)
+        if [ "${#entries[@]}" -gt 0 ]; then
+          for entry in "${entries[@]}"; do
+            unzip -p "$archive" "$entry"
+          done > "$logs"
+        else
+          unzip -p "$archive" > "$logs"
+        fi
+        echo "SCHEDULED_FAILURE_LOG=$logs" >> "$GITHUB_ENV"
+
+    - name: Report failure or recovery
+      if: ${{ always() }}
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+      env:
+        KEY: ${{ inputs.key }}
+        STATUS: ${{ inputs.status }}
+        TITLE_PREFIX: ${{ inputs.title-prefix }}
+        WHAT_TO_CHECK: ${{ inputs.what-to-check }}
+        EXTRA_LABELS: ${{ inputs.labels }}
+        FAILURE_JOB_NAME: ${{ steps.failure.outputs.job_name }}
+        FAILURE_STEP_NAME: ${{ steps.failure.outputs.step_name }}
+        SCHEDULED_FAILURE_LOG: ${{ env.SCHEDULED_FAILURE_LOG }}
+      with:
+        script: |
+          const fs = require('fs');
+          const { reportScheduledFailure } = require('./.github/actions/scheduled-failure-issue/report.cjs');
+          const errorLog = process.env.SCHEDULED_FAILURE_LOG
+            ? fs.readFileSync(process.env.SCHEDULED_FAILURE_LOG, 'utf8')
+            : '';
+          await reportScheduledFailure({
+            github,
+            context,
+            core,
+            key: process.env.KEY,
+            status: process.env.STATUS,
+            titlePrefix: process.env.TITLE_PREFIX,
+            whatToCheck: process.env.WHAT_TO_CHECK,
+            extraLabels: process.env.EXTRA_LABELS,
+            jobName: process.env.FAILURE_JOB_NAME,
+            stepName: process.env.FAILURE_STEP_NAME,
+            errorLog,
+          });

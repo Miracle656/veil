@@ -10,6 +10,8 @@ import { ensureFeePayer } from '@/lib/feePayer'
 import { buildFriendbotUrl, getNetwork, walletConfig } from '@/lib/network'
 import { trackWalletCreated } from '@/lib/supabase'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import { WALLET_CREATION_LIMITATION_MESSAGE } from '@/lib/platformLimitation'
 
 const network = getNetwork()
 
@@ -78,9 +80,11 @@ export default function OnboardingPage() {
       // Testnet only: give the spending account some XLM so the wallet is
       // usable straight away. Best-effort — a faucet hiccup must not stop a
       // wallet from being created, since nothing below depends on it.
-      const friendbotUrl = buildFriendbotUrl(signerKeypair.publicKey())
-      if (friendbotUrl) {
-        await fetch(friendbotUrl).catch(() => null)
+      if (getNetwork().name === 'testnet') {
+        const friendbotUrl = buildFriendbotUrl(signerKeypair.publicKey())
+        if (friendbotUrl) {
+          await fetch(friendbotUrl).catch(() => null)
+        }
       }
 
       // No deploy here. The wallet address is a pure function of the factory,
@@ -160,6 +164,22 @@ export default function OnboardingPage() {
           {/* ── CTAs ── */}
           {step === 'landing' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', width: '100%' }}>
+              {/* TODO(#1003): remove platform limitation warning when multi-origin contract ships */}
+              <div
+                id="platform-limitation-notice"
+                style={{
+                  fontSize: '0.8125rem',
+                  lineHeight: 1.5,
+                  color: 'rgba(246,247,248,0.7)',
+                  backgroundColor: 'rgba(255, 255, 255, 0.04)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: 10,
+                  padding: '0.75rem 1rem',
+                  textAlign: 'center',
+                }}
+              >
+                {WALLET_CREATION_LIMITATION_MESSAGE}
+              </div>
               <button id="onboarding-create" className="btn-gold" onClick={handleCreate}>
                 Create wallet
               </button>

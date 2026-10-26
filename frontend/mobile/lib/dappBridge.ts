@@ -18,13 +18,16 @@
  */
 
 import { errorMessage } from './errorMessage';
+import { isPasskeyCancellation } from './passkeyOutcome';
+import type { RequestDetails } from './transactionRequestDetails';
 import {
   getPermissionGrantedAt,
   isOriginPermissionGranted,
   grantOriginPermissions,
   type PermissionScope,
 } from './permissions';
-import { signXdrPayload } from './walletConnect';
+import { createSep43Wallet, type Sep43Wallet } from 'invisible-wallet-sdk';
+import { signXdrPayload, getMobileSep43Wallet } from './walletConnect';
 
 /** Thrown when a request is refused — either the user declined the prompt, or no wallet is available. */
 export class DappRequestRejected extends Error {
@@ -42,8 +45,23 @@ export type PermissionRequest = {
   scope: PermissionScope;
   /** Name the page gave itself, carried into the prompt. */
   name?: string;
-  /** When the scope was granted, or null when it is being asked for fresh. */
+  /**
+   * When the scope was already granted, or null when it has never been.
+   *
+   * A prompt under `alwaysPrompt` is a repeat request for a scope the user has
+   * granted, so this is what lets the sheet distinguish "this site may ask, and
+   * it is asking again" from "this site is asking for the first time".
+   */
   grantedAt: number | null;
+  /**
+   * What the user is actually being asked to approve, decoded.
+   *
+   * Supplied by a caller that has a payload to describe — a transaction, an auth
+   * entry. It is optional because disclosure asks for no payload, and a prompt
+   * that has nothing to show must still be able to ask honestly rather than
+   * invent a description.
+   */
+  details?: RequestDetails;
 };
 
 /**
@@ -62,6 +80,17 @@ export type AuthorizeOptions = {
   name?: string;
   /** Presents the approval prompt. Not called when the scope is already granted. */
   prompt: PermissionPrompt;
+  /**
+   * Ask the user even when the scope is already granted.
+   *
+   * For a signature this is the difference between "this site may ask" and "this
+   * site may sign", and the second is never true: a grant is a standing permission
+   * to *reach the prompt*, not to bypass it. A cached address disclosure can live
+   * with being answered once per session; a transaction cannot.
+   */
+  alwaysPrompt?: boolean;
+  /** The decoded payload to show in the prompt, when there is one to show. */
+  details?: RequestDetails;
 };
 
 export type DappAuthorization =
@@ -77,24 +106,35 @@ export type DappAuthorization =
  * whole reason revocation is immediate: there is no second copy to go stale.
  *
  * A granted scope returns without prompting, so a page that has permission does
- * not nag. A scope that is missing prompts, and the grant is only persisted
- * after the user says yes.
+ * not nag — unless `alwaysPrompt` is set, in which case the grant only says the
+ * site may ask, and the user is asked every time. A scope that is missing
+ * prompts, and the grant is only persisted after the user says yes.
  */
 export async function authorizeDappRequest(options: AuthorizeOptions): Promise<DappAuthorization> {
-  const { origin, scope, name, prompt } = options;
+  const { origin, scope, name, prompt, alwaysPrompt, details } = options;
 
-  if (isOriginPermissionGranted(origin, scope)) {
+  if (!alwaysPrompt && isOriginPermissionGranted(origin, scope)) {
     return { status: 'granted', grantedAt: getPermissionGrantedAt(origin, scope) ?? Date.now(), prompted: false };
   }
 
-  const approved = await prompt({ origin, scope, name, grantedAt: null });
+  // `grantedAt` tells the prompt whether this is a first ask or a repeat. Under
+  // alwaysPrompt a signature request is a repeat by design, and the sheet should
+  // say "you have allowed this site to ask" rather than describing it as new.
+  const grantedAt = getPermissionGrantedAt(origin, scope);
+  const approved = await prompt({
+    origin,
+    scope,
+    name,
+    grantedAt,
+    ...(details ? { details } : {}),
+  });
   if (!approved) {
     return { status: 'rejected', prompted: true };
   }
 
   const record = await grantOriginPermissions(origin, [scope], { name });
-  const grantedAt = record.grants.find((grant) => grant.scope === scope)?.grantedAt ?? Date.now();
-  return { status: 'granted', grantedAt, prompted: true };
+  const nowGrantedAt = record.grants.find((grant) => grant.scope === scope)?.grantedAt ?? Date.now();
+  return { status: 'granted', grantedAt: nowGrantedAt, prompted: true };
 }
 
 /**
@@ -149,5 +189,79 @@ export async function signXdrForOrigin(
   options: AuthorizeOptions,
   xdrString: string
 ): Promise<string> {
-  return withOriginPermission(options, () => signXdrPayload(xdrString));
+  return withOriginPermission(options, async () => {
+    try {
+      return await signXdrPayload(xdrString);
+    } catch (error: unknown) {
+      // Dismissing the passkey sheet is declining, so it has to reach the page
+      // as a rejection rather than as a failure — which is what the @throws
+      // above promises. The ceremony reports a cancellation; translating it
+      // here keeps that distinction inside the wallet and gives the page the
+      // one error shape it understands.
+      if (isPasskeyCancellation(error)) throw new DappRequestRejected();
+      throw error;
+    }
+  });
+}
+
+/**
+ * Creates a SEP-43 standard wallet interface bound to an origin, gating calls
+ * through the origin's permissions in permissions.ts.
+ */
+export function createOriginSep43Wallet(options: {
+  origin: string;
+  name?: string;
+  prompt: PermissionPrompt;
+}) {
+  const baseWallet = getMobileSep43Wallet();
+  return createSep43Wallet({
+    getAddress: async () => {
+      return withOriginPermission(
+        { origin: options.origin, scope: 'address_disclosure', name: options.name, prompt: options.prompt },
+        async () => {
+          const res = await baseWallet.getAddress();
+          if (res.error) throw new Error(res.error.message);
+          return res.address ?? null;
+        }
+      );
+    },
+    getNetwork: async () => {
+      const res = await baseWallet.getNetwork();
+      if (res.error) throw new Error(res.error.message);
+      return {
+        network: res.network ?? 'TESTNET',
+        networkPassphrase: res.networkPassphrase ?? 'Test SDF Network ; September 2015',
+      };
+    },
+    signTransaction: async (xdrString, opts) => {
+      return withOriginPermission(
+        { origin: options.origin, scope: 'transaction_signing', name: options.name, prompt: options.prompt },
+        async () => {
+          const res = await baseWallet.signTransaction(xdrString, opts);
+          if (res.error) throw new Error(res.error.message);
+          return res.signedTxXdr ?? '';
+        }
+      );
+    },
+    signAuthEntry: async (authEntry, opts) => {
+      return withOriginPermission(
+        { origin: options.origin, scope: 'transaction_signing', name: options.name, prompt: options.prompt },
+        async () => {
+          const res = await baseWallet.signAuthEntry(authEntry, opts);
+          if (res.error) throw new Error(res.error.message);
+          return res.signedAuthEntry ?? '';
+        }
+      );
+    },
+    signMessage: async (message, opts) => {
+      return withOriginPermission(
+        { origin: options.origin, scope: 'transaction_signing', name: options.name, prompt: options.prompt },
+        async () => {
+          const res = await baseWallet.signMessage(message, opts);
+          if (res.error) throw new Error(res.error.message);
+          return res.signedMessage ?? '';
+        }
+      );
+    },
+  });
 }

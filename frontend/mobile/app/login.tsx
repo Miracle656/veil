@@ -9,6 +9,7 @@ import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
+import { RestoreBackupPanel } from '../components/RestoreBackupPanel';
 import { HexagonIcon } from '../components/icons';
 import { loginWithAddress, loginWithPasskey } from '../lib/passkeyLogin';
 
@@ -21,8 +22,9 @@ const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.Store
  * passkey itself synced (Google Password Manager / iCloud Keychain). A wallet
  * address is an equally valid way in: its signer set is public, so anyone who
  * knows the address can prove possession of a registered passkey against it —
- * no PRF required. The recovery-server flow and raw-key import remain as
- * fallbacks.
+ * no PRF required. A backup file is the third way in: it carries the `C…`
+ * address with nothing to type, verified the same way. The recovery-server
+ * flow and raw-key import remain as fallbacks.
  */
 export default function LoginScreen() {
   const router = useRouter();
@@ -33,6 +35,7 @@ export default function LoginScreen() {
   const [error, setError] = useState<string | null>(null);
   const [showAddress, setShowAddress] = useState(false);
   const [address, setAddress] = useState('');
+  const [showRestore, setShowRestore] = useState(false);
 
   const handlePasskeyLogin = async () => {
     setBusy(true);
@@ -132,6 +135,26 @@ export default function LoginScreen() {
                 <Text style={styles.ctaSecondaryText}>Sign in</Text>
               )}
             </Pressable>
+          </View>
+        )}
+
+        <Pressable
+          testID="login-restore-toggle"
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => setShowRestore((v) => !v)}
+          style={styles.linkBtn}
+        >
+          <Text style={styles.link}>{showRestore ? 'Hide backup restore' : 'Restore from a backup file'}</Text>
+        </Pressable>
+
+        {showRestore && (
+          <View style={styles.card} testID="login-restore-panel">
+            <RestoreBackupPanel
+              requireSignerMatch
+              testIDPrefix="login-restore"
+              onRestored={() => router.replace('/dashboard')}
+            />
           </View>
         )}
 

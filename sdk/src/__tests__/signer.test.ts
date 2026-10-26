@@ -1,4 +1,4 @@
-/** @jest-environment node */
+/** @jest-environment @stryker-mutator/jest-runner/jest-env/node */
 /**
  * The SDK signs through a TransactionSigner callback so no secret key has to
  * live in a client bundle. These tests use the real Stellar SDK (no network):

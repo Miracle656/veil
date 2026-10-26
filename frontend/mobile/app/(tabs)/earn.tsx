@@ -34,6 +34,7 @@ import { fundDeposit, loadEarnBalances, type EarnBalances } from '../../lib/earn
 import { useNetwork } from '../../hooks/useNetwork';
 import { useWallet } from '../../components/WalletProvider';
 import { requirePasskey } from '../../lib/passkey';
+import { isPasskeyCancellation, PasskeyCeremonyError } from '../../lib/passkeyOutcome';
 import { signAndSubmitSorobanXdr } from '../../lib/sorobanTx';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import { openExternalUrl } from '../../lib/about';
@@ -81,11 +82,10 @@ function formatAmount(n: number, digits = 4): string {
 
 /** Map a raw failure onto something the user can act on. */
 function describeFailure(error: unknown): string {
+  // Refusals and failures already carry the next step in the ceremony error.
+  if (error instanceof PasskeyCeremonyError) return error.message;
   const message = errorMessage(error);
   const lower = message.toLowerCase();
-  if (lower.includes('cancel') || lower.includes('abort')) {
-    return 'Passkey cancelled. Please try again.';
-  }
   if (lower.includes('utilization') || lower.includes('cap')) {
     return 'This pool is full right now, so it cannot take deposits. Try again later.';
   }
@@ -243,6 +243,13 @@ export default function EarnRoute() {
       setDepositAmount('');
       await loadData(accountAddress);
     } catch (error: unknown) {
+      // Cancelling the prompt returns to the deposit form untouched: no error
+      // state, and no deposit or move into the pool has happened.
+      if (isPasskeyCancellation(error)) {
+        setErrorMsg(null);
+        setStep('deposit-form');
+        return;
+      }
       setErrorMsg(describeFailure(error));
       setStep('error');
     }
@@ -281,6 +288,11 @@ export default function EarnRoute() {
       setStep('withdraw-done');
       await loadData(accountAddress);
     } catch (error: unknown) {
+      if (isPasskeyCancellation(error)) {
+        setErrorMsg(null);
+        setStep('withdraw-form');
+        return;
+      }
       setErrorMsg(describeFailure(error));
       setStep('error');
     }

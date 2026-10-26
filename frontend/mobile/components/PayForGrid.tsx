@@ -22,10 +22,11 @@ export type BillService = {
   hint: string;
   Icon: (props: IconProps) => React.JSX.Element;
   /**
-   * Whether the flow behind this tile exists. Only 'live' services appear on
-   * the dashboard; the rest are listed in the drawer behind a "soon" badge.
+   * Whether the flow is live, expected later, or not planned. Only live
+   * services appear on the dashboard; unavailable services are explained in
+   * the drawer.
    */
-  status: 'live' | 'soon';
+  status: 'live' | 'soon' | 'not-planned';
   /** Highlight in gold. Reserved for a service we want to draw the eye to. */
   accent?: boolean;
   /** Route to push when tapped. Absent means the caller handles selection. */
@@ -37,19 +38,21 @@ export type BillService = {
  * Nigerian user opens a wallet to do. Fiat on the face, USDC + sponsored fees
  * underneath.
  *
- * None of these are live yet, so none render on the dashboard. They are listed
- * in ServicesDrawer behind a "soon" badge instead, because a tile that does
- * nothing when tapped is worse than one the user was told is not ready.
+ * Only supported flows are shown on the dashboard. ServicesDrawer explains
+ * future services separately from categories the backend does not support.
  *
  * Flip a service to status: 'live' when its flow ships and it moves onto the
  * dashboard on its own — there is no second list to update.
  */
 export const BILL_SERVICES: BillService[] = [
-  { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'soon' },
+  // Live: the flow exists and the deposit is crypto from this wallet, so it
+  // never leaves the app. Like `transfer` below it stays hidden when the
+  // backend holding the Linq key is unreachable — there is no order without it.
+  { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'live', route: '/airtime' },
   { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
-  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'soon' },
+  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'live', route: '/electricity' },
   { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
-  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'soon' },
+  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'not-planned' },
   // The offramp: USDC out to a Nigerian bank account, via Linq. Live rather
   // than 'soon' because the flow behind it exists — but the dashboard still
   // hides it when the backend that holds the API key is unreachable, since
@@ -57,6 +60,16 @@ export const BILL_SERVICES: BillService[] = [
   { id: 'transfer', label: 'Cash out', hint: 'To any bank', Icon: BankIcon, status: 'live', route: '/cash-out' },
   { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
 ];
+
+export function getServiceAvailabilityMessage(service: Pick<BillService, 'id' | 'label' | 'status'>) {
+  if (service.status === 'soon') {
+    return `${service.label} is not available yet. No payment will be made.`;
+  }
+  if (service.id === 'bills') {
+    return 'Water and waste payments are not supported by the bill provider and are not planned. No payment will be made.';
+  }
+  return `${service.label} is not planned. No payment will be made.`;
+}
 
 export function PayForGrid({
   services = BILL_SERVICES,
@@ -72,9 +85,11 @@ export function PayForGrid({
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const live = useMemo(() => services.filter((s) => s.status === 'live'), [services]);
+  const columnCount = Math.min(4, live.length + (onMore ? 1 : 0));
+  const cellWidth = `${100 / Math.max(columnCount, 1)}%` as `${number}%`;
 
-  // Nothing shipped yet means no card at all, rather than a grid of dead tiles.
-  // The drawer behind the drape mark is the way in until the first flow lands.
+  // An empty live set means no card at all, rather than a grid of dead tiles.
+  // The drawer behind the drape mark explains unavailable services.
   if (live.length === 0) return null;
 
   return (
@@ -87,7 +102,7 @@ export function PayForGrid({
             onPress={() => onSelect?.(service)}
             accessibilityRole="button"
             accessibilityLabel={`${service.label} — ${service.hint}`}
-            style={({ pressed }) => [styles.cell, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.cell, { width: cellWidth }, pressed && styles.pressed]}
           >
             <View style={[styles.iconWrap, service.accent && styles.iconWrapAccent]}>
               <service.Icon size={20} color={service.accent ? colors.accent : colors.textPrimary} />
@@ -104,7 +119,7 @@ export function PayForGrid({
             onPress={onMore}
             accessibilityRole="button"
             accessibilityLabel="More — all services"
-            style={({ pressed }) => [styles.cell, pressed && styles.pressed]}
+            style={({ pressed }) => [styles.cell, { width: cellWidth }, pressed && styles.pressed]}
           >
             <View style={[styles.iconWrap, styles.iconWrapAccent]}>
               <GridIcon size={20} color={colors.accent} />

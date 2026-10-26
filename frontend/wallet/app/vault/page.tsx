@@ -8,6 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { PasskeyCeremonyError, isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { beginTx, endTx } from '@/lib/txState'
 import {
   cancelVaultWithdrawal,
@@ -161,12 +162,13 @@ export default function VaultPage() {
       await loadDetails()
       return true
     } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setError(
-        message.includes('NotAllowedError')
-          ? 'Passkey verification was cancelled.'
-          : message,
-      )
+      // A dismissed prompt is not a vault failure: leave the screen as it was.
+      if (isPasskeyCancellation(cause)) {
+        setError(null)
+        return false
+      }
+      const message = cause instanceof PasskeyCeremonyError ? cause.message : cause instanceof Error ? cause.message : String(cause)
+      setError(message)
       return false
     } finally {
       setAction(null)

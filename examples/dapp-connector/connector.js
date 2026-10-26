@@ -1,16 +1,22 @@
 /**
- * connector.js — Veil content script
+ * connector.js — Veil content script & SEP-43 standard wallet provider
  *
- * Injected into every page (world: MAIN) at document_start.
- * Exposes `window.veil` — a minimal EIP-1193-style provider that
- * proxies requests to the Veil extension background via postMessage.
+ * Injected into every page at document_start.
+ * Exposes `window.stellar.veil` and `window.veil` conforming to SEP-0043
+ * (Standard Web Wallet API Interface):
+ *   - getAddress()
+ *   - getNetwork()
+ *   - signTransaction(xdr, opts)
+ *   - signAuthEntry(authEntry, opts)
+ *   - signMessage(message, opts)
  *
+ * Also preserves backwards-compatible request({ method, params }) dispatch.
  * Private key material NEVER crosses into the page context.
  */
 (function () {
   'use strict';
 
-  if (window.veil) return; // already injected
+  if (window.stellar?.veil && window.veil?.getAddress) return; // already injected
 
   let _nextId = 1;
   const _pending = new Map(); // id → { resolve, reject }
@@ -34,7 +40,7 @@
   });
 
   /**
-   * Send a request to the Veil extension and return a Promise.
+   * Send a request to the Veil extension background and return a Promise.
    *
    * @param {{ method: string, params?: object }} req
    * @returns {Promise<any>}
@@ -65,5 +71,97 @@
     });
   }
 
-  window.veil = Object.freeze({ request });
+  // ── SEP-43 Standard Web Wallet API Surface ────────────────────────────────
+
+  const sep43Provider = Object.freeze({
+    /**
+     * Retrieve the active wallet address.
+     * @returns {Promise<{ address?: string, error?: { code: number, message: string } }>}
+     */
+    async getAddress() {
+      try {
+        const result = await request({ method: 'getAddress' });
+        if (result && typeof result === 'object' && result.address) {
+          return result;
+        }
+        if (typeof result === 'string') {
+          return { address: result };
+        }
+        return result ?? { error: { code: -3, message: 'No wallet available' } };
+      } catch (err) {
+        return { error: { code: -3, message: err.message || String(err) } };
+      }
+    },
+
+    /**
+     * Retrieve the current network configuration.
+     * @returns {Promise<{ network?: string, networkPassphrase?: string, error?: { code: number, message: string } }>}
+     */
+    async getNetwork() {
+      try {
+        return await request({ method: 'getNetwork' });
+      } catch (err) {
+        return { error: { code: -1, message: err.message || String(err) } };
+      }
+    },
+
+    /**
+     * Sign a transaction envelope XDR.
+     * @param {string} xdr
+     * @param {{ networkPassphrase?: string, address?: string, submit?: boolean, submitUrl?: string }} [opts]
+     * @returns {Promise<{ signedTxXdr?: string, signerAddress?: string, error?: { code: number, message: string } }>}
+     */
+    async signTransaction(xdr, opts = {}) {
+      try {
+        return await request({
+          method: 'signTransaction',
+          params: { xdr, ...opts },
+        });
+      } catch (err) {
+        return { error: { code: -3, message: err.message || String(err) } };
+      }
+    },
+
+    /**
+     * Sign a Soroban authorization entry XDR.
+     * @param {string} authEntry
+     * @param {{ networkPassphrase?: string, address?: string }} [opts]
+     * @returns {Promise<{ signedAuthEntry?: string, signerAddress?: string, error?: { code: number, message: string } }>}
+     */
+    async signAuthEntry(authEntry, opts = {}) {
+      try {
+        return await request({
+          method: 'signAuthEntry',
+          params: { authEntry, ...opts },
+        });
+      } catch (err) {
+        return { error: { code: -3, message: err.message || String(err) } };
+      }
+    },
+
+    /**
+     * Sign an arbitrary message.
+     * @param {string} message
+     * @param {{ networkPassphrase?: string, address?: string }} [opts]
+     * @returns {Promise<{ signedMessage?: string, signerAddress?: string, error?: { code: number, message: string } }>}
+     */
+    async signMessage(message, opts = {}) {
+      try {
+        return await request({
+          method: 'signMessage',
+          params: { message, ...opts },
+        });
+      } catch (err) {
+        return { error: { code: -3, message: err.message || String(err) } };
+      }
+    },
+
+    /** Backwards-compatible generic request dispatcher. */
+    request,
+  });
+
+  // Expose as window.veil and window.stellar.veil
+  window.veil = sep43Provider;
+  window.stellar = window.stellar || {};
+  window.stellar.veil = sep43Provider;
 })();
