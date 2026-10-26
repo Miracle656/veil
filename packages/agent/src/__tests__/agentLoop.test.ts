@@ -54,13 +54,13 @@ describe('runAgent', () => {
   it('returns current Blend positions without claiming unavailable earnings', async () => {
     const llm = scripted([
       { text: '', toolCalls: [{ id: 'blend', name: 'get_blend_positions', input: {} }] },
-      { text: 'Your current USDC position is 0.0000130 USDC. Earned amount is unknown.', toolCalls: [] },
+      { text: 'Your current USDC position is 0.000013 USDC. Earned amount is unknown.', toolCalls: [] },
     ])
     await runAgent('What is in my lending pool?', wallet, [], undefined, undefined, llm, undefined, {
       status: 'available',
       positions: [{ poolId: 'CPOOL', asset: 'CUSDC', code: 'USDC', deposited: '130', bTokenBalance: '100' }],
     })
-    expect(llm.results[0][0].content).toContain('"currentValueStroops":"130"')
+    expect(llm.results[0][0].content).toContain('"currentValue":"0.000013"')
     expect(llm.results[0][0].content).toContain('original principal is not recorded')
   })
 
