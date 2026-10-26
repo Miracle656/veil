@@ -8,6 +8,7 @@ import { Asset, Networks } from '@stellar/stellar-sdk';
 
 import {
   checkSwapAsset,
+  classicAsset,
   noRouteMessage,
   quoteMismatch,
   swapAssetLabel,
