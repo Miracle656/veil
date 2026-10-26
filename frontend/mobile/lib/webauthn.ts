@@ -103,3 +103,29 @@ export function derToRawSignature(derSig: Uint8Array): Uint8Array {
   raw.set(normalizeLowS(padOrTrim32(sRaw)), 32);
   return raw;
 }
+
+/**
+ * The DER prefix of a P-256 SubjectPublicKeyInfo, up to the key bits:
+ * SEQUENCE { SEQUENCE { id-ecPublicKey, prime256v1 }, BIT STRING (0 unused) }.
+ */
+const P256_SPKI_PREFIX = new Uint8Array([
+  0x30, 0x59, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08, 0x2a,
+  0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x03, 0x42, 0x00,
+]);
+
+/**
+ * The uncompressed P-256 point (0x04 ‖ x ‖ y, 65 bytes) inside a registration
+ * response's SPKI.
+ *
+ * Strict on purpose: the result is about to be added as a signer on a wallet
+ * that holds money, so anything other than the exact P-256 SPKI layout is
+ * refused rather than searched for a plausible-looking 0x04.
+ */
+export function spkiToUncompressedP256(spki: Uint8Array): Uint8Array {
+  const ok =
+    spki.length === P256_SPKI_PREFIX.length + 65 &&
+    P256_SPKI_PREFIX.every((byte, i) => spki[i] === byte) &&
+    spki[P256_SPKI_PREFIX.length] === 0x04;
+  if (!ok) throw new Error('The new passkey did not return a P-256 public key.');
+  return spki.slice(P256_SPKI_PREFIX.length);
+}

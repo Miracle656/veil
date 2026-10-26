@@ -31,3 +31,8 @@ export function inclusionFee(): string {
 export function feeBidXlm(): number {
   return Number(inclusionFee()) / 10_000_000;
 }
+
+/** Format an XLM amount with a concrete figure for the banner (e.g. `1.05 XLM`). */
+export function formatFundingXlm(amount: number): string {
+  return `${amount.toFixed(2)} XLM`;
+}

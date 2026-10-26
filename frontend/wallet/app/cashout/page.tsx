@@ -34,6 +34,7 @@ import {
   rememberActiveOrder,
   rememberDepositAddress,
   verifyBankAccount,
+  type OfframpCoin,
   type OfframpOrder,
   type VerifiedBank,
 } from '@/lib/offramp'
@@ -42,6 +43,16 @@ type Step = 'amount' | 'bank' | 'review' | 'deposit' | 'done'
 
 /** Linq expires an unpaid order ten minutes after it is created. */
 const DEPOSIT_WINDOW_MS = 10 * 60 * 1000
+
+/**
+ * The asset this screen cashes out.
+ *
+ * Named because every quote on screen is naira per one unit of it: `ngn / rate`
+ * is only the right number of asset if `rate` was asked for this asset, which the
+ * backend now requires rather than guesses. A second asset here turns this into
+ * per-selection state — it must not stay a constant while two assets are offered.
+ */
+const CASH_OUT_COIN: OfframpCoin = 'usdc'
 
 const QUICK_AMOUNTS = [20_000, 50_000, 100_000, 250_000]
 
@@ -139,7 +150,7 @@ export default function CashOutPage() {
       setAvailable(ok)
       setProbed(true)
       if (!ok) return
-      getOfframpRate()
+      getOfframpRate(CASH_OUT_COIN)
         .then((r) => !cancelled && setRate(r.rate))
         .catch((err) => !cancelled && setRateError(errorMessage(err)))
     })

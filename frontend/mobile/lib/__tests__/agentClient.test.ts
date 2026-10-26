@@ -1,6 +1,7 @@
 import {
   PRODUCTION_AGENT_URL,
   historyFromMessages,
+  parseCashOutIntent,
   parseInvestIntent,
   parseSwapIntent,
   resolveAgentUrl,
@@ -134,5 +135,24 @@ describe('parseInvestIntent', () => {
     expect(parseInvestIntent({ asset: { code: 'USDY', issuer }, amount: '-1' })).toBeUndefined();
     // No amount at all is as unusable as a bad one, and the web twin refuses it.
     expect(parseInvestIntent({ asset: { code: 'USDY', issuer } })).toBeUndefined();
+  });
+});
+
+describe('parseCashOutIntent', () => {
+  it('accepts only a positive finite amount and rate', () => {
+    expect(parseCashOutIntent({ amountNGN: 25_000, rate: 1_500 })).toEqual({
+      amountNGN: 25_000,
+      rate: 1_500,
+    });
+  });
+
+  it('drops malformed cash-out data and never accepts bank details', () => {
+    expect(parseCashOutIntent({ amountNGN: -1, rate: 1_500 })).toBeUndefined();
+    expect(parseCashOutIntent({ amountNGN: 25_000, rate: 0 })).toBeUndefined();
+    expect(parseCashOutIntent({ amountNGN: 25_000, rate: 1_500, accountNumber: '0123456789' })).toEqual({
+      amountNGN: 25_000,
+      rate: 1_500,
+    });
+    expect(parseCashOutIntent('25,000')).toBeUndefined();
   });
 });

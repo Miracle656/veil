@@ -26,9 +26,25 @@ const DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses'
 
 export class OfframpUnavailable extends Error {}
 
+/**
+ * The assets the cash-out rails price.
+ *
+ * `coin` is required by the backend now, so it is part of this client's API
+ * rather than something the server guesses. It is still read back off every
+ * response — see `getOfframpRate`.
+ */
+export type OfframpCoin = 'xlm' | 'usdc'
+
 export interface OfframpRate {
   rate: number
-  currency: string
+  /**
+   * Which asset `rate` is naira-per-one-unit-of.
+   *
+   * Typed as a string rather than `OfframpCoin` on purpose: an older backend
+   * passed Linq's own `USDC` straight through, and an installed build has to keep
+   * working against one. The comparison that protects the money is the runtime
+   * check in `getOfframpRate`, not this type.
+   */
   coin: string
   /** Always true: the binding rate is the one locked into an order. */
   indicative: boolean
@@ -215,10 +231,21 @@ async function call<T>(path: string, init: { method?: string; body?: unknown } =
  * Gates the entry point: the backend holds the key, so if it is asleep or
  * unconfigured there is no order to create, and the button should say so before
  * the user types an amount.
+ *
+ * This used to call `/offramp/rate`, which made a pricing endpoint the health
+ * check for the feature: when the backend started requiring `coin`, a 400 read as
+ * "cash-out is down" and the entry point disappeared for every build that had not
+ * been updated. `/offramp/availability` answers the question that is actually
+ * being asked, makes no provider call, and so spends none of the rate allowance
+ * every user shares.
  */
 export async function isOfframpAvailable(): Promise<boolean> {
   try {
-    await call<OfframpRate>('/offramp/rate')
+    const answer = await call<{ available?: boolean }>('/offramp/availability')
+    // A 200 whose body cannot be read is not an answer. `call` resolves whatever
+    // parsed — an edge holding page parses to `{}` — and treating that as
+    // available would offer a flow that fails on the first tap.
+    if (answer?.available !== true) throw new Error('Unrecognised availability answer')
     store()?.setItem(AVAILABILITY_KEY, '1')
     return true
   } catch {
@@ -233,13 +260,38 @@ export async function isOfframpAvailable(): Promise<boolean> {
  * Rendering "unavailable" while the first probe is still in flight makes a
  * working feature look broken for a second, and Render cold starts make that
  * second long.
+ *
+ * The key is unchanged from the rate-based probe because the stored meaning is
+ * unchanged — `'1'` meant "the rails answered", and they still do. A build that
+ * cached `'0'` while the rate call was 400ing is corrected by the first live
+ * probe of every launch, which is what this cache has always relied on.
  */
 export function lastKnownAvailability(): boolean {
   return store()?.getItem(AVAILABILITY_KEY) === '1'
 }
 
-export function getOfframpRate(): Promise<OfframpRate> {
-  return call<OfframpRate>('/offramp/rate')
+/**
+ * The naira-per-coin quote for the asset being cashed out.
+ *
+ * `coin` is sent, not assumed. The backend used to answer with naira per
+ * **dollar** whatever was asked, so a USDC-only screen divided by it correctly by
+ * coincidence and any other asset by a factor of that asset's price.
+ *
+ * The answer is then checked against the question. The server names the coin it
+ * priced for, and this divides naira by the number to work out how much asset the
+ * user holds — so a response for anything other than what was asked must not be
+ * used, however plausible it looks. Compared case-insensitively because an older
+ * backend returned Linq's `USDC`.
+ */
+export async function getOfframpRate(coin: OfframpCoin): Promise<OfframpRate> {
+  const answer = await call<OfframpRate>(
+    `/offramp/rate?coin=${encodeURIComponent(coin)}`,
+  )
+  if (String(answer?.coin).toLowerCase() !== coin) {
+    throw new Error('The service priced a different asset than the one asked for.')
+  }
+  if (!(answer.rate > 0)) throw new Error('The service returned an unusable rate.')
+  return answer
 }
 
 export function verifyBankAccount(bankCode: string, accountNumber: string): Promise<VerifiedBank> {

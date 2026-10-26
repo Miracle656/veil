@@ -3,8 +3,10 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../hooks/useTheme';
 import { getLastBackupExportedAt } from '../../lib/backupFile';
+import { getFeePayerInfo } from '../../lib/feePayerSource';
 import {
   deriveRecoveryStatus,
+  prfStateFromSource,
   type PrfRecoveryState,
   type RecoveryStatus,
 } from '../../lib/recoveryStatus';
@@ -22,17 +24,25 @@ export default function RecoverySettingsScreen() {
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refresh = useCallback(async () => {
-    const [walletAddress, signerSecret, backupLastExportedAt, servers] = await Promise.all([
-      getWalletAddress(),
-      getSignerSecret(),
-      getLastBackupExportedAt(),
-      listRecoveryServerUrls(),
-    ]);
+    const [walletAddress, signerSecret, backupLastExportedAt, servers, feePayer] =
+      await Promise.all([
+        getWalletAddress(),
+        getSignerSecret(),
+        getLastBackupExportedAt(),
+        listRecoveryServerUrls(),
+        getFeePayerInfo().catch(() => null),
+      ]);
+    // The create path records how the fee payer was derived (#1178): use that
+    // record to answer "is this wallet PRF-backed?" without a prompt. Only a
+    // wallet from before the record existed stays unverified, and an explicit
+    // passkey check's outcome is never overwritten.
+    const effectivePrf = prf === 'unverified' ? prfStateFromSource(feePayer?.source) : prf;
+    if (effectivePrf !== prf) setPrf(effectivePrf);
     setStatus(
       deriveRecoveryStatus({
         walletAddress,
         signerSecret,
-        prf,
+        prf: effectivePrf,
         backupLastExportedAt,
         recoveryServerCount: servers.length,
       })

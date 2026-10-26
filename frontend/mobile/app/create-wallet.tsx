@@ -11,7 +11,7 @@ import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
-import { createTestnetWallet, importTestnetWallet, type CreatedWallet } from '../lib/testnetWallet';
+import { createClassicWallet, importClassicWallet, type CreatedWallet } from '../lib/classicWallet';
 import {
   createPasskeyWallet,
   recreatePasskeyWallet,
@@ -23,6 +23,8 @@ import {
 import { evaluatePrf } from '../lib/passkey';
 import { getNetwork } from '../lib/network';
 import { useWallet } from '../components/WalletProvider';
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import { WALLET_CREATION_LIMITATION_MESSAGE } from '../lib/platformLimitation';
 
 // Passkeys need the native module — unavailable in Expo Go.
 const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
@@ -371,7 +373,7 @@ export default function CreateWallet() {
             <Pressable
               accessibilityRole="button"
               disabled={status === 'busy' || secret.trim().length < 56}
-              onPress={() => run(() => importTestnetWallet(secret))}
+              onPress={() => run(() => importClassicWallet(secret))}
               style={({ pressed }) => [styles.cta, (status === 'busy' || secret.trim().length < 56) && styles.disabled, pressed && styles.pressed]}
             >
               {status === 'busy' ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.ctaText}>Import wallet</Text>}
@@ -383,6 +385,15 @@ export default function CreateWallet() {
         ) : (
           <>
             <View style={styles.spacer} />
+            {/* TODO(#1003): remove platform limitation warning when multi-origin contract ships */}
+            <View
+              testID="platform-limitation-notice"
+              style={styles.platformNotice}
+            >
+              <Text style={styles.platformNoticeText}>
+                {WALLET_CREATION_LIMITATION_MESSAGE}
+              </Text>
+            </View>
             {!IN_EXPO_GO && (
               <Pressable
                 testID="create-passkey-button"
@@ -398,7 +409,7 @@ export default function CreateWallet() {
               testID="create-wallet-button"
               accessibilityRole="button"
               disabled={status === 'busy'}
-              onPress={() => run(createTestnetWallet)}
+              onPress={() => run(createClassicWallet)}
               style={({ pressed }) => [
                 IN_EXPO_GO ? styles.cta : styles.ctaSecondary,
                 status === 'busy' && styles.disabled,
@@ -533,4 +544,20 @@ const createStyles = (colors: ThemeColors) =>
     addr: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 15 },
     fund: { fontFamily: fontFamily.bodyMedium, fontSize: 13, marginTop: 8 },
     pressed: { opacity: 0.7 },
+    platformNotice: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      marginTop: 10,
+    },
+    platformNoticeText: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 17,
+      textAlign: 'center',
+    },
   });

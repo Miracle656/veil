@@ -206,6 +206,18 @@ describe('compareSppDeployments', () => {
       })
       expect(compareSppDeployments(pinned, upstream)).toEqual([])
     })
+
+    it('reports duplicate upstream pool ids instead of silently accepting ambiguous data', () => {
+      const upstream = freshUpstream(pinned)
+      upstream.pools.push({ ...upstream.pools[0] })
+      expect(compareSppDeployments(pinned, upstream)).toEqual([
+        {
+          key: 'pools.duplicateUpstream',
+          pinnedValue: '<unique pool ids>',
+          upstreamValue: pinned.pools[0]!.id,
+        },
+      ])
+    })
   })
 
   describe('quiet drift: same contract ids, different meaning', () => {

@@ -5,15 +5,21 @@ import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { recordFeePayerSource } from './feePayerSource';
-import { getNetworkName } from './network';
+import { getNetwork, getNetworkName } from './network';
 import { discoverWithPrf, nativePrfEvaluator, type DiscoveredPasskey } from './passkey';
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import {
+  fetchContractOrigin,
+  isWrongPlatformOrigin,
+  WRONG_PLATFORM_ERROR_MESSAGE,
+} from './platformLimitation';
 import { readSigners, WalletContractNotFoundError, type WalletSigner } from './signers';
 import { readBreadcrumbs, writeBreadcrumbs } from './walletBreadcrumbs';
 import { getSignerSecret, getWalletAddress, setPasskeyCredential, setPasskeyId, setSignerSecret, setWalletAddress } from './walletStore';
 import { hexToUint8Array } from './webauthn';
 
 /** Same PRF salt the fee-payer was derived with at creation (SDK constant). */
-const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
 
 // SDK storage keys — mirrored so the SDK's login()/signAuthEntry() see the
 // recovered wallet exactly as if register() had run on this device.
@@ -48,6 +54,18 @@ const SIGNER_MISMATCH_MESSAGE =
 
 function toHex(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
+}
+
+function getActiveRpcUrl(): string {
+  try {
+    if (typeof getNetwork === 'function') {
+      const net = getNetwork();
+      if (net?.rpcUrl) return net.rpcUrl;
+    }
+  } catch {
+    // fallback
+  }
+  return 'https://soroban-testnet.stellar.org';
 }
 
 /**
@@ -118,6 +136,13 @@ export async function loginWithPasskey(): Promise<LoginResult> {
         'publish their record the next time their home screen opens on the device that holds them — ' +
         'open the wallet there once, then sign in here.',
     );
+  }
+
+  // ── Verify platform compatibility ──
+  // TODO(#1003): remove platform limitation check when multi-origin contract ships
+  const contractOrigin = await fetchContractOrigin(getActiveRpcUrl(), crumbs.walletAddress);
+  if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
+    throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
   }
 
   // Persist to the app's secure store…
@@ -191,6 +216,15 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
     throw new Error(SIGNER_MISMATCH_MESSAGE);
   }
 
+  // ── Verify platform compatibility ──
+  // A wallet deployed from web carries a web origin that cannot
+  // be signed from the native app until multi-origin check_auth ships (#1003).
+  // TODO(#1003): remove platform limitation check when multi-origin contract ships
+  const contractOrigin = await fetchContractOrigin(getActiveRpcUrl(), address);
+  if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
+    throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
+  }
+
   // Everything has been checked; only now do we adopt the wallet.
   const publicKeyHex = toHex(matchedPublicKey);
   const prfSeed = picked.prf && picked.prf.length >= 32 ? picked.prf.subarray(0, 32) : null;
@@ -224,8 +258,11 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
  * An assertion never reveals its public key, so possession is proven the other
  * way round: the signature is checked against every signer the wallet holds,
  * and a match means the asserting passkey owns that signer's private key.
+ *
+ * Exported so backup-file restore (V192 / #765) runs the same check V191
+ * introduces rather than inventing a second verification rule.
  */
-function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
+export function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
   // WebAuthn signs SHA-256(authData ‖ SHA-256(clientDataJSON)).
   const clientDataHash = sha256(picked.clientDataJSON);
   const verificationData = new Uint8Array(picked.authData.length + clientDataHash.length);
@@ -248,8 +285,18 @@ function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]):
   return null;
 }
 
-/** Write the SDK's AsyncStorage keys, namespaced per network like walletStore. */
-async function writeSdkMirror(address: string, credentialId: string, publicKeyHex: string): Promise<void> {
+/**
+ * Write the SDK's AsyncStorage keys, namespaced per network like walletStore.
+ *
+ * Exported so backup-file restore (V192 / #765) uses this writer rather than a
+ * second copy of the suffix rule. One writer means the SDK keys cannot drift
+ * into a half-old-device / half-new-device wallet across flows.
+ */
+export async function writeSdkMirror(
+  address: string,
+  credentialId: string,
+  publicKeyHex: string,
+): Promise<void> {
   const suffix = getNetworkName() === 'mainnet' ? '_mainnet' : '';
   await AsyncStorage.multiSet([
     [`${SDK_ADDRESS}${suffix}`, address],

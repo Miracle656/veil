@@ -40,7 +40,7 @@ import {
   type DeviceAuthenticator,
 } from '../secretExport';
 import { SecureKey } from '../storage';
-import { createTestnetWallet, importTestnetWallet } from '../testnetWallet';
+import { createClassicWallet, importClassicWallet } from '../classicWallet';
 import {
   clearWalletStore,
   getSignerSecret,
@@ -96,7 +96,7 @@ describe('walletKind', () => {
 
 describe('resolveSecretExport', () => {
   it('reveals the keypair wallet created on this device', async () => {
-    const created = await createTestnetWallet();
+    const created = await createClassicWallet();
 
     const state = await resolveSecretExport();
     expect(state.status).toBe('revealable');
@@ -172,7 +172,7 @@ describe('the entry point’s own test (app/(tabs)/settings.tsx)', () => {
   const offered = async () => walletKind(await getWalletAddress()) === 'keypair';
 
   it('offers a keypair wallet and refuses every other wallet', async () => {
-    await createTestnetWallet();
+    await createClassicWallet();
     expect(await offered()).toBe(true);
 
     // A smart wallet must not see the row at all — the fee-payer secret sitting
@@ -257,7 +257,7 @@ describe('requireDeviceUnlock', () => {
 describe('the round trip (#1041 acceptance)', () => {
   it('restores the same address after a reinstall, from the revealed key alone', async () => {
     // 1. A classic wallet is created on this device.
-    const created = await createTestnetWallet();
+    const created = await createClassicWallet();
 
     // 2. The user passes the lock and reveals the secret.
     const outcome = await requireDeviceUnlock({
@@ -277,7 +277,7 @@ describe('the round trip (#1041 acceptance)', () => {
     expect((await resolveSecretExport()).status).toBe('no-wallet');
 
     // 4. A new device, the same app, the key typed in by hand.
-    const restored = await importTestnetWallet(revealed.secret);
+    const restored = await importClassicWallet(revealed.secret);
 
     // Same wallet — not a wallet that merely looks similar.
     expect(restored.address).toBe(created.address);
@@ -293,7 +293,7 @@ describe('the round trip (#1041 acceptance)', () => {
     // wallet, and now they import a classic wallet over it. The passkey
     // credential left behind must not change which wallet this is, and the
     // fee-payer slot must end up holding the imported key — not the old one.
-    const created = await createTestnetWallet();
+    const created = await createClassicWallet();
     const revealed = await resolveSecretExport();
     if (revealed.status !== 'revealable') throw new Error('expected a revealable wallet');
 
@@ -304,7 +304,7 @@ describe('the round trip (#1041 acceptance)', () => {
     await setPasskeyCredential('cred-id', 'a1b2c3');
     expect((await resolveSecretExport()).status).toBe('smart-wallet');
 
-    const restored = await importTestnetWallet(revealed.secret);
+    const restored = await importClassicWallet(revealed.secret);
     expect(restored.address).toBe(created.address);
     expect(await getWalletAddress()).toBe(revealed.address);
     expect(await getSignerSecret()).toBe(revealed.secret);
@@ -331,7 +331,7 @@ describe('the encrypted backup still cannot carry a secret', () => {
   });
 
   it('a revealed keypair wallet exports a backup with no key in it', async () => {
-    const created = await createTestnetWallet();
+    const created = await createClassicWallet();
     const revealed = await resolveSecretExport();
     if (revealed.status !== 'revealable') throw new Error('expected a revealable wallet');
 
@@ -363,7 +363,7 @@ describe('the encrypted backup still cannot carry a secret', () => {
   });
 
   it('revealing writes nothing anywhere but the keychain it read from', async () => {
-    await createTestnetWallet();
+    await createClassicWallet();
     const revealed = await resolveSecretExport();
     if (revealed.status !== 'revealable') throw new Error('expected a revealable wallet');
     await requireDeviceUnlock({

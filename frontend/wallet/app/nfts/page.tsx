@@ -13,6 +13,7 @@ import {
   IndexerNotConfiguredError,
   type NFTItem,
 } from '@/lib/nfts'
+import { NFTTransferModal } from '@/components/NFTTransferModal'
 
 /** State simulators help while building the gallery; users should never see them. */
 const IS_DEV = process.env.NODE_ENV !== 'production'
@@ -33,6 +34,7 @@ export default function NFTGalleryPage() {
   const [simulateEmpty, setSimulateEmpty] = useState(false)
   const [simulateError, setSimulateError] = useState(false)
   const [selectedNFT, setSelectedNFT] = useState<NFTItem | null>(null)
+  const [transferNFT, setTransferNFT] = useState<NFTItem | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [showRawJson, setShowRawJson] = useState(false)
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({})
@@ -694,21 +696,51 @@ export default function NFTGalleryPage() {
                     </pre>
                   )}
 
-                  <a
-                    href={`https://stellar.expert/explorer/testnet/contract/${selectedNFT.contractId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="btn-ghost"
-                    style={{ display: 'block', textAlign: 'center', padding: '0.625rem 1rem', fontSize: '0.875rem', textDecoration: 'none' }}
-                  >
-                    View Contract on Stellar Expert ↗
-                  </a>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.75rem' }}>
+                    <button
+                      type="button"
+                      onClick={() => setTransferNFT(selectedNFT)}
+                      style={{
+                        padding: '0.625rem 1rem',
+                        fontSize: '0.875rem',
+                        fontWeight: 600,
+                        background: 'var(--teal, #00FFC8)',
+                        color: '#000',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Transfer Token
+                    </button>
+                    <a
+                      href={`https://stellar.expert/explorer/testnet/contract/${selectedNFT.contractId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-ghost"
+                      style={{ display: 'block', textAlign: 'center', padding: '0.625rem 1rem', fontSize: '0.875rem', textDecoration: 'none' }}
+                    >
+                      View Contract on Stellar Expert ↗
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── NFT Transfer Dialog with Name Consequence Warning ── */}
+      <NFTTransferModal
+        token={transferNFT}
+        isOpen={Boolean(transferNFT)}
+        onClose={() => setTransferNFT(null)}
+        onTransfer={async () => {
+          await loadData()
+          setSelectedNFT(null)
+          setTransferNFT(null)
+        }}
+      />
     </div>
   )
 }

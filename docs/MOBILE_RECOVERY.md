@@ -56,7 +56,7 @@ Not every device can enrol a passkey. A Redmi Note 11 5G returns
 `createCredentialAsync no provider dependencies found` from
 `react-native-passkeys`, with no credential provider exposed anywhere in the
 phone's settings. For those users the classic keypair wallet is the only option
-(`lib/testnetWallet.ts`): a plain Stellar G-account whose ed25519 secret sits in
+(`lib/classicWallet.ts`): a plain Stellar G-account whose ed25519 secret sits in
 the secure store under `veil_signer_secret`, and which `lib/spendAsset.ts`
 spends through the classic branch because the stored address is not a `C…`.
 

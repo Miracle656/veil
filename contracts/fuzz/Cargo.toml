@@ -22,3 +22,10 @@ name = "fuzz_webauthn"
 path = "fuzz_targets/fuzz_webauthn.rs"
 test = false
 doc = false
+# The fuzz crate must NOT be part of the contracts workspace: it builds
+# with sanitizer flags on nightly, while the workspace members build for
+# wasm32-unknown-unknown. An empty [workspace] table detaches this crate from
+# the parent manifest (cargo otherwise errors: "current package believes it is
+# in a workspace when it is not"). This is the layout cargo-fuzz itself
+# documents.
+[workspace]

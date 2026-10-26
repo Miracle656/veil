@@ -14,6 +14,12 @@ import {
 } from '@stellar/stellar-sdk'
 import { deriveP256KeyPair } from '@/lib/recovery'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+// TODO(#1003): remove platform limitation check when multi-origin contract ships
+import {
+  fetchContractOrigin,
+  isWrongPlatformOrigin,
+  WRONG_PLATFORM_ERROR_MESSAGE,
+} from '@/lib/platformLimitation'
 
 const network = getNetwork()
 
@@ -138,6 +144,15 @@ export default function RecoverPage() {
         throw new Error(
           'This passkey does not match any signer on this wallet. Make sure you are using the correct passkey and wallet address.'
         )
+      }
+
+      // ── 3b. Verify platform compatibility ────────────────────────────────
+      // A wallet deployed from native mobile carries an android: origin that cannot
+      // be signed from the browser until multi-origin check_auth ships (#1003).
+      // TODO(#1003): remove platform limitation check when multi-origin contract ships
+      const contractOrigin = await fetchContractOrigin(network.rpcUrl, walletAddress)
+      if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
+        throw new Error(WRONG_PLATFORM_ERROR_MESSAGE)
       }
 
       // ── 4. Restore localStorage + session ────────────────────────────────

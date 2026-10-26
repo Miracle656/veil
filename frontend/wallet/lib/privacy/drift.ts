@@ -159,6 +159,7 @@ export function compareSppDeployments(
 
   const upstreamPools = upstream.pools
   const pinnedIds = new Set(pinned.pools.map((p) => p.id))
+  const seenUpstreamIds = new Set<string>()
 
   for (const pinnedPool of pinned.pools) {
     const upstreamPool = upstreamPools.find((p) => poolId(p) === pinnedPool.id)
@@ -207,6 +208,14 @@ export function compareSppDeployments(
   // Pools upstream has that we do not pin. A disabled one is not actionable, so it is not drift.
   for (const upstreamPool of upstreamPools) {
     const id = poolId(upstreamPool)
+    if (id && seenUpstreamIds.has(id)) {
+      drifts.push({
+        key: 'pools.duplicateUpstream',
+        pinnedValue: '<unique pool ids>',
+        upstreamValue: id,
+      })
+    }
+    if (id) seenUpstreamIds.add(id)
     if (id && !pinnedIds.has(id) && upstreamPool.enabled !== false) {
       drifts.push({
         key: 'pools.unpinnedUpstream',

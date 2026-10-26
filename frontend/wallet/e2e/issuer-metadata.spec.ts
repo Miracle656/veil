@@ -37,10 +37,10 @@ test('registered metadata, cached logo, offline fallback, and image recovery', a
   await page.route('https://circle.com/.well-known/stellar.toml', (route) => {
     tomlRequests++
     return offline ? route.abort() : route.fulfill({
-      contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nname="Issuer supplied name"\ndesc="Issuer supplied description"\nimage="https://logos.example/usdc.svg"`,
+      contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nname="Issuer supplied name"\ndesc="Issuer supplied description"\nimage="https://circle.com/logos/usdc.svg"`,
     })
   })
-  await page.route('https://logos.example/usdc.svg', (route) => {
+  await page.route('https://circle.com/logos/usdc.svg', (route) => {
     imageRequests++
     return route.fulfill({ contentType: 'image/svg+xml', body: broken ? Buffer.from('invalid image') : logo })
   })
@@ -87,13 +87,13 @@ for (const failure of ['oversized', 'http', 'unreadable', 'redirect', 'offline']
     await page.route('**/api/issuer-logo?**', (route) => { proxyRequests++; return route.fulfill({ status: 502 }) })
     await page.route('https://circle.com/.well-known/stellar.toml', (route) => failure === 'offline'
       ? route.abort()
-      : route.fulfill({ contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="${failure === 'http' ? 'http' : 'https'}://logos.example/usdc.svg"` }))
-    await page.route('**://logos.example/**', (route) => {
+      : route.fulfill({ contentType: 'text/plain', body: `[[CURRENCIES]]\ncode="USDC"\nissuer="${issuer}"\nimage="${failure === 'http' ? 'http' : 'https'}://circle.com/logos/usdc.svg"` }))
+    await page.route('**://circle.com/logos/**', (route) => {
       // The insecure redirect target serves a valid logo; it must still be refused.
       if (route.request().url().endsWith('/insecure.svg')) return route.fulfill({ contentType: 'image/svg+xml', body: logo })
       imageRequests++
       if (failure === 'unreadable') return route.abort()
-      if (failure === 'redirect') return route.fulfill({ status: 302, headers: { location: 'http://logos.example/insecure.svg' } })
+      if (failure === 'redirect') return route.fulfill({ status: 302, headers: { location: 'http://circle.com/logos/insecure.svg' } })
       return route.fulfill({ contentType: 'image/svg+xml', body: Buffer.alloc(MAX_ISSUER_LOGO_BYTES + 1) })
     })
     await page.goto('/assets')

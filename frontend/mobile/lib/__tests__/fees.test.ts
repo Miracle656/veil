@@ -4,7 +4,7 @@ jest.mock('../network', () => ({
   getNetwork: () => ({ name: mockNetworkName }),
 }));
 
-import { feeBidXlm, inclusionFee, MAINNET_FEE_BID } from '../fees';
+import { feeBidXlm, formatFundingXlm, inclusionFee, MAINNET_FEE_BID } from '../fees';
 
 describe('inclusionFee', () => {
   it('bids 0.01 XLM on mainnet: above the market, but affordable', () => {
@@ -21,5 +21,12 @@ describe('inclusionFee', () => {
   it('keeps the minimum on testnet', () => {
     mockNetworkName = 'testnet';
     expect(inclusionFee()).toBe('100');
+  });
+});
+
+describe('formatFundingXlm', () => {
+  it('names a concrete amount, never "some XLM"', () => {
+    expect(formatFundingXlm(1.05)).toBe('1.05 XLM');
+    expect(formatFundingXlm(0.05)).not.toMatch(/some/i);
   });
 });

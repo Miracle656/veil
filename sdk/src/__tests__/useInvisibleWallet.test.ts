@@ -469,7 +469,7 @@ describe('useInvisibleWallet', () => {
     })
 
     it('recovers the passkey public key from an assertion that carries none (the React Native shape)', async () => {
-      // react-native-passkey's authenticate() returns authData, clientDataJSON and
+      // react-native-passkeys' get() returns authData, clientDataJSON and
       // signature — and no public key, because WebAuthn assertions do not have one.
       // Before recovery existed this branch silently did nothing on mobile.
       const { webAuthnProvider } = require('../webauthn');
@@ -810,30 +810,28 @@ describe('useInvisibleWallet', () => {
   })
 
   describe('addSigner()', () => {
-    it('submits add_signer and returns signerIndex decoded from tx returnValue', async () => {
+    // add_signer needs the wallet's own authorisation. A simulation that asks
+    // for none would mean submitting an unsigned change, which the old code did
+    // (and the contract rejected). The signed path, with real XDR, is covered in
+    // additionalSigners.test.ts.
+    it('refuses to submit add_signer when the simulation asks for no wallet authorisation', async () => {
       localStorage.setItem('invisible_wallet_address', 'CWALLET')
       const { result } = renderHook(() => useInvisibleWallet(CONFIG))
 
-      // Make scValToNative return index 2 for this call
+      const sendTransaction = jest.fn()
       ;(SorobanRpc.Server as jest.Mock).mockImplementationOnce(() => ({
         getAccount:      jest.fn().mockResolvedValue({ accountId: () => 'G', sequenceNumber: () => '0', incrementSequenceNumber: jest.fn() }),
         simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: {} }, minResourceFee: '0', transactionData: {}, events: [], latestLedger: 1 }),
-        sendTransaction: jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'add-hash' }),
-        getTransaction:  jest.fn().mockResolvedValue({ status: 'SUCCESS', returnValue: { _type: 'u32', _value: 2 } }),
+        sendTransaction,
+        getTransaction:  jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
       }))
 
-      const { scValToNative } = jest.requireMock('@stellar/stellar-sdk') as typeof import('@stellar/stellar-sdk')
-      ;(scValToNative as jest.Mock).mockReturnValueOnce(2)
-
-      const fakeKeypair = Keypair.fromSecret('SSECRET')
-      const newKey = new Uint8Array(65).fill(4)
-
-      let res!: Awaited<ReturnType<typeof result.current.addSigner>>
       await act(async () => {
-        res = await result.current.addSigner(fakeKeypair, newKey)
+        await expect(
+          result.current.addSigner(Keypair.fromSecret('SSECRET'), new Uint8Array(65).fill(4))
+        ).rejects.toThrow('did not ask for authorisation')
       })
-
-      expect(res.signerIndex).toBe(2)
+      expect(sendTransaction).not.toHaveBeenCalled()
     })
 
     it('throws when newPublicKeyBytes is not 65 bytes', async () => {
@@ -860,13 +858,14 @@ describe('useInvisibleWallet', () => {
   })
 
   describe('removeSigner()', () => {
-    it('submits remove_signer and resolves on success', async () => {
+    it('refuses to submit remove_signer when the simulation asks for no wallet authorisation', async () => {
       localStorage.setItem('invisible_wallet_address', 'CWALLET')
 
+      const sendTransaction = jest.fn()
       ;(SorobanRpc.Server as jest.Mock).mockImplementationOnce(() => ({
         getAccount:          jest.fn().mockResolvedValue({ accountId: () => 'G', sequenceNumber: () => '0', incrementSequenceNumber: jest.fn() }),
         simulateTransaction: jest.fn().mockResolvedValue({ result: { retval: {} }, minResourceFee: '0', transactionData: {}, events: [], latestLedger: 1 }),
-        sendTransaction:     jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'rm-hash' }),
+        sendTransaction,
         getTransaction:      jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
       }))
 
@@ -875,8 +874,9 @@ describe('useInvisibleWallet', () => {
       await act(async () => {
         await expect(
           result.current.removeSigner(Keypair.fromSecret('SSECRET'), 1)
-        ).resolves.toBeUndefined()
+        ).rejects.toThrow('did not ask for authorisation')
       })
+      expect(sendTransaction).not.toHaveBeenCalled()
     })
 
     it('throws when no wallet address is set', async () => {

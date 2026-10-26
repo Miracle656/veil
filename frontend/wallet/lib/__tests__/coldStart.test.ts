@@ -54,11 +54,13 @@ describe('a backend that is waking up', () => {
   })
 
   it('retries the offramp rate through a cold start instead of reporting it down', async () => {
-    const backend = wakingBackend(2, { coin: 'USDC', currency: 'NGN', rate: 1352.65, indicative: true })
+    // `coin: 'USDC'` in the answer is deliberate: an older backend passed Linq's
+    // own spelling straight through, and the client compares case-insensitively.
+    const backend = wakingBackend(2, { coin: 'USDC', rate: 1352.65, indicative: true })
     ;(globalThis as { fetch?: unknown }).fetch = backend.fn
 
     const { getOfframpRate } = await import('../offramp')
-    const settled = settle(getOfframpRate())
+    const settled = settle(getOfframpRate('usdc'))
     await jest.advanceTimersByTimeAsync(30_000)
 
     expect(await settled).toMatchObject({ ok: true, value: { rate: 1352.65 } })
@@ -108,7 +110,7 @@ describe('a backend that is waking up', () => {
     })
 
     const { getOfframpRate } = await import('../offramp')
-    const settled = settle(getOfframpRate())
+    const settled = settle(getOfframpRate('usdc'))
     await jest.advanceTimersByTimeAsync(30_000)
 
     const result = await settled
@@ -125,11 +127,11 @@ describe('a backend that is waking up', () => {
       calls += 1
       return calls === 1
         ? response(503, '<html><body>Service Unavailable</body></html>')
-        : response(200, JSON.stringify({ coin: 'USDC', currency: 'NGN', rate: 1352.65, indicative: true }))
+        : response(200, JSON.stringify({ coin: 'USDC', rate: 1352.65, indicative: true }))
     })
 
     const { getOfframpRate } = await import('../offramp')
-    const settled = settle(getOfframpRate())
+    const settled = settle(getOfframpRate('usdc'))
     await jest.advanceTimersByTimeAsync(30_000)
 
     expect(await settled).toMatchObject({ ok: true, value: { rate: 1352.65 } })
@@ -143,11 +145,94 @@ describe('a backend that is waking up', () => {
     })
 
     const { getOfframpRate } = await import('../offramp')
-    const settled = settle(getOfframpRate())
+    const settled = settle(getOfframpRate('usdc'))
     await jest.advanceTimersByTimeAsync(60_000)
 
     expect((await settled).ok).toBe(false)
     expect(calls).toBeGreaterThan(1)
     expect(calls).toBeLessThanOrEqual(5)
+  })
+})
+
+/**
+ * Which endpoint answers which question.
+ *
+ * The backend is in the middle of making `coin` required. While that lands, a
+ * client that asks `/offramp/rate` "is cash-out up?" gets a 400 the first time
+ * it prices the wrong asset, reads it as down, and hides the entry point — the
+ * exact failure the reviewer asked to avoid discovering in production.
+ */
+describe('asking the right question', () => {
+  beforeEach(() => {
+    jest.resetModules()
+    process.env['NEXT_PUBLIC_WRAITH_URL'] = BASE
+  })
+
+  afterEach(() => {
+    delete process.env['NEXT_PUBLIC_WRAITH_URL']
+    jest.restoreAllMocks()
+  })
+
+  /** A fetch that records the paths it was sent and answers with `payload`. */
+  function recorder(payload: unknown, status = 200) {
+    const paths: string[] = []
+    const fn = jest.fn(async (url: string) => {
+      paths.push(String(url).slice(BASE.length))
+      return response(status, JSON.stringify(payload))
+    })
+    ;(globalThis as { fetch?: unknown }).fetch = fn
+    return paths
+  }
+
+  it('probes availability without pricing anything', async () => {
+    const paths = recorder({ available: true })
+
+    const { isOfframpAvailable } = await import('../offramp')
+    await expect(isOfframpAvailable()).resolves.toBe(true)
+
+    expect(paths).toEqual(['/offramp/availability'])
+  })
+
+  // A 200 whose body does not say so is not an answer. Render's edge hands back
+  // a holding page that parses to `{}`, and an unread "yes" offered a cash-out
+  // that failed on the first tap.
+  it('does not read an empty 200 as available', async () => {
+    recorder({})
+
+    const { isOfframpAvailable } = await import('../offramp')
+    await expect(isOfframpAvailable()).resolves.toBe(false)
+  })
+
+  it('asks for the asset it is cashing out', async () => {
+    const paths = recorder({ coin: 'xlm', rate: 213.4, indicative: true })
+
+    const { getOfframpRate } = await import('../offramp')
+    await expect(getOfframpRate('xlm')).resolves.toMatchObject({ rate: 213.4 })
+
+    expect(paths).toEqual(['/offramp/rate?coin=xlm'])
+  })
+
+  // The check that protects the money. Every screen here divides the naira
+  // amount by this number to work out how much asset to send, so a quote for
+  // USDC answers to "XLM" would ask for roughly five times too much of it.
+  it('refuses a quote priced for a different asset', async () => {
+    recorder({ coin: 'usdc', rate: 1352.65, indicative: true })
+
+    const { getOfframpRate } = await import('../offramp')
+    const settled = settle(getOfframpRate('xlm'))
+
+    // Asserted on `.message` directly rather than through objectContaining:
+    // `error` is an Error, and Error.message is non-enumerable, so
+    // toMatchObject cannot see it and the match fails on a correct result.
+    const result = await settled
+    if (result.ok) throw new Error('expected the mismatched quote to be refused')
+    expect((result.error as Error).message).toMatch(/different asset/)
+  })
+
+  it('refuses a rate that cannot be divided by', async () => {
+    recorder({ coin: 'usdc', rate: 0, indicative: true })
+
+    const { getOfframpRate } = await import('../offramp')
+    await expect(settle(getOfframpRate('usdc'))).resolves.toMatchObject({ ok: false })
   })
 })

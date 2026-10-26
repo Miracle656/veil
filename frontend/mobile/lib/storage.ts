@@ -26,6 +26,12 @@ export const SecureKey = {
   passkeyId: 'invisible_wallet_key_id',
   passkeyPublicKey: 'invisible_wallet_public_key',
   signerSecret: 'veil_signer_secret',
+  /**
+   * Passkeys added to the wallet beyond its primary one. Deliberately its own
+   * key: the four above are the primary binding, and adding a device must never
+   * write them (see lib/additionalSigners.ts).
+   */
+  additionalSigners: 'invisible_wallet_additional_signers',
 } as const;
 
 export type SecureKey = (typeof SecureKey)[keyof typeof SecureKey];
