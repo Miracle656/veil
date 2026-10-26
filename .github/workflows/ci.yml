@@ -132,6 +132,11 @@ jobs:
           fail_ci_if_error: false
       - name: Bundle size budget (size-limit)
         run: npm run size
+      # Packs the SDK, installs the tarball into a throwaway consumer, and
+      # proves every subpath resolves to the format its condition declares and
+      # loads from both a CommonJS and an ESM consumer (#1216).
+      - name: Published layout (ESM + CommonJS consumers)
+        run: npm run verify:exports
 
   # SDK Browser Matrix — Playwright tests across browsers
   sdk-browser-matrix:

@@ -39,6 +39,7 @@ import { loadHoldings } from '../../lib/holdings';
 import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
 import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
 import { useNetwork } from '../../hooks/useNetwork';
+import { recheckPendingBillOrders } from '../../lib/billOrders';
 
 /** Shorten a Stellar address for the header chip: `GDKF…9QX3`. */
 function shortAddress(addr: string): string {
@@ -176,6 +177,9 @@ export default function DashboardTab() {
         // Keep the last known total; the XLM figure still renders meanwhile.
       }
       try {
+        // Re-check any pending bill orders on open/refresh so orders resolve
+        void recheckPendingBillOrders().catch(() => undefined);
+
         // Merge, don't replace: this runs every 15s, and any single source
         // blinking (rate-limited RPC, slow Horizon page) would otherwise blank
         // the feed until the next poll refilled it.

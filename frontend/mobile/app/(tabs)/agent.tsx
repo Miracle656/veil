@@ -19,11 +19,11 @@ import { Horizon, Keypair, TransactionBuilder, type Transaction } from '@stellar
  */
 
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  type LayoutChangeEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -33,6 +33,10 @@ import {
 } from 'react-native';
 
 import { Button, Card, Screen } from '../../components/ui';
+import { KeyboardStickyView, useKeyboardState } from 'react-native-keyboard-controller';
+
+import { ArrowUpIcon, BackIcon } from '../../components/icons';
+import { VeilLogo } from '../../components/VeilLogo';
 import {
   describeSubmissionError,
   proposalRefusal,
@@ -46,6 +50,7 @@ import {
 } from '../../lib/agentMessages';
 import { useNetwork } from '../../hooks/useNetwork';
 import { loadBlendPositionSnapshot } from '../../lib/blend';
+import { threadBottomInset } from '../../lib/agentComposer';
 import { historyFromMessages, sendAgentMessage, type AgentReply } from '../../lib/agentClient';
 import { setCashOutHandoff } from '../../lib/cashOutHandoff';
 import { signPayloadWithPasskey } from '../../lib/passkey';
@@ -53,7 +58,7 @@ import { isPasskeyCancellation } from '../../lib/passkeyOutcome';
 import { getPasskeyId, getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
-import { fontFamily, typography } from '../../theme/typography';
+import { fontFamily } from '../../theme/typography';
 
 /**
  * Agent chat (`/agent`) — the assistant can read, explain, and *propose*, but it
@@ -79,18 +84,36 @@ const SUGGESTIONS = [
 ];
 
 export default function AgentScreen() {
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+  // How far the composer has been lifted. `KeyboardStickyView` translates it
+  // over whatever is behind it rather than making room, so the thread has to
+  // give back exactly the same distance — otherwise the composer sits on top
+  // of the conversation it belongs to.
+  const keyboardHeight = useKeyboardState((state) => state.height);
+  const liftedBy = Math.max(0, keyboardHeight - insets.bottom);
+  // The composer as it is actually drawn. It is anchored over the thread rather
+  // than taking a share of the column, so the thread owes it its full height —
+  // which is measured here, never assumed. The chips and the input card both
+  // grow with the system font size and with the lines typed into the field, so
+  // a constant clears the composer on the device it was measured on and lands
+  // on top of it on the next one (#1039).
+  const [composerHeight, setComposerHeight] = useState(0);
+  const handleComposerLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setComposerHeight((previous) => (Math.abs(previous - height) < 0.5 ? previous : height));
+  }, []);
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // Subscribed rather than read once at module load: the network is a runtime
   // choice, and everything on this screen belongs to exactly one chain.
   const { network } = useNetwork();
-  const [messages, setMessages] = useState<AgentMessage[]>([
-    {
-      id: nextMessageId('greeting'),
-      kind: 'agent',
-      text: "I'm your Veil agent. I can check prices, read your transfer history, and prepare swaps and payments. Anything that moves funds needs your passkey — I can't sign for you.",
-    },
-  ]);
+  // Empty, and the greeting is drawn instead of stored.
+  //
+  // It used to be the first message in the thread, which meant
+  // `historyFromMessages` replayed a canned UI string to the model every turn
+  // as something it had said. It is a label, not a turn.
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [input, setInput] = useState('');
   const [isThinking, setIsThinking] = useState(false);
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
@@ -239,8 +262,9 @@ export default function AgentScreen() {
   function handleClearHistory() {
     // The agent keeps no history of its own any more — what it sees is what this
     // screen sends — so clearing is local.
-    setMessages((current) => current.slice(0, 1));
-    appendMessage({ id: nextMessageId('notice'), kind: 'notice', text: 'Conversation cleared.' });
+    // Back to the empty state, which says "cleared" better than a notice
+    // sitting in an otherwise empty thread could.
+    setMessages([]);
   }
 
   /**
@@ -317,33 +341,66 @@ export default function AgentScreen() {
 
   return (
     <Screen>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
+      <View style={styles.flex}>
+        {/* With no tab bar there is no other way off this screen, so the
+            chevron is load-bearing rather than decoration. Clear appears only
+            when there is something to clear. */}
         <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={[typography.heading, styles.title]}>Veil agent</Text>
-            <Text style={styles.status}>
-              It can propose, only you can sign
-            </Text>
-          </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Clear conversation history"
-            onPress={handleClearHistory}
-            style={styles.clear}
+            accessibilityLabel="Back"
+            hitSlop={10}
+            onPress={() => (router.canGoBack() ? router.back() : router.replace('/dashboard'))}
+            style={({ pressed }) => [styles.headerBtn, pressed && styles.pressed]}
           >
-            <Text style={styles.clearText}>Clear</Text>
+            <BackIcon size={22} color={colors.textSecondary} />
           </Pressable>
+          {messages.length > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Clear conversation history"
+              onPress={handleClearHistory}
+              style={({ pressed }) => [styles.headerBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.clearText}>Clear</Text>
+            </Pressable>
+          ) : null}
         </View>
 
+        {/* `flex: 1` here *and* `flexGrow: 1` on the content, which have to go
+            together. The content grows so the empty state can centre in the
+            space; the view is bounded so the thread cannot grow past its
+            share and shove the composer off the bottom of the screen. With
+            only the second, the keyboard looked like it was still covering
+            the composer when in fact the composer had been pushed under it.
+
+            The viewport runs the full height of the screen, *behind* the
+            composer, so the content's bottom padding is what keeps the last
+            message visible: it reserves the composer's measured height, the
+            keyboard's lift, and a standing gap — see `threadBottomInset`. */}
         <ScrollView showsVerticalScrollIndicator={false}
           ref={scrollRef}
-          contentContainerStyle={styles.thread}
+          style={styles.flex}
+          testID="agent-thread"
+          contentContainerStyle={[
+            styles.thread,
+            { paddingBottom: threadBottomInset({ composerHeight, keyboardLift: liftedBy }) },
+          ]}
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
           keyboardShouldPersistTaps="handled"
         >
+          {messages.length === 0 ? (
+            <View style={styles.empty}>
+              <VeilLogo size={52} color={colors.accent} />
+              <Text style={styles.emptyTitle}>What can I help with?</Text>
+              <Text style={styles.emptyBody}>
+                I can check prices, read your transfer history, and prepare swaps and
+                payments. Anything that moves funds needs your passkey — I can&apos;t sign
+                for you.
+              </Text>
+            </View>
+          ) : null}
+
           {messages.map((message) => (
             <MessageRow
               key={message.id}
@@ -361,7 +418,31 @@ export default function AgentScreen() {
           )}
         </ScrollView>
 
-        <View style={styles.composer}>
+        {/* Attempt five, and the first that does not depend on the layout
+            noticing anything. `KeyboardAvoidingView` — React Native's and the
+            library's — works by the window resizing or by padding a
+            container; under edge-to-edge the window does not resize, and
+            every variation of padding left the composer under the keyboard.
+            `KeyboardStickyView` translates the view itself by the measured
+            keyboard height, so there is no layout pass to get wrong.
+
+            `opened: insets.bottom` cancels a double count: the shell already
+            holds the composer that far off the bottom of the screen, and the
+            keyboard covers that strip too, so lifting by the full keyboard
+            height would leave a gap exactly one inset tall.
+
+            `composerAnchor` takes the composer out of the column's flow, so
+            the thread can run the full height of the screen and state its own
+            clearance (`threadBottomInset`, measured from this composer's real
+            height) instead of trusting two boxes to have negotiated correctly.
+            That clearance is what the last message clears with the keyboard
+            closed (#1039); the lift above only ever adds to it. */}
+        <KeyboardStickyView
+          offset={{ closed: 0, opened: insets.bottom }}
+          style={styles.composerAnchor}
+          testID="agent-composer-anchor"
+        >
+        <View style={styles.composer} onLayout={handleComposerLayout} testID="agent-composer">
           <ScrollView showsVerticalScrollIndicator={false} horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
             {SUGGESTIONS.map((suggestion) => (
               <Pressable
@@ -375,7 +456,11 @@ export default function AgentScreen() {
             ))}
           </ScrollView>
 
-          <View style={styles.inputRow}>
+          {/* One card, not a pill with a button parked beside it: the text
+              sits on top and the controls sit under it, inside the same
+              surface. That is what makes the reference read as a single
+              object you are writing into. */}
+          <View style={styles.inputCard}>
             <TextInput
               style={styles.input}
               placeholder="Ask about balances, rates, or a payment"
@@ -387,22 +472,29 @@ export default function AgentScreen() {
               returnKeyType="send"
               multiline
             />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Send message"
-              onPress={handleSend}
-              disabled={!input.trim() || isThinking}
-              style={({ pressed }) => [
-                styles.send,
-                (!input.trim() || isThinking) && styles.sendDisabled,
-                pressed && styles.sendPressed,
-              ]}
-            >
-              <Text style={styles.sendLabel}>Send</Text>
-            </Pressable>
+            <View style={styles.inputActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send message"
+                onPress={handleSend}
+                disabled={!input.trim() || isThinking}
+                style={({ pressed }) => [
+                  styles.send,
+                  (!input.trim() || isThinking) && styles.sendDisabled,
+                  pressed && styles.sendPressed,
+                ]}
+              >
+                <ArrowUpIcon
+                  size={20}
+                  color={!input.trim() || isThinking ? colors.textFaint : colors.onAccent}
+                  strokeWidth={2.6}
+                />
+              </Pressable>
+            </View>
           </View>
         </View>
-      </KeyboardAvoidingView>
+        </KeyboardStickyView>
+      </View>
     </Screen>
   );
 }
@@ -684,29 +776,48 @@ const createStyles = (colors: ThemeColors) =>
     flex: {
       flex: 1,
     },
+    // A bar with nothing in the middle. The screen names itself through the
+    // greeting while the thread is empty, and once there are messages the
+    // conversation is the subject — a standing title would be repeating
+    // what the user is already looking at.
     header: {
       flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 12,
-      paddingTop: 16,
-      paddingBottom: 12,
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      minHeight: 44,
+      paddingTop: 8,
+      paddingBottom: 4,
     },
-    headerText: {
+    headerBtn: {
+      paddingVertical: 8,
+      paddingHorizontal: 6,
+    },
+    pressed: {
+      opacity: 0.6,
+    },
+    // Centred in what is left after the header and composer, so the greeting
+    // sits in the middle of the empty space rather than under the chevron.
+    empty: {
       flex: 1,
-      gap: 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 14,
+      paddingHorizontal: 16,
+      paddingBottom: 48,
     },
-    title: {
+    emptyTitle: {
+      fontFamily: fontFamily.heading,
+      fontSize: 26,
       color: colors.textStrong,
-      fontSize: 24,
+      textAlign: 'center',
     },
-    status: {
+    emptyBody: {
       fontFamily: fontFamily.body,
-      fontSize: 12,
+      fontSize: 14,
+      lineHeight: 21,
       color: colors.textMuted,
-    },
-    clear: {
-      paddingVertical: 6,
-      paddingHorizontal: 10,
+      textAlign: 'center',
+      maxWidth: 320,
     },
     clearText: {
       fontFamily: fontFamily.bodyMedium,
@@ -714,8 +825,22 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textMuted,
     },
     thread: {
+      flexGrow: 1,
       gap: 12,
-      paddingBottom: 16,
+      // No paddingBottom here on purpose: the thread's bottom inset is a
+      // measured figure (composer height + keyboard lift + standing gap),
+      // computed per render — see `threadBottomInset` in lib/agentComposer.ts.
+    },
+    // The composer does not take a share of the column: it is pinned to the
+    // bottom of the screen and the thread reserves its measured height
+    // instead. Anchoring is what makes the clearance one figure that can be
+    // stated and pinned by a test, rather than a resting-case bug where the
+    // last message drew under the chips and the input (#1039).
+    composerAnchor: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
     },
     row: {
       flexDirection: 'row',
@@ -839,15 +964,11 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textMuted,
     },
     composer: {
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
       paddingTop: 10,
-      // The tab bar floats over the bottom of every tab (VeilTabBar is
-      // absolutely positioned), and its raised centre button stands higher
-      // still. With 8 here the input sat underneath it and could not be typed
-      // into. Scrolling tabs clear it with bottom padding on their content;
-      // this composer is pinned, so it has to clear it itself.
-      paddingBottom: 100,
+      // Was 100, to clear the floating tab bar and its raised centre button.
+      // This screen no longer draws one, so that much space is just a gap
+      // between the keyboard and the thing you are typing into.
+      paddingBottom: 12,
       gap: 10,
     },
     chips: {
@@ -867,39 +988,49 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 12,
       color: colors.textMuted,
     },
-    inputRow: {
-      flexDirection: 'row',
-      alignItems: 'flex-end',
-      gap: 10,
-    },
-    input: {
-      flex: 1,
-      maxHeight: 120,
-      fontFamily: fontFamily.body,
-      fontSize: 14,
-      color: colors.textPrimary,
-      backgroundColor: colors.surfaceMd,
+    // The whole composer is one surface. The reference puts its controls
+    // inside the same rounded card as the text, which is what stops the send
+    // button reading as a separate thing sitting next to the field.
+    inputCard: {
+      backgroundColor: colors.surface,
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 14,
-      paddingVertical: 10,
-      paddingHorizontal: 14,
+      borderRadius: 26,
+      paddingTop: 14,
+      paddingBottom: 10,
+      paddingHorizontal: 16,
+      gap: 6,
     },
+    inputActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'flex-end',
+    },
+    input: {
+      maxHeight: 120,
+      fontFamily: fontFamily.body,
+      fontSize: 16,
+      lineHeight: 22,
+      color: colors.textPrimary,
+      padding: 0,
+    },
+    // A circle sized to the glyph, sitting level with a one-line composer.
     send: {
-      borderRadius: 14,
+      width: 38,
+      height: 38,
+      borderRadius: 19,
       backgroundColor: colors.accent,
-      paddingVertical: 12,
-      paddingHorizontal: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
+    // A different fill, not a faded one. `opacity: 0.4` over the brand yellow
+    // produced the washed-out disc in the screenshot — it read as a broken
+    // enabled button rather than a disabled one, because a dimmed accent is
+    // still unmistakably the accent.
     sendDisabled: {
-      opacity: 0.4,
+      backgroundColor: colors.surfaceMd,
     },
     sendPressed: {
       transform: [{ scale: 0.98 }],
-    },
-    sendLabel: {
-      fontFamily: fontFamily.bodySemiBold,
-      fontSize: 14,
-      color: colors.onAccent,
     },
   });

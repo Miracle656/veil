@@ -615,10 +615,10 @@ export interface BillCustomerLookup {
   valid: boolean;
   customerName?: string;
   accountHolderName?: string;
-  address?: string;
-  meterNumber?: string;
   currentPackage?: string;
   dueDate?: string;
+  address?: string;
+  meterNumber?: string;
   meterType?: 'prepaid' | 'postpaid';
   minimumAmount?: number;
   error?: string;
