@@ -3,6 +3,7 @@ import {
   historyFromMessages,
   parseCashOutIntent,
   parseInvestIntent,
+  parseNairaIntent,
   parseSwapIntent,
   resolveAgentUrl,
   sendAgentMessage,
@@ -154,5 +155,45 @@ describe('parseCashOutIntent', () => {
       rate: 1_500,
     });
     expect(parseCashOutIntent('25,000')).toBeUndefined();
+  });
+});
+
+describe('parseNairaIntent', () => {
+  it('accepts valid airtime intent', () => {
+    expect(parseNairaIntent({ kind: 'airtime', phone: '08012345678', amount: 1000, network: 'mtn' })).toEqual({
+      kind: 'airtime',
+      phone: '08012345678',
+      amount: 1000,
+      network: 'mtn',
+    });
+  });
+
+  it('accepts valid bill intent', () => {
+    expect(parseNairaIntent({ kind: 'bill', service: 'power', amount: 5000, customerId: '12345' })).toEqual({
+      kind: 'bill',
+      service: 'power',
+      amount: 5000,
+      customerId: '12345',
+    });
+  });
+
+  it('accepts valid buy_naira intent', () => {
+    expect(parseNairaIntent({ kind: 'buy_naira', amount: 10000, asset: 'usdc' })).toEqual({
+      kind: 'buy_naira',
+      amount: 10000,
+      asset: 'USDC',
+    });
+  });
+
+  it('accepts verify intent', () => {
+    expect(parseNairaIntent({ kind: 'verify' })).toEqual({ kind: 'verify' });
+  });
+
+  it('drops malformed naira intents', () => {
+    expect(parseNairaIntent({ kind: 'airtime', phone: '', amount: 1000 })).toBeUndefined();
+    expect(parseNairaIntent({ kind: 'airtime', phone: '08012345678', amount: -100 })).toBeUndefined();
+    expect(parseNairaIntent({ kind: 'bill', service: '', amount: 5000 })).toBeUndefined();
+    expect(parseNairaIntent({ kind: 'buy_naira', amount: 0 })).toBeUndefined();
+    expect(parseNairaIntent('invalid')).toBeUndefined();
   });
 });

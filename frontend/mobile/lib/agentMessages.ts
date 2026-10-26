@@ -37,6 +37,13 @@ export type InvestIntent = {
 /** A cash-out hand-off; bank selection and verification stay on the Cash Out screen. */
 export type CashOutIntent = { amountNGN: number; rate: number };
 
+/** A prepared Naira flow (airtime, bill, or buy-with-naira) handed to its screen. */
+export type NairaIntent =
+  | { kind: 'airtime'; phone: string; network?: string; amount: number }
+  | { kind: 'bill'; service: string; customerId?: string; amount: number }
+  | { kind: 'buy_naira'; amount: number; asset: string }
+  | { kind: 'verify' };
+
 /** What a transaction the agent proposed will actually do, decoded locally. */
 export type ProposalReview = {
   /** Account that pays for and authorises the transaction. */
@@ -60,6 +67,8 @@ export type AgentMessage =
   | { id: string; kind: 'invest'; text: string; intent: InvestIntent }
   /** A read-rate cash-out hand-off to the screen that verifies and creates orders. */
   | { id: string; kind: 'cashout'; text: string; intent: CashOutIntent }
+  /** A prepared Naira flow (airtime, bills, or buy-with-naira). */
+  | { id: string; kind: 'naira'; text: string; intent: NairaIntent }
   /** A failure, from the service or from this app. */
   | { id: string; kind: 'error'; text: string }
   /** App-generated context, never attributed to the agent. */
