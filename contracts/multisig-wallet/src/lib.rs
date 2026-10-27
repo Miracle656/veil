@@ -218,4 +218,198 @@ mod tests {
         assert_eq!(token_client.balance(&to), 100);
         assert_eq!(token_client.balance(&contract_id), 900);
     }
+
+    // ── Threshold evaluation (#1207) ─────────────────────────────────────────
+    //
+    // The whole feature is the check `approvals.len() >= threshold`. Off by one
+    // in one direction blocks a payment; in the other it pays out with a
+    // signature missing. These tests attempt the second.
+
+    struct Ctx {
+        env: Env,
+        contract_id: Address,
+        owners: [Address; 3],
+        to: Address,
+        token_address: Address,
+    }
+
+    impl Ctx {
+        fn client(&self) -> MultisigContractClient<'_> {
+            MultisigContractClient::new(&self.env, &self.contract_id)
+        }
+
+        fn balance(&self, who: &Address) -> i128 {
+            token::Client::new(&self.env, &self.token_address).balance(who)
+        }
+    }
+
+    /// Three owners, the given threshold, 1000 tokens in the multisig and one
+    /// proposal of 100 to `to`.
+    fn setup(threshold: u32) -> Ctx {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(MultisigContract, ());
+        let owners = [Address::generate(&env), Address::generate(&env), Address::generate(&env)];
+        let token_address = env
+            .register_stellar_asset_contract_v2(Address::generate(&env))
+            .address();
+        token::StellarAssetClient::new(&env, &token_address).mint(&contract_id, &1000);
+
+        let client = MultisigContractClient::new(&env, &contract_id);
+        let mut list = Vec::new(&env);
+        for o in owners.iter() {
+            list.push_back(o.clone());
+        }
+        client.initialize(&list, &threshold, &token_address);
+
+        let to = Address::generate(&env);
+        assert_eq!(client.propose_transaction(&owners[0], &to, &100), 1);
+
+        Ctx { env, contract_id, owners, to, token_address }
+    }
+
+    #[test]
+    fn one_signature_below_threshold_does_not_pay() {
+        // Breaks: a 3-of-3 paying out on two signatures.
+        let ctx = setup(3);
+        let client = ctx.client();
+        client.sign_transaction(&1, &ctx.owners[0]);
+        client.sign_transaction(&1, &ctx.owners[1]);
+
+        let p = client.get_proposal(&1);
+        assert_eq!(p.approvals.len(), 2);
+        assert!(!p.executed);
+        assert_eq!(ctx.balance(&ctx.to), 0);
+        assert_eq!(ctx.balance(&ctx.contract_id), 1000);
+    }
+
+    #[test]
+    fn exactly_at_threshold_pays_once() {
+        // Breaks: a legitimate 3-of-3 blocked, or paid twice.
+        let ctx = setup(3);
+        let client = ctx.client();
+        for o in ctx.owners.iter() {
+            client.sign_transaction(&1, o);
+        }
+        assert!(client.get_proposal(&1).executed);
+        assert_eq!(ctx.balance(&ctx.to), 100);
+        assert_eq!(ctx.balance(&ctx.contract_id), 900);
+    }
+
+    #[test]
+    fn threshold_of_one_pays_on_the_first_signature() {
+        // Boundary: the smallest threshold. Breaks: 1-of-N needing two.
+        let ctx = setup(1);
+        ctx.client().sign_transaction(&1, &ctx.owners[2]);
+        assert!(ctx.client().get_proposal(&1).executed);
+        assert_eq!(ctx.balance(&ctx.to), 100);
+    }
+
+    #[test]
+    fn a_repeated_signature_counts_once() {
+        // Breaks: one owner meeting a 2-of-3 alone by signing twice.
+        let ctx = setup(2);
+        let client = ctx.client();
+        client.sign_transaction(&1, &ctx.owners[0]);
+        client.sign_transaction(&1, &ctx.owners[0]);
+        client.sign_transaction(&1, &ctx.owners[0]);
+
+        let p = client.get_proposal(&1);
+        assert_eq!(p.approvals.len(), 1);
+        assert!(!p.executed);
+        assert_eq!(ctx.balance(&ctx.to), 0);
+
+        // A second, different owner does meet it.
+        client.sign_transaction(&1, &ctx.owners[1]);
+        assert!(client.get_proposal(&1).executed);
+        assert_eq!(ctx.balance(&ctx.to), 100);
+    }
+
+    #[test]
+    fn a_non_owner_signature_is_refused_and_does_not_count() {
+        // Breaks: an outsider supplying the missing signature.
+        let ctx = setup(2);
+        let client = ctx.client();
+        client.sign_transaction(&1, &ctx.owners[0]);
+        let outsider = Address::generate(&ctx.env);
+        assert!(client.try_sign_transaction(&1, &outsider).is_err());
+
+        let p = client.get_proposal(&1);
+        assert_eq!(p.approvals.len(), 1);
+        assert!(!p.executed);
+        assert_eq!(ctx.balance(&ctx.to), 0);
+    }
+
+    #[test]
+    fn an_owner_signature_needs_that_owners_auth() {
+        // Without mock_all_auths. Breaks: anyone approving in an owner's name.
+        let ctx = setup(1);
+        ctx.env.set_auths(&[]);
+        assert!(ctx.client().try_sign_transaction(&1, &ctx.owners[0]).is_err());
+        assert_eq!(ctx.balance(&ctx.to), 0);
+    }
+
+    #[test]
+    fn an_executed_proposal_cannot_be_signed_again() {
+        // Breaks: a late signature replaying the payment.
+        let ctx = setup(2);
+        let client = ctx.client();
+        client.sign_transaction(&1, &ctx.owners[0]);
+        client.sign_transaction(&1, &ctx.owners[1]);
+        assert!(client.try_sign_transaction(&1, &ctx.owners[2]).is_err());
+        assert_eq!(ctx.balance(&ctx.to), 100);
+    }
+
+    #[test]
+    fn approvals_do_not_carry_between_proposals() {
+        // Breaks: signatures on one proposal counting toward another.
+        let ctx = setup(2);
+        let client = ctx.client();
+        assert_eq!(client.propose_transaction(&ctx.owners[1], &ctx.to, &50), 2);
+        client.sign_transaction(&1, &ctx.owners[0]);
+        client.sign_transaction(&2, &ctx.owners[1]);
+        assert!(!client.get_proposal(&1).executed);
+        assert!(!client.get_proposal(&2).executed);
+        assert_eq!(ctx.balance(&ctx.to), 0);
+    }
+
+    #[test]
+    fn only_an_owner_can_propose() {
+        // Breaks: an outsider queueing payments for owners to rubber-stamp.
+        let ctx = setup(2);
+        let outsider = Address::generate(&ctx.env);
+        assert!(ctx.client().try_propose_transaction(&outsider, &ctx.to, &1).is_err());
+        assert_eq!(ctx.client().get_proposal_count(), 1);
+    }
+
+    #[test]
+    fn initialize_refuses_a_threshold_that_is_zero_or_above_the_owner_count() {
+        // Boundary: 0 (anything executes) and owners + 1 (nothing ever can).
+        let env = Env::default();
+        env.mock_all_auths();
+        let token = Address::generate(&env);
+        let mut owners = Vec::new(&env);
+        owners.push_back(Address::generate(&env));
+        owners.push_back(Address::generate(&env));
+
+        for bad in [0u32, 3] {
+            let id = env.register(MultisigContract, ());
+            let client = MultisigContractClient::new(&env, &id);
+            assert!(client.try_initialize(&owners, &bad, &token).is_err());
+        }
+        // Exactly the owner count is allowed.
+        let id = env.register(MultisigContract, ());
+        MultisigContractClient::new(&env, &id).initialize(&owners, &2, &token);
+    }
+
+    #[test]
+    fn initialize_cannot_be_called_twice() {
+        // Breaks: anyone replacing the owners of a funded multisig.
+        let ctx = setup(2);
+        let mut mine = Vec::new(&ctx.env);
+        mine.push_back(Address::generate(&ctx.env));
+        let token = Address::generate(&ctx.env);
+        assert!(ctx.client().try_initialize(&mine, &1, &token).is_err());
+        assert_eq!(ctx.client().get_owners().len(), 3);
+    }
 }
