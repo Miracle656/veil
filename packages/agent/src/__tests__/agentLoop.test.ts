@@ -51,6 +51,35 @@ describe('runAgent', () => {
     expect(result.pendingTxXdr).toBeUndefined()
   })
 
+  it('returns current Blend positions without claiming unavailable earnings', async () => {
+    const llm = scripted([
+      { text: '', toolCalls: [{ id: 'blend', name: 'get_blend_positions', input: {} }] },
+      { text: 'Your current USDC position is 0.000013 USDC. Earned amount is unknown.', toolCalls: [] },
+    ])
+    await runAgent('What is in my lending pool?', wallet, [], undefined, undefined, llm, undefined, {
+      status: 'available',
+      positions: [{ poolId: 'CPOOL', asset: 'CUSDC', code: 'USDC', deposited: '130', bTokenBalance: '100' }],
+    })
+    expect(llm.results[0][0].content).toContain('"currentValue":"0.000013"')
+    expect(llm.results[0][0].content).toContain('original principal is not recorded')
+  })
+
+  it('distinguishes an empty Blend position from an unavailable pool read', async () => {
+    const noPosition = scripted([
+      { text: '', toolCalls: [{ id: 'blend', name: 'get_blend_positions', input: {} }] },
+      { text: 'Nothing supplied yet.', toolCalls: [] },
+    ])
+    await runAgent('What is in my lending pool?', wallet, [], undefined, undefined, noPosition, undefined, { status: 'available', positions: [] })
+    expect(noPosition.results[0][0].content).toContain('Nothing is supplied yet')
+
+    const unavailable = scripted([
+      { text: '', toolCalls: [{ id: 'blend', name: 'get_blend_positions', input: {} }] },
+      { text: 'Position data is unavailable.', toolCalls: [] },
+    ])
+    await runAgent('What is in my lending pool?', wallet, [], undefined, undefined, unavailable, undefined, { status: 'unavailable', positions: [] })
+    expect(unavailable.results[0][0].content).toContain('currently unavailable')
+  })
+
   it('hands a transaction to the user for approval, with the tool result threaded back', async () => {
     const llm = scripted([
       {
