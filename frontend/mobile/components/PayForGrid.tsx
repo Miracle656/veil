@@ -70,9 +70,6 @@ export function getServiceAvailabilityMessage(service: Pick<BillService, 'id' | 
   if (service.status === 'soon') {
     return `${service.label} is not available yet. No payment will be made.`;
   }
-  if (service.id === 'bills') {
-    return 'Water and waste payments are not supported by the bill provider and are not planned. No payment will be made.';
-  }
   return `${service.label} is not planned. No payment will be made.`;
 }
 
