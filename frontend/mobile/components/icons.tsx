@@ -81,6 +81,16 @@ export function SwapIcon({ size, color = 'currentColor', strokeWidth = 1.9 }: Ic
   );
 }
 
+/** Buy — a credit card shape, for buying crypto with naira. */
+export function BuyIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Rect x="2" y="5" width="20" height="14" rx="2.5" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M2 10h20" stroke={color} strokeWidth={strokeWidth} />
+    </Base>
+  );
+}
+
 /** QR-scan viewfinder — the "scan a recipient" affordance. */
 export function ScanIcon({ size, color = 'currentColor', strokeWidth = 1.9 }: IconProps) {
   return (

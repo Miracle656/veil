@@ -35,7 +35,11 @@ import {
   isNairaVerified,
   payBill,
   setNairaVerified,
+  lookupCableTv,
+  lookupBetting,
   type NairaCoin,
+  type CableTvLookup,
+  type BettingLookup,
 } from '@/lib/ngn'
 import type { PlatformFee } from '@/lib/platformFee'
 import { validateIdentifierBeforeConfirm } from '@/lib/billCategories'
@@ -49,9 +53,20 @@ import {
 import { beginTx, endTx } from '@/lib/txState'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
-type Step = 'form' | 'confirm' | 'paying' | 'done' | 'failed' | 'unconfirmed'
+type Step = 'form' | 'lookup' | 'confirm' | 'paying' | 'done' | 'failed' | 'unconfirmed'
+
+type BillCategory = 'airtime' | 'cabletv' | 'betting'
 
 const QUICK_AMOUNTS = [200, 500, 1000, 2000]
+
+const CATEGORIES: Array<{ id: BillCategory; icon: string; label: string; sublabel: string; status: 'live' | 'soon' }> = [
+  { id: 'airtime', icon: '☎', label: 'Airtime', sublabel: 'All networks', status: 'live' },
+  { id: 'cabletv', icon: '📺', label: 'Cable TV', sublabel: 'DSTV, GOtv, StarTimes', status: 'live' },
+  { id: 'betting', icon: '🎰', label: 'Betting', sublabel: 'Bet9ja, SportyBet, 1xBet', status: 'live' },
+]
+
+const CABLETV_PROVIDERS = ['DSTV', 'GOtv', 'StarTimes']
+const BETTING_PROVIDERS = ['Bet9ja', 'SportyBet', '1xBet', 'BetKing']
 
 /**
  * Nigerian mobile prefixes, so the network is detected rather than asked for.
@@ -87,9 +102,13 @@ export default function BillsPage() {
   const [step, setStep] = useState<Step>('form')
   const [error, setError] = useState<string | null>(null)
 
+  const [category, setCategory] = useState<BillCategory>('airtime')
   const [provider, setProvider] = useState<string>('MTN')
   const [providerTouched, setProviderTouched] = useState(false)
   const [phone, setPhone] = useState('')
+  const [smartcard, setSmartcard] = useState('')
+  const [accountId, setAccountId] = useState('')
+  const [selectedPackage, setSelectedPackage] = useState<string | null>(null)
   const [amountNGN, setAmountNGN] = useState('')
   const [coin, setCoin] = useState<NairaCoin>('usdc')
 
@@ -114,6 +133,10 @@ export default function BillsPage() {
   const [unconfirmedReason, setUnconfirmedReason] = useState<'error' | 'timeout' | null>(null)
   const [isRechecking, setIsRechecking] = useState(false)
 
+  // Lookup state
+  const [lookupData, setLookupData] = useState<CableTvLookup | BettingLookup | null>(null)
+  const [lookupLoading, setLookupLoading] = useState(false)
+
   const pollerRef = useRef<BillPoller | null>(null)
 
   const refreshOrders = useCallback(() => {
@@ -133,12 +156,24 @@ export default function BillsPage() {
   }, [refreshOrders])
 
   const phoneDigits = useMemo(() => phone.replace(/\D/g, ''), [phone])
+  const smartcardDigits = useMemo(() => smartcard.replace(/\D/g, ''), [smartcard])
   const detected = useMemo(() => detectNetwork(phone), [phone])
+
+  // Update provider options based on category
+  useEffect(() => {
+    if (category === 'airtime') {
+      setProvider('MTN')
+    } else if (category === 'cabletv') {
+      setProvider('DSTV')
+    } else if (category === 'betting') {
+      setProvider('Bet9ja')
+    }
+  }, [category])
 
   // A detected network wins until the user overrides it
   useEffect(() => {
-    if (detected && !providerTouched) setProvider(detected)
-  }, [detected, providerTouched])
+    if (category === 'airtime' && detected && !providerTouched) setProvider(detected)
+  }, [detected, providerTouched, category])
 
   useEffect(() => {
     setMismatch(isNairaKycMismatch())
@@ -187,7 +222,24 @@ export default function BillsPage() {
 
   const ngn = Number(amountNGN.replace(/[^\d]/g, '')) || 0
   const code = coin.toUpperCase()
-  const cost = rate && ngn > 0 ? ngn / rate : 0
+
+  // Calculate effective NGN amount and cost based on category
+  const effectiveNgn = useMemo(() => {
+    if (category === 'cabletv' && lookupData && 'availablePackages' in lookupData && selectedPackage) {
+      const pkg = lookupData.availablePackages.find(p => p.id === selectedPackage)
+      return pkg?.price || 0
+    }
+    return ngn
+  }, [category, lookupData, selectedPackage, ngn])
+
+  const cost = rate && effectiveNgn > 0 ? effectiveNgn / rate : 0
+
+  // Update step number based on whether lookup is used
+  const stepNumber = useMemo(() => {
+    if (step === 'form' || step === 'lookup') return 1
+    if (step === 'confirm') return 2
+    return 2
+  }, [step])
 
   // Preview fee on confirm step
   useEffect(() => {
@@ -224,28 +276,80 @@ export default function BillsPage() {
   }, [])
 
   const phoneValid = phoneDigits.length === 11 && phoneDigits.startsWith('0')
+  const smartcardValid = smartcardDigits.length >= 6
+  const accountValid = accountId.length >= 3
+
+  const lookup = useCallback(async () => {
+    if (category === 'cabletv' && smartcardValid) {
+      setLookupLoading(true)
+      try {
+        const data = await lookupCableTv({
+          provider,
+          smartcardNumber: smartcardDigits,
+        })
+        setLookupData(data)
+        setStep('lookup')
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      } finally {
+        setLookupLoading(false)
+      }
+    } else if (category === 'betting' && accountValid) {
+      setLookupLoading(true)
+      try {
+        const data = await lookupBetting({
+          provider,
+          accountId,
+        })
+        setLookupData(data)
+        setStep('lookup')
+      } catch (err) {
+        // Lookup not supported - continue without it
+        setStep('confirm')
+      } finally {
+        setLookupLoading(false)
+      }
+    } else {
+      setStep('confirm')
+    }
+  }, [category, smartcardValid, smartcardDigits, provider, accountValid, accountId])
 
   const continueFromForm = useCallback(async () => {
-    const validation = await validateIdentifierBeforeConfirm('airtime', phone, { provider })
-    if (!validation.valid) {
-      setError(validation.error ?? 'Please check the phone number.')
-      return
-    }
-    setError(null)
     if (!isNairaVerified()) {
       router.push('/verify?returnTo=/bills')
       return
     }
+    await lookup()
+  }, [router, lookup])
+    if (!isNairaVerified()) {
+      router.push('/verify?returnTo=/bills')
+      return
+    }
+    await lookup()
+  }, [router, lookup])
+
+  const continueFromLookup = useCallback(() => {
     setStep('confirm')
-  }, [router, phone, provider])
+  }, [])
 
   const pay = useCallback(async () => {
-    if (!customerRef || !feePayerAddress || !rate || ngn <= 0) return
+    if (!customerRef || !feePayerAddress || !rate || effectiveNgn <= 0) return
     const signerSecret =
       walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
     if (!signerSecret) {
       setError('Signing key not found. Ensure your wallet is unlocked.')
       return
+    }
+
+    // Determine customer ID based on category
+    let customerId = ''
+
+    if (category === 'airtime') {
+      customerId = phoneDigits
+    } else if (category === 'cabletv') {
+      customerId = smartcardDigits
+    } else if (category === 'betting') {
+      customerId = accountId
     }
 
     beginTx()
@@ -255,15 +359,15 @@ export default function BillsPage() {
     setUnconfirmedReason(null)
 
     try {
-      const amountStableCoin = Number((ngn / rate).toFixed(7))
+      const amountStableCoin = Number((effectiveNgn / rate).toFixed(7))
 
       // 1. Reserve first
       const order = await payBill({
         customerRef,
-        billCategory: 'airtime',
+        billCategory: category,
         provider,
-        customerId: phoneDigits,
-        amountNgn: ngn,
+        customerId,
+        amountNgn: effectiveNgn,
         amountStableCoin,
         rate,
         coin,
@@ -278,10 +382,10 @@ export default function BillsPage() {
         saveBillOrder({
           orderId: order.id,
           customerRef,
-          category: 'airtime',
+          category,
           provider,
-          identifier: phoneDigits,
-          amount: ngn,
+          identifier: category === 'airtime' ? phoneDigits : category === 'cabletv' ? smartcardDigits : accountId,
+          amount: effectiveNgn,
           amountCrypto: amountStableCoin,
           asset: coin,
           status: 'pending',
@@ -344,7 +448,7 @@ export default function BillsPage() {
     } finally {
       endTx()
     }
-  }, [customerRef, feePayerAddress, rate, ngn, phoneDigits, provider, coin])
+  }, [customerRef, feePayerAddress, rate, effectiveNgn, category, phoneDigits, smartcardDigits, accountId, provider, coin, refreshOrders])
 
   const manualCheckStatus = useCallback(async () => {
     if (!orderId || !customerRef || isRechecking || !pollerRef.current) return
@@ -405,19 +509,37 @@ export default function BillsPage() {
           <Card>
             <SectionLabel>Pay for</SectionLabel>
             <div className="grid grid-cols-4 max-md:grid-cols-2 gap-3 mt-[18px]">
-              <div
-                tabIndex={0}
-                role="button"
-                aria-pressed="true"
-                aria-label="Airtime - All networks"
-                className="bg-[rgba(253,218,36,0.08)] border border-[rgba(253,218,36,0.35)] rounded-[18px] px-4 py-[18px] flex flex-col gap-[5px] cursor-pointer"
-              >
-                <div className="text-[17px] text-gold">☎</div>
-                <div className="text-sm font-semibold mt-1 whitespace-nowrap text-off-white">Airtime</div>
-                <div className="text-[11px] text-[rgba(246,247,248,0.55)] whitespace-nowrap">
-                  All networks
+              {CATEGORIES.filter(cat => cat.status === 'live').map((cat) => (
+                <div
+                  key={cat.id}
+                  tabIndex={0}
+                  role="button"
+                  aria-pressed={category === cat.id}
+                  aria-label={`${cat.label} - ${cat.sublabel}`}
+                  onClick={() => {
+                    setCategory(cat.id)
+                    setStep('form')
+                    setError(null)
+                    setLookupData(null)
+                    setSelectedPackage(null)
+                  }}
+                  className={`rounded-[18px] px-4 py-[18px] flex flex-col gap-[5px] cursor-pointer transition-colors ${
+                    category === cat.id
+                      ? 'bg-[rgba(253,218,36,0.08)] border border-[rgba(253,218,36,0.35)]'
+                      : 'bg-[rgba(255,255,255,0.03)] border border-border-dim hover:border-white/20'
+                  }`}
+                >
+                  <div className={`text-[17px] ${category === cat.id ? 'text-gold' : 'text-white/60'}`}>
+                    {cat.icon}
+                  </div>
+                  <div className={`text-sm font-semibold mt-1 whitespace-nowrap ${category === cat.id ? 'text-off-white' : 'text-white/70'}`}>
+                    {cat.label}
+                  </div>
+                  <div className="text-[11px] text-[rgba(246,247,248,0.55)] whitespace-nowrap">
+                    {cat.sublabel}
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
           </Card>
 
@@ -431,78 +553,119 @@ export default function BillsPage() {
           {step === 'form' && (
             <Card>
               <div className="flex flex-col gap-6">
+                {/* Provider selection */}
                 <div>
-                  <SectionLabel>Network</SectionLabel>
+                  <SectionLabel>Provider</SectionLabel>
                   <div className="flex gap-2 flex-wrap mt-3">
-                    {NETWORKS.map((n) => (
+                    {(category === 'airtime' ? NETWORKS : category === 'cabletv' ? CABLETV_PROVIDERS : BETTING_PROVIDERS).map((p) => (
                       <button
-                        key={n}
+                        key={p}
                         type="button"
                         onClick={() => {
-                          setProvider(n)
+                          setProvider(p)
                           setProviderTouched(true)
                         }}
                         className={`px-4 py-2.5 rounded-[12px] text-[13px] font-medium border transition-colors ${
-                          provider === n
+                          provider === p
                             ? 'bg-gold text-near-black border-gold font-semibold'
                             : 'border-border-dim bg-[rgba(255,255,255,0.03)] text-white/70 hover:text-white hover:border-white/20'
                         }`}
                       >
-                        {n}
+                        {p}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div>
-                  <SectionLabel>Phone number</SectionLabel>
-                  <div className="mt-2.5">
-                    <input
-                      data-testid="airtime-phone-input"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value.replace(/[^\d]/g, '').slice(0, 11))}
-                      placeholder="0803 512 4471"
-                      inputMode="numeric"
-                      className="w-full bg-surface-md border border-border-dim rounded-[14px] px-4 py-3.5 text-off-white text-[19px] font-mono tracking-wider outline-none focus:border-gold transition-colors"
-                    />
-                    <p className="text-[12px] text-white/50 mt-2">
-                      {detected
-                        ? `${detected} number, detected from ${phoneDigits.slice(0, 4)}${
-                            providerTouched && provider !== detected ? ` — sending to ${provider}` : ''
-                          }`
-                        : 'Numbers get ported, so check the network above matches.'}
-                    </p>
+                {/* Category-specific fields */}
+                {category === 'airtime' && (
+                  <div>
+                    <SectionLabel>Phone number</SectionLabel>
+                    <div className="mt-2.5">
+                      <input
+                        data-testid="airtime-phone-input"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value.replace(/[^\d]/g, '').slice(0, 11))}
+                        placeholder="0803 512 4471"
+                        inputMode="numeric"
+                        className="w-full bg-surface-md border border-border-dim rounded-[14px] px-4 py-3.5 text-off-white text-[19px] font-mono tracking-wider outline-none focus:border-gold transition-colors"
+                      />
+                      <p className="text-[12px] text-white/50 mt-2">
+                        {detected
+                          ? `${detected} number, detected from ${phoneDigits.slice(0, 4)}${
+                              providerTouched && provider !== detected ? ` — sending to ${provider}` : ''
+                            }`
+                          : 'Numbers get ported, so check the network above matches.'}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <div>
-                  <SectionLabel>Amount</SectionLabel>
-                  <div className="flex items-center gap-2 mt-2.5 bg-surface-md border border-border-dim rounded-[14px] px-4 py-3 focus-within:border-gold transition-colors">
-                    <span className="text-[24px] font-semibold text-white/50">₦</span>
-                    <input
-                      data-testid="airtime-amount-input"
-                      value={amountNGN}
-                      onChange={(e) => setAmountNGN(e.target.value.replace(/[^\d]/g, ''))}
-                      placeholder="0"
-                      inputMode="numeric"
-                      className="w-full bg-transparent border-none text-off-white text-[24px] font-semibold outline-none"
-                    />
+                {category === 'cabletv' && (
+                  <div>
+                    <SectionLabel>Smartcard number</SectionLabel>
+                    <div className="mt-2.5">
+                      <input
+                        value={smartcard}
+                        onChange={(e) => setSmartcard(e.target.value.replace(/\D/g, ''))}
+                        placeholder="Enter smartcard number"
+                        inputMode="numeric"
+                        className="w-full bg-surface-md border border-border-dim rounded-[14px] px-4 py-3.5 text-off-white text-[19px] font-mono tracking-wider outline-none focus:border-gold transition-colors"
+                      />
+                      <p className="text-[12px] text-white/50 mt-2">
+                        Enter the smartcard number shown on your decoder
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex gap-2 flex-wrap mt-3">
-                    {QUICK_AMOUNTS.map((q) => (
-                      <button
-                        key={q}
-                        type="button"
-                        onClick={() => setAmountNGN(String(q))}
-                        className={`px-3 py-1.5 rounded-pill text-[12px] border transition-colors ${
-                          ngn === q
-                            ? 'bg-[rgba(253,218,36,0.12)] border-[rgba(253,218,36,0.5)] text-gold font-semibold'
-                            : 'border-border-dim bg-[rgba(255,255,255,0.03)] text-white/60 hover:text-white'
-                        }`}
-                      >
-                        ₦{q.toLocaleString('en-NG')}
-                      </button>
-                    ))}
+                )}
+
+                {category === 'betting' && (
+                  <div>
+                    <SectionLabel>Account ID / Phone</SectionLabel>
+                    <div className="mt-2.5">
+                      <input
+                        value={accountId}
+                        onChange={setAccountId}
+                        placeholder="Enter account ID or phone number"
+                        className="w-full bg-surface-md border border-border-dim rounded-[14px] px-4 py-3.5 text-off-white text-[19px] font-mono tracking-wider outline-none focus:border-gold transition-colors"
+                      />
+                      <p className="text-[12px] text-white/50 mt-2">
+                        Enter your betting account ID or registered phone number
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Amount field (not for cabletv - amount comes from package selection) */}
+                {category !== 'cabletv' && (
+                  <div>
+                    <SectionLabel>Amount</SectionLabel>
+                    <div className="flex items-center gap-2 mt-2.5 bg-surface-md border border-border-dim rounded-[14px] px-4 py-3 focus-within:border-gold transition-colors">
+                      <span className="text-[24px] font-semibold text-white/50">₦</span>
+                      <input
+                        data-testid="airtime-amount-input"
+                        value={amountNGN}
+                        onChange={(e) => setAmountNGN(e.target.value.replace(/[^\d]/g, ''))}
+                        placeholder="0"
+                        inputMode="numeric"
+                        className="w-full bg-transparent border-none text-off-white text-[24px] font-semibold outline-none"
+                      />
+                    </div>
+                    <div className="flex gap-2 flex-wrap mt-3">
+                      {QUICK_AMOUNTS.map((q) => (
+                        <button
+                          key={q}
+                          type="button"
+                          onClick={() => setAmountNGN(String(q))}
+                          className={`px-3 py-1.5 rounded-pill text-[12px] border transition-colors ${
+                            ngn === q
+                              ? 'bg-[rgba(253,218,36,0.12)] border-[rgba(253,218,36,0.5)] text-gold font-semibold'
+                              : 'border-border-dim bg-[rgba(255,255,255,0.03)] text-white/60 hover:text-white'
+                          }`}
+                        >
+                          ₦{q.toLocaleString('en-NG')}
+                        </button>
+                      ))}
                   </div>
                 </div>
 
@@ -555,15 +718,22 @@ export default function BillsPage() {
 
                 <PrimaryAction
                   data-testid="airtime-continue-btn"
-                  disabled={!phoneValid || ngn <= 0 || rateState !== 'ready'}
-                  onClick={continueFromForm}
+                  disabled={
+                    (category === 'airtime' && (!phoneValid || ngn <= 0)) ||
+                    (category === 'cabletv' && !smartcardValid) ||
+                    (category === 'betting' && (!accountValid || ngn <= 0)) ||
+                    rateState !== 'ready' ||
+                    lookupLoading
+                  }
+                  onClick={() => void continueFromForm()}
                 >
-                  Continue
+                  {lookupLoading ? 'Looking up...' : 'Continue'}
                 </PrimaryAction>
               </div>
             </Card>
           )}
 
+<<<<<<< HEAD
           {step === 'form' && recentOrders.length > 0 && (
             <Card>
               <div className="flex justify-between items-center mb-3">
@@ -650,6 +820,72 @@ export default function BillsPage() {
                 })}
               </div>
             </Card>
+=======
+          {/* ── lookup results ─────────────────────────────────────────────── */}
+          {step === 'lookup' && lookupData && (
+            <Card>
+              <p className="text-[14px] text-white/60 mb-2">
+                {category === 'cabletv' ? 'Account found' : 'Account verified'}
+              </p>
+              {category === 'cabletv' && 'customerName' in lookupData ? (
+                <>
+                  <p className="text-[13px] text-white/60">Customer: {lookupData.customerName}</p>
+                  <p className="text-[13px] text-white/60">Current package: {lookupData.currentPackage}</p>
+                  <p className="text-[13px] text-white/60">Due date: {lookupData.dueDate}</p>
+                  <div className="mt-4">
+                    <SectionLabel>Select package</SectionLabel>
+                    <div className="flex flex-col gap-2 mt-3">
+                      {lookupData.availablePackages.map((pkg) => (
+                        <button
+                          key={pkg.id}
+                          type="button"
+                          onClick={() => setSelectedPackage(pkg.id)}
+                          className={`w-full px-4 py-3 rounded-[12px] border text-left transition-colors ${
+                            selectedPackage === pkg.id
+                              ? 'bg-[rgba(253,218,36,0.08)] border-[rgba(253,218,36,0.35)]'
+                              : 'bg-[rgba(255,255,255,0.03)] border-border-dim hover:border-white/20'
+                          }`}
+                        >
+                          <div className="flex justify-between items-center">
+                            <span className={`text-sm ${selectedPackage === pkg.id ? 'text-off-white' : 'text-white/70'}`}>
+                              {pkg.name}
+                            </span>
+                            <span className={`text-sm font-mono ${selectedPackage === pkg.id ? 'text-gold' : 'text-white/60'}`}>
+                              {naira(pkg.price)}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-[13px] text-white/60">Account: {lookupData.accountName}</p>
+                  <p className="text-[13px] text-white/60">Status: {lookupData.accountStatus}</p>
+                  {lookupData.balance !== undefined && (
+                    <p className="text-[13px] text-white/60">Current balance: {naira(lookupData.balance)}</p>
+                  )}
+                </>
+              )}
+            </Card>
+
+            <div className="flex flex-col gap-3">
+              <PrimaryAction
+                disabled={category === 'cabletv' && !selectedPackage}
+                onClick={continueFromLookup}
+              >
+                Continue
+              </PrimaryAction>
+              <button
+                type="button"
+                onClick={() => setStep('form')}
+                className="w-full text-center text-[13px] text-white/50 hover:text-white/80 py-2 transition-colors"
+              >
+                Back to edit
+              </button>
+            </div>
+>>>>>>> funds0033-cmyk/issue-1139-naira-onramp
           )}
 
           {/* ── b2 · confirm ──────────────────────────────────────────────── */}
@@ -657,7 +893,14 @@ export default function BillsPage() {
             <div className="flex flex-col gap-5">
               <Card>
                 <p className="text-[14px] text-white/60">
-                  {naira(ngn)} airtime to {phoneDigits} costs
+                  {category === 'airtime'
+                    ? `${naira(effectiveNgn)} airtime to ${phoneDigits} costs`
+                    : category === 'cabletv'
+                      ? `${lookupData && 'availablePackages' in lookupData
+                          ? lookupData.availablePackages.find(p => p.id === selectedPackage)?.name
+                          : 'Package'} subscription costs`
+                      : `${naira(effectiveNgn)} deposit to ${provider} costs`
+                  }
                 </p>
                 <p className="font-lora italic font-semibold text-[32px] text-off-white mt-1">
                   {cost.toFixed(coin === 'xlm' ? 4 : 2)} {code}
@@ -666,8 +909,17 @@ export default function BillsPage() {
 
               <Card>
                 <div className="flex flex-col divide-y divide-border-dim">
-                  <DetailRow label="Network" value={provider} />
-                  <DetailRow label="Phone" value={phoneDigits} mono />
+                  <DetailRow label="Category" value={category === 'airtime' ? 'Airtime' : category === 'cabletv' ? 'Cable TV' : 'Betting'} />
+                  <DetailRow label="Provider" value={provider} />
+                  {category === 'airtime' && <DetailRow label="Phone" value={phoneDigits} mono />}
+                  {category === 'cabletv' && <DetailRow label="Smartcard" value={smartcardDigits} mono />}
+                  {category === 'betting' && <DetailRow label="Account" value={accountId} mono />}
+                  {lookupData && 'customerName' in lookupData && (
+                    <DetailRow label="Customer" value={lookupData.customerName} />
+                  )}
+                  {lookupData && 'accountName' in lookupData && (
+                    <DetailRow label="Account name" value={lookupData.accountName} />
+                  )}
                   <DetailRow label="Paid from" value={`${code} balance`} />
                   <DetailRow label="Network fee" value="Sponsored" />
                   {veilFee && (
@@ -712,7 +964,7 @@ export default function BillsPage() {
                 <div className="w-12 h-12 rounded-full border-2 border-gold border-t-transparent animate-spin mb-2" />
                 <div>
                   <h2 className="text-[20px] font-semibold text-off-white mb-2">
-                    {waitingForPasskey ? 'Confirm with your passkey' : 'Sending your top-up'}
+                    {waitingForPasskey ? 'Confirm with your passkey' : 'Processing your payment'}
                   </h2>
                   <p
                     data-testid="airtime-wait-text"
@@ -722,15 +974,17 @@ export default function BillsPage() {
                       ? 'Approve the spend using Face ID, fingerprint, or device PIN.'
                       : pollErrorCount > 0
                         ? `Checking status failed — retrying (${pollErrorCount}/${MAX_CONSECUTIVE_POLL_ERRORS})…`
-                        : `${provider} is vending ${naira(ngn)} to ${phoneDigits}.`}
+                        : `${provider} is processing your ${category === 'airtime' ? 'top-up' : category === 'cabletv' ? 'subscription' : 'deposit'}.`}
                   </p>
                 </div>
 
                 <div className="w-full bg-[rgba(255,255,255,0.03)] border border-border-dim rounded-[14px] p-4 flex justify-between text-left">
                   <div>
-                    <div className="text-[11px] uppercase tracking-wider text-white/40">Airtime</div>
+                    <div className="text-[11px] uppercase tracking-wider text-white/40">
+                      {category === 'airtime' ? 'Airtime' : category === 'cabletv' ? 'Subscription' : 'Deposit'}
+                    </div>
                     <div className="text-[14px] font-medium text-off-white mt-0.5">
-                      {naira(ngn)} · {provider}
+                      {naira(effectiveNgn)} · {provider}
                     </div>
                   </div>
                   <div className="text-right">
@@ -752,17 +1006,27 @@ export default function BillsPage() {
                   <div className="w-8 h-8 rounded-full bg-[rgba(0,208,146,0.15)] text-[#00D092] flex items-center justify-center font-bold">
                     ✓
                   </div>
-                  <h2 className="text-[22px] font-semibold text-off-white">Airtime sent</h2>
+                  <h2 className="text-[22px] font-semibold text-off-white">
+                    {category === 'airtime' ? 'Airtime sent' : category === 'cabletv' ? 'Subscription activated' : 'Deposit complete'}
+                  </h2>
                 </div>
                 <p className="text-[14px] leading-relaxed text-white/60">
-                  {naira(ngn)} is on {phoneDigits}. It usually shows on the phone within a minute.
+                  {category === 'airtime'
+                    ? `${naira(effectiveNgn)} is on ${phoneDigits}. It usually shows on the phone within a minute.`
+                    : category === 'cabletv'
+                      ? `Your ${provider} subscription is now active. Services usually resume within minutes.`
+                      : `${naira(effectiveNgn)} has been deposited to your ${provider} account. It should appear within minutes.`
+                  }
                 </p>
               </Card>
 
               <Card>
                 <div className="flex flex-col divide-y divide-border-dim">
-                  <DetailRow label="Network" value={provider} />
-                  <DetailRow label="Recipient" value={phoneDigits} mono />
+                  <DetailRow label="Category" value={category === 'airtime' ? 'Airtime' : category === 'cabletv' ? 'Cable TV' : 'Betting'} />
+                  <DetailRow label="Provider" value={provider} />
+                  {category === 'airtime' && <DetailRow label="Recipient" value={phoneDigits} mono />}
+                  {category === 'cabletv' && <DetailRow label="Smartcard" value={smartcardDigits} mono />}
+                  {category === 'betting' && <DetailRow label="Account" value={accountId} mono />}
                   <DetailRow
                     label="You spent"
                     value={`${(spent ?? cost).toFixed(coin === 'xlm' ? 4 : 2)} ${code}`}
@@ -809,16 +1073,24 @@ export default function BillsPage() {
                   onClick={() => {
                     setStep('form')
                     setAmountNGN('')
+                    setPhone('')
+                    setSmartcard('')
+                    setAccountId('')
+                    setSelectedPackage(null)
                     setOrderId(null)
                     setPayHash(null)
                     setSpent(null)
+<<<<<<< HEAD
                     setPrepaidToken(null)
                     setTokenCopied(false)
                     refreshOrders()
+=======
+                    setLookupData(null)
+>>>>>>> funds0033-cmyk/issue-1139-naira-onramp
                     void loadRate()
                   }}
                 >
-                  Buy again
+                  {category === 'airtime' ? 'Buy again' : category === 'cabletv' ? 'Subscribe again' : 'Deposit again'}
                 </PrimaryAction>
                 <button
                   type="button"
@@ -838,13 +1110,13 @@ export default function BillsPage() {
                 <h2 className="text-[22px] font-semibold text-[#FF4D4D] mb-2">Payment failed</h2>
                 <p className="text-[14px] leading-relaxed text-white/65">
                   Your {(spent ?? cost).toFixed(coin === 'xlm' ? 4 : 2)} {code} is being returned
-                  to this wallet. No airtime was added to {phoneDigits}.
+                  to this wallet. No {category === 'airtime' ? 'airtime was added' : category === 'cabletv' ? 'subscription was activated' : 'deposit was made'}.
                 </p>
               </Card>
 
               <Card>
                 <div className="flex flex-col divide-y divide-border-dim">
-                  <DetailRow label={`${provider} didn't complete the top-up`} value="—" />
+                  <DetailRow label={`${provider} didn't complete the ${category === 'airtime' ? 'top-up' : category === 'cabletv' ? 'subscription' : 'deposit'}`} value="—" />
                   <DetailRow label="Refund on its way back" value="Usually a few minutes" />
                   {orderId && (
                     <DetailRow
@@ -867,6 +1139,8 @@ export default function BillsPage() {
                     setOrderId(null)
                     setPayHash(null)
                     setError(null)
+                    setLookupData(null)
+                    setSelectedPackage(null)
                     void loadRate()
                   }}
                 >
@@ -894,15 +1168,18 @@ export default function BillsPage() {
                 </h2>
                 <p className="text-[14px] leading-relaxed text-white/60">
                   {unconfirmedReason === 'error'
-                    ? `Checking status failed after ${MAX_CONSECUTIVE_POLL_ERRORS} attempts. The network service could not be reached, but your top-up may already have arrived.`
-                    : `Confirmation from ${provider} is taking longer than usual. Your top-up may already have arrived.`}
+                    ? `Checking status failed after ${MAX_CONSECUTIVE_POLL_ERRORS} attempts. The network service could not be reached, but your ${category === 'airtime' ? 'top-up' : category === 'cabletv' ? 'subscription' : 'deposit'} may already have arrived.`
+                    : `Confirmation from ${provider} is taking longer than usual. Your ${category === 'airtime' ? 'top-up' : category === 'cabletv' ? 'subscription' : 'deposit'} may already have arrived.`}
                 </p>
               </Card>
 
               <Card>
                 <div className="flex flex-col divide-y divide-border-dim">
-                  <DetailRow label="Network" value={provider} />
-                  <DetailRow label="Recipient" value={phoneDigits} mono />
+                  <DetailRow label="Category" value={category === 'airtime' ? 'Airtime' : category === 'cabletv' ? 'Cable TV' : 'Betting'} />
+                  <DetailRow label="Provider" value={provider} />
+                  {category === 'airtime' && <DetailRow label="Recipient" value={phoneDigits} mono />}
+                  {category === 'cabletv' && <DetailRow label="Smartcard" value={smartcardDigits} mono />}
+                  {category === 'betting' && <DetailRow label="Account" value={accountId} mono />}
                   <DetailRow
                     label="Payment"
                     value={`${(spent ?? cost).toFixed(coin === 'xlm' ? 4 : 2)} ${code} sent`}
@@ -924,10 +1201,14 @@ export default function BillsPage() {
                 </div>
                 <div className="flex flex-col gap-2 text-[13px] text-white/70 leading-relaxed">
                   <div>• Your {(spent ?? cost).toFixed(coin === 'xlm' ? 4 : 2)} {code} left this wallet.</div>
-                  <div>• The {naira(ngn)} airtime may already have arrived on {phoneDigits}.</div>
-                  <div>• Check the recipient&apos;s phone balance (dial your network&apos;s balance code) or ask them directly.</div>
                   <div>
-                    • If the airtime has not arrived, contact support with reference{' '}
+                    • The {naira(effectiveNgn)} {category === 'airtime' ? 'airtime' : category === 'cabletv' ? 'subscription' : 'deposit'} may already have arrived{category === 'airtime' ? ` on ${phoneDigits}` : category === 'cabletv' ? '' : ` in your ${provider} account`}.
+                  </div>
+                  {category === 'airtime' && (
+                    <div>• Check the recipient&apos;s phone balance (dial your network&apos;s balance code) or ask them directly.</div>
+                  )}
+                  <div>
+                    • If the {category === 'airtime' ? 'airtime' : category === 'cabletv' ? 'subscription' : 'deposit'} has not arrived, contact support with reference{' '}
                     <span className="font-mono text-gold">
                       {orderId ? orderId.slice(0, 8).toUpperCase() : 'above'}
                     </span>.

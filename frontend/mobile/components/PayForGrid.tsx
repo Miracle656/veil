@@ -9,6 +9,7 @@ import {
   BankIcon,
   BettingIcon,
   BillsIcon,
+  BuyIcon,
   DataIcon,
   GridIcon,
   PowerIcon,
@@ -52,7 +53,10 @@ export const BILL_SERVICES: BillService[] = [
   { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
   { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'live', route: '/electricity' },
   { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
-  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'not-planned' },
+  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'soon' },
+  // The onramp: buy XLM or USDC with naira via bank transfer. Live because the
+  // flow exists — but hidden when the backend holding the Linq key is unreachable.
+  { id: 'buy', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn', accent: true },
   // The offramp: USDC out to a Nigerian bank account, via Linq. Live rather
   // than 'soon' because the flow behind it exists — but the dashboard still
   // hides it when the backend that holds the API key is unreachable, since
@@ -64,9 +68,6 @@ export const BILL_SERVICES: BillService[] = [
 export function getServiceAvailabilityMessage(service: Pick<BillService, 'id' | 'label' | 'status'>) {
   if (service.status === 'soon') {
     return `${service.label} is not available yet. No payment will be made.`;
-  }
-  if (service.id === 'bills') {
-    return 'Water and waste payments are not supported by the bill provider and are not planned. No payment will be made.';
   }
   return `${service.label} is not planned. No payment will be made.`;
 }
