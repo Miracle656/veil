@@ -1,59 +1,34 @@
 /**
  * Buy airtime with crypto from this wallet.
  *
- * Screens b1–b5 of the design.
+ * Screens b1–b5 of the design, built on the shared `BillFlow`
+ * (`components/BillFlow.tsx` and `lib/billFlow.ts`).
  *
- * ## This is the mirror image of the onramp, and that is the point
+ * ## What lives here vs in `BillFlow`
  *
- * Buying crypto hands the user a bank account and sends them to their bank app;
- * nothing is signed. Airtime is the reverse — the deposit is crypto *leaving*
- * this wallet — so it is signed, with a passkey, and it never leaves the app.
- * That is why it is the better of the two flows and why it ships first.
+ * `BillFlow` owns the shared payment machinery — mainnet gating, per-coin rate
+ * loading, `customerRef` and classic `G…` `refundAddress` resolution, the
+ * one-time NIN verification bounce to `/verify`, `previewSpendFee` on the
+ * confirm step before the passkey prompt, reserving the order first (`payBill`)
+ * and spending the locked amount second (`spendAsset`), and polling
+ * `getBillStatus` until delivered or refunded.
  *
- * ## The order of operations is not arbitrary
- *
- * `payBill` reserves the order and locks the rate, and returns the address to
- * pay. Only then is anything spent. Reserving first means a failure to reserve
- * costs nothing, and the amount we send is the amount the order was quoted at.
- *
- * ## Underpayment is not a failed order
- *
- * Linq settles at whatever actually arrives, converted at the locked rate —
- * "this is a manual deposit by design". So sending less than quoted buys *less
- * airtime*, silently. The amount sent is therefore taken from the order rather
- * than re-derived from anything on screen.
- *
- * ## The refund address matters most when everything has already gone wrong
- *
- * If the biller rejects the top-up after the deposit lands, the crypto comes
- * back to `refundAddress`. It must be an address the user controls, and a
- * classic `G…` one — a classic payment cannot name a contract. That is the
- * fee-payer account, whose balances the holdings list already shows as part of
- * this wallet.
+ * This file holds only what is specific to airtime:
+ *   - Nigerian mobile prefix detection (`MTN`, `AIRTEL`, `GLO`, `9MOBILE`) and
+ *     the editable network chip row (since ported numbers must be overridable)
+ *   - the 11-digit phone number input and contact picker (`pickContactNumber`)
+ *   - the airtime copy and confirmation rows passed across the `BillFlow` seam
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, Text, TextInput, View } from 'react-native';
 
+import { BillFlow, createBillFlowStyles } from '../components/BillFlow';
 import * as Clipboard from 'expo-clipboard';
 import { ContactIcon } from '../components/icons';
-import { pickContactNumber } from '../lib/pickContact';
-import { FlowHeader } from '../components/FlowHeader';
-import { SlideToConfirm } from '../components/SlideToConfirm';
-import { useWallet } from '../components/WalletProvider';
 import { useTheme } from '../hooks/useTheme';
+import type { BillCategoryConfig } from '../lib/billFlow';
+import { pickContactNumber } from '../lib/pickContact';
 import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
@@ -87,7 +62,7 @@ import { classifyBillPollStatus } from '../lib/billFlow';
 
 type Step = 'form' | 'confirm' | 'paying' | 'done' | 'failed';
 
-const QUICK_AMOUNTS = [200, 500, 1000, 2000];
+const QUICK_AMOUNTS = [200, 500, 1000, 2000] as const;
 
 /**
  * Nigerian mobile prefixes, so the network is detected rather than asked for.
@@ -96,16 +71,16 @@ const QUICK_AMOUNTS = [200, 500, 1000, 2000];
  * the wrong biller is a failed vend. So the picker stays visible and editable,
  * and the hint says where the guess came from.
  */
-const PREFIXES: Record<string, string[]> = {
+export const PREFIXES: Record<string, string[]> = {
   MTN: ['0803', '0806', '0703', '0706', '0813', '0816', '0810', '0814', '0903', '0906', '0913', '0916'],
   AIRTEL: ['0802', '0808', '0708', '0812', '0701', '0902', '0901', '0904', '0907', '0912'],
   GLO: ['0805', '0807', '0705', '0815', '0811', '0905', '0915'],
   '9MOBILE': ['0809', '0818', '0817', '0909', '0908'],
 };
 
-const NETWORKS = Object.keys(PREFIXES);
+export const NETWORKS = Object.keys(PREFIXES);
 
-function detectNetwork(phone: string): string | null {
+export function detectNetwork(phone: string): string | null {
   const p = phone.replace(/\D/g, '');
   if (p.length < 4) return null;
   const prefix = p.slice(0, 4);
@@ -115,25 +90,63 @@ function detectNetwork(phone: string): string | null {
   return null;
 }
 
-function naira(n: number): string {
-  return `₦${n.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
+export function isValidNigerianPhone(phoneDigits: string): boolean {
+  return phoneDigits.length === 11 && phoneDigits.startsWith('0');
+}
+
+export function buildAirtimeCategoryConfig(params: {
+  provider: string;
+  phone: string;
+}): BillCategoryConfig {
+  const phoneDigits = params.phone.replace(/\D/g, '');
+  const { provider } = params;
+  return {
+    category: 'airtime',
+    title: 'Airtime',
+    returnTo: '/airtime',
+    provider,
+    customerId: phoneDigits,
+    customerValid: isValidNigerianPhone(phoneDigits),
+    quickAmounts: QUICK_AMOUNTS,
+    copy: {
+      mainnetTitle: 'Switch to mainnet to buy airtime',
+      mainnetHint:
+        'Top-ups are vended against real crypto, so this only works on mainnet — there is no test mode. Switch network in Settings, then come back.',
+      insufficientBalanceNoun: 'top-up',
+      verifySummary: (amountFormatted) => `Airtime · ${amountFormatted} to ${params.phone}`,
+      confirmQuestion: (amountFormatted) => `${amountFormatted} airtime to ${phoneDigits} costs`,
+      confirmRows: [
+        { label: 'Network', value: provider },
+        { label: 'Phone', value: phoneDigits },
+      ],
+      refundNote: `If ${provider} can't complete the top-up, the full amount comes straight back to this wallet.`,
+      payingTitle: 'Sending your top-up',
+      payingHint: (amountFormatted) => `${provider} is vending ${amountFormatted} to ${phoneDigits}.`,
+      payingWaitLabel: 'Waiting for the top-up…',
+      payingSummaryLabel: 'Airtime',
+      payingSummaryValue: (amountFormatted) => `${amountFormatted} · ${provider} ${phoneDigits}`,
+      doneTitle: 'Airtime sent',
+      doneHint: (amountFormatted) =>
+        `${amountFormatted} is on ${phoneDigits}. It usually shows on the phone within a minute.`,
+      doneRows: [{ label: 'Network', value: provider }],
+      doneAgainLabel: 'Buy again',
+      failedHint: (spentFormatted) =>
+        `Your ${spentFormatted} is being returned to this wallet. No airtime was added to ${phoneDigits}.`,
+      failedReasonLabel: `${provider} didn't complete the top-up`,
+    },
+  };
 }
 
 export default function AirtimeScreen() {
-  const router = useRouter();
   const { colors } = useTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
-  const { wallet } = useWallet();
-
-  const { networkName } = useNetwork();
-  const mainnetOnly = networkName !== 'mainnet';
-
-  const [step, setStep] = useState<Step>('form');
-  const [error, setError] = useState<string | null>(null);
+  const styles = useMemo(() => createBillFlowStyles(colors), [colors]);
 
   const [provider, setProvider] = useState<string>('MTN');
   const [providerTouched, setProviderTouched] = useState(false);
   const [phone, setPhone] = useState('');
+  const [contactError, setContactError] = useState<string | null>(null);
+
+  const phoneDigits = phone.replace(/\D/g, '');
   const [amountNGN, setAmountNGN] = useState('');
   const [coin, setCoin] = useState<NairaCoin>('usdc');
 
@@ -189,6 +202,7 @@ export default function AirtimeScreen() {
   }, [handleRecheckOrders]);
 
   const detected = detectNetwork(phone);
+
   // A detected network wins until the user overrides it. Ported numbers are why
   // the override exists at all.
   useEffect(() => {
@@ -310,13 +324,17 @@ export default function AirtimeScreen() {
     const picked = await pickContactNumber();
     if (picked.ok) {
       setPhone(picked.phone);
-      setError(null);
+      setContactError(null);
       return;
     }
     // A cancel is a decision, not a failure, and gets no message.
-    if (picked.reason !== 'cancelled') setError(picked.message);
+    if (picked.reason !== 'cancelled') setContactError(picked.message);
   }, []);
 
+  const config = useMemo(
+    () => buildAirtimeCategoryConfig({ provider, phone }),
+    [provider, phone],
+  );
   const continueFromForm = useCallback(async () => {
     // Validate before the confirm step, naming the specific problem
     const validation = await validateIdentifierBeforeConfirm('airtime', phone, { provider });
@@ -439,6 +457,24 @@ export default function AirtimeScreen() {
   }, [prepaidToken]);
 
   return (
+    <BillFlow
+      {...config}
+      fieldError={contactError}
+      onClearFieldError={() => setContactError(null)}
+    >
+      <Text style={styles.label}>NETWORK</Text>
+      <View style={styles.networkRow}>
+        {NETWORKS.map((n) => (
+          <Pressable
+            key={n}
+            onPress={() => {
+              setProvider(n);
+              setProviderTouched(true);
+            }}
+            style={[styles.networkChip, provider === n && styles.networkChipActive]}
+          >
+            <Text style={[styles.networkText, provider === n && styles.networkTextActive]}>
+              {n}
     <SafeAreaView style={styles.screen} edges={['top']}>
       <View style={styles.header}>
         <FlowHeader title="Airtime" />
@@ -807,33 +843,46 @@ export default function AirtimeScreen() {
             <Text style={styles.hint}>
               Nothing for you to do. It returns to this wallet and will show in your activity.
             </Text>
+          </Pressable>
+        ))}
+      </View>
 
-            <Pressable
-              onPress={() => {
-                setStep('form');
-                setOrderId(null);
-                setPayHash(null);
-                setError(null);
-                void loadRate();
-              }}
-              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
-            >
-              <Text style={styles.primaryText}>Try again</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => router.back()}
-              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
-            >
-              <Text style={styles.secondaryText}>Back to home</Text>
-            </Pressable>
-            {orderId ? (
-              <Text style={styles.centeredHint}>Ref {orderId.slice(0, 8).toUpperCase()}</Text>
-            ) : null}
-          </>
+      <View style={styles.field}>
+        <Text style={styles.label}>PHONE NUMBER</Text>
+        <View style={styles.phoneRow}>
+          <TextInput
+            style={styles.phoneInput}
+            value={phone}
+            onChangeText={(t) => setPhone(t.replace(/[^\d]/g, '').slice(0, 11))}
+            keyboardType="number-pad"
+            placeholder="0803 512 4471"
+            placeholderTextColor={colors.textMuted}
+          />
+          {/* Nobody remembers the number they are topping up. It is
+              almost always someone else's, which is the whole reason
+              this screen exists. */}
+          <Pressable
+            onPress={() => void chooseContact()}
+            accessibilityRole="button"
+            accessibilityLabel="Choose from contacts"
+            hitSlop={8}
+            style={({ pressed }) => [styles.contactBtn, pressed && styles.pressed]}
+          >
+            <ContactIcon size={17} color={colors.textSecondary} />
+          </Pressable>
+        </View>
+        {detected ? (
+          <Text style={styles.hint}>
+            {detected} number, detected from {phoneDigits.slice(0, 4)}
+            {providerTouched && provider !== detected ? ` — sending to ${provider}` : ''}
+          </Text>
+        ) : (
+          <Text style={styles.hint}>
+            Numbers get ported, so check the network above matches.
+          </Text>
         )}
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      </View>
+    </BillFlow>
   );
 }
 
