@@ -426,15 +426,22 @@ A STRIDE threat model covering key derivation (V132), note storage (V143), circu
 Private flows cross many parts (keys, prover, pool, sync), and each can break the others silently. One round trip that runs on its own catches that.
 
 ### What to build
-A script and CI job, manual or nightly, that creates two funded testnet wallets and runs shield → private send → unshield through Veil's privacy client, checking balances at each step.
+A browser-driven Playwright test that runs the wallet's real privacy client against the deployed Stellar Private Payments contracts on testnet. The test must submit Soroban invocations and verify on-chain state; an in-memory note map, synthetic proof hash, or plain-payment round trip is not evidence that the pool works.
+
+The published SPP SDK is browser-only and may lag the deployed contracts. Verify and pin its protocol compatibility against the deployment before asserting behavior. The test also needs a reachable bootnode. Keep the contracts testnet-only and treat them as unaudited.
+
+Start with manual dispatch only. Add a schedule only after the test has demonstrated that it can both pass and fail for the right reasons.
 
 ### Key files
-- `frontend/wallet/e2e/privacy.spec.ts` (new) or `scripts/privacy-e2e.mjs` (new)
-- `.github/workflows/`
+- `frontend/wallet/e2e/privacy.spec.ts` (browser-driven; future PR)
+- `frontend/wallet/lib/privacy/client.ts`
+- `.github/workflows/` (manual dispatch first)
 
 ### Acceptance criteria
-- [ ] The round trip passes on testnet and fails with a clear step name when it breaks
-- [ ] Uses Friendbot only; no secrets in the repo
+- [ ] Browser tests exercise deployed SPP contract invocations and on-chain state, not an in-memory simulation or plain payments
+- [ ] SDK protocol compatibility is checked against the pinned contract deployment
+- [ ] The test reports clear per-step failures, uses Friendbot only, and retries Horizon reads for ledger lag without storing secrets
+- [ ] The workflow starts as `workflow_dispatch` only; scheduling is added only after verified pass/fail behavior
 
 > **Drips Wave** · Complexity: **Intermediate** · **150 points**
 
