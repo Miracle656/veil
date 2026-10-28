@@ -72,8 +72,16 @@ describe('passkeyFailureMessage', () => {
     expect(msg).not.toMatch(/denied permission/i)
   })
 
-  it('points an iOS Chrome user at Safari', () => {
-    expect(passkeyFailureMessage(notAllowed(), CHROME_IOS, 5)).toMatch(/needs Safari/)
+  it('never tells an iOS user to switch to Safari', () => {
+    // A reported failure went the other way: Safari refused the ceremony and
+    // Chrome completed it on the same phone minutes later. Naming Safari would
+    // send that person back to the browser that had just failed them.
+    for (const ua of [SAFARI_IOS, CHROME_IOS]) {
+      const msg = passkeyFailureMessage(notAllowed(), ua, 5)
+      expect(msg).not.toMatch(/needs Safari/)
+      expect(msg).toMatch(/Try again/)
+    }
+    expect(passkeyFailureMessage(notAllowed(), CHROME_IOS, 5)).toMatch(/another browser/)
   })
 
   it('assumes a dismissed prompt everywhere else, and says to retry', () => {

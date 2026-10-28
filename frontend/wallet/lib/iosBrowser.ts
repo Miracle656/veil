@@ -100,8 +100,12 @@ export function passkeyFailureMessage(
   if (isIOSInAppBrowser(userAgent, maxTouchPoints)) {
     return 'This page is open inside another app’s browser, which cannot create a passkey. Tap the … menu and choose Open in Safari, then try again.'
   }
-  if (isNonSafariIOS(userAgent, maxTouchPoints)) {
-    return 'Creating a passkey on iOS needs Safari. Open app.useveilapp.xyz in Safari and try again.'
+  // Deliberately NOT "use Safari". A reported failure went the other way:
+  // Safari refused the ceremony and Chrome completed it on the same phone,
+  // minutes apart. Naming a browser here would have sent that person back to
+  // the one that had just failed them.
+  if (isIOS(userAgent, maxTouchPoints)) {
+    return 'Your browser refused the passkey prompt. Try again — and if it keeps refusing, try another browser such as Chrome.'
   }
   return 'The passkey prompt was dismissed or blocked. Try again, and approve the prompt when your device asks.'
 }

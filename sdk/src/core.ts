@@ -681,9 +681,27 @@ function resolveStorage(storage?: StorageAdapter): StorageAdapter {
     return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 }
 
-/** Read and parse the persisted portable-signer record, or null if none/invalid. */
-async function readPortableSigner(store: StorageAdapter): Promise<PortableSigner | null> {
-    const raw = await store.getItem(PORTABLE_SIGNER_KEY);
+/**
+ * True when a storage call actually handed back a promise.
+ *
+ * `StorageAdapter` permits either, and the difference is load-bearing in
+ * exactly one place: the path from a click to `navigator.credentials.create()`.
+ * Safari will not carry transient user activation across awaits that a
+ * localStorage-backed store never needed, and refuses the ceremony with
+ * `NotAllowedError` — the same error it raises when somebody dismisses the
+ * prompt, which is why this cost a day to find. Chromium is more forgiving,
+ * so the symptom was "Safari fails, Chrome works".
+ *
+ * The helpers below therefore stay synchronous when the store is synchronous,
+ * and only return a promise when they genuinely have to. An async store
+ * (AsyncStorage on React Native) behaves exactly as before; mobile does not
+ * run this ceremony in a browser, so the gesture rule does not apply there.
+ */
+function isThenable<T>(value: unknown): value is PromiseLike<T> {
+    return typeof (value as PromiseLike<T> | null | undefined)?.then === 'function';
+}
+
+function parsePortableSigner(raw: string | null): PortableSigner | null {
     if (!raw) return null;
     try {
         const parsed = JSON.parse(raw) as PortableSigner;
@@ -696,18 +714,33 @@ async function readPortableSigner(store: StorageAdapter): Promise<PortableSigner
     }
 }
 
+/** Read and parse the persisted portable-signer record, or null if none/invalid. */
+function readPortableSigner(
+    store: StorageAdapter
+): PortableSigner | null | Promise<PortableSigner | null> {
+    const raw = store.getItem(PORTABLE_SIGNER_KEY);
+    return isThenable<string | null>(raw)
+        ? raw.then(parsePortableSigner)
+        : parsePortableSigner(raw);
+}
+
 /**
  * Resolve this wallet's WebAuthn user.id, generating and persisting a random
  * one on first use. Kept independent of any caller-supplied display name so
  * two different people who happen to choose the same username never collide
  * on the same authenticator.
  */
-async function resolveUserId(store: StorageAdapter): Promise<Uint8Array> {
-    const existing = await store.getItem(USER_ID_KEY);
-    if (existing) return hexToUint8Array(existing);
-    const fresh = crypto.getRandomValues(new Uint8Array(16));
-    await store.setItem(USER_ID_KEY, bufferToHex(fresh));
-    return fresh;
+function resolveUserId(store: StorageAdapter): Uint8Array | Promise<Uint8Array> {
+    const mint = (): Uint8Array | Promise<Uint8Array> => {
+        const fresh = crypto.getRandomValues(new Uint8Array(16));
+        const written = store.setItem(USER_ID_KEY, bufferToHex(fresh));
+        return isThenable<void>(written) ? written.then(() => fresh) : fresh;
+    };
+    const existing = store.getItem(USER_ID_KEY);
+    if (isThenable<string | null>(existing)) {
+        return existing.then((value) => (value ? hexToUint8Array(value) : mint()));
+    }
+    return existing ? hexToUint8Array(existing) : mint();
 }
 
 /**
@@ -716,15 +749,29 @@ async function resolveUserId(store: StorageAdapter): Promise<Uint8Array> {
  * an authenticator that already holds one of them refuses the request rather
  * than silently replacing the existing resident credential.
  */
-async function collectKnownCredentials(
-    store: StorageAdapter
-): Promise<{ id: string; transports?: string[] }[]> {
+type KnownCredential = { id: string; transports?: string[] };
+
+function buildKnownCredentials(
+    keyId: string | null,
+    portable: PortableSigner | null,
+): KnownCredential[] {
     const known = new Map<string, string[] | undefined>();
-    const keyId = await store.getItem('invisible_wallet_key_id');
     if (keyId) known.set(keyId, undefined);
-    const portable = await readPortableSigner(store);
     if (portable) known.set(portable.credentialId, portable.transports);
     return Array.from(known, ([id, transports]) => ({ id, transports }));
+}
+
+function collectKnownCredentials(
+    store: StorageAdapter
+): KnownCredential[] | Promise<KnownCredential[]> {
+    const keyId = store.getItem('invisible_wallet_key_id');
+    const portable = readPortableSigner(store);
+    if (isThenable(keyId) || isThenable(portable)) {
+        return Promise.all([keyId, portable]).then(([k, p]) =>
+            buildKnownCredentials(k ?? null, p ?? null),
+        );
+    }
+    return buildKnownCredentials(keyId as string | null, portable as PortableSigner | null);
 }
 
 // ── Core ──────────────────────────────────────────────────────────────────────
@@ -889,13 +936,24 @@ export class InvisibleWalletCore {
             const challenge = crypto.getRandomValues(new Uint8Array(32));
             const normalizedUsername = username ? username.normalize('NFC') : undefined;
             const name   = normalizedUsername || 'Veil User';
-            const userId = await resolveUserId(store);
+            // Both of these stay synchronous on a localStorage-backed store, and
+            // are only awaited when the adapter genuinely returned a promise.
+            // An unconditional `await` here — even on an already-resolved value
+            // — is enough for Safari to drop the user activation and refuse the
+            // ceremony below. See isThenable.
+            const pendingUserId = resolveUserId(store);
+            const userId = isThenable<Uint8Array>(pendingUserId)
+                ? await pendingUserId
+                : pendingUserId;
 
             const resolvedRpId = this.resolveRpId();
 
             // Guard against an authenticator silently replacing an existing
             // resident credential for this wallet (matching rp.id + user.id).
-            const excludeCredentials = await collectKnownCredentials(store);
+            const pendingKnown = collectKnownCredentials(store);
+            const excludeCredentials = isThenable<KnownCredential[]>(pendingKnown)
+                ? await pendingKnown
+                : pendingKnown;
 
             const { credentialId, publicKeyBytes, attestationObject, clientDataJSON, authenticatorAttachment, transports } = await webAuthnProvider.create({
                 challenge,
