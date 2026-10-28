@@ -1,5 +1,5 @@
 /**
- * Buy XLM or USDC with naira.
+ * Buy XLM with naira.
  *
  * Screens a1–a6 of the design, plus the expired case (f1).
  *
