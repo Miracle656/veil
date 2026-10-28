@@ -53,9 +53,10 @@ export const BILL_SERVICES: BillService[] = [
   { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
   { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'live', route: '/electricity' },
   { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
-  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'soon' },
-  // The onramp: buy XLM or USDC with naira via bank transfer. Live because the
-  // flow exists — but hidden when the backend holding the Linq key is unreachable.
+  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'not-planned' },
+  // The onramp: buy naira-priced XLM by bank transfer. Live because the flow
+  // exists — but hidden when the backend holding the Linq key is unreachable.
+  // XLM only: Linq holds no USDC liquidity, so the coin toggle offers one coin.
   { id: 'buy', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn', accent: true },
   // The offramp: USDC out to a Nigerian bank account, via Linq. Live rather
   // than 'soon' because the flow behind it exists — but the dashboard still
