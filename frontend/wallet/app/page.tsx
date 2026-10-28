@@ -10,6 +10,7 @@ import { ensureFeePayer } from '@/lib/feePayer'
 import { buildFriendbotUrl, getNetwork, walletConfig } from '@/lib/network'
 import { trackWalletCreated } from '@/lib/supabase'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { isIOSInAppBrowser, passkeyFailureMessage } from '@/lib/iosBrowser'
 // TODO(#1003): remove platform limitation warning when multi-origin contract ships
 import { WALLET_CREATION_LIMITATION_MESSAGE } from '@/lib/platformLimitation'
 
@@ -20,6 +21,9 @@ type Step = 'landing' | 'registering' | 'deploying' | 'done'
 export default function OnboardingPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>('landing')
+  // Resolved after mount: the user agent is not available during SSR, and a
+  // server-rendered guess would be wrong for every other visitor.
+  const [inAppBrowser, setInAppBrowser] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [address, setAddress] = useState<string | null>(null)
   const [showTutorial, setShowTutorial] = useState(false)
@@ -41,6 +45,13 @@ export default function OnboardingPage() {
     localStorage.setItem('veil_seen_tutorial', '1')
     setShowTutorial(false)
   }
+
+  // Warn before they tap rather than after it fails: an in-app webview
+  // cannot create a passkey at all, and finding that out from a WebAuthn
+  // error that says the user denied permission helps nobody.
+  useEffect(() => {
+    try { setInAppBrowser(isIOSInAppBrowser()) } catch { /* no navigator */ }
+  }, [])
 
   const wallet = useInvisibleWallet(walletConfig)
 
@@ -104,7 +115,11 @@ export default function OnboardingPage() {
       // Track wallet creation (fire-and-forget — never blocks the flow)
       trackWalletCreated(walletAddress, signerKeypair.publicKey())
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err))
+      // WebAuthn's own NotAllowedError text blames the user for something they
+      // did not do and names no way out. Where the environment explains it —
+      // an in-app webview that cannot create a passkey at all — say that
+      // instead; otherwise show what actually went wrong.
+      setError(passkeyFailureMessage(err) ?? (err instanceof Error ? err.message : String(err)))
       setStep('landing')
     }
 
@@ -180,6 +195,22 @@ export default function OnboardingPage() {
               >
                 {WALLET_CREATION_LIMITATION_MESSAGE}
               </div>
+              {inAppBrowser && (
+                <div
+                  role="status"
+                  style={{
+                    border: '1px solid rgba(253,218,36,0.4)',
+                    background: 'rgba(253,218,36,0.08)',
+                    borderRadius: '0.75rem',
+                    padding: '0.75rem 1rem',
+                    textAlign: 'center',
+                    marginBottom: '0.75rem',
+                  }}
+                >
+                  You&rsquo;re in another app&rsquo;s browser, which can&rsquo;t create a passkey.
+                  Tap the &hellip; menu and choose <strong>Open in Safari</strong> first.
+                </div>
+              )}
               <button id="onboarding-create" className="btn-gold" onClick={handleCreate}>
                 Create wallet
               </button>

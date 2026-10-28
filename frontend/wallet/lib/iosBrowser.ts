@@ -37,3 +37,71 @@ export function isNonSafariIOS(
 ): boolean {
   return isIOS(userAgent, maxTouchPoints) && /CriOS|FxiOS|EdgiOS|OPiOS|GSA/.test(userAgent)
 }
+
+/**
+ * Whether this looks like an app's embedded browser rather than a real one.
+ *
+ * On iOS a passkey cannot be created inside most in-app webviews: the host app
+ * has to opt into the platform authenticator, and almost none do. The attempt
+ * fails with WebAuthn's `NotAllowedError`, whose own wording — "not allowed by
+ * the user agent or the platform in the current context, possibly because the
+ * user denied permission" — blames the user for something they did not do and
+ * names no way out.
+ *
+ * Two signals, neither trusted alone:
+ *
+ * 1. A vendor's own marker, where there is one. These are reliable but only
+ *    cover the apps that bother to set one.
+ * 2. The absence of `Version/<n>`. Mobile Safari always sends it; a WKWebView
+ *    hosted by another app does not. This catches the ones with no marker —
+ *    Telegram among them, which matters because that is where most people
+ *    arrive from.
+ *
+ * Like `isNonSafariIOS`, this decides a sentence and never a capability.
+ * Registration is still attempted and its real outcome is what the page
+ * reports; a false positive costs a slightly wrong hint, never a blocked
+ * signup.
+ */
+export function isIOSInAppBrowser(
+  userAgent: string = navigator.userAgent,
+  maxTouchPoints = navigator.maxTouchPoints,
+): boolean {
+  if (!isIOS(userAgent, maxTouchPoints)) return false
+  // A real third-party browser is a different problem with a different answer.
+  if (isNonSafariIOS(userAgent, maxTouchPoints)) return false
+  if (/FBAN|FBAV|Instagram|LinkedInApp|Line\/|MicroMessenger|Snapchat|Twitter|musical_ly|TikTok|WhatsApp|Telegram/i.test(userAgent)) {
+    return true
+  }
+  return !/Version\/\d/.test(userAgent)
+}
+
+/**
+ * What to tell somebody whose passkey registration failed.
+ *
+ * `NotAllowedError` is raised both when the platform refuses outright and when
+ * the person dismisses the Face ID sheet, and the browser gives no way to tell
+ * those apart. So the environment decides the wording: inside an app's browser
+ * the overwhelmingly likely cause is the webview, and the answer is to open the
+ * page properly. Anywhere else, assume they cancelled and let them retry.
+ *
+ * Returns null when the error is not one this can improve on, so the caller
+ * shows the original rather than guessing.
+ */
+export function passkeyFailureMessage(
+  error: unknown,
+  userAgent: string = navigator.userAgent,
+  maxTouchPoints = navigator.maxTouchPoints,
+): string | null {
+  const name = (error as { name?: string } | null)?.name
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  const notAllowed = name === 'NotAllowedError' || /not allowed by the user agent/i.test(message)
+  if (!notAllowed) return null
+
+  if (isIOSInAppBrowser(userAgent, maxTouchPoints)) {
+    return 'This page is open inside another app’s browser, which cannot create a passkey. Tap the … menu and choose Open in Safari, then try again.'
+  }
+  if (isNonSafariIOS(userAgent, maxTouchPoints)) {
+    return 'Creating a passkey on iOS needs Safari. Open app.useveilapp.xyz in Safari and try again.'
+  }
+  return 'The passkey prompt was dismissed or blocked. Try again, and approve the prompt when your device asks.'
+}
