@@ -47,6 +47,7 @@ import {
   type AgentMessage,
   type ProposalReview,
   type ProposalStatus,
+  type SwapDepositPlanIntent,
 } from '../../lib/agentMessages';
 import { useNetwork } from '../../hooks/useNetwork';
 import { threadBottomInset } from '../../lib/agentComposer';
@@ -55,6 +56,8 @@ import { setCashOutHandoff } from '../../lib/cashOutHandoff';
 import { signPayloadWithPasskey } from '../../lib/passkey';
 import { isPasskeyCancellation } from '../../lib/passkeyOutcome';
 import { getPasskeyId, getSignerSecret, getWalletAddress } from '../../lib/walletStore';
+import { getAssetIssuer } from '../../lib/assets';
+import { loadHoldings } from '../../lib/holdings';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
@@ -154,6 +157,23 @@ export default function AgentScreen() {
 
   const handleReply = useCallback(
     (reply: AgentReply) => {
+      if (reply.planIntent) {
+        if (reply.planIntent.usdcIssuer !== getAssetIssuer('USDC', network.name)) {
+          appendMessage({
+            id: nextMessageId('error'),
+            kind: 'error',
+            text: 'The plan’s USDC issuer does not match the active network’s verified asset registry.',
+          });
+          return;
+        }
+        appendMessage({
+          id: nextMessageId('plan'),
+          kind: 'plan',
+          text: reply.response,
+          intent: reply.planIntent,
+        });
+        return;
+      }
       if (reply.swapIntent) {
         appendMessage({
           id: nextMessageId('swap'),
@@ -211,7 +231,7 @@ export default function AgentScreen() {
         status: { state: 'awaiting' },
       });
     },
-    [appendMessage, network.networkPassphrase]
+    [appendMessage, network.name, network.networkPassphrase]
   );
 
   // One HTTPS request per message to the agent route (lib/agentClient.ts). The
@@ -558,6 +578,16 @@ function MessageRow({
         </View>
       );
 
+    case 'plan':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <SwapDepositPlanHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
+
     case 'invest':
       return (
         <View style={styles.row}>
@@ -625,6 +655,70 @@ label="Open Earn Section"
             },
           });
         }}
+      />
+    </View>
+  );
+}
+
+/** Show the complete plan before the first screen asks for a passkey. */
+function SwapDepositPlanHandoff({ intent }: { intent: SwapDepositPlanIntent }) {
+  const router = useRouter();
+  const { network } = useNetwork();
+  const { colors } = useTheme();
+  const [preparing, setPreparing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function startPlan() {
+    if (preparing) return;
+    if (intent.usdcIssuer !== getAssetIssuer('USDC', network.name)) {
+      setError('The USDC issuer does not match the verified issuer on this network.');
+      return;
+    }
+    setPreparing(true);
+    setError(null);
+    try {
+      const walletAddress = await getWalletAddress();
+      if (!walletAddress) throw new Error('Unlock your wallet before starting this plan.');
+      const holdings = await loadHoldings(walletAddress);
+      const before = holdings.find(
+        (holding) => holding.code === 'USDC' && holding.issuer === intent.usdcIssuer,
+      );
+      router.push({
+        pathname: '/swap',
+        params: {
+          from: intent.from,
+          to: intent.to,
+          amount: intent.amount,
+          plan: 'blend-deposit',
+          planIssuer: intent.usdcIssuer,
+          planBefore: before?.balance ?? '0',
+        },
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not prepare the plan.');
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  return (
+    <View style={{ marginTop: 10, gap: 8 }}>
+      <Card style={{ padding: 12, gap: 6 }}>
+        <Text style={{ color: colors.textStrong, fontWeight: '700' }}>Plan review · 2 steps</Text>
+        <Text style={{ color: colors.textPrimary }}>
+          1. Swap {intent.amount} {intent.from} to USDC ({intent.usdcIssuer}).
+        </Text>
+        <Text style={{ color: colors.textPrimary }}>
+          2. Deposit only the USDC actually received from step 1 into Blend.
+        </Text>
+        <Text style={{ color: colors.textSecondary }}>
+          The swap and deposit each open their existing review screen and require a separate passkey approval. Fees are shown by those screens before each approval.
+        </Text>
+      </Card>
+      {error ? <Text style={{ color: colors.danger }}>{error}</Text> : null}
+      <Button
+        label={preparing ? 'Preparing…' : 'Review plan and start step 1'}
+        onPress={() => void startPlan()}
       />
     </View>
   );
