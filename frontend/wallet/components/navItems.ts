@@ -14,6 +14,7 @@ import {
   ArrowUpDown,
   BanknoteArrowDown,
   BanknoteArrowUp,
+  AtSign,
   Bot,
   CircleDollarSign,
   CreditCard,
@@ -51,6 +52,7 @@ export const NAV_MAIN: NavItem[] = [
   { href: '/bills',     label: 'Bills & airtime', Icon: CreditCard        },
   { href: '/dapps',     label: 'dApps',           Icon: LayoutGrid        },
   { href: '/agent',     label: 'Agent',           Icon: Bot               },
+  { href: '/names',     label: 'Names',           Icon: AtSign            },
 ]
 
 export const NAV_FOOT: NavItem[] = [
