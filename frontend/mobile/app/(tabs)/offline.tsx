@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { AppState, type AppStatus, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
-import { listUnconfirmed, type UnconfirmedAction } from '../lib/unconfirmed';
+import { AppState, type AppStateStatus, Pressable, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import { listUnconfirmed, type UnconfirmedAction } from '../../lib/unconfirmed';
 
 /**
  * The offline screen is a considered state at the app level. It
@@ -9,7 +9,7 @@ import { listUnconfirmed, type UnconfirmedAction } from '../lib/unconfirmed';
  * reconnect.
  */
 export default function OfflineScreen() {
-  const [appState, setAppState] = useState<AppStatus>(AppState.currentState);
+  const [appState, setAppState] = useState<AppStateStatus>(AppState.currentState);
   const [unconfirmed, setUnconfirmed] = useState<UnconfirmedAction[]>([]);
 
   useEffect(() => {
@@ -19,7 +19,7 @@ export default function OfflineScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    void listUnconfirmed().then(items => {
+    void listUnconfirmed().then((items: UnconfirmedAction[]) => {
       if (!cancelled) setUnconfirmed(items);
     });
     return () => {
@@ -27,7 +27,8 @@ export default function OfflineScreen() {
     };
   }, []);
 
-  const isOffline = appState !== AppState.active;
+  const isOffline = appState !== 'active';
+  const hasUnconfirmed = unconfirmed.length > 0;
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -35,11 +36,11 @@ export default function OfflineScreen() {
         <Text style={styles.eyebrow}>Offline</Text>
         <Text style={styles.lede}>
           {isOffline
-            ? 'You are offline. New payments are paused until you reconnect.'
+            ? 'You are offline. New payments are paused until you reconnect. Any payment already in progress will be confirmed or resolved automatically when you are back online.'
             : 'You are back online.'}
         </Text>
 
-        {unconfirmed.length > 0 ? (
+        {hasUnconfirmed ? (
           <View style={styles.warning}>
             <Text style={styles.warningTitle}>Unconfirmed actions</Text>
             <Text style={styles.warningBody}>
