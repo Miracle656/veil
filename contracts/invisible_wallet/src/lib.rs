@@ -141,6 +141,29 @@ impl InvisibleWallet {
         Ok(())
     }
 
+    /// Upgrade the wallet's contract WASM to `new_wasm_hash`.
+    ///
+    /// Authorised ONLY through the wallet's own signer set: `require_auth` on
+    /// the contract's own address routes through `__check_auth`, so only a
+    /// registered signer's WebAuthn assertion (or a session key that is
+    /// explicitly permitted, see below) can authorise an upgrade. Operator keys,
+    /// guardians and the factory admin have no path to this entry point.
+    ///
+    /// Session keys: an upgrade replaces the entire contract, including the
+    /// authorisation logic that session keys and spend limits depend on. A
+    /// limited-scope session key therefore must never be able to upgrade the
+    /// wallet. This function does not accept session-key credentials; the
+    /// session-key ACL path in `__check_auth` rejects any call whose target is
+    /// the wallet itself, which is enforced in the ACL branch.
+    ///
+    /// Note: this affects new wallets only. Deployed wallets have no upgrade
+    /// entry point and cannot be changed.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), WalletError> {
+        env.current_contract_address().require_auth();
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
     /// Add a new signer key to the wallet. Requires authorization from the
     /// contract itself (i.e. an existing signer must authorize via `__check_auth`).
     /// Returns the index assigned to the new signer.
