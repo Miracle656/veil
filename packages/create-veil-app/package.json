@@ -10,8 +10,8 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc && chmod +x dist/index.js",
-    "dev": "tsx src/index.ts",
+    "build": "node init && tsc && chmod +x dist/index.js",
+    "dev": "node init && tsx src/index.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

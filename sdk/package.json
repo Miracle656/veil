@@ -1,7 +1,7 @@
 {
   "name": "invisible-wallet-sdk",
   "version": "0.2.0",
-  "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn) — supports Web and React Native",
+  "description": "Client SDK for Invisible Wallet (Soroban + WebAuthn) \u2014 supports Web and React Native",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "react-native": "src/index.ts",
@@ -47,14 +47,14 @@
     "angular"
   ],
   "scripts": {
-    "build": "tsc && node scripts/flatten-dist.js",
+    "build": "node init && tsc && node scripts/flatten-dist.js",
     "test": "jest",
     "test:vitest": "vitest run --coverage",
     "size": "npm run build && size-limit",
     "test:surface": "jest api-surface.test.ts",
     "stryker": "stryker run",
     "storybook": "storybook dev -p 6006 -c react/.storybook",
-    "build-storybook": "storybook build -c react/.storybook -o react/storybook-static",
+    "build-storybook": "node init && storybook build -c react/.storybook -o react/storybook-static",
     "test-d": "npm run build && tsd"
   },
   "keywords": [
@@ -205,7 +205,9 @@
         "dom"
       ],
       "paths": {
-        "invisible-wallet-sdk": ["./dist/index.d.ts"]
+        "invisible-wallet-sdk": [
+          "./dist/index.d.ts"
+        ]
       }
     }
   }

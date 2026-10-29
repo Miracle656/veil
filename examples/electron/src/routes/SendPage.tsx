@@ -4,6 +4,7 @@ import { appConfig } from '../lib/config'
 import { useElectronWallet } from '../lib/wallet'
 import { deriveFeePayerKeypair, requirePasskeyAssertion } from '../lib/webauthn'
 import { readCredentialId, readSignerSecret, readWalletAddress } from '../lib/storage'
+import { useMidActionDisconnect } from '../../../../src/hooks/useMidActionDisconnect'
 
 const HorizonServer = Horizon.Server
 
@@ -329,9 +330,7 @@ export function SendPage() {
       // land; do not claim failure.
       setUnconfirmed({ kind: 'soroban', hash })
     } catch (err) {
-      if (isNetworkError(err)) {
-        // The ceremony completed and the network dropped
-      }
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }

@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist/veil-button.js",
   "scripts": {
-    "build": "esbuild src/veil-button.ts --bundle --format=esm --platform=browser --target=es2020 --minify --outfile=dist/veil-button.js",
+    "build": "node init && esbuild src/veil-button.ts --bundle --format=esm --platform=browser --target=es2020 --minify --outfile=dist/veil-button.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
