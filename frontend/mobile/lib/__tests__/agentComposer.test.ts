@@ -4,7 +4,11 @@
  * pins the screen to actually using them.
  */
 
-import { THREAD_BOTTOM_GAP, threadBottomInset } from '../agentComposer';
+import {
+  THREAD_BOTTOM_GAP,
+  UNMEASURED_COMPOSER_CLEARANCE,
+  threadBottomInset,
+} from '../agentComposer';
 
 it('with the keyboard closed, reserves the composer and the standing gap', () => {
   // A one-line composer on a small phone.
@@ -27,9 +31,28 @@ it('follows the composer as text size grows — largest dynamic type', () => {
   );
 });
 
-it('never clears less than the standing gap, whatever it is measured', () => {
-  // Before the first onLayout the height is 0; a stray negative measurement
-  // must not subtract from the gap.
-  expect(threadBottomInset({ composerHeight: 0 })).toBe(THREAD_BOTTOM_GAP);
-  expect(threadBottomInset({ composerHeight: -50, keyboardLift: -10 })).toBe(THREAD_BOTTOM_GAP);
+it('reserves an estimate before the composer has been measured', () => {
+  // This case used to return the gap alone, reading 0 as "nothing to clear"
+  // rather than "not measured yet" — so until onLayout first fired, the last
+  // message was drawn underneath the composer. A reported bug: the answer had
+  // the chips and the input field showing through it.
+  expect(threadBottomInset({ composerHeight: 0 })).toBe(
+    THREAD_BOTTOM_GAP + UNMEASURED_COMPOSER_CLEARANCE
+  );
+  // A stray negative measurement is no more "measured" than 0 is, and must
+  // never subtract from the gap.
+  expect(threadBottomInset({ composerHeight: -50, keyboardLift: -10 })).toBe(
+    THREAD_BOTTOM_GAP + UNMEASURED_COMPOSER_CLEARANCE
+  );
+  expect(threadBottomInset({ composerHeight: Number.NaN })).toBe(
+    THREAD_BOTTOM_GAP + UNMEASURED_COMPOSER_CLEARANCE
+  );
+});
+
+it('a real measurement always wins, including a small one', () => {
+  // The estimate must not become a floor: 122 is a one-line composer on a
+  // small phone and reserving 140 there would waste 18dp of thread forever.
+  expect(threadBottomInset({ composerHeight: 122 })).toBeLessThan(
+    THREAD_BOTTOM_GAP + UNMEASURED_COMPOSER_CLEARANCE
+  );
 });
