@@ -1432,6 +1432,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-tokens"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68e41ef20c8d4f3c0b21b83a15c8e4c7e99462af020fc0f0dcd1d548a07812ea"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "stellar-xdr"
 version = "22.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1549,6 +1558,14 @@ name = "vault"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+]
+
+[[package]]
+name = "veil-names"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+ "stellar-tokens",
 ]
 
 [[package]]
