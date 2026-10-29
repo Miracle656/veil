@@ -515,6 +515,7 @@ export default function AirtimeScreen() {
               <Text style={styles.label}>PHONE NUMBER</Text>
               <View style={styles.phoneRow}>
                 <TextInput
+                  testID="airtime-phone-input"
                   style={styles.phoneInput}
                   value={phone}
                   onChangeText={(t) => setPhone(t.replace(/[^\d]/g, '').slice(0, 11))}
@@ -551,6 +552,7 @@ export default function AirtimeScreen() {
             <View style={styles.amountRow}>
               <Text style={styles.currency}>₦</Text>
               <TextInput
+                testID="airtime-amount-input"
                 style={styles.amountInput}
                 value={amountNGN}
                 onChangeText={(t) => setAmountNGN(t.replace(/[^\d]/g, ''))}
@@ -600,6 +602,7 @@ export default function AirtimeScreen() {
             </View>
 
             <Pressable
+              testID="airtime-continue-btn"
               onPress={() => void continueFromForm()}
               disabled={!phone.trim() || ngn <= 0 || rateState !== 'ready'}
               style={({ pressed }) => [
@@ -671,7 +674,11 @@ export default function AirtimeScreen() {
               </Text>
             </View>
 
-            <SlideToConfirm label="Slide to pay" onConfirm={() => void pay()} />
+            <SlideToConfirm
+              testID="slide-to-confirm-btn"
+              label="Slide to pay"
+              onConfirm={() => void pay()}
+            />
             <Text style={styles.centeredHint}>Then confirm with your passkey</Text>
 
             <Pressable onPress={() => setStep('form')}>
@@ -713,7 +720,7 @@ export default function AirtimeScreen() {
 
             <View style={styles.waitRow}>
               <ActivityIndicator color={colors.accent} />
-              <Text style={styles.hint}>
+              <Text style={styles.hint} testID="airtime-wait-text">
                 {waitingForPasskey ? 'Waiting for your passkey…' : 'Waiting for the top-up…'}
               </Text>
             </View>
@@ -723,7 +730,7 @@ export default function AirtimeScreen() {
         {/* ── b4 · done ─────────────────────────────────────────────────── */}
         {!mainnetOnly && step === 'done' && (
           <>
-            <View style={styles.card}>
+            <View style={styles.card} testID="airtime-done-screen">
               <Text style={styles.question}>Airtime sent</Text>
               <Text style={styles.hint}>
                 {naira(ngn)} is on {phoneDigits}. It usually shows on the phone within a minute.
@@ -798,7 +805,7 @@ export default function AirtimeScreen() {
         {/* ── b5 · failed, refunding ────────────────────────────────────── */}
         {!mainnetOnly && step === 'failed' && (
           <>
-            <View style={styles.card}>
+            <View style={styles.card} testID="airtime-failed-screen">
               <Text style={styles.question}>Payment failed</Text>
               <Text style={styles.hint}>
                 Your {(spent ?? cost).toFixed(coin === 'xlm' ? 4 : 2)} {code} is being returned to
@@ -850,7 +857,7 @@ export default function AirtimeScreen() {
         {/* ── b6 · unconfirmed (bounded wait ended or consecutive poll errors) */}
         {!mainnetOnly && step === 'unconfirmed' && (
           <>
-            <View style={styles.card}>
+            <View style={styles.card} testID="airtime-unconfirmed-screen">
               <Text style={styles.question}>
                 {unconfirmedReason === 'error'
                   ? "Couldn't confirm status"
@@ -906,6 +913,7 @@ export default function AirtimeScreen() {
             </View>
 
             <Pressable
+              testID="airtime-check-again-btn"
               disabled={isRechecking}
               onPress={() => {
                 if (!pollerRef.current || isRechecking) return;
