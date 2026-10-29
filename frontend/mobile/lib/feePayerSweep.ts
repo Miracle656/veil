@@ -19,6 +19,7 @@
 import { Asset, Horizon, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 
 import { planFeePayerRecovery, type RecoveryPlan } from './feePayerRecovery';
+import { readBreadcrumbs } from './walletBreadcrumbs';
 
 export type AccountSnapshot = {
   /** XLM balance, or null when the account does not exist on the network. */
@@ -141,3 +142,34 @@ export async function submitSweep(
 }
 
 export const MAINNET_PASSPHRASE = Networks.PUBLIC;
+
+/**
+ * The real bindings.
+ *
+ * `walletSigner` is passed in rather than read back from the contract: at the
+ * point this runs, the signer that just authenticated is already in hand, and
+ * it is the same key the proof compares against. Re-reading it would be a
+ * simulation round trip for an answer we were holding.
+ */
+export function defaultSweepDeps(
+  walletSigner: Uint8Array | null,
+  net: { horizonUrl: string; networkPassphrase: string },
+  fee: string,
+): SweepDeps {
+  const server = new Horizon.Server(net.horizonUrl);
+  return {
+    loadAccount: async (address) => {
+      try {
+        const account = await server.loadAccount(address);
+        return snapshotFromHorizon(account as unknown as Parameters<typeof snapshotFromHorizon>[0]);
+      } catch {
+        // Horizon answers 404 for an account that has never been funded, which
+        // is the ordinary case here, not an error worth surfacing.
+        return null;
+      }
+    },
+    readCrumbSigner: async (address) => (await readBreadcrumbs(address))?.publicKeyBytes ?? null,
+    readWalletSigner: async () => walletSigner,
+    sendXlm: (fromSecret, to, amount) => submitSweep(fromSecret, to, amount, net, fee),
+  };
+}
