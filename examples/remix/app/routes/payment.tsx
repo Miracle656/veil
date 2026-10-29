@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ActionFunctionArgs } from '@remix-run/node'
 import { Link, useFetcher } from '@remix-run/react'
+import { registerPushToken, revokePushToken } from '~/lib/notifications'
 import {
   Keypair,
   Contract,
@@ -25,7 +26,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const xdr = String(form.get('xdr') || '')
   if (!xdr) return { error: 'Missing signed transaction.' }
 
-  const net = resolveNetwork(getPublicEnv())
+  const net = resolveNetwork(resolveNetwork(getPublicEnv()))
   try {
     const server = new SorobanRpc.Server(net.rpcUrl)
     const tx = TransactionBuilder.fromXDR(xdr, net.networkPassphrase)
@@ -61,6 +62,9 @@ export default function Payment() {
   const [amount, setAmount] = useState('')
   const [signing, setSigning] = useState(false)
   const [clientError, setClientError] = useState<string | null>(null)
+  const [notifyEnabled, setNotifyEnabled] = useState(false)
+  const [notifyAmount, setNotifyAmount] = useState(false)
+  const [notifyStatus, setNotifyStatus] = useState<string | null>(null)
 
   const submitting = signing || fetcher.state !== 'idle'
   const result = fetcher.data
@@ -133,6 +137,25 @@ export default function Payment() {
     }
   }
 
+  // Consent-gated push registration. The token is stored per wallet; the
+  // notification body never includes the amount unless the user opts in.
+  async function handleToggleNotify() {
+    setNotifyStatus(null)
+    try {
+      if (notifyEnabled) {
+        await revokePushToken()
+        setNotifyEnabled(false)
+        setNotifyStatus('Notifications off. Token revoked.')
+      } else {
+        await registerPushToken({ revealAmount: notifyAmount })
+        setNotifyEnabled(true)
+        setNotifyStatus('Notifications on.')
+      }
+    } catch (err) {
+      setNotifyStatus(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   const canSubmit =
     isValidAddress(recipient) && !isNaN(parseFloat(amount)) && parseFloat(amount) > 0
 
@@ -178,6 +201,27 @@ export default function Payment() {
         {(clientError || result?.error) && (
           <p className="alert error">{clientError || result?.error}</p>
         )}
+
+        <div className="stack" style={{ borderTop: '1px solid #eee', paddingTop: '0.75rem' }}>
+          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={notifyEnabled}
+              onChange={handleToggleNotify}
+            />
+            Notify me when money arrives
+          </label>
+          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={notifyAmount}
+              disabled={!notifyEnabled}
+              onChange={(e) => setNotifyAmount(e.target.checked)}
+            />
+            Include amount in notification (off by default)
+          </label>
+          {notifyStatus && <p className="muted">{notifyStatus}</p>}
+        </div>
 
         {result?.hash && (
           <div className="alert success stack">
