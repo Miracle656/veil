@@ -5,6 +5,7 @@ members = [
     "mock-wallet",
     "multisig-wallet",
     "vault",
+    "veil-names",
 ]
 resolver = "2"
 
