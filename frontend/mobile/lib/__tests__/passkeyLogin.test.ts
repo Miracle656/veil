@@ -31,6 +31,11 @@ jest.mock('../passkey', () => ({
 jest.mock('../walletStore', () => ({
   getSignerSecret: jest.fn(async () => null),
   getWalletAddress: jest.fn(async () => null),
+  // Read by the stranded-fee-payer recovery. Null here means there is no
+  // credential id to derive a legacy account from, so the sweep declines
+  // without touching the network — which is what these cases want.
+  getPasskeyId: jest.fn(async () => null),
+  getPasskeyPublicKey: jest.fn(async () => null),
   setPasskeyCredential: (...a: unknown[]) => mockSetPasskeyCredential(...a),
   setPasskeyId: jest.fn(async () => undefined),
   setSignerSecret: (...a: unknown[]) => mockSetSignerSecret(...a),
@@ -128,7 +133,13 @@ describe('loginWithAddress — acceptance criteria', () => {
 
     const result = await loginWithAddress(WALLET);
 
-    expect(result).toEqual({ address: WALLET, recoverable: false });
+    // The sweep runs on every sign-in and reports what it did; with no
+    // credential id stored there is no legacy account to look at.
+    expect(result).toEqual({
+      address: WALLET,
+      recoverable: false,
+      feePayerSweep: { swept: false, reason: 'no-legacy-candidate' },
+    });
     expect(mockSetWalletAddress).toHaveBeenCalledWith(WALLET);
     expect(mockSetPasskeyCredential).toHaveBeenCalledWith('test-credential', signerOf(REGISTERED).publicKey);
     const secret = mockSetSignerSecret.mock.calls[0][0];
