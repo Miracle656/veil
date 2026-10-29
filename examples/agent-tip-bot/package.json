@@ -2,11 +2,11 @@
   "name": "veil-agent-tip-bot",
   "version": "0.1.0",
   "private": true,
-  "description": "AI tipping agent — scores creator posts and tips above a threshold using @veil/agent and a session key",
+  "description": "AI tipping agent \u2014 scores creator posts and tips above a threshold using @veil/agent and a session key",
   "type": "module",
   "scripts": {
-    "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts"
+    "start": "node init && tsx src/index.ts",
+    "dev": "node init && tsx watch src/index.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.81.0",
