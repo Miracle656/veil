@@ -272,6 +272,72 @@ function isAccountNotFound(err: unknown): boolean {
   return status === 404 || (err instanceof Error && err.name === 'NotFoundError');
 }
 
+
+/**
+ * Flags the ISSUER sets, which travel with the asset rather than the holder,
+ * so they read the same for everyone who holds it.
+ */
+export interface HorizonIssuerFlags {
+  auth_required?: boolean;
+  auth_revocable?: boolean;
+  auth_clawback_enabled?: boolean;
+  auth_immutable?: boolean;
+}
+
+/**
+ * What the issuer can do to a balance of this asset, in a sentence, or null
+ * when it can do neither.
+ *
+ * Shares its wording with the web wallet so the two cannot drift into saying
+ * different things about the same asset. It matters most for USDT0, whose
+ * issuer has both flags set: the only place mobile used to say so was a line
+ * inside the "enable USDT0" banner, which a holder never sees again after they
+ * tap it once. This is the asset behaving as designed, not Veil holding
+ * anything back.
+ */
+export function getAssetControlDisclosure(flags?: HorizonIssuerFlags | null): string | null {
+  if (!flags) return null;
+  if (flags.auth_revocable && flags.auth_clawback_enabled) {
+    return 'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.';
+  }
+  if (flags.auth_clawback_enabled) {
+    return 'The issuer can take this balance back, and this is a property of the asset, not of Veil.';
+  }
+  if (flags.auth_revocable) {
+    return 'The issuer can freeze this balance, and this is a property of the asset, not of Veil.';
+  }
+  return null;
+}
+
+/**
+ * The issuing account's flags, or null when Horizon cannot answer.
+ *
+ * Null means "unknown", and callers show nothing rather than implying the
+ * issuer is powerless — the web wallet had a bug of exactly that shape, where
+ * a Horizon failure silently dropped the disclosure.
+ */
+export async function fetchIssuerFlags(issuer: string): Promise<HorizonIssuerFlags | null> {
+  if (!issuer) return null;
+  try {
+    const account = await new Horizon.Server(getNetwork().horizonUrl).loadAccount(issuer);
+    return (account.flags as HorizonIssuerFlags) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the last read found a classic account behind the address.
+ *
+ * A smart wallet can hold XLM in its contract with no classic account at all.
+ * The dashboard reads that fine, but a trustline needs the classic account, so
+ * the screen has to be able to say so rather than offering adds that fail.
+ */
+let lastAccountExists = true;
+
+export function classicAccountExists(): boolean {
+  return lastAccountExists;
+}
 /**
  * Loads every non-native asset held by `publicKey` from Horizon.
  */
@@ -279,9 +345,13 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   const server = new Horizon.Server(getNetwork().horizonUrl);
   try {
     const account = await server.loadAccount(publicKey);
+    lastAccountExists = true;
     return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
   } catch (err) {
-    if (isAccountNotFound(err)) return [];
+    if (isAccountNotFound(err)) {
+      lastAccountExists = false;
+      return [];
+    }
     throw err;
   }
 }
