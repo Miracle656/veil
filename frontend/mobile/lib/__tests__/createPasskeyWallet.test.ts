@@ -15,6 +15,13 @@ jest.mock('../passkey', () => ({
 
 jest.mock('../network', () => ({
   getNetwork: jest.fn(),
+  // `sdkStorage.sdkStorageKey` namespaces the SDK's keys per network, so it
+  // awaits `hydrateNetwork()` and reads `getNetworkName()`. Without these two
+  // the call throws, `getSdkItem` swallows it and returns null, the credential
+  // id reads as absent, and PRF is never attempted — so every case here came
+  // back 'unsupported' no matter what the PRF mock was told to return.
+  getNetworkName: jest.fn(() => 'testnet'),
+  hydrateNetwork: jest.fn(async () => undefined),
 }));
 
 jest.mock('../testnetWallet', () => ({
