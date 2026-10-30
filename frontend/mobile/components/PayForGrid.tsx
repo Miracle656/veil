@@ -8,6 +8,7 @@ import {
   AirtimeIcon,
   BankIcon,
   BettingIcon,
+  BuyIcon,
   BillsIcon,
   DataIcon,
   GridIcon,
@@ -48,6 +49,13 @@ export const BILL_SERVICES: BillService[] = [
   // Live: the flow exists and the deposit is crypto from this wallet, so it
   // never leaves the app. Like `transfer` below it stays hidden when the
   // backend holding the Linq key is unreachable — there is no order without it.
+  // The onramp: buy naira-priced XLM by bank transfer. The screen has existed
+  // on this branch for a while with nothing on the dashboard pointing at it —
+  // only a single Settings row, in one NIN state — so on an installed build
+  // there was no way to reach it at all. Gated like `transfer`: both need the
+  // backend holding the Linq key, and Linq's Stellar leg is mainnet only.
+  // XLM only, because Linq holds no USDC liquidity (#1143).
+  { id: 'buy', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn', accent: true },
   { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'live', route: '/airtime' },
   { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
   { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'soon' },

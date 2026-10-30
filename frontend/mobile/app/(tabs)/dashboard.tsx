@@ -339,7 +339,7 @@ export default function DashboardTab() {
         services={
           offrampReady && !onTestnet
             ? BILL_SERVICES
-            : BILL_SERVICES.filter((s) => s.id !== 'transfer')
+            : BILL_SERVICES.filter((s) => s.id !== 'transfer' && s.id !== 'buy')
         }
         onSelect={(service) => {
           if (service.route) router.push(service.route as never);
