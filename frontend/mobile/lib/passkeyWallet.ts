@@ -2,6 +2,8 @@ import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { recordFeePayerSource } from './feePayerSource';
+import { defaultSweepDeps, migrateFeePayerToPasskey } from './feePayerSweep';
+import { inclusionFee } from './fees';
 import { getNetwork } from './network';
 import { SDK_KEY_ID, getCredentialId, getSdkItem } from './sdkStorage';
 import { evaluatePrf } from './passkey';
@@ -228,8 +230,21 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
 
   const currentSecret = await getSignerSecret();
   if (currentSecret && currentSecret !== derived.secret()) {
-    if (await accountExists(Keypair.fromSecret(currentSecret).publicKey())) {
-      return { bound: false, issue: 'funded' };
+    const current = Keypair.fromSecret(currentSecret).publicKey();
+    if (await accountExists(current)) {
+      // This used to refuse, and the refusal was the bug. The account
+      // holding the money is the one that cannot be rebuilt from the
+      // passkey; adopting the derived key while leaving the balance behind
+      // would put it beyond reach of every future install. So move it
+      // first and adopt second — and if the move does not happen, change
+      // nothing at all, which is the old behaviour and still the safe one.
+      const moved = await migrateFeePayerToPasskey(
+        { from: current, fromSecret: currentSecret, to: derived.publicKey() },
+        defaultSweepDeps(null, getNetwork(), inclusionFee()),
+      );
+      if (!moved.swept && moved.reason !== 'legacy-empty' && moved.reason !== 'below-reserve') {
+        return { bound: false, issue: 'funded' };
+      }
     }
   }
 

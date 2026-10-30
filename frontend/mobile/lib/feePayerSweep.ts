@@ -18,7 +18,7 @@
  */
 import { Asset, Horizon, Keypair, Networks, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 
-import { planFeePayerRecovery, type RecoveryPlan } from './feePayerRecovery';
+import { planFeePayerRecovery, retainedForSweep, type RecoveryPlan } from './feePayerRecovery';
 import { readBreadcrumbs } from './walletBreadcrumbs';
 
 export type AccountSnapshot = {
@@ -151,6 +151,66 @@ export const MAINNET_PASSPHRASE = Networks.PUBLIC;
  * it is the same key the proof compares against. Re-reading it would be a
  * simulation round trip for an answer we were holding.
  */
+
+/**
+ * Move a wallet off a fee-payer that cannot be rebuilt from its passkey.
+ *
+ * A wallet created on build 10 or earlier read the SDK's credential id from
+ * the BARE AsyncStorage key while the storage adapter was already writing it
+ * per network. On mainnet that read returned null, PRF was never attempted,
+ * and creation fell through to `Keypair.random()` — a fee-payer that exists in
+ * one secure store and can be rebuilt from nothing. It dies with the install.
+ * One user lost a funded account that way before this existed.
+ *
+ * An encrypted backup does not cover it: the backup holds the wallet address,
+ * the signer PUBLIC keys and settings, never a private key. There is no file
+ * that would have saved it, which is why this has to be repaired rather than
+ * backed up.
+ *
+ * The repair is a move, not a swap. Adopting the passkey-derived key while the
+ * old account still holds the money would stop anything reaching that balance
+ * — which is why the binding retry refused outright whenever it found funds.
+ * Sweeping first and adopting second turns that refusal into a fix.
+ *
+ * Unlike the stranded-fee-payer sweep above, this needs no breadcrumb proof:
+ * the source is the account this wallet is already paying fees from and whose
+ * secret is already in the secure store, and the destination is derived from
+ * the user's own passkey. Neither is guessed.
+ *
+ * What stays behind is the account's reserve plus a little fee headroom — the
+ * same arithmetic as the sweep. Reclaiming that too would mean merging the
+ * account, which cannot be done while it holds subentries, and a failed merge
+ * on a money path is a worse trade than leaving the reserve.
+ */
+export async function migrateFeePayerToPasskey(
+  params: { from: string; fromSecret: string; to: string },
+  deps: Pick<SweepDeps, 'loadAccount' | 'sendXlm'>,
+): Promise<SweepOutcome> {
+  if (params.from === params.to) return { swept: false, reason: 'same-account' };
+  let snapshot: AccountSnapshot | null;
+  try {
+    snapshot = await deps.loadAccount(params.from);
+  } catch {
+    return { swept: false, reason: 'sweep-failed' };
+  }
+  // Never funded, or already emptied: there is nothing to move, and the
+  // caller is free to adopt the passkey-derived key straight away.
+  if (!snapshot || snapshot.xlm === null || snapshot.xlm <= 0) {
+    return { swept: false, reason: 'legacy-empty' };
+  }
+  const retained = retainedForSweep(snapshot.subentryCount);
+  const movable = snapshot.xlm - retained;
+  if (movable <= 0) return { swept: false, reason: 'below-reserve' };
+  const amount = movable.toFixed(7);
+  try {
+    const txHash = await deps.sendXlm(params.fromSecret, params.to, amount);
+    return { swept: true, amount, txHash, from: params.from, to: params.to };
+  } catch {
+    // The money has not moved, so the caller must NOT adopt the new key.
+    return { swept: false, reason: 'sweep-failed' };
+  }
+}
+
 export function defaultSweepDeps(
   walletSigner: Uint8Array | null,
   net: { horizonUrl: string; networkPassphrase: string },
