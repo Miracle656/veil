@@ -3,7 +3,7 @@ import { Buffer } from 'buffer';
 
 import { recordFeePayerSource } from './feePayerSource';
 import { getNetwork } from './network';
-import { SDK_KEY_ID, getSdkItem } from './sdkStorage';
+import { SDK_KEY_ID, getCredentialId, getSdkItem } from './sdkStorage';
 import { evaluatePrf } from './passkey';
 import type { PrfOutcome } from './prfOutcome';
 import { fundWithFriendbot } from './testnetWallet';
@@ -210,7 +210,13 @@ export async function recreatePasskeyWallet(
  * changes, because it comes from the passkey's public key, not this key.
  */
 export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
-  const keyId = await getSdkItem(SDK_KEY_ID);
+  // Read through `getCredentialId`, not the SDK's copy alone. A wallet whose
+  // id lives only in `walletStore` — any install predating the per-network
+  // namespacing — returned `failed` here before `evaluatePrf` was ever
+  // called, so the screen said "Could not check this passkey. Try again."
+  // and no passkey prompt appeared. There was nothing to try again: the
+  // check had not asked the authenticator anything.
+  const keyId = await getCredentialId();
   const walletAddress = await getWalletAddress();
   if (!keyId || !walletAddress) return { bound: false, issue: 'failed' };
 

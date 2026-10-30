@@ -62,9 +62,10 @@ export default function RecoverySettingsScreen() {
         prf,
         backupLastExportedAt,
         recoveryServerCount: servers.length,
+        prfFailedChecks: failedChecks,
       })
     );
-  }, [prf]);
+  }, [prf, failedChecks]);
 
   useEffect(() => {
     void refresh();

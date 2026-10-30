@@ -37,6 +37,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getNetworkName, hydrateNetwork } from './network';
+import { getPasskeyId } from './walletStore';
 
 /** Credential id of the registered passkey, as the SDK names it. */
 export const SDK_ADDRESS = 'invisible_wallet_address';
@@ -70,4 +71,35 @@ export async function setSdkItems(entries: readonly (readonly [string, string])[
     entries.map(async ([base, value]) => [await sdkStorageKey(base), value] as [string, string]),
   );
   await AsyncStorage.multiSet(scoped);
+}
+
+/**
+ * The registered passkey's credential id, from whichever store still holds it.
+ *
+ * The SDK's copy can be missing on a wallet that works perfectly well. An
+ * install predating the per-network namespacing has it under the BARE key,
+ * and `getSdkItem` deliberately refuses to fall back to that on mainnet — for
+ * a good reason, since on testnet the bare keys are a different, real wallet.
+ *
+ * `walletStore` is not that hazard. It namespaces through the same rule, so
+ * its credential id belongs to the same network by construction and can never
+ * be another wallet's. It is simply the app's own copy of the same value.
+ *
+ * Reading one and not the other is how the recovery screen came to say
+ * "Could not check this passkey. Try again." without ever showing a passkey
+ * prompt: the check returned `failed` on a missing id before it could ask the
+ * authenticator anything, so there was nothing to try again.
+ *
+ * Found through the SDK's copy being absent, the id is written back, so the
+ * next reader of that key does not have to know any of this.
+ */
+export async function getCredentialId(): Promise<string | null> {
+  const fromSdk = await getSdkItem(SDK_KEY_ID);
+  if (fromSdk) return fromSdk;
+  const fromStore = await getPasskeyId().catch(() => null);
+  if (!fromStore) return null;
+  // Best-effort: a failure here costs the next caller one extra lookup, and
+  // must never turn a recoverable wallet into an error on screen.
+  await setSdkItems([[SDK_KEY_ID, fromStore]]).catch(() => undefined);
+  return fromStore;
 }

@@ -8,6 +8,15 @@ export type RecoveryStatusInput = {
   prf: PrfRecoveryState;
   backupLastExportedAt: number | null;
   recoveryServerCount: number;
+  /**
+   * Consecutive failed passkey checks this session.
+   *
+   * The screen already stops asking after two — it replaces the prompt with
+   * a panel saying checking again will not help. This row did not know that
+   * and kept saying "Try again" beside it, so the same screen gave two
+   * opposite instructions about the same button.
+   */
+  prfFailedChecks?: number;
 };
 export type RecoveryMechanism = {
   key: 'prf' | 'backup' | 'servers';
@@ -27,8 +36,12 @@ export type RecoveryStatus = {
 /** Derive the honest recovery summary without prompting the authenticator. */
 export function deriveRecoveryStatus(input: RecoveryStatusInput): RecoveryStatus {
   const hasWallet = !!input.walletAddress && !!input.signerSecret;
+  // Two failures in a row is the screen's own threshold for giving up on the
+  // passkey, so past it this stops offering a check it does not believe in.
+  const exhausted = (input.prfFailedChecks ?? 0) >= 2;
   const needsPrfCheck =
-    input.prf === 'unverified' || input.prf === 'cancelled' || input.prf === 'failed';
+    !exhausted &&
+    (input.prf === 'unverified' || input.prf === 'cancelled' || input.prf === 'failed');
   const mechanisms: RecoveryMechanism[] = [
     {
       key: 'prf',
@@ -45,7 +58,9 @@ export function deriveRecoveryStatus(input: RecoveryStatusInput): RecoveryStatus
             : input.prf === 'cancelled'
               ? 'Check cancelled. You can try again.'
               : input.prf === 'failed'
-                ? 'Could not check this passkey. Try again.'
+                ? exhausted
+                  ? 'This passkey did not give a recovery secret. Create an encrypted backup instead.'
+                  : 'Could not check this passkey. Try again.'
                 : input.prf === 'funded'
                   ? 'The fee-payer has funds and was not changed. Create an encrypted backup for recovery.'
                   : input.prf === 'unsupported'

@@ -75,3 +75,50 @@ describe('deriveRecoveryStatus', () => {
     expect(status.overall).toBe('none');
   });
 });
+
+describe('after the screen has given up on the passkey', () => {
+  // The screen replaces the prompt with a panel headed "Checking again won't
+  // help" once two checks in a row have failed. This row went on saying "Try
+  // again" beside it, so one screen gave two opposite instructions about the
+  // same button.
+  const failedTwice = {
+    walletAddress: 'CWALLET',
+    signerSecret: 'SSECRET',
+    prf: 'failed' as const,
+    backupLastExportedAt: null,
+    recoveryServerCount: 0,
+    prfFailedChecks: 2,
+  };
+
+  it('stops inviting a check it no longer believes in', () => {
+    const prf = deriveRecoveryStatus(failedTwice).mechanisms[0];
+
+    expect(prf.needsCheck).toBe(false);
+    expect(prf.detail).not.toContain('Try again');
+    expect(prf.action).toBe('Create an encrypted backup');
+  });
+
+  it('points at the thing that does not depend on the passkey', () => {
+    const prf = deriveRecoveryStatus(failedTwice).mechanisms[0];
+
+    expect(prf.detail).toContain('encrypted backup');
+  });
+
+  it('still offers one retry after a single failure', () => {
+    // One failure is not a verdict — a cancelled prompt or a flaky read gets
+    // another go, which is the case the original wording was written for.
+    const prf = deriveRecoveryStatus({ ...failedTwice, prfFailedChecks: 1 }).mechanisms[0];
+
+    expect(prf.needsCheck).toBe(true);
+    expect(prf.detail).toContain('Try again');
+    expect(prf.action).toBe('Check passkey');
+  });
+
+  it('is unchanged when the caller does not count failures', () => {
+    const { prfFailedChecks: _omitted, ...withoutCount } = failedTwice;
+    const prf = deriveRecoveryStatus(withoutCount).mechanisms[0];
+
+    expect(prf.needsCheck).toBe(true);
+    expect(prf.detail).toContain('Try again');
+  });
+});
