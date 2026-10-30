@@ -309,11 +309,14 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
   // (serverless recovery). Best-effort, as at creation/recovery.
   void writeBreadcrumbs(feePayer.secret(), address, matchedPublicKey).catch(() => undefined);
 
-  const feePayerSweep = await recoverStrandedFeePayer(
-    address,
-    feePayer.publicKey(),
-    matchedPublicKey,
-  );
+  // Only when the fee-payer is the PRF-derived one. Without PRF this is a
+  // fresh `Keypair.random()` that exists on this phone and nowhere else, so
+  // sweeping a legacy balance into it would strand the money harder than
+  // leaving it alone: the credential-id account can be re-derived by any
+  // build, that one cannot be re-derived at all.
+  const feePayerSweep: SweepOutcome = recoverable
+    ? await recoverStrandedFeePayer(address, feePayer.publicKey(), matchedPublicKey)
+    : { swept: false, reason: 'fee-payer-not-passkey-bound' };
 
   return { address, recoverable, feePayerSweep };
 }
