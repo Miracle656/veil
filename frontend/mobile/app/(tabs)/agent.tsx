@@ -23,6 +23,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  type LayoutChangeEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -34,6 +35,7 @@ import {
 import { Button, Card, Screen } from '../../components/ui';
 import { KeyboardStickyView, useKeyboardState } from 'react-native-keyboard-controller';
 
+import { threadBottomInset } from '../../lib/agentComposer';
 import { ArrowUpIcon, BackIcon } from '../../components/icons';
 import { VeilLogo } from '../../components/VeilLogo';
 import {
@@ -87,6 +89,14 @@ export default function AgentScreen() {
   // of the conversation it belongs to.
   const keyboardHeight = useKeyboardState((state) => state.height);
   const liftedBy = Math.max(0, keyboardHeight - insets.bottom);
+  // The composer's real drawn height. Chips plus input card grow with the
+  // system font size and with the lines typed in, so the only honest figure
+  // for what has to be cleared is the one it reports for itself.
+  const [composerHeight, setComposerHeight] = useState(0);
+  const handleComposerLayout = useCallback((event: LayoutChangeEvent) => {
+    const { height } = event.nativeEvent.layout;
+    setComposerHeight((previous) => (Math.abs(previous - height) < 0.5 ? previous : height));
+  }, []);
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // Subscribed rather than read once at module load: the network is a runtime
@@ -339,7 +349,10 @@ export default function AgentScreen() {
         <ScrollView showsVerticalScrollIndicator={false}
           ref={scrollRef}
           style={styles.flex}
-          contentContainerStyle={[styles.thread, { paddingBottom: 16 + liftedBy }]}
+          contentContainerStyle={[
+            styles.thread,
+            { paddingBottom: threadBottomInset({ composerHeight, keyboardLift: liftedBy }) },
+          ]}
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
           keyboardShouldPersistTaps="handled"
         >
@@ -385,7 +398,7 @@ export default function AgentScreen() {
             keyboard covers that strip too, so lifting by the full keyboard
             height would leave a gap exactly one inset tall. */}
         <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }}>
-        <View style={styles.composer}>
+        <View style={styles.composer} onLayout={handleComposerLayout} testID="agent-composer">
           <ScrollView showsVerticalScrollIndicator={false} horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
             {SUGGESTIONS.map((suggestion) => (
               <Pressable
