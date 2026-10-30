@@ -28,12 +28,13 @@ import {
 } from '../lib/passkeyWallet';
 import { evaluatePrf } from '../lib/passkey';
 import { getNetwork } from '../lib/network';
+import { SDK_KEY_ID, getSdkItem } from '../lib/sdkStorage';
 import { useWallet } from '../components/WalletProvider';
 
 // Passkeys need the native module — unavailable in Expo Go.
 const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
-type Status = 'idle' | 'busy' | 'prf-warning' | 'created' | 'error';
+type Status = 'idle' | 'busy' | 'prf-warning' | 'created' | 'error' | 'already-registered';
 
 function shortAddr(a: string): string {
   return a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-6)}` : a;
@@ -100,6 +101,18 @@ export default function CreateWallet() {
     setError(null);
     setPendingPrf(null);
     try {
+      // A credential id already stored for this network means a passkey was
+      // registered here and the run that made it did not finish — the SDK
+      // records the id during registration, before the wallet is deployed.
+      // Registering again cannot work: that id goes out as
+      // `excludeCredentials`, the passkey really is on the device, and the
+      // platform refuses. People hit this on their FIRST wallet and read
+      // 'you already have an account' as the app being broken, when signing
+      // in with that same passkey works and gives them their wallet.
+      if (await getSdkItem(SDK_KEY_ID)) {
+        setStatus('already-registered');
+        return;
+      }
       const res = await createPasskeyWallet(wallet);
       if (res.status === 'created') {
         setResult(res.wallet);
@@ -109,7 +122,14 @@ export default function CreateWallet() {
         setStatus('prf-warning');
       }
     } catch (e) {
-      setError(errorMessage(e));
+      // This path reported `errorMessage(e)` raw while `run()` below mapped
+      // the same two errors to something actionable, so the passkey button —
+      // the one almost everybody uses — surfaced Android's own wording.
+      if (isExcludedCredentialExists(e)) {
+        setStatus('already-registered');
+        return;
+      }
+      setError(isNoCredentialProvider(e) ? NO_CREDENTIAL_PROVIDER_MESSAGE : errorMessage(e));
       setStatus('error');
     }
   }
@@ -171,6 +191,42 @@ export default function CreateWallet() {
       );
       setStatus('error');
     }
+  }
+
+  // A passkey for this network already exists on the device, so creation is
+  // impossible and sign-in is the whole answer. Previously this arrived as an
+  // error paragraph telling people to reset their wallet in Settings — advice
+  // that destroys a perfectly good wallet, offered to someone whose wallet was
+  // fine and one tap away.
+  if (status === 'already-registered') {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="create-wallet-already-registered-screen">
+        <View style={styles.body}>
+          <FlowHeader title="You already have a wallet" />
+          <Text style={styles.caption}>
+            This device already holds a Veil passkey for this network, so a second
+            one cannot be created over it. That passkey is your wallet — sign in
+            with it and everything is where you left it.
+          </Text>
+          <View style={styles.spacer} />
+          <Pressable
+            testID="create-wallet-sign-in-instead"
+            accessibilityRole="button"
+            onPress={() => router.replace('/login')}
+            style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+          >
+            <Text style={styles.ctaText}>Sign in with my passkey</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setStatus('idle')}
+            style={styles.linkBtn}
+          >
+            <Text style={styles.link}>Go back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   if (status === 'prf-warning' && pendingPrf) {
@@ -398,6 +454,33 @@ export default function CreateWallet() {
         ) : (
           <>
             <View style={styles.spacer} />
+            {/* Said here, where it can still be acted on, because tapping
+                through to the biometric prompt is irreversible in the only
+                way that matters: a reinstall leaves local storage empty, so
+                nothing on this device knows about the wallet the passkey
+                already opens, `excludeCredentials` goes out empty, and the
+                authenticator mints a SECOND passkey without a murmur. One
+                user did exactly that and spent a day stranded from a funded
+                mainnet wallet. Creating cannot find an existing wallet; only
+                signing in can. */}
+            {!IN_EXPO_GO && (
+              <View style={styles.card} testID="create-wallet-new-wallet-notice">
+                <Text style={styles.caption}>
+                  This makes a brand-new wallet. If you have used Veil before —
+                  on this phone, or with this Google or iCloud account — sign in
+                  instead: creating here will not find that wallet, and your
+                  funds stay in the one you already have.
+                </Text>
+                <Pressable
+                  testID="create-wallet-sign-in-link"
+                  accessibilityRole="button"
+                  onPress={() => router.replace('/login')}
+                  style={styles.linkBtn}
+                >
+                  <Text style={styles.link}>I have used Veil before — sign in</Text>
+                </Pressable>
+              </View>
+            )}
             {!IN_EXPO_GO && (
               <Pressable
                 testID="create-passkey-button"
