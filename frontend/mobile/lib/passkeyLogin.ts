@@ -103,6 +103,36 @@ async function recoverStrandedFeePayer(
   }
 }
 
+/**
+ * Run the stranded fee-payer recovery for the wallet already on this device.
+ *
+ * Reachable without a sign-in, which is the whole point. `loginWithPasskey`
+ * is called from the Sign in screen alone, and `app/index.tsx` sends anyone
+ * with a stored wallet straight to the dashboard — so for the very people this
+ * recovery exists for, already signed in and quietly missing their balance,
+ * the only way to reach it was to clear the app's data and sign in again.
+ * Telling a user whose money is already stranded to wipe local state is not a
+ * repair, it is a second chance to lose the wallet.
+ *
+ * Costs no passkey prompt: the signer is the one already in the secure store
+ * and the legacy key comes from the credential id, so this can run on app
+ * start. Two Horizon reads when there is nothing to do, and once the PRF
+ * account holds anything the planner answers `prf-funded` and stops looking.
+ */
+export async function recoverStoredWalletFeePayer(): Promise<SweepOutcome> {
+  const [storedAddress, storedSecret] = await Promise.all([
+    getWalletAddress().catch(() => null),
+    getSignerSecret().catch(() => null),
+  ]);
+  if (!storedAddress || !storedSecret) return { swept: false, reason: 'no-stored-wallet' };
+  const storedSigner = await getPasskeyPublicKey().catch(() => null);
+  return recoverStrandedFeePayer(
+    storedAddress,
+    Keypair.fromSecret(storedSecret).publicKey(),
+    storedSigner ? hexToUint8Array(storedSigner) : null,
+  );
+}
+
 export async function loginWithPasskey(): Promise<LoginResult> {
   // ── Same-device fast path ──────────────────────────────────────────────────
   const [storedAddress, storedSecret] = await Promise.all([
@@ -113,14 +143,7 @@ export async function loginWithPasskey(): Promise<LoginResult> {
     // The stranded case reaches here, not the ceremony below: somebody whose
     // fee-payer was replaced on a previous sign-in is already "logged in", so
     // a recovery that only ran on a fresh assertion would never reach them.
-    // The signer is the one already stored for this device, so this costs no
-    // extra passkey prompt and no simulation.
-    const storedSigner = await getPasskeyPublicKey().catch(() => null);
-    const feePayerSweep = await recoverStrandedFeePayer(
-      storedAddress,
-      Keypair.fromSecret(storedSecret).publicKey(),
-      storedSigner ? hexToUint8Array(storedSigner) : null,
-    );
+    const feePayerSweep = await recoverStoredWalletFeePayer();
     return { address: storedAddress, source: 'local', feePayerSweep };
   }
 

@@ -20,6 +20,7 @@ import { fontFamily } from '../../theme/typography';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
 import { getWalletAddress } from '../../lib/walletStore';
+import { recoverStoredWalletFeePayer } from '../../lib/passkeyLogin';
 import ActivityFeed from '../../components/ActivityFeed';
 import { useInitActivityFeed, hydrateActivityFeed, type TxRecord } from '../../lib/activityFeed';
 import { loadHorizonActivity } from '../../lib/horizonActivity';
@@ -30,6 +31,41 @@ import { loadHoldings } from '../../lib/holdings';
 import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
 import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
 import { useNetwork } from '../../hooks/useNetwork';
+
+// Attempted once per launch, not once per focus: the sweep is a transaction,
+// and even the "nothing to do" answer costs a pair of Horizon reads.
+let strandedRecoveryAttempted = false;
+
+/**
+ * Bring back a fee-payer stranded by the credential-id-to-PRF move.
+ *
+ * Driven from here, and not from `loginWithPasskey` alone, because the people
+ * this exists for never reach the Sign in screen: they are already signed in,
+ * and `app/index.tsx` sends a stored wallet straight to this dashboard. The
+ * only other way in was to clear the app's data and sign in again — which is
+ * not a repair to offer someone whose money is already stranded.
+ *
+ * Costs no passkey prompt, and is never allowed to affect the screen: if it
+ * cannot run, the balance stays exactly where it already was.
+ */
+async function recoverStrandedOnce(
+  addr: string,
+  refreshAll: (a: string) => Promise<void>,
+): Promise<void> {
+  if (strandedRecoveryAttempted) return;
+  strandedRecoveryAttempted = true;
+  try {
+    const outcome = await recoverStoredWalletFeePayer();
+    if (!outcome.swept) return;
+    console.warn(
+      `[dashboard] recovered a stranded fee-payer: ${outcome.amount} XLM to ${outcome.to} (${outcome.txHash})`,
+    );
+    // Every figure on screen was read before the money moved.
+    await refreshAll(addr);
+  } catch {
+    // Deliberately silent.
+  }
+}
 
 /** Shorten a Stellar address for the header chip: `GDKF…9QX3`. */
 function shortAddress(addr: string): string {
@@ -205,6 +241,7 @@ export default function DashboardTab() {
           // Backfill the on-chain sign-in record for wallets created before
           // breadcrumbs existed (idempotent, once per session, best-effort).
           void ensureBreadcrumbs();
+          void recoverStrandedOnce(addr, refreshAll);
         }
       })
       .catch(() => setWalletAddress(null));
