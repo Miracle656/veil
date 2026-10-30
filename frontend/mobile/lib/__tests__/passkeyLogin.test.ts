@@ -19,6 +19,7 @@ const mockSetPasskeyCredential = jest.fn();
 const mockWriteBreadcrumbs = jest.fn();
 const mockMultiSet = jest.fn();
 const mockGetNetworkName = jest.fn();
+const mockFetchContractOrigin = jest.fn<Promise<string | null>, unknown[]>(async () => null);
 
 jest.mock('../signers', () => {
   const actual = jest.requireActual('../signers');
@@ -49,8 +50,19 @@ jest.mock('../walletBreadcrumbs', () => ({
 // assertions pinned to the real per-network key names the SDK adapter writes.
 jest.mock('../network', () => ({
   getNetworkName: () => mockGetNetworkName(),
+  getNetwork: () => ({ rpcUrl: 'https://rpc.example', horizonUrl: 'https://horizon.example' }),
   hydrateNetwork: jest.fn(async () => undefined),
 }));
+// The wallet contract stores ONE WebAuthn origin, so sign-in now refuses a
+// wallet made on the other platform. Null here means "not deployed, or no
+// origin recorded", which is the ordinary case these tests are about.
+jest.mock('../platformLimitation', () => {
+  const actual = jest.requireActual('../platformLimitation');
+  return {
+    ...actual,
+    fetchContractOrigin: (...a: unknown[]) => mockFetchContractOrigin(...a),
+  };
+});
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
   default: {
@@ -122,6 +134,7 @@ function assertionOf(privateKey: Uint8Array, prf: Uint8Array | null = null): Dis
 beforeEach(() => {
   jest.resetAllMocks();
   mockGetNetworkName.mockReturnValue('testnet');
+  mockFetchContractOrigin.mockResolvedValue(null);
   mockMultiSet.mockResolvedValue(undefined);
   mockWriteBreadcrumbs.mockResolvedValue(undefined);
 });
@@ -253,5 +266,39 @@ describe('loginWithAddress — edge cases', () => {
     await expect(loginWithAddress(WALLET)).rejects.toThrow(/cancelled/);
     expect(mockSetWalletAddress).not.toHaveBeenCalled();
     expect(mockSetSignerSecret).not.toHaveBeenCalled();
+  });
+});
+describe('a wallet bound to the other platform', () => {
+  // `__check_auth` compares the contract's stored origin byte for byte, so a
+  // wallet created in the browser rejects every signature from this app.
+  // Without this refusal sign-in looks healthy and the FIRST SEND fails with a
+  // raw contract error — which reads to a user exactly like money gone missing.
+  it('refuses an address whose wallet was created on the website', async () => {
+    mockReadSigners.mockResolvedValue([signerOf(REGISTERED)]);
+    mockDiscoverWithPrf.mockResolvedValue(assertionOf(REGISTERED));
+    mockFetchContractOrigin.mockResolvedValue('https://app.useveilapp.xyz');
+
+    await expect(loginWithAddress(WALLET)).rejects.toThrow(/website/i);
+    // Nothing adopted: a half-signed-in state would be worse than refusing.
+    expect(mockSetWalletAddress).not.toHaveBeenCalled();
+    expect(mockSetSignerSecret).not.toHaveBeenCalled();
+  });
+
+  it('allows a wallet created in this app', async () => {
+    mockReadSigners.mockResolvedValue([signerOf(REGISTERED)]);
+    mockDiscoverWithPrf.mockResolvedValue(assertionOf(REGISTERED));
+    mockFetchContractOrigin.mockResolvedValue('android:apk-key-hash:D9qli1VVzfL7b5X0pddQcUG1tB6298g7VBbxvJkJV0Q');
+
+    await expect(loginWithAddress(WALLET)).resolves.toMatchObject({ address: WALLET });
+  });
+
+  it('allows a wallet that records no origin at all', async () => {
+    // Undeployed, or unreachable RPC. Refusing on an unknown would lock people
+    // out of their own wallets over a network blip.
+    mockReadSigners.mockResolvedValue([signerOf(REGISTERED)]);
+    mockDiscoverWithPrf.mockResolvedValue(assertionOf(REGISTERED));
+    mockFetchContractOrigin.mockResolvedValue(null);
+
+    await expect(loginWithAddress(WALLET)).resolves.toMatchObject({ address: WALLET });
   });
 });

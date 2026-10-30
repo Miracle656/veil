@@ -9,6 +9,11 @@ import { defaultSweepDeps, sweepStrandedFeePayer, type SweepOutcome } from './fe
 import { inclusionFee } from './fees';
 import { getNetwork, getNetworkName } from './network';
 import { discoverWithPrf, nativePrfEvaluator, type DiscoveredPasskey } from './passkey';
+import {
+  WRONG_PLATFORM_ERROR_MESSAGE,
+  fetchContractOrigin,
+  isWrongPlatformOrigin,
+} from './platformLimitation';
 import { SDK_ADDRESS, SDK_KEY_ID, SDK_PUBLIC_KEY, getSdkItem, setSdkItems } from './sdkStorage';
 import { readSigners, WalletContractNotFoundError, type WalletSigner } from './signers';
 import { recoverWalletFromAssertion } from './recoverPasskeyKey';
@@ -205,6 +210,17 @@ export async function loginWithPasskey(): Promise<LoginResult> {
   // A random fee-payer cannot be re-derived anywhere, so it is a last resort —
   // but it is better than refusing the sign-in, since the smart wallet's own
   // balance belongs to the passkey and only needs some gas to move.
+  // ── Platform binding ──────────────────────────────────────────────────────
+  // The wallet contract stores ONE WebAuthn origin and `__check_auth` compares
+  // it byte for byte, so a wallet made in the browser rejects every signature
+  // from this app. Refusing here is the whole point: without it sign-in looks
+  // perfectly healthy and the first send fails with a raw contract error, which
+  // reads exactly like money that has gone missing. The website already refuses
+  // the mirror case in these words; this app said nothing at all.
+  // TODO(#1003): drop this when a multi-origin wallet contract ships.
+  const origin = await fetchContractOrigin(getNetwork().rpcUrl, resolved.address);
+  if (origin && isWrongPlatformOrigin(origin)) throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
+
   const feePayer = prfFeePayer ?? Keypair.random();
 
   // Persist to the app's secure store…
@@ -294,6 +310,19 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
     // The wallet exists and the user held out a passkey, but that passkey is
     // not a signer on it. Refuse and explain — no wallet state is written.
     throw new Error(SIGNER_MISMATCH_MESSAGE);
+  }
+
+  // ── Platform binding ──────────────────────────────────────────────────────
+  // The wallet contract stores ONE WebAuthn origin and `__check_auth` compares
+  // it byte for byte, so a wallet made in the browser rejects every signature
+  // from this app. Refusing here is the whole point: without it sign-in looks
+  // perfectly healthy and the first send fails with a raw contract error, which
+  // reads exactly like money that has gone missing. The website already refuses
+  // the mirror case in these words; this app said nothing at all.
+  // TODO(#1003): drop this when a multi-origin wallet contract ships.
+  const addressOrigin = await fetchContractOrigin(getNetwork().rpcUrl, address);
+  if (addressOrigin && isWrongPlatformOrigin(addressOrigin)) {
+    throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
   }
 
   // Everything has been checked; only now do we adopt the wallet.
