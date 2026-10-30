@@ -397,7 +397,22 @@ export default function AgentScreen() {
             holds the composer that far off the bottom of the screen, and the
             keyboard covers that strip too, so lifting by the full keyboard
             height would leave a gap exactly one inset tall. */}
-        <KeyboardStickyView offset={{ closed: 0, opened: insets.bottom }}>
+        {/* Docked, not stacked. `KeyboardStickyView` lifts the composer with a
+            transform, and a transform does not reflow anything: in the flex
+            column the composer kept its original box, so the lift drew it over
+            the bottom of the thread. The content padding compensated for that
+            lift, but padding only moves what can scroll — with a short thread
+            there was nothing to scroll and the composer rose straight over the
+            last message, which is the reported overlap.
+
+            Taking it out of the flow makes the thread's viewport the full
+            height of the screen, which is what `threadBottomInset` has always
+            documented and reserved space for: gap + the composer's measured
+            height + the lift. Now that figure is reserved inside a viewport the
+            composer actually covers, so it holds whether the thread scrolls or
+            not. The composer needs its own background once it floats, or the
+            messages show through it. */}
+        <KeyboardStickyView style={styles.dock} offset={{ closed: 0, opened: insets.bottom }}>
         <View style={styles.composer} onLayout={handleComposerLayout} testID="agent-composer">
           <ScrollView showsVerticalScrollIndicator={false} horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
             {SUGGESTIONS.map((suggestion) => (
@@ -880,7 +895,16 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 13,
       color: colors.textMuted,
     },
+    // Pinned to the bottom of the screen, behind which the thread scrolls.
+    dock: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+    },
     composer: {
+      // Opaque because it floats: without this the thread reads through it.
+      backgroundColor: colors.background,
       paddingTop: 10,
       // Was 100, to clear the floating tab bar and its raised centre button.
       // This screen no longer draws one, so that much space is just a gap

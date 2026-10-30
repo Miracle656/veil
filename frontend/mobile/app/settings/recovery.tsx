@@ -12,6 +12,16 @@
  * not check this passkey. Try again." — advice that, in the second case, could
  * never work no matter how many times it was followed. A check that fails twice
  * now stops telling the user to repeat it and points at the backup instead.
+ *
+ * The result of a successful check is read back from storage, not held in this
+ * component alone. It used to live only in `useState`, so a passkey that had
+ * just been confirmed — tick and all — was reported as "Not checked yet" the
+ * moment the screen was left and reopened, which reads as the check having
+ * silently failed. There is no new flag: a successful check is exactly what
+ * `recordFeePayerSource(address, 'prf')` already writes, keyed to the
+ * fee-payer address so a later key change cannot inherit the tick. A result
+ * from this session still wins over the record, so a check that fails now is
+ * not overruled by a check that passed before.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -28,6 +38,7 @@ import {
   type RecoveryStatus,
 } from '../../lib/recoveryStatus';
 import { checkPasskeyRecovery } from '../../lib/recoveryStatusActions';
+import { getFeePayerInfo } from '../../lib/feePayerSource';
 import { listRecoveryServerUrls } from '../../lib/recovery';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
 import type { ThemeColors } from '../../lib/theme';
@@ -49,17 +60,18 @@ export default function RecoverySettingsScreen() {
   const [failedChecks, setFailedChecks] = useState(0);
 
   const refresh = useCallback(async () => {
-    const [walletAddress, signerSecret, backupLastExportedAt, servers] = await Promise.all([
+    const [walletAddress, signerSecret, backupLastExportedAt, servers, feePayer] = await Promise.all([
       getWalletAddress(),
       getSignerSecret(),
       getLastBackupExportedAt(),
       listRecoveryServerUrls(),
+      getFeePayerInfo().catch(() => null),
     ]);
     setStatus(
       deriveRecoveryStatus({
         walletAddress,
         signerSecret,
-        prf,
+        prf: prf === 'unverified' && feePayer?.source === 'prf' ? 'ready' : prf,
         backupLastExportedAt,
         recoveryServerCount: servers.length,
         prfFailedChecks: failedChecks,
@@ -99,10 +111,10 @@ export default function RecoverySettingsScreen() {
         </Text>
 
         {status?.mechanisms.map((mechanism) => (
-          <View key={mechanism.key} style={styles.card}>
+          <View key={mechanism.key} style={styles.card} testID={`recovery-${mechanism.key}`}>
             <View style={styles.copy}>
               <Text style={styles.label}>{mechanism.label}</Text>
-              <Text style={styles.detail}>
+              <Text testID={`recovery-${mechanism.key}-detail`} style={styles.detail}>
                 {mechanism.detail ?? (mechanism.ready ? 'Ready' : 'Not configured')}
               </Text>
             </View>
