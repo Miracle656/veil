@@ -1,5 +1,5 @@
 import { errorMessage } from '../lib/errorMessage';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import {
   ActivityIndicator,
@@ -24,6 +24,12 @@ import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { getFeePayerAddress } from '../lib/activity';
 import { getNetwork } from '../lib/network';
 import { sweepContractBalance } from '../lib/sweepContractBalance';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { FlowHeader } from '../components/FlowHeader';
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
 import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 
 // The anchor domain is the only thing that legitimately comes from env — every
@@ -46,6 +52,8 @@ type Step =
   | 'error';
 
 export default function WithdrawScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [step, setStep] = useState<Step>('form');
   const [anchor, setAnchor] = useState(DEFAULT_ANCHOR);
   const [assetCode, setAssetCode] = useState('USDC');
@@ -245,20 +253,25 @@ export default function WithdrawScreen() {
 
   if (step === 'error') {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Something went wrong</Text>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="withdraw-screen">
+      <View style={styles.body}>
+        <FlowHeader title="Cash out" />
+        <Text style={styles.heading}>Something went wrong</Text>
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Pressable style={[styles.btn, styles.btnPrimary]} onPress={reset}>
-          <Text style={styles.btnText}>Try again</Text>
+        <Pressable style={styles.cta} onPress={reset}>
+          <Text style={styles.ctaText}>Try again</Text>
         </Pressable>
       </View>
+      </SafeAreaView>
     );
   }
 
   if (step === 'done') {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Withdrawal complete</Text>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="withdraw-screen">
+      <View style={styles.body}>
+        <FlowHeader title="Cash out" />
+        <Text style={styles.heading}>Withdrawal complete</Text>
         <Text style={styles.subtitle}>
           The anchor confirmed your cash-out. Funds should arrive shortly.
         </Text>
@@ -267,10 +280,11 @@ export default function WithdrawScreen() {
             {txnStatus.amount_out} {txnStatus.amount_out_asset ?? ''}
           </Text>
         ) : null}
-        <Pressable style={[styles.btn, styles.btnPrimary]} onPress={reset}>
-          <Text style={styles.btnText}>Start new withdrawal</Text>
+        <Pressable style={styles.cta} onPress={reset}>
+          <Text style={styles.ctaText}>Start new withdrawal</Text>
         </Pressable>
       </View>
+      </SafeAreaView>
     );
   }
 
@@ -282,8 +296,10 @@ export default function WithdrawScreen() {
       : 'Payment sent — waiting for the anchor…';
 
     return (
-      <View style={styles.container}>
-        <ActivityIndicator color="#6366f1" size="large" />
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="withdraw-screen">
+      <View style={styles.body}>
+        <FlowHeader title="Cash out" />
+        <ActivityIndicator color={colors.accent} size="large" style={styles.spinner} />
         <Text style={styles.subtitle}>{label}</Text>
         {txnStatus ? (
           <View style={styles.card}>
@@ -296,24 +312,26 @@ export default function WithdrawScreen() {
         {sweepHash ? <Text style={styles.hash}>sweep tx: {sweepHash}</Text> : null}
         {step === 'interactive' && txnId ? (
           <Pressable
-            style={[styles.btn, styles.btnSecondary]}
+            style={styles.ctaSecondary}
             onPress={() => transferServerRef.current && WebBrowser.openBrowserAsync(
               `${transferServerRef.current}/transaction?id=${txnId}`,
             )}
           >
-            <Text style={styles.btnText}>Check status</Text>
+            <Text style={styles.ctaSecondaryText}>Check status</Text>
           </Pressable>
         ) : null}
-        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={reset}>
-          <Text style={styles.btnText}>Cancel</Text>
+        <Pressable style={styles.ctaSecondary} onPress={reset}>
+          <Text style={styles.ctaSecondaryText}>Cancel</Text>
         </Pressable>
       </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Cash out</Text>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="withdraw-screen">
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+      <FlowHeader title="Cash out" />
       <Text style={styles.subtitle}>Withdraw to a bank account or mobile money via a Stellar anchor.</Text>
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -322,7 +340,7 @@ export default function WithdrawScreen() {
         <TextInput
           style={styles.input}
           placeholder="Asset (e.g. USDC)"
-          placeholderTextColor="#64748b"
+          placeholderTextColor={colors.textFaint}
           value={assetCode}
           onChangeText={setAssetCode}
           autoCapitalize="characters"
@@ -330,7 +348,7 @@ export default function WithdrawScreen() {
         <TextInput
           style={styles.input}
           placeholder="Amount"
-          placeholderTextColor="#64748b"
+          placeholderTextColor={colors.textFaint}
           value={amount}
           onChangeText={setAmount}
           keyboardType="decimal-pad"
@@ -338,7 +356,7 @@ export default function WithdrawScreen() {
         <TextInput
           style={styles.input}
           placeholder="testanchor.stellar.org"
-          placeholderTextColor="#64748b"
+          placeholderTextColor={colors.textFaint}
           value={anchor}
           onChangeText={setAnchor}
           autoCapitalize="none"
@@ -347,17 +365,25 @@ export default function WithdrawScreen() {
       </View>
 
       <Pressable
-        style={[styles.btn, styles.btnPrimary, !amount && styles.btnDisabled]}
+        style={[styles.cta, !amount && styles.ctaDisabled]}
         onPress={startWithdraw}
         disabled={!amount}
       >
-        <Text style={styles.btnText}>Continue</Text>
+        <Text style={styles.ctaText}>Continue</Text>
       </Pressable>
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
+/**
+ * Reads the palette itself rather than taking a `styles` prop: it is rendered
+ * from one place, and a styles prop would be a second way for a screen to be
+ * themed — which is the habit this file is being cured of.
+ */
 function Row({ label, value }: { label: string; value: string }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -366,89 +392,93 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: '#0B0B0F',
-    padding: 24,
-    gap: 16,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: '#9BA1A6',
-    fontSize: 15,
-    textAlign: 'center',
-  },
-  form: {
-    gap: 10,
-  },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    color: '#f1f5f9',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  btn: {
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  btnPrimary: {
-    backgroundColor: '#6366f1',
-  },
-  btnSecondary: {
-    backgroundColor: '#334155',
-  },
-  btnDisabled: {
-    opacity: 0.4,
-  },
-  btnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    gap: 8,
-    width: '100%',
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  rowLabel: {
-    color: '#94a3b8',
-    fontSize: 13,
-  },
-  rowValue: {
-    color: '#f1f5f9',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  error: {
-    color: '#f87171',
-    fontSize: 13,
-    backgroundColor: '#450a0a',
-    borderRadius: 8,
-    padding: 10,
-  },
-  hash: {
-    color: '#94a3b8',
-    fontFamily: 'monospace',
-    fontSize: 12,
-  },
-  amountOut: {
-    color: '#a5b4fc',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-});
+/**
+ * Cash out carried the same off-brand indigo/slate palette Buy did, hardcoded
+ * dark and headed by a bare bold title with no way back off the screen but the
+ * system gesture. It now reads from `ThemeColors` and follows Send's shapes, so
+ * the two ends of the same money flow match.
+ */
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    body: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 40, gap: 14 },
+
+    heading: {
+      color: colors.textStrong,
+      fontFamily: fontFamily.heading,
+      fontSize: 22,
+      marginTop: 10,
+    },
+    subtitle: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14.5,
+      lineHeight: 21,
+    },
+
+    form: { gap: 10 },
+    input: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      color: colors.textPrimary,
+      fontFamily: fontFamily.body,
+      fontSize: 16,
+      borderWidth: 1,
+      // borderStrong, not border: these are fields the screen is asking you to
+      // type into, and the faint divider colour made them disappear.
+      borderColor: colors.borderStrong,
+    },
+
+    cta: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.accent,
+      borderRadius: 100,
+      paddingVertical: 17,
+      marginTop: 8,
+    },
+    ctaText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    ctaDisabled: { opacity: 0.4 },
+    ctaSecondary: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 100,
+      paddingVertical: 17,
+      marginTop: 8,
+    },
+    ctaSecondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+
+    card: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      gap: 8,
+      width: '100%',
+    },
+    row: { flexDirection: 'row', justifyContent: 'space-between' },
+    rowLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },
+    rowValue: { color: colors.textPrimary, fontFamily: fontFamily.bodyMedium, fontSize: 13 },
+    spinner: { marginTop: 24 },
+
+    error: {
+      color: colors.danger,
+      backgroundColor: colors.dangerSurface,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      borderRadius: 12,
+      padding: 12,
+    },
+    // Inconsolata: a transaction hash is an address, and the old 'monospace'
+    // resolved to whatever the OS happened to supply.
+    hash: { color: colors.textMuted, fontFamily: fontFamily.address, fontSize: 12 },
+    amountOut: { color: colors.accentText, fontFamily: fontFamily.address, fontSize: 22 },
+  });

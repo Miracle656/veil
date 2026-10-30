@@ -1,5 +1,5 @@
 import { errorMessage } from '../lib/errorMessage';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
@@ -23,6 +23,12 @@ import {
   signSep10Challenge,
   type Sep24TransactionStatus,
 } from '../lib/sep24';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { FlowHeader } from '../components/FlowHeader';
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
 import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 
 const FALLBACK_ADDRESS = process.env['EXPO_PUBLIC_FEE_PAYER_ADDRESS']?.trim() || '';
@@ -77,6 +83,8 @@ const POLL_INTERVAL_MS = 5_000;
 
 export default function BuyScreen() {
   const router = useRouter();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [anchorDomain, setAnchorDomain] = useState(DEFAULT_ANCHOR_DOMAIN);
   const [assetCode, setAssetCode] = useState('XLM');
   const [amount, setAmount] = useState('');
@@ -215,8 +223,10 @@ export default function BuyScreen() {
 
   if (step === 'success') {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Deposit confirmed</Text>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="buy-screen">
+      <View style={styles.body}>
+        <FlowHeader title="Buy" />
+        <Text style={styles.heading}>Deposit confirmed</Text>
         <Text style={styles.subtitle}>
           Your funds are on their way. It may take a few minutes for the balance to appear.
         </Text>
@@ -225,17 +235,20 @@ export default function BuyScreen() {
             +{txnStatus.amount_in} {txnStatus.amount_in_asset ?? assetCode}
           </Text>
         )}
-        <Pressable style={[styles.btn, styles.btnPrimary]} onPress={reset}>
-          <Text style={styles.btnText}>Buy again</Text>
+        <Pressable style={styles.cta} onPress={reset}>
+          <Text style={styles.ctaText}>Buy again</Text>
         </Pressable>
       </View>
+      </SafeAreaView>
     );
   }
 
   if (step === 'pending') {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Waiting for the anchor</Text>
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="buy-screen">
+      <View style={styles.body}>
+        <FlowHeader title="Buy" />
+        <Text style={styles.heading}>Waiting for the anchor</Text>
         <Text style={styles.subtitle}>
           Complete the deposit in the browser window. Come back here when you&apos;re done.
         </Text>
@@ -245,20 +258,22 @@ export default function BuyScreen() {
             <Text style={styles.rowValue}>{txnStatus.status}</Text>
           </View>
         )}
-        <ActivityIndicator color="#6366f1" style={styles.spinner} />
-        <Pressable style={[styles.btn, styles.btnSecondary]} onPress={checkStatusNow}>
-          <Text style={styles.btnText}>Check status</Text>
+        <ActivityIndicator color={colors.accent} style={styles.spinner} />
+        <Pressable style={styles.ctaSecondary} onPress={checkStatusNow}>
+          <Text style={styles.ctaSecondaryText}>Check status</Text>
         </Pressable>
         <Pressable style={styles.linkBtn} onPress={reset}>
           <Text style={styles.linkText}>Cancel</Text>
         </Pressable>
       </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
-      <Text style={styles.title}>Buy</Text>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="buy-screen">
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+      <FlowHeader title="Buy" />
       <Text style={styles.subtitle}>Bring fiat into your wallet through a SEP-24 anchor.</Text>
 
       {!account && (
@@ -275,7 +290,7 @@ export default function BuyScreen() {
         <TextInput
           style={styles.input}
           placeholder="e.g. testanchor.stellar.org"
-          placeholderTextColor="#64748b"
+          placeholderTextColor={colors.textFaint}
           value={anchorDomain}
           onChangeText={setAnchorDomain}
           autoCapitalize="none"
@@ -288,7 +303,7 @@ export default function BuyScreen() {
             <TextInput
               style={styles.input}
               placeholder="Amount"
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textFaint}
               value={amount}
               onChangeText={setAmount}
               keyboardType="decimal-pad"
@@ -299,7 +314,7 @@ export default function BuyScreen() {
             <TextInput
               style={styles.input}
               placeholder="Asset"
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textFaint}
               value={assetCode}
               onChangeText={setAssetCode}
               autoCapitalize="characters"
@@ -308,14 +323,14 @@ export default function BuyScreen() {
         </View>
 
         <Pressable
-          style={[styles.btn, styles.btnPrimary, step === 'connecting' && styles.btnDisabled]}
+          style={[styles.cta, step === 'connecting' && styles.ctaDisabled]}
           onPress={handleBuy}
           disabled={step === 'connecting'}
         >
           {step === 'connecting' ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={colors.onAccent} />
           ) : (
-            <Text style={styles.btnText}>Connect to anchor</Text>
+            <Text style={styles.ctaText}>Connect to anchor</Text>
           )}
         </Pressable>
       </View>
@@ -337,167 +352,174 @@ export default function BuyScreen() {
 
       {step === 'error' && error && <Text style={styles.error}>{error}</Text>}
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: '#0B0B0F',
-    padding: 24,
-    gap: 16,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: '#9BA1A6',
-    fontSize: 15,
-  },
-  notice: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    padding: 14,
-  },
-  noticeText: {
-    color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  form: {
-    gap: 10,
-  },
-  label: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  rowFieldFlex: {
-    flex: 2,
-    gap: 6,
-  },
-  rowFieldAsset: {
-    flex: 1,
-    gap: 6,
-  },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    color: '#f1f5f9',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  btn: {
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  btnPrimary: {
-    backgroundColor: '#6366f1',
-  },
-  btnSecondary: {
-    backgroundColor: '#334155',
-  },
-  btnDisabled: {
-    opacity: 0.4,
-  },
-  btnText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  linkBtn: {
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  linkText: {
-    color: '#94a3b8',
-    fontSize: 14,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    gap: 4,
-  },
-  rowLabel: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  rowValue: {
-    color: '#f1f5f9',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  spinner: {
-    marginVertical: 4,
-  },
-  amount: {
-    color: '#a5b4fc',
-    fontFamily: 'monospace',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  error: {
-    color: '#f87171',
-    fontSize: 13,
-    backgroundColor: '#450a0a',
-    borderRadius: 8,
-    padding: 10,
-  },
-  rwaCard: {
-    backgroundColor: 'rgba(253, 218, 36, 0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(253, 218, 36, 0.25)',
-    borderRadius: 12,
-    padding: 16,
-    gap: 6,
-    marginTop: 8,
-  },
-  rwaTag: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#FDDA24',
-    letterSpacing: 0.8,
-  },
-  rwaTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  rwaDesc: {
-    fontSize: 13,
-    color: '#94a3b8',
-    lineHeight: 18,
-    marginBottom: 6,
-  },
-  rwaButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    alignSelf: 'flex-start',
-  },
-  rwaButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#FDDA24',
-  },
-});
+/**
+ * Buy was still wearing the indigo/slate palette the rest of the app left
+ * behind (`#6366f1`, `#1e293b`, `#334155`), hardcoded dark, with its own
+ * `fontWeight` headings instead of the brand faces. On a phone in light mode
+ * it rendered as a dark slab in the middle of the wallet, and the one brand
+ * colour on it — the gold on the USDY card — was the literal dark-mode hex, so
+ * it lost its contrast against white.
+ *
+ * Everything below reads from `ThemeColors`, which is why it is a function
+ * now: both palettes come from the same definition, so a light-mode value
+ * cannot be forgotten. The shapes follow Send — the pill CTA, 16-radius cards
+ * and inputs, Anton-weight overline labels — because Buy sits beside it on the
+ * dashboard and the two should not look like different products.
+ */
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    body: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 40, gap: 14 },
+
+    // Second-level heading inside a flow: FlowHeader already carries "Buy", so
+    // this names the state rather than repeating the screen.
+    heading: {
+      color: colors.textStrong,
+      fontFamily: fontFamily.heading,
+      fontSize: 22,
+      marginTop: 10,
+    },
+    subtitle: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14.5,
+      lineHeight: 21,
+    },
+
+    notice: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 14,
+    },
+    noticeText: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+
+    form: { gap: 10 },
+    label: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 1.4,
+    },
+    row: { flexDirection: 'row', gap: 10 },
+    rowFieldFlex: { flex: 2, gap: 6 },
+    rowFieldAsset: { flex: 1, gap: 6 },
+    input: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      color: colors.textPrimary,
+      fontFamily: fontFamily.body,
+      fontSize: 16,
+      borderWidth: 1,
+      // borderStrong, not border: this is something the screen is asking you to
+      // type into, and the faint divider colour made the fields disappear.
+      borderColor: colors.borderStrong,
+    },
+
+    cta: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: colors.accent,
+      borderRadius: 100,
+      paddingVertical: 17,
+      marginTop: 8,
+    },
+    ctaText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    ctaDisabled: { opacity: 0.4 },
+    ctaSecondary: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 100,
+      paddingVertical: 17,
+      marginTop: 8,
+    },
+    ctaSecondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    linkBtn: { alignItems: 'center', paddingVertical: 8 },
+    linkText: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 14 },
+
+    card: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+      gap: 4,
+    },
+    rowLabel: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 1.4,
+    },
+    rowValue: { color: colors.textPrimary, fontFamily: fontFamily.bodyMedium, fontSize: 14 },
+    spinner: { marginVertical: 4 },
+
+    // Inconsolata, like every other figure in the app — the old 'monospace'
+    // resolved to whatever the OS felt like and matched nothing.
+    amount: { color: colors.accentText, fontFamily: fontFamily.address, fontSize: 22 },
+
+    error: {
+      color: colors.danger,
+      backgroundColor: colors.dangerSurface,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      borderRadius: 12,
+      padding: 12,
+    },
+
+    rwaCard: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      gap: 6,
+      marginTop: 8,
+    },
+    rwaTag: {
+      color: colors.accentText,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 10,
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+    },
+    rwaTitle: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    rwaDesc: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      marginBottom: 6,
+    },
+    rwaButton: {
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 100,
+      paddingVertical: 9,
+      paddingHorizontal: 14,
+      alignSelf: 'flex-start',
+    },
+    rwaButtonText: { color: colors.accentText, fontFamily: fontFamily.bodySemiBold, fontSize: 12 },
+  });
