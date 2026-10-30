@@ -133,12 +133,15 @@ describe('loginWithAddress — acceptance criteria', () => {
 
     const result = await loginWithAddress(WALLET);
 
-    // The sweep runs on every sign-in and reports what it did; with no
-    // credential id stored there is no legacy account to look at.
+    // This passkey offered no PRF, so the fee-payer is a fresh random key
+    // that exists on this phone and nowhere else. The sweep is refused
+    // rather than skipped for want of a candidate: moving a legacy balance
+    // into an account that cannot be re-derived would strand it harder than
+    // leaving it in the credential-id account, which any build can rebuild.
     expect(result).toEqual({
       address: WALLET,
       recoverable: false,
-      feePayerSweep: { swept: false, reason: 'no-legacy-candidate' },
+      feePayerSweep: { swept: false, reason: 'fee-payer-not-passkey-bound' },
     });
     expect(mockSetWalletAddress).toHaveBeenCalledWith(WALLET);
     expect(mockSetPasskeyCredential).toHaveBeenCalledWith('test-credential', signerOf(REGISTERED).publicKey);
@@ -165,6 +168,13 @@ describe('loginWithAddress — acceptance criteria', () => {
     expect(mockSetSignerSecret).toHaveBeenCalledWith(
       Keypair.fromRawEd25519Seed(Buffer.from(prfSeed)).secret(),
     );
+    // The other half of the guard: a PRF fee-payer IS passkey-bound, so the
+    // sweep is allowed to look. It finds nothing here because no credential
+    // id is stored, which is a different answer from refusing to look.
+    expect(result.feePayerSweep).toEqual({
+      swept: false,
+      reason: 'no-legacy-candidate',
+    });
   });
 
   it('reports an undeployed address distinctly from a network failure', async () => {
