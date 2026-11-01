@@ -11,6 +11,17 @@
  *
  * The QR and the copy action are fed only by `info.address`, the fee-payer —
  * never the smart wallet's C… address, which cannot pay fees.
+ *
+ * The passkey check is offered for every passkey wallet, not only one whose
+ * derivation was never recorded. The label is a stored record, written by
+ * whichever code path last set the key; "Passkey (PRF)" therefore means
+ * someone asserted it, not that anyone compared it. Only
+ * `verifyFeePayerWithPasskey` compares — it evaluates the PRF, derives a key
+ * and checks it against the key actually in use — so a user who wants to know
+ * whether their fee payer really is reproducible from their passkey has to be
+ * able to run it. Gating the button on `unknown` withheld it from exactly the
+ * labels worth questioning. The check is read-only: nothing is signed and no
+ * key is changed.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -67,6 +78,14 @@ export default function FeePayerSettingsScreen() {
           result.reason === 'no-prf'
             ? 'Your passkey did not return a PRF secret, so the derivation could not be checked.'
             : 'No passkey is registered on this device.',
+        );
+      } else {
+        // Confirming a label leaves the screen looking identical, so the
+        // result has to be said out loud or the check reads as a no-op.
+        setVerifyNote(
+          result.source === 'prf'
+            ? 'Checked just now: your passkey derives this exact address.'
+            : 'Checked just now: your passkey derives a different address, so this fee payer was not derived from it.',
         );
       }
       await refresh();
@@ -146,17 +165,24 @@ export default function FeePayerSettingsScreen() {
               {copy.label}
             </Text>
             <Text style={styles.rowDetail}>{copy.description}</Text>
-            {info.source === 'unknown' && (
+            {info.source !== 'keypair' && (
               <Pressable
                 accessibilityRole="button"
+                testID="fee-payer-verify"
                 onPress={handleVerify}
                 disabled={verifying}
                 style={({ pressed }) => [styles.copyButton, pressed && styles.pressed]}
               >
-                <Text style={styles.copyText}>{verifying ? 'Checking…' : 'Check with passkey'}</Text>
+                <Text style={styles.copyText}>
+                  {verifying
+                    ? 'Checking…'
+                    : info.source === 'unknown'
+                      ? 'Check with passkey'
+                      : 'Re-check with passkey'}
+                </Text>
               </Pressable>
             )}
-            {verifyNote && <Text style={styles.rowDetail}>{verifyNote}</Text>}
+            {verifyNote && <Text testID="fee-payer-verify-note" style={styles.rowDetail}>{verifyNote}</Text>}
           </View>
         </>
       )}
