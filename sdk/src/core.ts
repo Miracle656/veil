@@ -46,6 +46,7 @@ import { assertionPublicKeyCandidates } from './crypto/assertionKey';
 import { TransactionOutbox, type ReplayOptions, type ReplayResult } from './outbox';
 import { verifyAttestation, AttestationError, type AttestationPolicy } from './webauthn/attestation';
 import { createLocalCipher, type LocalCipher } from './crypto/prf';
+import { assertEntryAuthorized, cappedExpiration, hostFunctionCalls } from './authEntryGuard';
 import { resolveSigner, signWith, type ResolvedSigner, type SignerInput, type TransactionSigner } from './signer';
 import {
     deriveCounterfactualAddress as _deriveCounterfactualAddress,
@@ -1336,13 +1337,25 @@ export class InvisibleWalletCore {
      * Recording-mode simulation hands back entries that expire at ledger 0, which
      * the host reads as already expired, so those get a real expiry; the same
      * value goes into the signed preimage and the attached credential.
+     *
+     * `simulated` is the transaction that produced `sim`, and is what every entry
+     * is checked against: the simulation arrives from the network, so it says what
+     * an RPC claims the call needs rather than what the caller asked for. An entry
+     * is signed only when it authorises this wallet to make a call this
+     * transaction contains, and its expiry is capped. See
+     * {@link assertEntryAuthorized} for why the transaction cannot vouch for the
+     * entry on its own.
      */
     private async authorizeEntries(
         sim: SorobanRpc.Api.SimulateTransactionSuccessResponse,
         server: SorobanRpc.Server,
+        simulated: Transaction,
     ): Promise<void> {
         const authEntries = sim.result?.auth;
         if (!authEntries) return;
+
+        const walletAddress = this.requireAddress();
+        const allowed = hostFunctionCalls(simulated);
 
         // stellarHash is a synchronous SHA-256 — avoids crypto.subtle (unavailable on some RN setups)
         const networkIdBytes = new Uint8Array(
@@ -1352,13 +1365,18 @@ export class InvisibleWalletCore {
         // Read lazily: a simulation with no address credentials signs nothing and
         // needs neither a nonce nor a ledger.
         const nonces = new Map<string, bigint>();
-        let fallbackExpiration: number | undefined;
+        let latestLedger: number | undefined;
 
         for (const parsed of authEntries) {
             const cred = parsed.credentials();
             if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
                 continue;
             }
+
+            // Before the passkey, not after: a refusal here must cost the user
+            // nothing and must never reach a prompt they would have to read to
+            // understand. Throws AuthEntryRejected.
+            assertEntryAuthorized(parsed, { walletAddress, allowed });
 
             const addrCred = cred.address();
             const contractAddress = Address.fromScAddress(addrCred.address()).toString();
@@ -1368,11 +1386,8 @@ export class InvisibleWalletCore {
                 nonces.set(contractAddress, nonce);
             }
 
-            let expiration = addrCred.signatureExpirationLedger();
-            if (!expiration) {
-                fallbackExpiration ??= (await server.getLatestLedger()).sequence + 100;
-                expiration = fallbackExpiration;
-            }
+            latestLedger ??= (await server.getLatestLedger()).sequence;
+            const expiration = cappedExpiration(addrCred.signatureExpirationLedger(), latestLedger);
 
             const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
                 new xdr.HashIdPreimageSorobanAuthorization({
@@ -1464,7 +1479,7 @@ export class InvisibleWalletCore {
         if (authEntries.length === 0) {
             throw new Error('The wallet contract did not ask for authorisation; refusing to submit an unsigned change.');
         }
-        await this.authorizeEntries(success, server);
+        await this.authorizeEntries(success, server, recording);
 
         const invoke = recording.operations[0] as Operation.InvokeHostFunction;
         const signed = new TransactionBuilder(await server.getAccount(feePayer), {
@@ -1856,7 +1871,7 @@ export class InvisibleWalletCore {
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
 
-            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server);
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
 
             const submissionTx = await signForSubmission(assembled, signer, this.config);
 
@@ -1976,7 +1991,7 @@ export class InvisibleWalletCore {
             // 3. Authorize the rotation with the CURRENT passkey. signAuthEntry reads
             //    the still-current credential from storage, so this must run before we
             //    persist the new credential below.
-            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server);
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
 
             const submissionTx = await signForSubmission(assembled, signer, this.config);
 
@@ -2270,7 +2285,7 @@ export class InvisibleWalletCore {
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
 
-            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server);
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
 
             const submissionTx = await signForSubmission(assembled, signer, this.config);
             const sendResult = await server.sendTransaction(submissionTx);
@@ -2388,7 +2403,7 @@ export class InvisibleWalletCore {
 
             const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
 
-            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server);
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
 
             const submissionTx = await signForSubmission(assembled, signer, this.config);
 
@@ -2458,11 +2473,15 @@ export class InvisibleWalletCore {
             signTransaction: async (xdrString) => {
                 const rpc = new SorobanRpc.Server(this.config.rpcUrl);
                 const tx = TransactionBuilder.fromXDR(xdrString, this.config.networkPassphrase);
+                // A fee bump carries no operations of its own; the calls being
+                // authorised are the inner transaction's, so that is what the
+                // entries have to be checked against.
+                const inner = 'innerTransaction' in tx ? tx.innerTransaction : tx;
                 const sim = await rpc.simulateTransaction(tx, { cpuInstructions: 5_000_000 } as any);
                 if (SorobanRpc.Api.isSimulationError(sim)) {
                     throw new Error(`Simulation failed: ${sim.error}`);
                 }
-                await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, rpc);
+                await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, rpc, inner);
                 const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
                 return assembled.toXDR();
             },

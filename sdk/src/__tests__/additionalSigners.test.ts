@@ -430,3 +430,145 @@ describe('registerAdditionalSigner()', () => {
     expect(mockCreate).not.toHaveBeenCalled()
   })
 })
+
+// ── 5. A hostile simulation never reaches the passkey ─────────────────────────
+
+/**
+ * Simulation output arrives over the network, so whoever controls the RPC
+ * chooses what comes back. These pin that the SDK refuses a response asking it
+ * to authorise something the transaction does not contain — and that it refuses
+ * *before* the passkey prompt, since a user cannot be expected to audit XDR in
+ * a system dialog.
+ *
+ * Auth entries are bound to a nonce and an expiry rather than to the
+ * transaction carrying them, so a signed entry can be lifted out and submitted
+ * inside someone else's transaction. "It would have failed anyway when the real
+ * call ran" is not a defence.
+ */
+describe('a simulation that asks for something else', () => {
+  const ATTACKER = StrKey.encodeContract(Buffer.alloc(32, 66))
+  const TOKEN = StrKey.encodeContract(Buffer.alloc(32, 77))
+
+  /** An auth entry of the attacker's choosing, in recording-mode shape. */
+  function hostileEntry(opts: {
+    credentialAddress?: string
+    contract?: string
+    fn?: string
+    args?: xdr.ScVal[]
+    expiry?: number
+  }): xdr.SorobanAuthorizationEntry {
+    const {
+      credentialAddress = WALLET,
+      contract = WALLET,
+      fn = 'add_signer',
+      args = [],
+      expiry = 0,
+    } = opts
+    return new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: new Address(credentialAddress).toScAddress(),
+          nonce: xdr.Int64.fromString('123456789'),
+          signatureExpirationLedger: expiry,
+          signature: xdr.ScVal.scvVoid(),
+        })
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(contract).toScAddress(),
+            functionName: fn,
+            args,
+          })
+        ),
+        subInvocations: [],
+      }),
+    })
+  }
+
+  /** Let `get_nonce` work normally, then hand back `entry` for the real call. */
+  function wireHostileServer(entry: xdr.SorobanAuthorizationEntry) {
+    const sent: Transaction[] = []
+    mockServer.getAccount.mockImplementation(async () => new Account(FEE_PAYER.publicKey(), '100'))
+    mockServer.getLatestLedger.mockResolvedValue({ sequence: 5000 })
+    mockServer.simulateTransaction.mockImplementation(async (tx: Transaction) => {
+      const op = tx.operations[0] as Operation.InvokeHostFunction
+      const fn = op.func.invokeContract().functionName().toString()
+      if (fn === 'get_nonce') {
+        return { result: { retval: nativeToScVal(WALLET_NONCE, { type: 'u64' }) }, latestLedger: 1 }
+      }
+      if ((op.auth ?? []).length === 0) {
+        return { result: { retval: xdr.ScVal.scvVoid(), auth: [entry] }, latestLedger: 1 }
+      }
+      return { result: { retval: xdr.ScVal.scvVoid(), auth: [] }, latestLedger: 1 }
+    })
+    mockServer.sendTransaction.mockImplementation(async (tx: Transaction) => {
+      sent.push(tx)
+      return { status: 'PENDING', hash: 'a'.repeat(64) }
+    })
+    mockServer.getTransaction.mockResolvedValue({ status: 'SUCCESS', returnValue: nativeToScVal(1, { type: 'u32' }) })
+    return sent
+  }
+
+  it('refuses a token transfer smuggled in, without ever prompting the passkey', async () => {
+    const store = memoryStore(PRIMARY_BINDING)
+    // The credential is this wallet, so an address-only check would pass. The
+    // invocation is a transfer of the wallet's balance to the attacker.
+    const sent = wireHostileServer(
+      hostileEntry({
+        contract: TOKEN,
+        fn: 'transfer',
+        args: [
+          new Address(WALLET).toScVal(),
+          new Address(ATTACKER).toScVal(),
+          nativeToScVal(9_999_999_999, { type: 'i128' }),
+        ],
+      })
+    )
+    mockAuthenticate.mockResolvedValue(assertion())
+
+    await expect(makeWallet(store).addSigner(FEE_PAYER, NEW_KEY)).rejects.toThrow(
+      /not a call this transaction makes/
+    )
+    expect(mockAuthenticate).not.toHaveBeenCalled()
+    expect(sent).toHaveLength(0)
+  })
+
+  it('refuses an entry that authorises a different wallet', async () => {
+    const store = memoryStore(PRIMARY_BINDING)
+    const sent = wireHostileServer(hostileEntry({ credentialAddress: ATTACKER, contract: ATTACKER }))
+    mockAuthenticate.mockResolvedValue(assertion())
+
+    await expect(makeWallet(store).addSigner(FEE_PAYER, NEW_KEY)).rejects.toThrow(/different address/)
+    expect(mockAuthenticate).not.toHaveBeenCalled()
+    expect(sent).toHaveLength(0)
+  })
+
+  it('refuses the expected call carrying arguments the caller did not choose', async () => {
+    const store = memoryStore(PRIMARY_BINDING)
+    const sent = wireHostileServer(
+      hostileEntry({ fn: 'add_signer', args: [nativeToScVal(Buffer.from(p256Key(9)), { type: 'bytes' })] })
+    )
+    mockAuthenticate.mockResolvedValue(assertion())
+
+    await expect(makeWallet(store).addSigner(FEE_PAYER, NEW_KEY)).rejects.toThrow(/not a call this transaction makes/)
+    expect(mockAuthenticate).not.toHaveBeenCalled()
+    expect(sent).toHaveLength(0)
+  })
+
+  it('caps an expiry the simulation pushed far into the future', async () => {
+    const store = memoryStore(PRIMARY_BINDING)
+    // Valid entry, but asking to stay signable for years — a signature that can
+    // be kept and replayed long after the user has forgotten approving it.
+    const sent = wireHostileServer(
+      hostileEntry({ args: [nativeToScVal(Buffer.from(NEW_KEY), { type: 'bytes' })], expiry: 50_000_000 })
+    )
+    mockAuthenticate.mockResolvedValue(assertion())
+
+    await makeWallet(store).addSigner(FEE_PAYER, NEW_KEY)
+
+    expect(sent).toHaveLength(1)
+    const op = sent[0].operations[0] as Operation.InvokeHostFunction
+    expect(op.auth![0].credentials().address().signatureExpirationLedger()).toBe(5100)
+  })
+})
