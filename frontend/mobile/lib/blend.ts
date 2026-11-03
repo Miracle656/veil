@@ -126,6 +126,10 @@ export interface BlendPosition {
   bTokenBalance: string;
 }
 
+export type BlendPositionSnapshot =
+  | { status: 'available'; positions: BlendPosition[] }
+  | { status: 'unavailable'; positions: [] };
+
 /** Load configured Blend pools and the APY of each reserve the wallet can use. */
 export async function loadBlendPools(): Promise<BlendPool[]> {
   const poolIds = configuredPoolIds();
@@ -203,6 +207,41 @@ export async function loadBlendPositions(userAddress: string): Promise<BlendPosi
   );
 
   return positions.flat();
+}
+
+/** Read-only agent view that distinguishes an empty wallet from an unreachable pool. */
+export async function loadBlendPositionSnapshot(userAddress: string): Promise<BlendPositionSnapshot> {
+  const poolIds = configuredPoolIds();
+  if (poolIds.length === 0) return { status: 'unavailable', positions: [] };
+
+  const results = await Promise.all(
+    poolIds.map(async (poolId) => {
+      try {
+        const pool = await loadPool(poolId);
+        const user = await pool.loadUser(userAddress);
+        const positions = [...pool.reserves.values()]
+          .map((reserve) => {
+            const bTokenBalance = user.getSupplyBTokens(reserve);
+            if (bTokenBalance <= 0n) return null;
+            return {
+              poolId,
+              asset: reserve.assetId,
+              code: earnAssetFor(reserve.assetId),
+              deposited: user.getSupply(reserve).toString(),
+              bTokenBalance: bTokenBalance.toString(),
+            };
+          })
+          .filter((item): item is BlendPosition => item !== null);
+        return { ok: true as const, positions };
+      } catch {
+        // Avoid logging RPC URLs: provider credentials may be embedded in them.
+        return { ok: false as const, positions: [] as BlendPosition[] };
+      }
+    }),
+  );
+
+  if (results.every((result) => !result.ok)) return { status: 'unavailable', positions: [] };
+  return { status: 'available', positions: results.flatMap((result) => result.positions) };
 }
 
 interface SupplyParams {
