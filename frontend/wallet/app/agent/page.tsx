@@ -10,6 +10,7 @@ import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { derToRawSignature, hexToUint8Array, signMessage as sdkSignMessage } from '@veil/sdk'
 import {
   proposalRefusal,
   reviewProposedTransaction,
@@ -17,6 +18,134 @@ import {
 } from '@veil/agent-review'
 
 const network = getNetwork()
+const AGENT_SESSION_STORAGE_KEY = 'veil_agent_session'
+
+interface StoredAgentSession {
+  sessionToken: string
+  walletAddress: string
+  expiresAt: number
+}
+
+function getStoredAgentSession(walletAddress: string): string | null {
+  if (typeof window === 'undefined' || !walletAddress) return null
+  try {
+    const raw = walletSession.getItem(AGENT_SESSION_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as StoredAgentSession
+    if (
+      parsed.walletAddress === walletAddress &&
+      typeof parsed.sessionToken === 'string' &&
+      typeof parsed.expiresAt === 'number' &&
+      parsed.expiresAt > Date.now() + 30_000
+    ) {
+      return parsed.sessionToken
+    }
+    walletSession.removeItem(AGENT_SESSION_STORAGE_KEY)
+    return null
+  } catch {
+    return null
+  }
+}
+
+async function authenticateAgentSession(walletAddress: string, feePayerAddress?: string): Promise<string> {
+  const existing = getStoredAgentSession(walletAddress)
+  if (existing) return existing
+
+  const challengeRes = await fetch('/api/agent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'challenge', walletAddress }),
+  })
+  const challengeData = await challengeRes.json().catch(() => ({}))
+  if (!challengeRes.ok || typeof challengeData?.challenge !== 'string') {
+    throw new Error(challengeData?.error ?? 'Could not request wallet authentication challenge')
+  }
+
+  const challenge: string = challengeData.challenge
+  const canonicalPayload = `VEIL_AGENT_AUTH_V1\n${walletAddress}\n${challenge}`
+
+  let verifyPayload: Record<string, unknown>
+
+  if (walletAddress.startsWith('G')) {
+    const secret =
+      walletSession.getItem('veil_signer_secret') ?? walletLocal.getItem('veil_signer_secret')
+    if (!secret) throw new Error('Signing key not found for wallet authentication')
+    const kp = Keypair.fromSecret(secret)
+    const sigHex = Buffer.from(kp.sign(Buffer.from(canonicalPayload, 'utf8'))).toString('hex')
+    verifyPayload = {
+      action: 'verify',
+      walletAddress,
+      challenge,
+      signature: sigHex,
+      ...(feePayerAddress ? { feePayerAddress } : {}),
+    }
+  } else {
+    const keyId = walletLocal.getItem('invisible_wallet_key_id')
+    const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
+    if (!keyId || !publicKeyHex) {
+      throw new Error('Passkey credentials not found. Unlock your wallet first.')
+    }
+    const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+    const credId = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
+
+    const signed = await sdkSignMessage(
+      new TextEncoder().encode(canonicalPayload),
+      async (hashBytes) => {
+        const assertion = (await navigator.credentials.get({
+          publicKey: {
+            challenge: hashBytes.buffer.slice(
+              hashBytes.byteOffset,
+              hashBytes.byteOffset + hashBytes.byteLength,
+            ) as ArrayBuffer,
+            allowCredentials: [{ id: credId, type: 'public-key' }],
+            userVerification: 'required',
+            timeout: 60_000,
+          },
+        })) as PublicKeyCredential | null
+        if (!assertion) return null
+        const response = assertion.response as AuthenticatorAssertionResponse
+        return {
+          publicKey: hexToUint8Array(publicKeyHex),
+          authData: new Uint8Array(response.authenticatorData),
+          clientDataJSON: new Uint8Array(response.clientDataJSON),
+          signature: derToRawSignature(response.signature),
+        }
+      },
+      keyId,
+    )
+
+    verifyPayload = {
+      action: 'verify',
+      walletAddress,
+      challenge,
+      signedMessage: signed,
+      factoryId: network.factoryContractId,
+      networkPassphrase: network.networkPassphrase,
+      ...(feePayerAddress ? { feePayerAddress } : {}),
+    }
+  }
+
+  const verifyRes = await fetch('/api/agent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(verifyPayload),
+  })
+  const verifyData = await verifyRes.json().catch(() => ({}))
+  if (!verifyRes.ok || typeof verifyData?.sessionToken !== 'string') {
+    throw new Error(verifyData?.error ?? 'Wallet signature verification failed')
+  }
+
+  walletSession.setItem(
+    AGENT_SESSION_STORAGE_KEY,
+    JSON.stringify({
+      sessionToken: verifyData.sessionToken,
+      walletAddress,
+      expiresAt: verifyData.expiresAt,
+    }),
+  )
+  return verifyData.sessionToken
+}
 
 interface Message {
   role: 'user' | 'agent'
@@ -289,17 +418,28 @@ export default function AgentPage() {
 
     setIsThinking(true)
     try {
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          walletAddress,
-          feePayerAddress,
-          profile: getUserProfile(),
-          history,
-        }),
-      })
+      let sessionToken = await authenticateAgentSession(walletAddress, feePayerAddress)
+      const postChat = (token: string) =>
+        fetch('/api/agent', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            action: 'chat',
+            message: text,
+            feePayerAddress,
+            profile: getUserProfile(),
+            history,
+          }),
+        })
+      let res = await postChat(sessionToken)
+      if (res.status === 401) {
+        walletSession.removeItem(AGENT_SESSION_STORAGE_KEY)
+        sessionToken = await authenticateAgentSession(walletAddress, feePayerAddress)
+        res = await postChat(sessionToken)
+      }
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`)
 
@@ -441,6 +581,17 @@ export default function AgentPage() {
   const clearHistory = () => {
     const profile = getUserProfile()
     setMessages([{ role: 'agent', content: buildGreeting(profile) }])
+    const token = getStoredAgentSession(walletAddress)
+    if (token) {
+      void fetch('/api/agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action: 'clear_history' }),
+      }).catch(() => {})
+    }
   }
 
   // Finish onboarding → save profile, show greeting, enter chat
