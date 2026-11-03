@@ -5,7 +5,7 @@ import {
   type ChatTurn,
   type LlmProvider,
 } from './llm.js'
-import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL, USDC_ISSUER } from './network.js'
 import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
@@ -234,6 +234,23 @@ export const TOOL_REGISTRY: VeilTool[] = [
     },
   },
   {
+    name: 'prepare_swap_deposit_plan',
+    screen: 'Swap screen',
+    kind: 'prepare',
+    approval: 'screen',
+    description:
+      'Prepare a two-step plan that swaps into USDC and then deposits the realized USDC output into the existing Blend Earn screen. ' +
+      'This tool only returns a reviewable plan: it never builds, signs, or submits a transaction. The user reviews the complete plan first, then confirms each existing screen separately with their passkey. Use only when the user asks for swap then deposit.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        from_asset: { type: 'string', enum: ['XLM'], description: 'Asset to swap into USDC.' },
+        amount: { type: 'string', description: 'Positive amount to swap, with at most seven decimals.' },
+      },
+      required: ['from_asset', 'amount'],
+    },
+  },
+  {
     name: 'build_payment',
     screen: 'Send screen',
     kind: 'prepare',
@@ -339,6 +356,7 @@ ${capabilityList}
 
 RULES:
 1. For any swap, call open_swap. Never build a swap transaction yourself; the Swap screen quotes it and the user confirms there.
+1a. For a request to swap an asset and deposit the resulting USDC into Blend, call prepare_swap_deposit_plan. The plan is read-only until the user opens step one. Each screen performs its own review and passkey ceremony; step two uses only the USDC balance increase observed after step one completes. Never claim that approving one step approves another.
 2. Before a payment executes, ALWAYS call request_user_approval — never skip this.
 3. Use get_price when the user asks about a price or wants to weigh a swap first. Use get_trending_activity for questions about what is active or trending on Stellar. Only report the measured Lens 24-hour pair volume and source returned by the tool; identify every issued asset by issuer and call unverified issuers unverified. If Lens is unavailable, say "I cannot see the market right now" and do not guess.
 4. Prices come from Soroswap's aggregator when available, otherwise the Stellar DEX; say which when it matters. If price data is unavailable, state plainly that price data is currently unavailable — do NOT make up or estimate prices.
@@ -402,6 +420,8 @@ export interface AgentResult {
   investIntent?: InvestIntent
   /** A read-rate cash-out hand-off; the Cash Out screen owns all payout steps. */
   cashOutIntent?: CashOutIntent
+  /** A complete, read-only swap → Blend deposit plan for the mobile review UI. */
+  planIntent?: SwapDepositPlanIntent
 }
 
 export interface SwapIntent {
@@ -421,6 +441,13 @@ export interface InvestIntent {
 export interface CashOutIntent {
   amountNGN: number
   rate: number
+}
+
+export interface SwapDepositPlanIntent {
+  from: string
+  to: 'USDC'
+  amount: string
+  usdcIssuer: string
 }
 
 /** Assets the apps' Swap screens offer. */
@@ -444,6 +471,7 @@ export async function runAgent(
   let pendingTxSummary: string | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
+  let planIntent: SwapDepositPlanIntent | undefined
   let unavailablePrice: { assetA: string; assetB: string } | undefined
   const unavailablePriceResponse = () =>
     unavailablePrice
@@ -705,6 +733,26 @@ export async function runAgent(
         return JSON.stringify({ status: 'swap_screen_ready' })
       }
 
+      case 'prepare_swap_deposit_plan': {
+        const from = String(input.from_asset ?? '').trim().toUpperCase()
+        const amount = String(input.amount ?? '').trim()
+        if (from !== 'XLM') {
+          return JSON.stringify({ error: 'This plan currently supports swapping XLM into USDC.' })
+        }
+        if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) {
+          return JSON.stringify({ error: 'amount must be a plain positive number with at most seven decimals.' })
+        }
+        planIntent = { from, to: 'USDC', amount, usdcIssuer: USDC_ISSUER }
+        return JSON.stringify({
+          status: 'plan_ready_for_user_review',
+          steps: [
+            { action: 'swap', amount, from, to: 'USDC', usdc_issuer: USDC_ISSUER },
+            { action: 'blend_deposit', amount: 'realized_output_from_step_1', asset: 'USDC', issuer: USDC_ISSUER },
+          ],
+          execution: 'Each step is handled by its existing wallet screen and requires a separate passkey approval.',
+        })
+      }
+
       case 'build_payment': {
         if (cashOutToolUsed) {
           cashOutPaymentBlocked = true
@@ -757,6 +805,7 @@ export async function runAgent(
         swapIntent,
         investIntent,
         cashOutIntent,
+        planIntent,
       }
     }
 
@@ -781,23 +830,26 @@ export async function runAgent(
       // report, and so does a price lookup that failed. Either beats re-throwing.
       const settled = cashOutResponse() ?? unavailablePriceResponse()
       if (settled) {
-        return { response: settled, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent }
+        return { response: settled, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent, planIntent }
       }
       // The work is done — a swap or invest to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
-      if (swapIntent || investIntent || pendingTxXdr) {
+      if (swapIntent || investIntent || planIntent || pendingTxXdr) {
         return {
           response: swapIntent
             ? 'Your swap is ready in the Swap screen.'
             : investIntent
             ? 'Routing to the Invest section (destination screen under construction).'
+            : planIntent
+            ? 'Your complete swap and deposit plan is ready to review.'
             : 'Your transaction is ready to review.',
           pendingTxXdr,
           pendingTxSummary,
           swapIntent,
           investIntent,
           cashOutIntent,
+          planIntent,
         }
       }
       throw err
@@ -806,7 +858,7 @@ export async function runAgent(
 
   const response =
     cashOutResponse() ?? unavailablePriceResponse() ?? redactBankAccountNumbers(turn.text)
-  return { response, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent }
+  return { response, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent, planIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────
