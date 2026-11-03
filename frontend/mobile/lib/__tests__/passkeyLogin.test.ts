@@ -31,6 +31,11 @@ jest.mock('../passkey', () => ({
 jest.mock('../walletStore', () => ({
   getSignerSecret: jest.fn(async () => null),
   getWalletAddress: jest.fn(async () => null),
+  // Read by the stranded-fee-payer recovery. Null here means there is no
+  // credential id to derive a legacy account from, so the sweep declines
+  // without touching the network — which is what these cases want.
+  getPasskeyId: jest.fn(async () => null),
+  getPasskeyPublicKey: jest.fn(async () => null),
   setPasskeyCredential: (...a: unknown[]) => mockSetPasskeyCredential(...a),
   setPasskeyId: jest.fn(async () => undefined),
   setSignerSecret: (...a: unknown[]) => mockSetSignerSecret(...a),
@@ -135,7 +140,14 @@ describe('loginWithAddress — acceptance criteria', () => {
 
     const result = await loginWithAddress(WALLET);
 
-    expect(result).toEqual({ address: WALLET, recoverable: false });
+    // This passkey offered no PRF, so the fee-payer is a fresh random key
+    // that exists on this phone and nowhere else. The sweep is REFUSED,
+    // which is a different answer from looking and finding no candidate.
+    expect(result).toEqual({
+      address: WALLET,
+      recoverable: false,
+      feePayerSweep: { swept: false, reason: 'fee-payer-not-passkey-bound' },
+    });
     expect(mockSetWalletAddress).toHaveBeenCalledWith(WALLET);
     expect(mockSetPasskeyCredential).toHaveBeenCalledWith('test-credential', signerOf(REGISTERED).publicKey);
     const secret = mockSetSignerSecret.mock.calls[0][0];
@@ -161,6 +173,13 @@ describe('loginWithAddress — acceptance criteria', () => {
     expect(mockSetSignerSecret).toHaveBeenCalledWith(
       Keypair.fromRawEd25519Seed(Buffer.from(prfSeed)).secret(),
     );
+    // The other half of the guard: a PRF fee-payer IS passkey-bound, so the
+    // sweep is allowed to look. It finds nothing here because no credential
+    // id is stored — which must read differently from refusing to look.
+    expect(result.feePayerSweep).toEqual({
+      swept: false,
+      reason: 'no-legacy-candidate',
+    });
   });
 
   it('reports an undeployed address distinctly from a network failure', async () => {

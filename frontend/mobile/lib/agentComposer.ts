@@ -19,6 +19,25 @@
 /** Standing gap kept between the last message and the composer's top edge. */
 export const THREAD_BOTTOM_GAP = 16;
 
+/**
+ * What to reserve before the composer has ever been measured.
+ *
+ * `onLayout` reads 0 until it first fires, and 0 was being taken literally —
+ * nothing to clear — so the inset collapsed to the gap alone and the last
+ * message was drawn underneath the composer. That is the reported bug: an
+ * answer with the suggestion chips and the input field showing through it.
+ *
+ * This is NOT a floor on a real measurement: a genuine 122 on a small phone
+ * still reserves 122, which is the whole point of measuring (#1039). It only
+ * stands in when nothing has been measured yet. 140 is this composer added up
+ * from its own styles — 10 top padding + 12 bottom + 10 gap, a chip row of
+ * about 29 (6 padding each side, 1 border, ~15 of text), and an input card of
+ * about 84 (14 + 10 padding, 2 border, ~20 of field, 6 gap, ~32 of actions) —
+ * so an unmeasured screen errs towards a little too much space rather than
+ * painting over itself.
+ */
+export const UNMEASURED_COMPOSER_CLEARANCE = 140;
+
 export type ThreadClearance = {
   /** Composer height as reported by its own `onLayout`, in dp. */
   composerHeight: number;
@@ -36,5 +55,7 @@ export type ThreadClearance = {
  * message or a hundred, and any text size — because nothing in it is assumed.
  */
 export function threadBottomInset({ composerHeight, keyboardLift = 0 }: ThreadClearance): number {
-  return THREAD_BOTTOM_GAP + Math.max(0, composerHeight) + Math.max(0, keyboardLift);
+  const measured = Number.isFinite(composerHeight) ? Math.max(0, composerHeight) : 0;
+  const clearance = measured > 0 ? measured : UNMEASURED_COMPOSER_CLEARANCE;
+  return THREAD_BOTTOM_GAP + clearance + Math.max(0, keyboardLift);
 }

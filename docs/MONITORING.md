@@ -11,6 +11,14 @@ out that anything — attack, crash, quota, or a silent stall — had happened.
 > reads as diligence while leaving the same blind spot. So every metric named
 > below is marked with whether it is exported **today**. The aspirational ones
 > are listed separately, with the issue that would make them real.
+>
+> Note on the nightly `Testnet Smoke Test` workflow (`.github/workflows/testnet-smoke.yml`):
+> it has failed on every run and filed duplicate issues (#1118, #1122, #1129, #1146).
+> Its failures must be diagnosed before they are treated as product signal. A failure
+> must name the step, the network and the response. Note that this job contacts
+> no Veil backend at all, so a cold start is never the explanation for its
+> failures — only Friendbot, the RPC or the contracts can be. Fixing the check is in scope;
+> disabling or weakening it is not.
 
 ---
 

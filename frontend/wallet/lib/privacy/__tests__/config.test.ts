@@ -55,6 +55,10 @@ describe('privacy feature flag', () => {
   it('accepts 1 or true as the build-time switch on testnet', () => {
     process.env[PRIVACY_FLAG_VAR] = '1'
     expect(isPrivacyEnabled('testnet')).toBe(true)
+    expect(isPrivacyEnabled('mainnet')).toBe(false)
+    expect(getSppConfig('testnet')).not.toBeNull()
+    expect(getSppConfig('mainnet')).toBeNull()
+
     process.env[PRIVACY_FLAG_VAR] = 'true'
     expect(isPrivacyEnabled('testnet')).toBe(true)
   })

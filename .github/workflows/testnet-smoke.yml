@@ -166,7 +166,7 @@ jobs:
           node -e "
             const {
               Keypair,
-              Server,
+              Horizon,
               TransactionBuilder,
               Networks,
               Operation,
@@ -175,7 +175,12 @@ jobs:
             } = require('@stellar/stellar-sdk');
 
             const horizonUrl = process.env.HORIZON_URL;
-            const server = new Server(horizonUrl);
+            // stellar-sdk v12 moved the Horizon client under the Horizon
+            // namespace. A bare Server is undefined, so constructing it threw
+            // 'Server is not a constructor' and failed this job every night.
+            // The install step above is unpinned, so it broke on the day v12
+            // published: the check was broken, not the wallet.
+            const server = new Horizon.Server(horizonUrl);
 
             const senderKp = Keypair.fromSecret(process.env.SENDER_SECRET);
             const recipientPublic = process.env.RECIPIENT_PUBLIC;
