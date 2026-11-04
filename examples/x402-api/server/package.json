@@ -5,9 +5,9 @@
   "type": "module",
   "description": "x402-guarded Express API requiring 0.01 XLM, settled by an in-process Stellar facilitator",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "dev": "node init && tsx watch src/index.ts",
+    "build": "node init && tsc",
+    "start": "node init && node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
