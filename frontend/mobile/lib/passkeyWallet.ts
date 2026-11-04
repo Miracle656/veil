@@ -242,7 +242,17 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
         { from: current, fromSecret: currentSecret, to: derived.publicKey() },
         defaultSweepDeps(null, getNetwork(), inclusionFee()),
       );
-      if (!moved.swept && moved.reason !== 'legacy-empty' && moved.reason !== 'below-reserve') {
+      // `legacy-empty` is the only safe miss: there was nothing to move, so
+      // adopting the derived key abandons nothing.
+      //
+      // `below-reserve` is NOT safe, though it reads like it. It means the
+      // account holds XLM that a payment cannot reach because every drop is
+      // reserve — and adopting here overwrites the only copy of the secret
+      // that could ever reach it, which is the exact loss this function was
+      // written to prevent. One real wallet is in that state with 2.5 XLM
+      // locked behind three subentries. Refuse until the reserve can be
+      // freed by closing the account rather than sweeping it.
+      if (!moved.swept && moved.reason !== 'legacy-empty') {
         return { bound: false, issue: 'funded' };
       }
     }
