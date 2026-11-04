@@ -119,6 +119,7 @@ interface SpendingCardProps {
 
 function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardProps) {
   const [copied, setCopied] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const [xlmUsd, setXlmUsd] = useState<number | null>(null)
   const [requestFiat, setRequestFiat] = useState<number | null>(null)
@@ -154,14 +155,28 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardP
     payUri = createPaymentRequest({ destination: address, ...assetFields }).qrValue
   }
 
-  // A request for an issued asset is only meaningful with its issuer, so it is
-  // shared as the full link; a bare address would let the payer pick any USDT0.
+  // A request for an issued asset is only meaningful with its issuer, so the
+  // QR and the share sheet carry the full link; a bare address would let the
+  // payer pick any one of the eight assets called USDT0.
   const shareText = (finalAmount || !isNative) ? payUri : address
 
+  // …but **Copy** gives the address. This card promises "most senders &
+  // exchanges", and an exchange withdrawal field rejects `web+stellar:` — it
+  // wants 56 characters starting with G. Copying a link there was a dead end
+  // with no error message to explain it. The link is still one tap away below,
+  // for a payer whose wallet does read SEP-7.
+  const canCopyLink = !isNative || !!finalAmount
+
   const handleCopy = async () => {
-    if (!(await copyText(shareText))) return
+    if (!(await copyText(address))) return
     setCopied(true)
     window.setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleCopyLink = async () => {
+    if (!(await copyText(payUri))) return
+    setLinkCopied(true)
+    window.setTimeout(() => setLinkCopied(false), 2000)
   }
 
   const handleSaveQr = async () => {
@@ -221,7 +236,18 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardP
           size={200}
           bgColor="#ffffff"
           fgColor="#0F0F0F"
-          level="M"
+          // H, not M. The mark in the middle destroys the modules it covers,
+          // and only the 30% recovery of level H reliably survives that. The
+          // code gets denser, which is the trade being made on purpose.
+          level="H"
+          imageSettings={{
+            src: '/veil-logo.svg',
+            height: 40,
+            width: 40,
+            // Clear the modules behind the mark rather than paint over them,
+            // so a scanner reads an erasure it can correct instead of noise.
+            excavate: true,
+          }}
         />
       </div>
 
@@ -238,10 +264,16 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardP
       )}
 
       <div className="vw-recv-tiles">
-        <Tile primary label={copied ? 'Copied' : 'Copy'} onClick={handleCopy} icon={copied ? <CheckIcon /> : <CopyIcon />} />
+        <Tile primary label={copied ? 'Copied' : 'Copy address'} onClick={handleCopy} icon={copied ? <CheckIcon /> : <CopyIcon />} />
         <Tile label={downloading ? 'Saving…' : 'Save QR'} onClick={handleSaveQr} disabled={downloading} icon={<DownloadIcon />} />
         <Tile label="Share" onClick={handleShare} icon={<ShareIcon />} />
       </div>
+
+      {canCopyLink && (
+        <button type="button" className="vw-recv-linkbtn" onClick={handleCopyLink}>
+          {linkCopied ? 'Payment link copied' : 'Copy payment link instead'}
+        </button>
+      )}
     </div>
   )
 }

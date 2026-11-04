@@ -128,7 +128,8 @@ export default function ReceiveScreen() {
       )
     : null;
   // A request for an issued asset only means something with its issuer, so it
-  // is copied and shared as the full link rather than the bare address.
+  // is *shared* as the full link rather than the bare address. Copy is
+  // deliberately not this — see `handleCopy`.
   const shareText = requestIssuer ? payUri : payable;
 
   /**
@@ -147,12 +148,29 @@ export default function ReceiveScreen() {
     setTimeout(() => setCopiedContract(false), COPY_FEEDBACK_MS);
   }
 
+  /**
+   * Copy gives the **address**, never the SEP-7 link.
+   *
+   * This card is what someone uses to receive from an exchange, and an
+   * exchange withdrawal field rejects `web+stellar:` outright — it wants the
+   * 56 characters starting with G. Copying a link there failed with nothing to
+   * explain why. The link is still available through Share, and through the
+   * separate action below when an asset or amount is being requested.
+   */
   async function handleCopy() {
-    if (shareText) {
-      await Clipboard.setStringAsync(shareText);
+    if (payable) {
+      await Clipboard.setStringAsync(payable);
     }
     setCopied(true);
     setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
+  }
+
+  const [linkCopied, setLinkCopied] = useState(false);
+  async function handleCopyLink() {
+    if (!payUri) return;
+    await Clipboard.setStringAsync(payUri);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), COPY_FEEDBACK_MS);
   }
 
   async function handleShare() {
@@ -182,7 +200,7 @@ export default function ReceiveScreen() {
   }
 
   const tiles = [
-    { key: 'copy', label: copied ? 'Copied' : 'Copy', Icon: CopyIcon, onPress: handleCopy },
+    { key: 'copy', label: copied ? 'Copied' : 'Copy address', Icon: CopyIcon, onPress: handleCopy },
     { key: 'save', label: 'Save QR', Icon: DownloadIcon, onPress: handleSaveQr },
     { key: 'share', label: 'Share', Icon: ShareIcon, onPress: handleShare },
   ];
@@ -228,6 +246,15 @@ export default function ReceiveScreen() {
                 size={168}
                 backgroundColor="#F6F7F8"
                 color="#0F0F0F"
+                // H, not the default M. The mark in the middle destroys the
+                // modules it covers, and only level H's 30% recovery reliably
+                // survives that. Denser code, on purpose.
+                ecl="H"
+                logo={require('../assets/images/icon.png')}
+                logoSize={38}
+                logoBackgroundColor="#F6F7F8"
+                logoMargin={3}
+                logoBorderRadius={9}
                 getRef={(c) => { qrRef.current = c as unknown as QRRef; }}
               />
             ) : (
@@ -303,6 +330,20 @@ export default function ReceiveScreen() {
               </Pressable>
             ))}
           </View>
+
+          {payUri && requestIssuer && (
+            <Pressable
+              testID="receive-copy-link"
+              onPress={handleCopyLink}
+              accessibilityRole="button"
+              accessibilityLabel="Copy payment link"
+              style={({ pressed }) => [styles.linkButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.linkButtonLabel}>
+                {linkCopied ? 'Payment link copied' : 'Copy payment link instead'}
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         {/* Contract address */}
@@ -493,6 +534,22 @@ const createStyles = (colors: ThemeColors) =>
       borderColor: colors.border,
       borderRadius: 14,
       paddingVertical: 12,
+    },
+    // Quieter than the three tiles on purpose: the address above is what an
+    // exchange needs, and the SEP-7 link is the specialist option.
+    linkButton: {
+      marginTop: 10,
+      paddingVertical: 9,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 10,
+      alignItems: 'center',
+    },
+    linkButtonLabel: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 12.5,
     },
     tileLabel: {
       color: colors.textPrimary,
