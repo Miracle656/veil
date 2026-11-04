@@ -1204,6 +1204,23 @@ body {
   width: 100%;
   margin-top: 18px;
 }
+/* Secondary to the three tiles: the SEP-7 link, for a payer whose wallet reads
+   it. Deliberately quiet, because the address above is what an exchange needs. */
+.vw-recv-linkbtn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 12px;
+  background: transparent;
+  border: 1px solid var(--border-dim);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.vw-recv-linkbtn:hover {
+  color: var(--text);
+  border-color: var(--border);
+}
 .vw-recv-tile {
   flex: 1;
   display: flex;
