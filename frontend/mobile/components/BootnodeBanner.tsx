@@ -24,6 +24,17 @@ export function BootnodeBanner() {
     return () => clearInterval(interval);
   }, []);
 
+  // Developer diagnostic, not a user-facing warning.
+  //
+  // This is mounted in the root layout, so without this gate it sits across
+  // the top of EVERY screen — over the status bar — telling someone paying an
+  // electricity bill which bootnode the privacy prover fell back to. The
+  // community build leaves `EXPO_PUBLIC_SPP_BOOTNODE_URL` unset, so it showed
+  // for every user, always.
+  if (!__DEV__) {
+    return null;
+  }
+
   if (!status || !status.usingFallback || !status.reason) {
     return null;
   }
