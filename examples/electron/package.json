@@ -5,9 +5,9 @@
   "description": "Electron desktop wallet example using the Veil web SDK in the renderer process",
   "main": "electron/main.cjs",
   "scripts": {
-    "dev": "concurrently -k -n VITE,ELECTRON -c blue,yellow \"vite\" \"wait-on tcp:5174 && cross-env ELECTRON_RENDERER_URL=http://localhost:5174 electron .\"",
-    "build": "tsc && vite build",
-    "start": "npm run build && electron .",
+    "dev": "node init && concurrently -k -n VITE,ELECTRON -c blue,yellow \"vite\" \"wait-on tcp:5174 && cross-env ELECTRON_RENDERER_URL=http://localhost:5174 electron .\"",
+    "build": "node init && tsc && vite build",
+    "start": "node init && npm run build && electron .",
     "preview": "vite preview"
   },
   "dependencies": {
