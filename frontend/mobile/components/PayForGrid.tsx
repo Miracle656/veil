@@ -58,7 +58,10 @@ export const BILL_SERVICES: BillService[] = [
   { id: 'buy', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn', accent: true },
   { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'live', route: '/airtime' },
   { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
-  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'live', route: '/electricity' },
+  // Gated 2026-11-04: the screen renders but the purchase does not complete
+  // yet, and a tile that does nothing belongs behind the "soon" badge rather
+  // than on the dashboard. Give it back its route when the flow works.
+  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'soon' },
   { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
   { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'not-planned' },
   { id: 'transfer', label: 'Cash out', hint: 'To any bank', Icon: BankIcon, status: 'live', route: '/cash-out' },
