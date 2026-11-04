@@ -128,7 +128,8 @@ export default function ReceiveScreen() {
       )
     : null;
   // A request for an issued asset only means something with its issuer, so it
-  // is copied and shared as the full link rather than the bare address.
+  // is *shared* as the full link rather than the bare address. Copy is
+  // deliberately not this — see `handleCopy`.
   const shareText = requestIssuer ? payUri : payable;
 
   /**
@@ -199,7 +200,7 @@ export default function ReceiveScreen() {
   }
 
   const tiles = [
-    { key: 'copy', label: copied ? 'Copied' : 'Copy', Icon: CopyIcon, onPress: handleCopy },
+    { key: 'copy', label: copied ? 'Copied' : 'Copy address', Icon: CopyIcon, onPress: handleCopy },
     { key: 'save', label: 'Save QR', Icon: DownloadIcon, onPress: handleSaveQr },
     { key: 'share', label: 'Share', Icon: ShareIcon, onPress: handleShare },
   ];
