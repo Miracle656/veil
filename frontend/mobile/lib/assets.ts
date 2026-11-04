@@ -14,7 +14,7 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Horizon } from '@stellar/stellar-sdk';
+import { Horizon, StrKey } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
 
@@ -29,14 +29,6 @@ export interface HorizonBalanceLike {
   balance: string;
 }
 
-/** Stellar uses alphanum4 for codes up to 4 chars and alphanum12 thereafter. */
-export function stellarAssetTypeForCode(code: string): 'credit_alphanum4' | 'credit_alphanum12' {
-  if (!/^[A-Za-z0-9]{1,12}$/.test(code)) {
-    throw new Error('Stellar asset codes must contain 1 to 12 alphanumeric characters.');
-  }
-  return code.length <= 4 ? 'credit_alphanum4' : 'credit_alphanum12';
-}
-
 /** Verified asset metadata structure. */
 export interface RegisteredAsset {
   code: string;
@@ -45,7 +37,7 @@ export interface RegisteredAsset {
   issuerName: string;
   homeDomain?: string;
   network: 'mainnet' | 'testnet' | 'all';
-  kind: 'treasury' | 'fund' | 'equity' | 'governance' | 'stablecoin' | 'native';
+  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native';
   reserveXlm?: number;
   sacContractId?: string;
 }
@@ -57,7 +49,6 @@ export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSD
 export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA';
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
-export const ETHERFUSE_MAINNET_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
 
 export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   USDC: {
@@ -89,7 +80,6 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     kind: 'stablecoin',
     reserveXlm: 0.5,
   },
-  // AQUA floats and is priced from the order book, never from a hardcoded rate.
   AQUA: {
     code: 'AQUA',
     issuer: AQUA_MAINNET_ISSUER,
@@ -97,7 +87,7 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     issuerName: 'Aquarius',
     homeDomain: 'aqua.network',
     network: 'mainnet',
-    kind: 'governance',
+    kind: 'equity',
     reserveXlm: 0.5,
   },
   USDY: {
@@ -119,33 +109,6 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     kind: 'stablecoin',
     reserveXlm: 0.5,
     sacContractId: USDT0_MAINNET_SAC,
-  },
-  CETES: {
-    code: 'CETES',
-    issuer: ETHERFUSE_MAINNET_ISSUER,
-    name: 'Mexican Treasury Certificates',
-    issuerName: 'Etherfuse',
-    homeDomain: 'etherfuse.com',
-    network: 'mainnet',
-    kind: 'treasury',
-  },
-  USTRY: {
-    code: 'USTRY',
-    issuer: ETHERFUSE_MAINNET_ISSUER,
-    name: 'US Treasury Notes',
-    issuerName: 'Etherfuse',
-    homeDomain: 'etherfuse.com',
-    network: 'mainnet',
-    kind: 'treasury',
-  },
-  TESOURO: {
-    code: 'TESOURO',
-    issuer: ETHERFUSE_MAINNET_ISSUER,
-    name: 'Brazilian Treasury',
-    issuerName: 'Etherfuse',
-    homeDomain: 'etherfuse.com',
-    network: 'mainnet',
-    kind: 'treasury',
   },
 };
 
@@ -304,22 +267,169 @@ export async function loadWalletAddress(): Promise<string | null> {
 }
 
 /** A Horizon 404 means the account isn't funded yet — an empty portfolio, not an error. */
+/**
+ * Whether Horizon's answer means "this account does not exist yet".
+ *
+ * The stellar-sdk's `NotFoundError` extends `Error`, and a class extending a
+ * built-in loses its prototype chain once Babel has compiled it for Hermes — so
+ * `err instanceof Error` is FALSE on device for an error whose `name` is exactly
+ * 'NotFoundError'. This required it, which is why the Assets screen reported
+ * "NotFoundError" as a failure for a wallet whose classic account simply does
+ * not exist yet, while the dashboard — whose own copy of this check never had
+ * the gate — handled the same response from the same account without complaint.
+ *
+ * Duck-type it: a 404, or something calling itself NotFoundError.
+ */
 function isAccountNotFound(err: unknown): boolean {
-  const status = (err as { response?: { status?: number } })?.response?.status;
-  return status === 404 || (err instanceof Error && err.name === 'NotFoundError');
+  const e = err as { name?: string; response?: { status?: number } };
+  return e?.name === 'NotFoundError' || e?.response?.status === 404;
+}
+
+
+/**
+ * Flags the ISSUER sets, which travel with the asset rather than the holder,
+ * so they read the same for everyone who holds it.
+ */
+export interface HorizonIssuerFlags {
+  auth_required?: boolean;
+  auth_revocable?: boolean;
+  auth_clawback_enabled?: boolean;
+  auth_immutable?: boolean;
 }
 
 /**
+ * What the issuer can do to a balance of this asset, in a sentence, or null
+ * when it can do neither.
+ *
+ * Shares its wording with the web wallet so the two cannot drift into saying
+ * different things about the same asset. It matters most for USDT0, whose
+ * issuer has both flags set: the only place mobile used to say so was a line
+ * inside the "enable USDT0" banner, which a holder never sees again after they
+ * tap it once. This is the asset behaving as designed, not Veil holding
+ * anything back.
+ */
+export function getAssetControlDisclosure(flags?: HorizonIssuerFlags | null): string | null {
+  if (!flags) return null;
+  if (flags.auth_revocable && flags.auth_clawback_enabled) {
+    return 'The issuer can freeze this balance or take it back, and this is a property of the asset, not of Veil.';
+  }
+  if (flags.auth_clawback_enabled) {
+    return 'The issuer can take this balance back, and this is a property of the asset, not of Veil.';
+  }
+  if (flags.auth_revocable) {
+    return 'The issuer can freeze this balance, and this is a property of the asset, not of Veil.';
+  }
+  return null;
+}
+
+/**
+ * The issuing account's flags, or null when Horizon cannot answer.
+ *
+ * Null means "unknown", and callers show nothing rather than implying the
+ * issuer is powerless — the web wallet had a bug of exactly that shape, where
+ * a Horizon failure silently dropped the disclosure.
+ */
+export async function fetchIssuerFlags(issuer: string): Promise<HorizonIssuerFlags | null> {
+  if (!issuer) return null;
+  try {
+    const account = await new Horizon.Server(getNetwork().horizonUrl).loadAccount(issuer);
+    return (account.flags as HorizonIssuerFlags) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the last read found a classic account behind the address.
+ *
+ * A smart wallet can hold XLM in its contract with no classic account at all.
+ * The dashboard reads that fine, but a trustline needs the classic account, so
+ * the screen has to be able to say so rather than offering adds that fail.
+ */
+let lastAccountExists = true;
+
+export function classicAccountExists(): boolean {
+  return lastAccountExists;
+}
+/**
  * Loads every non-native asset held by `publicKey` from Horizon.
+ *
+ * A smart wallet's address is a CONTRACT, and Horizon only knows classic
+ * accounts, so asking it about a C-address fails on every attempt — which is
+ * why this screen broke on exactly the wallets it was built for. Trustlines
+ * are a property of the classic account regardless (a contract holds issued
+ * assets as SAC storage and needs no trustline at all), so the account to read
+ * is the fee payer, which is what the dashboard has resolved all along.
+ *
+ * `./activity` is imported at call time, not at module load. #1120 took the
+ * static edge out on purpose so the asset registry does not drag the keystore
+ * into every module that reads a code or an issuer; resolving it here keeps
+ * that graph clean while the behaviour comes back.
  */
 export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
-  const server = new Horizon.Server(getNetwork().horizonUrl);
-  try {
-    const account = await server.loadAccount(publicKey);
-    return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
-  } catch (err) {
-    if (isAccountNotFound(err)) return [];
-    throw err;
+  // Refuse anything that is not a Stellar address at all. This screen was
+  // passing the stored WebAuthn public key — `04` then 128 hex characters —
+  // straight through, and Horizon answered with a bare transport error whose
+  // only readable field was `name: "Unknown"`. That read as a network fault
+  // for three rounds. A wrong question deserves a different answer from an
+  // unreachable server.
+  if (!StrKey.isValidContract(publicKey) && !StrKey.isValidEd25519PublicKey(publicKey)) {
+    throw new Error(
+      `"${publicKey.slice(0, 8)}…" is not a Stellar address, so there are no assets to read for it.`,
+    );
   }
+
+  let effective = publicKey;
+  if (StrKey.isValidContract(publicKey)) {
+    // Required at call time, with a TYPE-only import for the signature, so no
+    // runtime edge is created at module load. Jest cannot run a dynamic
+    // `import()` without --experimental-vm-modules; `require` is what both
+    // Metro and the test environment handle.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getFeePayerAddress } = require('./activity') as typeof import('./activity');
+    const feePayer = await getFeePayerAddress();
+    // No fee payer stored means no classic account exists for this wallet yet,
+    // so there are no trustlines to report — empty, not broken.
+    if (!feePayer) {
+      lastAccountExists = false;
+      return [];
+    }
+    effective = feePayer;
+  }
+
+  const server = new Horizon.Server(getNetwork().horizonUrl);
+
+  // Retry once, and say what failed. Android drops one of the several Horizon
+  // calls this app fires on mount with that same bare "Unknown".
+  let last: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const account = await server.loadAccount(effective);
+      lastAccountExists = true;
+      return parseHeldAssets(account.balances as unknown as HorizonBalanceLike[]);
+    } catch (err) {
+      // Definitive, not a transport failure: the account simply is not funded.
+      if (isAccountNotFound(err)) {
+        lastAccountExists = false;
+        return [];
+      }
+      last = err;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+
+  // Carry the cause into the message. A flat "could not reach the network" is
+  // the same sentence whether Horizon is down, the URL is wrong, or the address
+  // is one Horizon cannot answer for — and those need different fixes. Read the
+  // fields directly rather than through `instanceof Error`, for the same Hermes
+  // reason `isAccountNotFound` cannot use it.
+  const e = last as { name?: string; message?: string } | null;
+  const detail = [e?.name, e?.message].filter(Boolean).join(': ') || String(last ?? 'no detail');
+  const which = effective === publicKey ? 'this wallet' : 'the fee payer';
+  const shortId = `${effective.slice(0, 4)}…${effective.slice(-4)}`;
+  console.warn(`[assets] loadAccount failed twice for ${effective} (${which}) — ${detail}`);
+  throw new Error(
+    `Could not read ${which} (${shortId}) from ${new URL(getNetwork().horizonUrl).host}. ${detail}`,
+  );
 }
 

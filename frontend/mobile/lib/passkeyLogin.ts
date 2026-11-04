@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { p256 } from '@noble/curves/p256.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
@@ -10,25 +9,24 @@ import { defaultSweepDeps, sweepStrandedFeePayer, type SweepOutcome } from './fe
 import { inclusionFee } from './fees';
 import { getNetwork, getNetworkName } from './network';
 import { discoverWithPrf, nativePrfEvaluator, type DiscoveredPasskey } from './passkey';
-// TODO(#1003): remove platform limitation warning when multi-origin contract ships
 import {
+  WRONG_PLATFORM_ERROR_MESSAGE,
   fetchContractOrigin,
   isWrongPlatformOrigin,
-  WRONG_PLATFORM_ERROR_MESSAGE,
 } from './platformLimitation';
+import { SDK_ADDRESS, SDK_KEY_ID, SDK_PUBLIC_KEY, getSdkItem, setSdkItems } from './sdkStorage';
 import { readSigners, WalletContractNotFoundError, type WalletSigner } from './signers';
+import { recoverWalletFromAssertion } from './recoverPasskeyKey';
 import { readBreadcrumbs, writeBreadcrumbs } from './walletBreadcrumbs';
 import { getPasskeyId, getPasskeyPublicKey, getSignerSecret, getWalletAddress, setPasskeyCredential, setPasskeyId, setSignerSecret, setWalletAddress } from './walletStore';
 import { hexToUint8Array } from './webauthn';
 
 /** Same PRF salt the fee-payer was derived with at creation (SDK constant). */
-export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
 
 // SDK storage keys — mirrored so the SDK's login()/signAuthEntry() see the
-// recovered wallet exactly as if register() had run on this device.
-const SDK_ADDRESS = 'invisible_wallet_address';
-const SDK_KEY_ID = 'invisible_wallet_key_id';
-const SDK_PUBLIC_KEY = 'invisible_wallet_public_key';
+// recovered wallet exactly as if register() had run on this device. Read and
+// written through sdkStorage so they carry the active network's namespace.
 
 export type LoginResult = {
   address: string;
@@ -61,18 +59,6 @@ const SIGNER_MISMATCH_MESSAGE =
 
 function toHex(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
-}
-
-function getActiveRpcUrl(): string {
-  try {
-    if (typeof getNetwork === 'function') {
-      const net = getNetwork();
-      if (net?.rpcUrl) return net.rpcUrl;
-    }
-  } catch {
-    // fallback
-  }
-  return 'https://soroban-testnet.stellar.org';
 }
 
 /**
@@ -122,6 +108,36 @@ async function recoverStrandedFeePayer(
   }
 }
 
+/**
+ * Run the stranded fee-payer recovery for the wallet already on this device.
+ *
+ * Reachable without a sign-in, which is the whole point. `loginWithPasskey`
+ * is called from the Sign in screen alone, and `app/index.tsx` sends anyone
+ * with a stored wallet straight to the dashboard — so for the very people this
+ * recovery exists for, already signed in and quietly missing their balance,
+ * the only way to reach it was to clear the app's data and sign in again.
+ * Telling a user whose money is already stranded to wipe local state is not a
+ * repair, it is a second chance to lose the wallet.
+ *
+ * Costs no passkey prompt: the signer is the one already in the secure store
+ * and the legacy key comes from the credential id, so this can run on app
+ * start. Two Horizon reads when there is nothing to do, and once the PRF
+ * account holds anything the planner answers `prf-funded` and stops looking.
+ */
+export async function recoverStoredWalletFeePayer(): Promise<SweepOutcome> {
+  const [storedAddress, storedSecret] = await Promise.all([
+    getWalletAddress().catch(() => null),
+    getSignerSecret().catch(() => null),
+  ]);
+  if (!storedAddress || !storedSecret) return { swept: false, reason: 'no-stored-wallet' };
+  const storedSigner = await getPasskeyPublicKey().catch(() => null);
+  return recoverStrandedFeePayer(
+    storedAddress,
+    Keypair.fromSecret(storedSecret).publicKey(),
+    storedSigner ? hexToUint8Array(storedSigner) : null,
+  );
+}
+
 export async function loginWithPasskey(): Promise<LoginResult> {
   // ── Same-device fast path ──────────────────────────────────────────────────
   const [storedAddress, storedSecret] = await Promise.all([
@@ -132,14 +148,7 @@ export async function loginWithPasskey(): Promise<LoginResult> {
     // The stranded case reaches here, not the ceremony below: somebody whose
     // fee-payer was replaced on a previous sign-in is already "logged in", so
     // a recovery that only ran on a fresh assertion would never reach them.
-    // The signer is the one already stored for this device, so this costs no
-    // extra passkey prompt and no simulation.
-    const storedSigner = await getPasskeyPublicKey().catch(() => null);
-    const feePayerSweep = await recoverStrandedFeePayer(
-      storedAddress,
-      Keypair.fromSecret(storedSecret).publicKey(),
-      storedSigner ? hexToUint8Array(storedSigner) : null,
-    );
+    const feePayerSweep = await recoverStoredWalletFeePayer();
     return { address: storedAddress, source: 'local', feePayerSweep };
   }
 
@@ -149,9 +158,9 @@ export async function loginWithPasskey(): Promise<LoginResult> {
   // public key come straight from that copy — no breadcrumbs required. Write
   // the breadcrumbs afterwards so a genuinely fresh device works next time.
   const [sdkAddress, sdkKeyId, sdkPubKey] = await Promise.all([
-    AsyncStorage.getItem(SDK_ADDRESS).catch(() => null),
-    AsyncStorage.getItem(SDK_KEY_ID).catch(() => null),
-    AsyncStorage.getItem(SDK_PUBLIC_KEY).catch(() => null),
+    getSdkItem(SDK_ADDRESS),
+    getSdkItem(SDK_KEY_ID),
+    getSdkItem(SDK_PUBLIC_KEY),
   ]);
   if (sdkAddress && sdkKeyId) {
     const prf = await nativePrfEvaluator(sdkKeyId)(FEE_PAYER_PRF_SALT);
@@ -175,55 +184,82 @@ export async function loginWithPasskey(): Promise<LoginResult> {
   // ── Fresh-device recovery ──────────────────────────────────────────────────
   const picked = await discoverWithPrf(FEE_PAYER_PRF_SALT);
   if (!picked) throw new Error('Passkey sign-in was cancelled.');
-  if (!picked.prf || picked.prf.length < 32) {
+
+  // The PRF fee-payer is preferred when the passkey offers it: it is the account
+  // the wallet has been paying fees from, so recovering it keeps that balance
+  // and the breadcrumbs reachable. It is no longer REQUIRED, because the wallet
+  // address does not actually depend on it.
+  const prfSeed = picked.prf && picked.prf.length >= 32 ? picked.prf.subarray(0, 32) : null;
+  const prfFeePayer = prfSeed ? Keypair.fromRawEd25519Seed(Buffer.from(prfSeed)) : null;
+  const crumbs = prfFeePayer ? await readBreadcrumbs(prfFeePayer.publicKey()) : null;
+
+  // Breadcrumbs are the cheap path — one Horizon read and the wallet is known.
+  // Without them the assertion itself still identifies the wallet, which is what
+  // makes a wallet created before any of this was recorded signable-into at all.
+  const resolved = crumbs
+    ? { address: crumbs.walletAddress, publicKey: crumbs.publicKeyBytes }
+    : await recoverWalletFromAssertion(picked);
+
+  if (!resolved) {
     throw new Error(
-      "This passkey didn't return a PRF secret, so the wallet can't be re-derived from it on this device. " +
-        'Use the recovery-server flow instead.',
+      'No wallet on this network could be found for that passkey. If you know the wallet address, ' +
+        'sign in with it instead.',
     );
   }
 
-  const feePayer = Keypair.fromRawEd25519Seed(Buffer.from(picked.prf.subarray(0, 32)));
-  const crumbs = await readBreadcrumbs(feePayer.publicKey());
-  if (!crumbs) {
-    throw new Error(
-      'No wallet is linked to this passkey on this network. Wallets created before sign-in support ' +
-        'publish their record the next time their home screen opens on the device that holds them — ' +
-        'open the wallet there once, then sign in here.',
-    );
-  }
+  // A random fee-payer cannot be re-derived anywhere, so it is a last resort —
+  // but it is better than refusing the sign-in, since the smart wallet's own
+  // balance belongs to the passkey and only needs some gas to move.
+  // ── Platform binding ──────────────────────────────────────────────────────
+  // The wallet contract stores ONE WebAuthn origin and `__check_auth` compares
+  // it byte for byte, so a wallet made in the browser rejects every signature
+  // from this app. Refusing here is the whole point: without it sign-in looks
+  // perfectly healthy and the first send fails with a raw contract error, which
+  // reads exactly like money that has gone missing. The website already refuses
+  // the mirror case in these words; this app said nothing at all.
+  // TODO(#1003): drop this when a multi-origin wallet contract ships.
+  const origin = await fetchContractOrigin(getNetwork().rpcUrl, resolved.address);
+  if (origin && isWrongPlatformOrigin(origin)) throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
 
-  // ── Verify platform compatibility ──
-  // TODO(#1003): remove platform limitation check when multi-origin contract ships
-  const contractOrigin = await fetchContractOrigin(getActiveRpcUrl(), crumbs.walletAddress);
-  if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
-    throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
-  }
+  const feePayer = prfFeePayer ?? Keypair.random();
 
   // Persist to the app's secure store…
   await Promise.all([
-    setWalletAddress(crumbs.walletAddress),
+    setWalletAddress(resolved.address),
     setSignerSecret(feePayer.secret()),
-    recordFeePayerSource(feePayer.publicKey(), 'prf'),
-    crumbs.publicKeyBytes
-      ? setPasskeyCredential(picked.credentialId, toHex(crumbs.publicKeyBytes))
+    recordFeePayerSource(feePayer.publicKey(), prfFeePayer ? 'prf' : 'random'),
+    resolved.publicKey
+      ? setPasskeyCredential(picked.credentialId, toHex(resolved.publicKey))
       : setPasskeyId(picked.credentialId),
   ]);
 
-  // …and mirror the SDK's storage so its login()/signAuthEntry() work too.
-  const sdkWrites: Array<[string, string]> = [
-    [SDK_ADDRESS, crumbs.walletAddress],
-    [SDK_KEY_ID, picked.credentialId],
-  ];
-  if (crumbs.publicKeyBytes) sdkWrites.push([SDK_PUBLIC_KEY, toHex(crumbs.publicKeyBytes)]);
-  await AsyncStorage.multiSet(sdkWrites);
-
-  const crumbSweep = await recoverStrandedFeePayer(
-    crumbs.walletAddress,
-    feePayer.publicKey(),
-    crumbs.publicKeyBytes,
+  // Record what was just learned, so the next device takes the cheap path.
+  void writeBreadcrumbs(feePayer.secret(), resolved.address, resolved.publicKey ?? null).catch(
+    () => undefined,
   );
 
-  return { address: crumbs.walletAddress, source: 'recovered', feePayerSweep: crumbSweep };
+  // …and mirror the SDK's storage so its login()/signAuthEntry() work too.
+  const sdkWrites: [string, string][] = [
+    [SDK_ADDRESS, resolved.address],
+    [SDK_KEY_ID, picked.credentialId],
+  ];
+  if (resolved.publicKey) sdkWrites.push([SDK_PUBLIC_KEY, toHex(resolved.publicKey)]);
+  await setSdkItems(sdkWrites);
+
+  // Only worth doing when the fee-payer is the PRF-derived one. A random
+  // fee-payer cannot be re-derived on any other install, so sweeping a legacy
+  // balance into it would move the money somewhere only this phone can reach —
+  // strictly worse than leaving it in the credential-id account, which any
+  // build can re-derive from the credential id alone.
+  const crumbSweep: SweepOutcome = prfFeePayer
+    ? await recoverStrandedFeePayer(
+        resolved.address,
+        feePayer.publicKey(),
+        resolved.publicKey ?? null,
+      )
+    : { swept: false, reason: 'fee-payer-not-passkey-bound' };
+
+  return { address: resolved.address, source: 'recovered', feePayerSweep: crumbSweep };
 }
 
 /**
@@ -276,12 +312,16 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
     throw new Error(SIGNER_MISMATCH_MESSAGE);
   }
 
-  // ── Verify platform compatibility ──
-  // A wallet deployed from web carries a web origin that cannot
-  // be signed from the native app until multi-origin check_auth ships (#1003).
-  // TODO(#1003): remove platform limitation check when multi-origin contract ships
-  const contractOrigin = await fetchContractOrigin(getActiveRpcUrl(), address);
-  if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
+  // ── Platform binding ──────────────────────────────────────────────────────
+  // The wallet contract stores ONE WebAuthn origin and `__check_auth` compares
+  // it byte for byte, so a wallet made in the browser rejects every signature
+  // from this app. Refusing here is the whole point: without it sign-in looks
+  // perfectly healthy and the first send fails with a raw contract error, which
+  // reads exactly like money that has gone missing. The website already refuses
+  // the mirror case in these words; this app said nothing at all.
+  // TODO(#1003): drop this when a multi-origin wallet contract ships.
+  const addressOrigin = await fetchContractOrigin(getNetwork().rpcUrl, address);
+  if (addressOrigin && isWrongPlatformOrigin(addressOrigin)) {
     throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
   }
 
@@ -309,11 +349,10 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
   // (serverless recovery). Best-effort, as at creation/recovery.
   void writeBreadcrumbs(feePayer.secret(), address, matchedPublicKey).catch(() => undefined);
 
-  // Only when the fee-payer is the PRF-derived one. Without PRF this is a
-  // fresh `Keypair.random()` that exists on this phone and nowhere else, so
-  // sweeping a legacy balance into it would strand the money harder than
-  // leaving it alone: the credential-id account can be re-derived by any
-  // build, that one cannot be re-derived at all.
+  // Guarded on `recoverable` for the same reason as the passkey-first path:
+  // a random fee-payer exists only on this phone, so sweeping a legacy
+  // balance into it would strand the money harder than leaving it where it
+  // is, since the credential-id account can be re-derived anywhere.
   const feePayerSweep: SweepOutcome = recoverable
     ? await recoverStrandedFeePayer(address, feePayer.publicKey(), matchedPublicKey)
     : { swept: false, reason: 'fee-payer-not-passkey-bound' };
@@ -327,11 +366,8 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
  * An assertion never reveals its public key, so possession is proven the other
  * way round: the signature is checked against every signer the wallet holds,
  * and a match means the asserting passkey owns that signer's private key.
- *
- * Exported so backup-file restore (V192 / #765) runs the same check V191
- * introduces rather than inventing a second verification rule.
  */
-export function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
+function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
   // WebAuthn signs SHA-256(authData ‖ SHA-256(clientDataJSON)).
   const clientDataHash = sha256(picked.clientDataJSON);
   const verificationData = new Uint8Array(picked.authData.length + clientDataHash.length);
@@ -354,22 +390,11 @@ export function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSig
   return null;
 }
 
-/**
- * Write the SDK's AsyncStorage keys, namespaced per network like walletStore.
- *
- * Exported so backup-file restore (V192 / #765) uses this writer rather than a
- * second copy of the suffix rule. One writer means the SDK keys cannot drift
- * into a half-old-device / half-new-device wallet across flows.
- */
-export async function writeSdkMirror(
-  address: string,
-  credentialId: string,
-  publicKeyHex: string,
-): Promise<void> {
-  const suffix = getNetworkName() === 'mainnet' ? '_mainnet' : '';
-  await AsyncStorage.multiSet([
-    [`${SDK_ADDRESS}${suffix}`, address],
-    [`${SDK_KEY_ID}${suffix}`, credentialId],
-    [`${SDK_PUBLIC_KEY}${suffix}`, publicKeyHex],
+/** Write the SDK's AsyncStorage keys, namespaced per network like walletStore. */
+async function writeSdkMirror(address: string, credentialId: string, publicKeyHex: string): Promise<void> {
+  await setSdkItems([
+    [SDK_ADDRESS, address],
+    [SDK_KEY_ID, credentialId],
+    [SDK_PUBLIC_KEY, publicKeyHex],
   ]);
 }

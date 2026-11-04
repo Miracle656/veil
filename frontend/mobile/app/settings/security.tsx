@@ -13,9 +13,13 @@ import { useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useAppLock } from '../../hooks/useAppLock';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { FlowHeader } from '../../components/FlowHeader';
 import { useTheme } from '../../hooks/useTheme';
 import { LOCK_TIMEOUT_OPTIONS, type LockTimeout } from '../../lib/appLock';
 import type { ThemeColors } from '../../lib/theme';
+import { fontFamily } from '../../theme/typography';
 
 function optionLabel(option: LockTimeout): string {
   return option === 'never' ? 'Never' : `${option} minutes`;
@@ -34,8 +38,9 @@ export default function SecuritySettingsScreen() {
   const { timeout, requireBiometrics, selectTimeout, selectRequireBiometrics } = useAppLock();
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false} style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Security</Text>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="security-screen">
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <FlowHeader title="Security" />
 
       <Text style={styles.sectionLabel}>AUTO-LOCK</Text>
       <Text style={styles.sectionBody}>
@@ -100,6 +105,7 @@ export default function SecuritySettingsScreen() {
         />
       </View>
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -111,24 +117,21 @@ const createStyles = (colors: ThemeColors) =>
     },
     content: {
       gap: 8,
-      padding: 24,
+      paddingHorizontal: 24,
+      paddingTop: 16,
       paddingBottom: 48,
-    },
-    title: {
-      color: colors.textStrong,
-      fontSize: 28,
-      fontWeight: '700',
-      marginBottom: 8,
     },
     sectionLabel: {
       color: colors.textFaint,
-      fontSize: 12,
-      letterSpacing: 1,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      letterSpacing: 1.4,
       marginTop: 20,
     },
     sectionBody: {
       color: colors.textSecondary,
-      fontSize: 13,
+      fontFamily: fontFamily.body,
+      fontSize: 13.5,
       lineHeight: 20,
     },
     options: {
@@ -155,7 +158,7 @@ const createStyles = (colors: ThemeColors) =>
     optionLabel: {
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     optionLabelSelected: {
       color: colors.accentText,
@@ -167,7 +170,7 @@ const createStyles = (colors: ThemeColors) =>
     optionCheck: {
       color: colors.accentText,
       fontSize: 16,
-      fontWeight: '700',
+      fontFamily: fontFamily.bodySemiBold,
     },
     warning: {
       color: colors.danger,
@@ -193,7 +196,7 @@ const createStyles = (colors: ThemeColors) =>
     switchLabel: {
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     switchDescription: {
       color: colors.textMuted,

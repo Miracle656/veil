@@ -500,6 +500,19 @@ export function getOnrampStatus(customerRef: string, orderId: string): Promise<O
 
 export type BillCategory = 'airtime' | 'data' | 'electricity' | 'cabletv' | 'betting';
 
+export type BillStatusClass = 'done' | 'failed' | 'pending';
+
+export function classifyBillStatus(status: string): BillStatusClass {
+  const normalized = status.trim().toLowerCase();
+  if (/\b(?:complete|completed|success|successful|deliver|delivered)\b/.test(normalized)) {
+    return 'done';
+  }
+  if (/\b(?:fail|failed|refund\w*|revers\w*|cancelled?|canceled)\b/.test(normalized)) {
+    return 'failed';
+  }
+  return 'pending';
+}
+
 export interface BillOrder {
   id: string;
   customerRef: string;

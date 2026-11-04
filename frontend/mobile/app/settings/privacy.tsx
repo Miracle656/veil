@@ -12,6 +12,9 @@
 import { useEffect, useMemo, useSyncExternalStore, useState } from 'react';
 import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { FlowHeader } from '../../components/FlowHeader';
 import { useTheme } from '../../hooks/useTheme';
 import { getNetworkName, subscribeToNetwork } from '../../lib/network';
 import { getPrivacySettingsOptions } from '../../lib/privacy/settings';
@@ -21,6 +24,7 @@ import {
   setSentryOptIn,
 } from '../../lib/sentry';
 import type { ThemeColors } from '../../lib/theme';
+import { fontFamily } from '../../theme/typography';
 
 export default function PrivacySettingsScreen() {
   const { colors } = useTheme();
@@ -31,8 +35,9 @@ export default function PrivacySettingsScreen() {
   const options = useMemo(() => getPrivacySettingsOptions(network), [network]);
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false} style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Privacy</Text>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="privacy-screen">
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+      <FlowHeader title="Privacy" />
 
       {options.map((option) => (
         <View key={option.key}>
@@ -58,6 +63,7 @@ export default function PrivacySettingsScreen() {
 
       <CrashReportOptIn />
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -136,25 +142,22 @@ const createStyles = (colors: ThemeColors) =>
     },
     content: {
       gap: 8,
-      padding: 24,
+      paddingHorizontal: 24,
+      paddingTop: 16,
       paddingBottom: 48,
-    },
-    title: {
-      color: colors.textStrong,
-      fontSize: 28,
-      fontWeight: '700',
-      marginBottom: 8,
     },
     sectionLabel: {
       color: colors.textFaint,
-      fontSize: 12,
-      letterSpacing: 1,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      letterSpacing: 1.4,
       marginBottom: 8,
       marginTop: 20,
     },
     sectionBody: {
       color: colors.textSecondary,
-      fontSize: 13,
+      fontFamily: fontFamily.body,
+      fontSize: 13.5,
       lineHeight: 20,
     },
     row: {
@@ -175,7 +178,7 @@ const createStyles = (colors: ThemeColors) =>
     rowLabel: {
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     rowDetail: {
       color: colors.textMuted,
@@ -193,7 +196,7 @@ const createStyles = (colors: ThemeColors) =>
     badgeText: {
       color: colors.textMuted,
       fontSize: 11,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
       textAlign: 'center',
     },
   });

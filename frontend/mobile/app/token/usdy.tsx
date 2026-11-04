@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { useTheme } from '../../hooks/useTheme';
+import type { ThemeColors } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
 import { FlowHeader } from '../../components/FlowHeader';
 import { USDY_MAINNET_ISSUER } from '../../lib/assets';
@@ -176,11 +177,27 @@ export default function UsdyDetailScreen() {
   );
 }
 
-function createStyles(colors: any) {
+/**
+ * `colors: any` was hiding a screen that did not theme at all.
+ *
+ * Every lookup here named a token that does not exist on `ThemeColors` —
+ * `colors.primary`, `colors.text` — so each one was `undefined` and each `||`
+ * fell through to the hardcoded dark value beside it. The screen looked
+ * correct in dark mode and stayed dark in light mode, and because the
+ * parameter was `any`, nothing in the typechecker had an opinion about it.
+ * That is the whole reason the annotation matters: with `ThemeColors` in
+ * place, a misnamed role is a build error rather than a silent fallback.
+ *
+ * The roles are now the real ones: `accent` for fills and `accentText` for
+ * gold-on-background text (light mode darkens the gold so it keeps contrast
+ * on white), `positive` for the backing note, `danger`/`dangerSurface` for the
+ * risk panel, and no literal colours left.
+ */
+function createStyles(colors: ThemeColors) {
   return StyleSheet.create({
     safe: {
       flex: 1,
-      backgroundColor: colors.background || '#0D0E11',
+      backgroundColor: colors.background,
     },
     scroll: {
       flex: 1,
@@ -198,22 +215,20 @@ function createStyles(colors: any) {
       width: 56,
       height: 56,
       borderRadius: 28,
-      backgroundColor: 'rgba(253,218,36,0.12)',
+      backgroundColor: colors.surfaceMd,
       borderWidth: 1,
-      borderColor: 'rgba(253,218,36,0.3)',
+      borderColor: colors.borderStrong,
       alignItems: 'center',
       justifyContent: 'center',
     },
     avatarText: {
       fontSize: 24,
-      fontWeight: '700',
-      color: colors.primary || '#FDDA24',
+      color: colors.accentText,
       fontFamily: fontFamily.accent,
     },
     tokenName: {
       fontSize: 20,
-      fontWeight: '600',
-      color: colors.text || '#F6F7F8',
+      color: colors.textStrong,
       fontFamily: fontFamily.heading,
       textAlign: 'center',
     },
@@ -223,9 +238,9 @@ function createStyles(colors: any) {
       gap: 8,
     },
     codeTag: {
-      backgroundColor: 'rgba(253,218,36,0.1)',
+      backgroundColor: colors.surfaceMd,
       borderWidth: 1,
-      borderColor: 'rgba(253,218,36,0.25)',
+      borderColor: colors.border,
       paddingHorizontal: 8,
       paddingVertical: 2,
       borderRadius: 6,
@@ -233,65 +248,68 @@ function createStyles(colors: any) {
     codeTagText: {
       fontSize: 12,
       fontFamily: fontFamily.address,
-      color: colors.primary || '#FDDA24',
-      fontWeight: '600',
+      color: colors.accentText,
     },
     categoryText: {
       fontSize: 13,
-      color: 'rgba(246,247,248,0.5)',
+      fontFamily: fontFamily.body,
+      color: colors.textMuted,
     },
     card: {
-      backgroundColor: colors.surface || '#17191E',
+      backgroundColor: colors.surface,
       borderRadius: 14,
       padding: 16,
       marginBottom: 14,
       borderWidth: 1,
-      borderColor: colors.border || 'rgba(255,255,255,0.08)',
+      borderColor: colors.border,
     },
     sectionLabel: {
       fontSize: 11,
       letterSpacing: 0.8,
       fontFamily: fontFamily.accent,
-      color: 'rgba(246,247,248,0.4)',
+      color: colors.label,
       marginBottom: 8,
     },
     bodyText: {
       fontSize: 14,
       lineHeight: 21,
-      color: colors.text || '#F6F7F8',
+      fontFamily: fontFamily.body,
+      color: colors.textPrimary,
     },
     backingBox: {
       marginTop: 10,
       padding: 10,
-      backgroundColor: 'rgba(255,255,255,0.03)',
+      backgroundColor: colors.surfaceMd,
       borderRadius: 8,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.06)',
+      borderColor: colors.border,
     },
     backingLabel: {
       fontSize: 12,
-      fontWeight: '600',
-      color: '#00A7B5',
+      fontFamily: fontFamily.bodySemiBold,
+      color: colors.positive,
       marginBottom: 2,
     },
     backingText: {
       fontSize: 12,
-      color: 'rgba(246,247,248,0.7)',
+      fontFamily: fontFamily.body,
+      color: colors.textSecondary,
       lineHeight: 18,
     },
     issuerText: {
       fontSize: 14,
-      color: colors.text || '#F6F7F8',
+      fontFamily: fontFamily.body,
+      color: colors.textPrimary,
       marginBottom: 4,
     },
     issuerHighlight: {
-      fontWeight: '600',
-      color: colors.primary || '#FDDA24',
+      fontFamily: fontFamily.bodySemiBold,
+      color: colors.accentText,
     },
     addressText: {
       fontSize: 11,
       fontFamily: fontFamily.address,
-      color: 'rgba(246,247,248,0.45)',
+      color: colors.textFaint,
       marginBottom: 12,
     },
     linkRow: {
@@ -300,23 +318,23 @@ function createStyles(colors: any) {
     linkButton: {
       paddingVertical: 8,
       paddingHorizontal: 12,
-      backgroundColor: 'rgba(255,255,255,0.05)',
+      backgroundColor: colors.surfaceMd,
       borderRadius: 8,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.1)',
+      borderColor: colors.border,
     },
     linkButtonText: {
       fontSize: 13,
-      color: colors.primary || '#FDDA24',
-      fontWeight: '500',
+      fontFamily: fontFamily.bodyMedium,
+      color: colors.accentText,
     },
     riskCard: {
-      backgroundColor: 'rgba(255, 107, 107, 0.04)',
+      backgroundColor: colors.dangerSurface,
       borderRadius: 14,
       padding: 16,
       marginBottom: 16,
       borderWidth: 1,
-      borderColor: 'rgba(255, 107, 107, 0.3)',
+      borderColor: colors.danger,
     },
     riskHeader: {
       flexDirection: 'row',
@@ -326,36 +344,38 @@ function createStyles(colors: any) {
     },
     warningIcon: {
       fontSize: 14,
-      color: '#FF6B6B',
+      color: colors.danger,
     },
     riskLabel: {
       fontSize: 11,
       letterSpacing: 0.8,
       fontFamily: fontFamily.accent,
-      color: '#FF6B6B',
+      color: colors.danger,
     },
     riskItem: {
-      backgroundColor: 'rgba(0,0,0,0.25)',
+      backgroundColor: colors.surface,
       padding: 10,
       borderRadius: 8,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.05)',
+      borderColor: colors.border,
       marginBottom: 8,
     },
     riskItemTitle: {
       fontSize: 13,
-      fontWeight: '600',
-      color: '#F6F7F8',
+      fontFamily: fontFamily.bodySemiBold,
+      color: colors.textStrong,
       marginBottom: 3,
     },
     riskItemDesc: {
       fontSize: 12,
-      color: 'rgba(246,247,248,0.7)',
+      fontFamily: fontFamily.body,
+      color: colors.textSecondary,
       lineHeight: 18,
     },
     disclaimerText: {
       fontSize: 11,
-      color: 'rgba(246,247,248,0.4)',
+      fontFamily: fontFamily.body,
+      color: colors.textFaint,
       lineHeight: 16,
       marginTop: 8,
     },
@@ -370,30 +390,33 @@ function createStyles(colors: any) {
       height: 20,
       borderRadius: 4,
       borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.3)',
+      // borderStrong: a checkbox nobody can see is a checkbox nobody ticks,
+      // and this one gates the buy button.
+      borderColor: colors.borderStrong,
       alignItems: 'center',
       justifyContent: 'center',
       marginTop: 2,
     },
     checkboxChecked: {
-      backgroundColor: colors.primary || '#FDDA24',
-      borderColor: colors.primary || '#FDDA24',
+      backgroundColor: colors.accent,
+      borderColor: colors.accent,
     },
     checkmark: {
       fontSize: 13,
-      fontWeight: '700',
-      color: '#000',
+      fontFamily: fontFamily.bodySemiBold,
+      color: colors.onAccent,
     },
     ackText: {
       flex: 1,
       fontSize: 12,
-      color: 'rgba(246,247,248,0.8)',
+      fontFamily: fontFamily.body,
+      color: colors.textSecondary,
       lineHeight: 18,
     },
     buyButton: {
-      backgroundColor: colors.primary || '#FDDA24',
+      backgroundColor: colors.accent,
       paddingVertical: 14,
-      borderRadius: 12,
+      borderRadius: 100,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -402,8 +425,8 @@ function createStyles(colors: any) {
     },
     buyButtonText: {
       fontSize: 15,
-      fontWeight: '700',
-      color: '#0D0E11',
+      fontFamily: fontFamily.bodySemiBold,
+      color: colors.onAccent,
     },
   });
 }

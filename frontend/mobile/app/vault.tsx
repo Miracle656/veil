@@ -31,6 +31,13 @@ import {
   type VaultWithdrawal,
 } from '../lib/vault';
 
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { FlowHeader } from '../components/FlowHeader';
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
+
 type DelayUnit = 'hours' | 'days';
 
 /**
@@ -65,6 +72,8 @@ const stubFetchVaultDetails: VaultFetch = async (contractId) => {
 };
 
 export default function VaultScreen() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [contractId, setContractId] = useState<string | null>(null);
   const [details, setDetails] = useState<VaultDetails | null>(null);
   const [loading, setLoading] = useState(false);
@@ -219,9 +228,10 @@ export default function VaultScreen() {
   }
 
   return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="vault-screen">
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.body}>
+      <FlowHeader title="Vault" />
       <Text style={styles.eyebrow}>TIME-LOCKED SUB-ACCOUNT</Text>
-      <Text style={styles.title}>Vault</Text>
       <Text style={styles.subtitle}>
         Hold XLM behind a withdrawal delay. Every transfer must be queued, remains
         cancellable, and can execute only after its timer expires.
@@ -247,7 +257,7 @@ export default function VaultScreen() {
                   keyboardType="number-pad"
                   value={delayValue}
                   onChangeText={setDelayValue}
-                  placeholderTextColor="#64748b"
+                  placeholderTextColor={colors.textFaint}
                 />
               </View>
               <View style={styles.inputAsset}>
@@ -275,7 +285,7 @@ export default function VaultScreen() {
               disabled={action !== null}
             >
               {action === 'deploy' ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={colors.onAccent} />
               ) : (
                 <Text style={styles.btnText}>Deploy vault</Text>
               )}
@@ -290,7 +300,7 @@ export default function VaultScreen() {
             <TextInput
               style={[styles.input, styles.mono, { marginTop: 12 }]}
               placeholder="C..."
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textFaint}
               value={existingContract}
               onChangeText={(value) => setExistingContract(value.trim())}
               autoCapitalize="none"
@@ -307,9 +317,9 @@ export default function VaultScreen() {
               disabled={action !== null || existingContract.length === 0}
             >
               {action === 'attach' ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={colors.textPrimary} />
               ) : (
-                <Text style={styles.btnText}>Attach vault</Text>
+                <Text style={styles.btnSecondaryText}>Attach vault</Text>
               )}
             </Pressable>
           </View>
@@ -328,7 +338,7 @@ export default function VaultScreen() {
             </View>
 
             {loading && !details ? (
-              <ActivityIndicator color="#6366f1" style={{ marginTop: 16 }} />
+              <ActivityIndicator color={colors.accent} style={styles.spinner} />
             ) : details && (
               <>
                 <View style={styles.statsGrid}>
@@ -353,7 +363,7 @@ export default function VaultScreen() {
               style={styles.input}
               keyboardType="decimal-pad"
               placeholder="0.00"
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textFaint}
               value={depositAmount}
               onChangeText={setDepositAmount}
             />
@@ -368,7 +378,7 @@ export default function VaultScreen() {
               disabled={action !== null || depositAmount.length === 0}
             >
               {action === 'deposit' ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={colors.onAccent} />
               ) : (
                 <Text style={styles.btnText}>Deposit</Text>
               )}
@@ -384,7 +394,7 @@ export default function VaultScreen() {
             <TextInput
               style={[styles.input, styles.mono]}
               placeholder="G... or C..."
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textFaint}
               value={recipient}
               onChangeText={(value) => setRecipient(value.trim())}
               autoCapitalize="none"
@@ -395,7 +405,7 @@ export default function VaultScreen() {
               style={styles.input}
               keyboardType="decimal-pad"
               placeholder="0.00"
-              placeholderTextColor="#64748b"
+              placeholderTextColor={colors.textFaint}
               value={withdrawalAmount}
               onChangeText={setWithdrawalAmount}
             />
@@ -411,7 +421,7 @@ export default function VaultScreen() {
               disabled={action !== null || recipient.length === 0 || withdrawalAmount.length === 0}
             >
               {action === 'queue' ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={colors.onAccent} />
               ) : (
                 <Text style={styles.btnText}>Queue withdrawal</Text>
               )}
@@ -441,7 +451,7 @@ export default function VaultScreen() {
                   <View key={withdrawal.id} style={[styles.card, styles.withdrawalCard]}>
                     <View style={styles.row}>
                       <Text style={styles.idBadge}>Withdrawal #{withdrawal.id}</Text>
-                      <Text style={[styles.statusBadge, statusColor(withdrawal, ready)]}>{status}</Text>
+                      <Text style={[styles.statusBadge, statusColor(withdrawal, ready, colors)]}>{status}</Text>
                     </View>
 
                     <InfoRow label="Amount" value={`${withdrawal.amountXlm} XLM`} />
@@ -461,7 +471,7 @@ export default function VaultScreen() {
                           disabled={action !== null}
                           onPress={() => handleCancel(withdrawal)}
                         >
-                          <Text style={styles.btnText}>
+                          <Text style={styles.btnSecondaryText}>
                             {action === `cancel-${withdrawal.id}` ? 'Cancelling...' : 'Cancel'}
                           </Text>
                         </Pressable>
@@ -488,17 +498,27 @@ export default function VaultScreen() {
         </View>
       )}
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
-function statusColor(withdrawal: VaultWithdrawal, ready: boolean) {
-  if (withdrawal.executed) return { color: '#34d399' };
-  if (withdrawal.cancelled) return { color: '#64748b' };
-  if (ready) return { color: '#facc15' };
-  return { color: '#f1f5f9' };
+/**
+ * The queue's four states, in palette roles rather than four loose hexes.
+ *
+ * Executed is the positive token the rest of the app uses for money arriving;
+ * cancelled is muted because it is over and nothing is owed; ready is the
+ * accent, since it is the only one of the four asking to be acted on.
+ */
+function statusColor(withdrawal: VaultWithdrawal, ready: boolean, colors: ThemeColors) {
+  if (withdrawal.executed) return { color: colors.positive };
+  if (withdrawal.cancelled) return { color: colors.textMuted };
+  if (ready) return { color: colors.accentText };
+  return { color: colors.textPrimary };
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.stat}>
       <Text style={styles.label}>{label.toUpperCase()}</Text>
@@ -508,6 +528,8 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function InfoRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.infoRow}>
       <Text style={styles.infoLabel}>{label}</Text>
@@ -516,204 +538,198 @@ function InfoRow({ label, value, mono = false }: { label: string; value: string;
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    backgroundColor: '#0B0B0F',
-    padding: 24,
-    gap: 16,
-  },
-  eyebrow: {
-    color: '#6366f1',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 28,
-    fontWeight: '700',
-  },
-  subtitle: {
-    color: '#9BA1A6',
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  form: {
-    gap: 16,
-  },
-  card: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 16,
-    gap: 4,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  withdrawalCard: {
-    gap: 8,
-  },
-  sectionTitle: {
-    color: '#f1f5f9',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  sectionCopy: {
-    color: '#94a3b8',
-    fontSize: 13,
-    lineHeight: 18,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  inputFlex: {
-    flex: 1,
-  },
-  inputAsset: {
-    flex: 1,
-  },
-  label: {
-    color: '#64748b',
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 6,
-    marginTop: 10,
-  },
-  input: {
-    backgroundColor: '#0f172a',
-    borderRadius: 10,
-    padding: 14,
-    color: '#f1f5f9',
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  mono: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-  },
-  unitToggle: {
-    flexDirection: 'row',
-    backgroundColor: '#0f172a',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    overflow: 'hidden',
-  },
-  unitOption: {
-    flex: 1,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  unitOptionActive: {
-    backgroundColor: '#6366f1',
-  },
-  unitOptionText: {
-    color: '#f1f5f9',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  btn: {
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  btnPrimary: {
-    backgroundColor: '#6366f1',
-  },
-  btnSecondary: {
-    backgroundColor: '#334155',
-  },
-  btnDisabled: {
-    opacity: 0.4,
-  },
-  btnText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  withdrawalBtn: {
-    flex: 1,
-  },
-  address: {
-    color: '#a5b4fc',
-    fontFamily: 'monospace',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 16,
-    marginTop: 14,
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: '#0f172a',
-  },
-  stat: {
-    minWidth: 100,
-  },
-  statValue: {
-    color: '#f1f5f9',
-    fontFamily: 'monospace',
-    fontSize: 15,
-    marginTop: 2,
-  },
-  error: {
-    color: '#f87171',
-    fontSize: 13,
-    backgroundColor: '#450a0a',
-    borderRadius: 8,
-    padding: 12,
-  },
-  notice: {
-    color: '#34d399',
-    fontSize: 13,
-    backgroundColor: '#052e1f',
-    borderRadius: 8,
-    padding: 12,
-  },
-  remove: {
-    color: '#f87171',
-    fontSize: 13,
-  },
-  refresh: {
-    color: '#a5b4fc',
-    fontSize: 13,
-  },
-  idBadge: {
-    color: '#f1f5f9',
-    fontSize: 11,
-    fontWeight: '700',
-    backgroundColor: '#334155',
-    borderRadius: 100,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    overflow: 'hidden',
-  },
-  statusBadge: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  infoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  infoLabel: {
-    color: '#64748b',
-    fontSize: 12,
-    flexShrink: 0,
-  },
-  infoValue: {
-    color: '#f1f5f9',
-    fontSize: 12,
-    textAlign: 'right',
-    flexShrink: 1,
-  },
-});
+/**
+ * The vault was the last screen still drawing the indigo/slate palette the app
+ * left behind — 41 hardcoded values, dark-only, with `fontFamily: 'monospace'`
+ * standing in for Inconsolata and four loose hexes deciding what a withdrawal's
+ * status looked like. In light mode it was a dark slab; in dark mode it was a
+ * different dark from everything around it.
+ *
+ * Roles, not hexes, so both palettes come from one definition. `surfaceMd` is
+ * the inset fill (inputs, the stats grid) and `surface` the card above it,
+ * which keeps the nesting legible without inventing a third background.
+ */
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    body: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 16, paddingBottom: 40, gap: 14 },
+
+    eyebrow: {
+      color: colors.accentText,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+      marginTop: 10,
+    },
+    subtitle: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14.5,
+      lineHeight: 21,
+    },
+
+    form: { gap: 16 },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      gap: 4,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    withdrawalCard: { gap: 8 },
+    sectionTitle: {
+      color: colors.textStrong,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 16,
+    },
+    sectionCopy: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    inputFlex: { flex: 1 },
+    inputAsset: { flex: 1 },
+    label: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 1.4,
+      marginBottom: 6,
+      marginTop: 10,
+    },
+    input: {
+      backgroundColor: colors.surfaceMd,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      color: colors.textPrimary,
+      fontFamily: fontFamily.body,
+      fontSize: 16,
+      borderWidth: 1,
+      // borderStrong, not border: a field being asked for has to be visible as
+      // one, and the faint divider colour made these disappear on white.
+      borderColor: colors.borderStrong,
+    },
+    mono: { fontFamily: fontFamily.address, fontSize: 12 },
+
+    unitToggle: {
+      flexDirection: 'row',
+      backgroundColor: colors.surfaceMd,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      overflow: 'hidden',
+    },
+    unitOption: { flex: 1, paddingVertical: 14, alignItems: 'center' },
+    unitOptionActive: { backgroundColor: colors.accent },
+    unitOptionText: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 14,
+    },
+
+    btn: {
+      borderRadius: 100,
+      paddingVertical: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    btnPrimary: { backgroundColor: colors.accent },
+    btnSecondary: {
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    btnDisabled: { opacity: 0.4 },
+    btnText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    // A secondary button is not drawn on the accent, so its label cannot use
+    // the on-accent colour: on light mode that was near-white on near-white.
+    btnSecondaryText: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 15,
+    },
+    withdrawalBtn: { flex: 1 },
+
+    address: {
+      color: colors.accentText,
+      fontFamily: fontFamily.address,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    statsGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 16,
+      marginTop: 14,
+      padding: 12,
+      borderRadius: 14,
+      backgroundColor: colors.surfaceMd,
+    },
+    stat: { minWidth: 100 },
+    statValue: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.address,
+      fontSize: 15,
+      marginTop: 2,
+    },
+    spinner: { marginTop: 16 },
+
+    error: {
+      color: colors.danger,
+      backgroundColor: colors.dangerSurface,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      borderRadius: 12,
+      padding: 12,
+    },
+    notice: {
+      color: colors.positive,
+      backgroundColor: colors.positiveSurface,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      borderRadius: 12,
+      padding: 12,
+    },
+    remove: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13 },
+    refresh: { color: colors.accentText, fontFamily: fontFamily.body, fontSize: 13 },
+
+    idBadge: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      backgroundColor: colors.surfaceMd,
+      borderRadius: 100,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      overflow: 'hidden',
+    },
+    statusBadge: { fontFamily: fontFamily.bodySemiBold, fontSize: 12 },
+    infoRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+    infoLabel: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      flexShrink: 0,
+    },
+    infoValue: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      textAlign: 'right',
+      flexShrink: 1,
+    },
+  });
