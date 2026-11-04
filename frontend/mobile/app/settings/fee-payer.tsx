@@ -27,6 +27,7 @@ import {
   type FeePayerBalance,
   type FeePayerInfo,
 } from '../../lib/feePayerSource';
+import { defaultRepairDeps, repairRandomFeePayer } from '../../lib/feePayerRepairRun';
 import type { ThemeColors } from '../../lib/theme';
 import { fontFamily } from '../../theme/typography';
 
@@ -39,6 +40,8 @@ export default function FeePayerSettingsScreen() {
   const [copied, setCopied] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyNote, setVerifyNote] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState(false);
+  const [repairNote, setRepairNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const next = await getFeePayerInfo().catch(() => null);
@@ -77,6 +80,50 @@ export default function FeePayerSettingsScreen() {
     }
   }
 
+  /**
+   * Move a random fee-payer's balance onto the one the passkey derives, while
+   * the random secret still exists on this device. After a reset it does not,
+   * and nothing can recover it — which is the whole reason this button is here
+   * rather than in a support script.
+   */
+  async function handleRepair() {
+    setRepairing(true);
+    setRepairNote(null);
+    try {
+      const outcome = await repairRandomFeePayer(defaultRepairDeps());
+
+      if ('repaired' in outcome && outcome.repaired) {
+        setRepairNote(
+          outcome.closedAccount
+            ? `Moved ${outcome.amount} XLM to your passkey-derived fee payer and closed the old account.`
+            : `Moved ${outcome.amount} XLM to your passkey-derived fee payer.`,
+        );
+      } else if ('plan' in outcome && outcome.plan.action === 'blocked') {
+        const held = outcome.plan.blockers
+          .map((b) => `${b.balance} ${b.code}`)
+          .join(', ');
+        setRepairNote(
+          `This account still holds ${held}. That has to move before the account can be closed, ` +
+            'and the rest of its XLM is locked as reserve until it is.',
+        );
+      } else if ('plan' in outcome && outcome.plan.action === 'none') {
+        setRepairNote(
+          outcome.plan.reason === 'no-prf'
+            ? 'Your passkey still returns no PRF secret, so there is no derived account to move to. Nothing was changed.'
+            : 'There is nothing to move. Nothing was changed.',
+        );
+      } else {
+        setRepairNote('The move did not complete, so your funds are where they were. Try again.');
+      }
+
+      await refresh();
+    } catch {
+      setRepairNote('The move did not complete, so your funds are where they were. Try again.');
+    } finally {
+      setRepairing(false);
+    }
+  }
+
   const copy = info ? describeFeePayerSource(info.source) : null;
 
   return (
@@ -103,6 +150,23 @@ export default function FeePayerSettingsScreen() {
                 generated at random. It cannot be re-derived from your passkey: on another device the
                 wallet gets a different, empty fee payer that must be funded before it can transact.
               </Text>
+              <Text style={styles.warningBody}>
+                This key exists only on this phone — it is not in your backup and cannot be
+                rebuilt. Move it now, before you reset or reinstall.
+              </Text>
+              <Pressable
+                testID="fee-payer-repair"
+                accessibilityRole="button"
+                accessibilityLabel="Move funds to passkey-derived fee payer"
+                onPress={handleRepair}
+                disabled={repairing}
+                style={({ pressed }) => [styles.copyButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.copyText}>
+                  {repairing ? 'Moving…' : 'Move to passkey-derived account'}
+                </Text>
+              </Pressable>
+              {repairNote && <Text style={styles.warningBody}>{repairNote}</Text>}
             </View>
           )}
 
