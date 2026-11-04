@@ -71,6 +71,41 @@ jobs:
       - name: Install EAS CLI
         run: npm install --global eas-cli@latest
 
+      # Build 21 died at `No space left on device` after 23 minutes, with cargo
+      # part-way through the arm64 target. The runner image leaves roughly 20 GB
+      # free on `/`, and this build wants more than that: four ABIs of Rust
+      # objects and rmeta, the NDK's own output, Gradle's caches and a ~120 MB
+      # APK. The runner ran out so completely it could not write its own
+      # diagnostic log, which is what surfaced as a bare `##[error]` with no
+      # cause attached.
+      #
+      # So take back the space the image spends on toolchains this build never
+      # touches, and move the build itself onto `/mnt` - a second volume with
+      # ~65 GB free that nothing here uses. `eas build --local` unpacks the
+      # project into the system temp dir, and the Rust target dir goes with it,
+      # so TMPDIR moves the bulk of the writes in one go.
+      #
+      # Do NOT add /usr/local/lib/android to the list below: that is the SDK and
+      # the NDK this build compiles against.
+      - name: Make room for the build
+        working-directory: .
+        run: |
+          echo "before:"; df -h / /mnt
+          for d in /usr/share/dotnet /usr/share/swift /usr/local/.ghcup /opt/ghc /usr/local/share/boost /usr/local/share/powershell /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/PyPy; do
+            sudo rm -rf "$d" || true
+          done
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          for d in /mnt/eas-tmp /mnt/gradle-home; do
+            sudo mkdir -p "$d"
+            sudo chown "$(id -u):$(id -g)" "$d"
+          done
+          echo "TMPDIR=/mnt/eas-tmp" >> "$GITHUB_ENV"
+          echo "TMP=/mnt/eas-tmp" >> "$GITHUB_ENV"
+          echo "TEMP=/mnt/eas-tmp" >> "$GITHUB_ENV"
+          # Gradle's caches are the other multi-gigabyte writer on `/`.
+          echo "GRADLE_USER_HOME=/mnt/gradle-home" >> "$GITHUB_ENV"
+          echo "after:"; df -h / /mnt
+
       # Expo's generated android/gradle.properties caps the Gradle daemon at
       # 2 GB, and packaging this APK (four ABIs, ~120 MB) ran out of heap after
       # 23 minutes of compiling. The user-level file overrides the project one;
