@@ -22,7 +22,7 @@ import { getPasskeyId, getPasskeyPublicKey, getSignerSecret, getWalletAddress, s
 import { hexToUint8Array } from './webauthn';
 
 /** Same PRF salt the fee-payer was derived with at creation (SDK constant). */
-const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
 
 // SDK storage keys — mirrored so the SDK's login()/signAuthEntry() see the
 // recovered wallet exactly as if register() had run on this device. Read and
@@ -367,7 +367,7 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
  * way round: the signature is checked against every signer the wallet holds,
  * and a match means the asserting passkey owns that signer's private key.
  */
-function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
+export function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
   // WebAuthn signs SHA-256(authData ‖ SHA-256(clientDataJSON)).
   const clientDataHash = sha256(picked.clientDataJSON);
   const verificationData = new Uint8Array(picked.authData.length + clientDataHash.length);
@@ -391,7 +391,7 @@ function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]):
 }
 
 /** Write the SDK's AsyncStorage keys, namespaced per network like walletStore. */
-async function writeSdkMirror(address: string, credentialId: string, publicKeyHex: string): Promise<void> {
+export async function writeSdkMirror(address: string, credentialId: string, publicKeyHex: string): Promise<void> {
   await setSdkItems([
     [SDK_ADDRESS, address],
     [SDK_KEY_ID, credentialId],

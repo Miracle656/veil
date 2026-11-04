@@ -1,7 +1,18 @@
+import type { FeePayerSource } from './feePayerSource';
 import type { PrfOutcome } from './prfOutcome';
 
 export type PrfRecoveryState =
-  'unverified' | 'ready' | 'missing' | 'funded' | Exclude<PrfOutcome, 'ok'>;
+  | 'unverified'
+  | 'ready'
+  | 'missing'
+  | 'funded'
+  /** Recorded at creation: the passkey gave no PRF secret and a random fee payer was used. */
+  | 'random'
+  /** Recorded: the fee payer derives from the passkey's non-secret credential ID (pre-PRF scheme). */
+  | 'legacy'
+  /** A keypair-mode testnet wallet: there is no passkey to recover from. */
+  | 'keypair'
+  | Exclude<PrfOutcome, 'ok'>;
 export type RecoveryStatusInput = {
   walletAddress: string | null;
   signerSecret: string | null;
@@ -88,4 +99,20 @@ export function deriveRecoveryStatus(input: RecoveryStatusInput): RecoveryStatus
     overall,
     summary: `${readyCount} of ${mechanisms.length} recovery mechanisms ready`,
   };
+}
+
+/** Restored in the feat/buy-with-naira merge: main-only. */
+export function prfStateFromSource(source: FeePayerSource | null | undefined): PrfRecoveryState {
+  switch (source) {
+    case 'prf':
+      return 'ready';
+    case 'random':
+      return 'random';
+    case 'credential-id':
+      return 'legacy';
+    case 'keypair':
+      return 'keypair';
+    default:
+      return 'unverified';
+  }
 }

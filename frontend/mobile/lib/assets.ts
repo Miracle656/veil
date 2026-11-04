@@ -50,6 +50,8 @@ export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5P
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q';
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF';
 
+export const ETHERFUSE_MAINNET_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC';
+
 export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   USDC: {
     code: 'USDC',
@@ -109,6 +111,33 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     kind: 'stablecoin',
     reserveXlm: 0.5,
     sacContractId: USDT0_MAINNET_SAC,
+  },
+  CETES: {
+    code: 'CETES',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Mexican Treasury Certificates',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+  },
+  USTRY: {
+    code: 'USTRY',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'US Treasury Notes',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+  },
+  TESOURO: {
+    code: 'TESOURO',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Brazilian Treasury',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
   },
 };
 
@@ -433,3 +462,11 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
   );
 }
 
+
+/** Restored in the feat/buy-with-naira merge: main-only, used by fetchPrice. */
+export function stellarAssetTypeForCode(code: string): 'credit_alphanum4' | 'credit_alphanum12' {
+  if (!/^[A-Za-z0-9]{1,12}$/.test(code)) {
+    throw new Error('Stellar asset codes must contain 1 to 12 alphanumeric characters.');
+  }
+  return code.length <= 4 ? 'credit_alphanum4' : 'credit_alphanum12';
+}

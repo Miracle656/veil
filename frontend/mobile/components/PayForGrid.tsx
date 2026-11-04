@@ -26,7 +26,7 @@ export type BillService = {
    * Whether the flow behind this tile exists. Only 'live' services appear on
    * the dashboard; the rest are listed in the drawer behind a "soon" badge.
    */
-  status: 'live' | 'soon';
+  status: 'live' | 'soon' | 'not-planned';
   /** Highlight in gold. Reserved for a service we want to draw the eye to. */
   accent?: boolean;
   /** Route to push when tapped. Absent means the caller handles selection. */
@@ -194,3 +194,17 @@ const createStyles = (colors: ThemeColors) =>
       opacity: 0.6,
     },
   });
+
+/** Restored in the feat/buy-with-naira merge: main-only, used by ServicesDrawer. */
+export function getServiceAvailabilityMessage(service: Pick<BillService, 'id' | 'label' | 'status'>) {
+  if (service.status === 'soon') {
+    return `${service.label} is not available yet. No payment will be made.`;
+  }
+  // Water and waste are not "not planned by Veil" — the bill provider does not
+  // carry them at all, which is a different thing to tell someone and the
+  // reason this case is spelled out rather than folded into the line below.
+  if (service.id === 'bills') {
+    return 'Water and waste payments are not supported by the bill provider and are not planned. No payment will be made.';
+  }
+  return `${service.label} is not planned. No payment will be made.`;
+}
