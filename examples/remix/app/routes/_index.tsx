@@ -6,15 +6,30 @@ import { resolveNetwork, clientEnv } from '~/lib/network'
 
 export const meta: MetaFunction = () => [{ title: 'Veil Wallet — Remix' }]
 
-type Step = 'idle' | 'registering' | 'funding' | 'deploying' | 'done' | 'error'
+type Step = 'idle' | 'registering' | 'funding' | 'deploying' | 'notifications' | 'done' | 'error'
 
 const stepLabel: Record<Step, string> = {
   idle: '',
   registering: 'Creating passkey…',
   funding: 'Funding fee-payer via Friendbot…',
   deploying: 'Deploying wallet on Stellar…',
+  notifications: 'Setting up notifications…',
   done: 'Done!',
   error: '',
+}
+
+// Notification preferences are defaulted conservatively: the push payload
+// only says that something arrived, never the amount or the sender.
+export interface NotificationPrefs {
+  enabled: boolean
+  showAmount: boolean
+  showSender: boolean
+}
+
+export const DEFAULT_PREFS: NotificationPrefs = {
+  enabled: false,
+  showAmount: false,
+  showSender: false,
 }
 
 export default function Index() {
@@ -22,6 +37,7 @@ export default function Index() {
   const [username, setUsername] = useState('')
   const [step, setStep] = useState<Step>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [prefs, setPrefs] = useState<NotificationPrels>(DEFAULT_PREFS)
 
   useEffect(() => {
     if (localStorage.getItem('invisible_wallet_address')) {
@@ -59,6 +75,13 @@ export default function Index() {
       setStep('deploying')
       await wallet.deploy(feePayer.secret())
 
+      // 4. Register a push token for this wallet, only if the user opted in.
+      //    Revoke is a separate call that deletes the token on the backend.
+      setStep('notifications')
+      if (prefs.enabled) {
+        await registerPushToken(net, wallet.address, prefs)
+      }
+
       setStep('done')
       navigate('/dashboard')
     } catch (err) {
@@ -94,6 +117,40 @@ export default function Index() {
           disabled={busy}
         />
 
+        <fieldset className="stack" style={{ border: 'none', padding: 0, margin: '0 0', width: '100%' }}>
+          <legend className="muted">Payment notifications</legend>
+          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={prefs.enabled}
+              onChange={(e) => setPrefs((p) => ({ ...p, enabled: e.target.checked }))}
+              disabled={busy}
+            />
+            Notify me when money arrives
+          </label>
+          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={prefs.showAmount}
+              onChange={(e) => setPrefs((p) => ({ ...p, showAmount: e.target.checked }))}
+              disabled={busy || !prefs.enabled}
+            />
+            Include the amount in the notification
+          </label>
+          <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={prefs.showSender}
+              onChange={(e) => setPrefs((p) => ({ ...p, showSender: e.target.checked }))}
+              disabled={busy || !prefs.enabled}
+            />
+            Include the sender in the notification
+          </label>
+          <p className="muted">
+            By default notifications only say that a payment arrived. You can turn them off at any time.
+          </p>
+        </fieldset>
+
         <button onClick={handleCreate} disabled={busy}>
           {busy ? stepLabel[step] : 'Create wallet with passkey'}
         </button>
@@ -109,4 +166,39 @@ export default function Index() {
       </div>
     </main>
   )
+}
+
+async function registerPushToken(
+  net: ReturnType<typeof resolveNetwork>,
+  address: string,
+  prefs: NotificationPrefs,
+): Promise<void> {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    throw new Error('This browser cannot receive push notifications.')
+  }
+
+  const permission = await Notification.requestPermission()
+  if (permission !== 'granted') {
+    throw new Error('Notification permission was not granted.')
+  }
+
+  const registration = await navigator.serviceWorker.ready
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: net.pushServerKey,
+  })
+
+  const res = await fetch(`${net.notifierUrl}/tokens/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      address,
+      subscription: subscription.toJSON(),
+      prefs: { showAmount: prefs.showAmount, showSender: prefs.showSender },
+    }),
+  })
+  if (!res.ok) {
+    await subscription.unsubscribe().catch(() => undefined)
+    throw new Error('Push registration failed — try again in a moment.')
+  }
 }

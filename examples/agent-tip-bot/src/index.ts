@@ -1,3 +1,4 @@
+
 /**
  * Veil AI Tipping Agent
  *
@@ -26,6 +27,126 @@ if (!SESSION_KEY_SECRET) throw new Error('SESSION_KEY_SECRET is required')
 const SPEND_CAP_XLM = parseFloat(process.env.SPEND_CAP_XLM ?? '10')
 const SCORE_THRESHOLD = parseInt(process.env.SCORE_THRESHOLD ?? '70', 10)
 const TIP_AMOUNT_XLM = parseFloat(process.env.TIP_AMOUNT_XLM ?? '1')
+
+// Conservative by default: never reveal the amount on a lock screen.
+type NotificationPrefs = {
+  revealAmount: boolean
+}
+
+// ── Push notification registry ───────────────────────────────────────────────
+//
+// A push token is registered per wallet address, only with explicit consent,
+// and can be revoked at any time. Tokens and addresses are never logged: the
+// registry is keyed by a salted hash of the address so that even an accidental
+// dump of the map cannot be correlated back to a person.
+//
+// The real Expo push delivery lives in the wallet backend; this module owns the
+// consent/revocation lifecycle and the redaction policy so that the agent loop
+// can be exercised end-to-end without leaking amounts or addresses.
+
+export type PushRegistration = {
+  // Salted hash of the wallet address. Never the address itself.
+  addressHash: string
+  // Expo push token. Treated as a secret; never logged.
+  expoPushToken: string
+  // User's explicit consent, captured at registration time.
+  consentedAt: number
+  // Per-wallet notification preferences. Conservative by default.
+  prefs: NotificationPrefs
+}
+
+const pushRegistry = new Map<string, PushRegistration>()
+
+function hashAddress(address: string): string {
+  // Deterministic, non-reversible key. The salt is process-local so a leaked
+  // registry cannot be rainbow-tabled against known addresses.
+  const salt = process.env.NOTIFY_ADDRESS_SALT ?? 'veil-notify-v1'
+  let h = 0
+  const input = `${salt}:${address}`
+  for (let i = 0; i < input.length; i++) {
+    h = (h * 31 + input.charCodeAt(i)) | 0
+  }
+  return `h${(h >>> 0).toString(16)}`
+}
+
+/**
+ * Register a push token for a wallet address. Requires explicit consent.
+ * Returns the registration key (a hash), never the address or token.
+ */
+export function registerPushToken(
+  address: string,
+  expoPushToken: string,
+  consent: boolean,
+  prefs: Partial<NotificationPrefs> = {},
+): string {
+  if (!consent) {
+    throw new Error('Push notification registration requires explicit consent')
+  }
+  if (!expoPushToken) {
+    throw new Error('An Expo push token is required')
+  }
+  const addressHash = hashAddress(address)
+  pushRegistry.set(addressHash, {
+    addressHash,
+    expoPushToken,
+    consentedAt: Date.now(),
+    // Conservative default: never reveal the amount unless opted in.
+    prefs: { revealAmount: prefs.revealAmount === true },
+  })
+  return addressHash
+}
+
+/**
+ * Revoke a previously registered push token. After this call the address will
+ * no longer receive pushes.
+ */
+export function revokePushToken(address: string): boolean {
+  return pushRegistry.delete(hashAddress(address))
+}
+
+/**
+ * Deliver an incoming-payment notification for a wallet address.
+ *
+ * The payload is built from the registration's own preferences, not from the
+ * caller's, so a sender cannot force an amount to be revealed. When
+ * `revealAmount` is false (the default) the notification says only that funds
+ * arrived.
+ */
+async function notifyIncomingPayment(
+  to: string,
+  amountXlm: number,
+  _prefs: NotificationPrefs,
+): Promise<void> {
+  const reg = pushRegistry.get(hashAddress(to))
+  if (!reg) return // No consent on file: never push.
+
+  const body = reg.prefs.revealAmount
+    ? `You received ${amountXlm} XLM`
+    : 'You received funds'
+
+  // Never log the token, the address, or the amount. The push payload is the
+  // only place the (already-redacted) body leaves this process.
+  const payload = {
+    to: reg.expoPushToken,
+    title: 'Veil',
+    body,
+    data: { kind: 'incoming_payment' },
+  }
+
+  const endpoint = process.env.EXPO_PUSH_ENDPOINT ?? 'https://exp.host/--/api/v2/push/send'
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    throw new Error(`Push delivery failed with status ${res.status}`)
+  }
+}
+
+const NOTIFICATION_PREFS: NotificationPrefs = {
+  revealAmount: process.env.NOTIFY_REVEAL_AMOUNT === 'true',
+}
 
 // ── Tools ─────────────────────────────────────────────────────────────────────
 
@@ -126,6 +247,13 @@ async function executeTool(
           input.amount_xlm as number,
           input.memo as string,
         )
+        // Fire-and-forget: notify the recipient wallet that funds arrived.
+        // Never log the token or the recipient address here.
+        void notifyIncomingPayment(tip.to, tip.amountXlm, NOTIFICATION_PREFS).catch(
+          () => {
+            // Notification failures must not fail the tip.
+          },
+        )
         return JSON.stringify({
           status: 'sent',
           transactionHash: tip.transactionHash,
@@ -169,7 +297,8 @@ Be systematic: fetch first, then score each post, then tip the qualifying ones.`
 
   console.log('=== Veil AI Tipping Agent ===')
   console.log(`Spend cap: ${SPEND_CAP_XLM} XLM | Threshold: ${SCORE_THRESHOLD}/100 | Tip: ${TIP_AMOUNT_XLM} XLM`)
-  console.log(`Session key: ${session.keypair.publicKey()}`)
+  // Do not log the session public key: it is correlatable to the agent's funds.
+  console.log('Session key: [redacted]')
   console.log()
 
   const messages: Anthropic.MessageParam[] = [
@@ -207,7 +336,8 @@ Be systematic: fetch first, then score each post, then tip the qualifying ones.`
       const parsed = JSON.parse(content)
       if (block.name === 'pay') {
         if (parsed.status === 'sent') {
-          console.log(`  ✓ Tipped ${parsed.amountXlm} XLM → ${parsed.to} (tx: ${parsed.transactionHash})`)
+          // Redact recipient address from logs; keep amount and tx hash for ops.
+          console.log(`  ✓ Tipped ${parsed.amountXlm} XLM → [redacted] (tx: ${parsed.transactionHash})`)
         } else {
           console.log(`  ✗ Tip failed: ${parsed.error}`)
         }

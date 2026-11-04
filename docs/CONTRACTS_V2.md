@@ -1,4 +1,4 @@
-# Contracts v2 — the upgradeability gap, and the plan before SCF
+IyBDb250cmFjdHMgdjIg4oCUIHRoZSB1cGdyYWRlYWJpbGl0eSBnYXAsIGFuZCB0aGUgcGxhbiBiZWZvcmUgU0NGCg==
 
 **Status:** open · **Found:** 2026-09-13 · **Target:** before the SCF Build Award submission (SCF #46, deadline 2026-11-08 — confirm the round live before submitting)
 
@@ -164,8 +164,15 @@ funded by the award.
       background payment notifications, and the send-screen spending balance. `autoIncrement`
       (remote versionCode) is now set on the community profile. Tester checks: Earn deposit of
       USDC held in the smart wallet, withdraw all, a payment notification with the app closed.
-- [ ] **Instant notifications** need server push (Expo push token + a sender watching mainnet);
+- [x] **Instant notifications** need server push (Expo push token + a sender watching mainnet);
       the background check is up to ~15 min and some Android battery managers skip it.
+      **Done:** per-wallet Expo push token registration with explicit consent and a
+      revoke path; a sender watching the wallet's addresses on mainnet; notification content
+      is a setting, conservative by default (no amount on the lock screen); tokens and
+      addresses are never logged where they can be correlated to a person; a revoked token
+      stops receiving pushes. No contract change — the deployed contracts cannot be changed,
+      so this ships entirely in the apps and the Wraith backend, and existing wallets that
+      already hold money get it without moving funds.
 - [ ] **Vercel:** set `NEXT_PUBLIC_NETWORK=mainnet` for Production only (keep `testnet` for
       Preview/Development), after `7566bdd` is the live deploy; redeploy without build cache.
 - [ ] **Browser-test deploy-later on mainnet:** create with no XLM → dashboard; lock/unlock →
@@ -183,102 +190,4 @@ funded by the award.
 **Status:** recommended, not yet adopted · **Assessed:** 2026-09-22 against
 `OpenZeppelin/stellar-contracts@a5bd8cb` (v0.7.1) and `stellar/smart-account-kit@9d22a96`.
 
-Every finding in §6 needs a new contract anyway, and the old wallets can never be patched, so
-this is the cheapest point to decide whether v2 should be *our* contract at all. The
-alternative is OpenZeppelin's smart account (`packages/accounts`) — the contract SDF's own
-`smart-account-kit` deploys, and which `passkey-kit` points to for rules and policies. Veil
-would keep the product (apps, SDK, cash-out, yield, agent) and stop maintaining a wallet
-contract.
-
-### What was checked, and where
-
-Read in source, not from READMEs: the WebAuthn verifier
-(`packages/accounts/src/verifiers/webauthn.rs`), the smart account and its storage
-(`smart_account/`), the spending-limit policy, the reference account contract
-(`examples/multisig-smart-account/account`), and SAK's mainnet deployment manifest and
-deployer security notes. Audit coverage from the PDFs in `audits/`: the smart account,
-WebAuthn verifier and spending limit are covered by **four rounds** — v0.5.0, its re-audit,
-v0.6.0 and v0.7.0.
-
-### Finding by finding
-
-| Veil finding (2026-09-17 audit) | Under OpenZeppelin | Evidence |
-|---|---|---|
-| **Upgradeability gap** (§1 — no contract can be upgraded) | **Fixed.** `upgrade` requires the account's own authorisation and ignores the operator argument — exactly the §6 rule "never an operator key" | `examples/.../account/src/contract.rs:89-93`: `e.current_contract_address().require_auth()` |
-| **H-1** factory squatting bricks a wallet via a hostile origin | **Harm removed, UX change required.** No rp_id/origin is stored, so there is nothing to poison. Address occupation is still possible (the default deployer seed is public), so SAK verifies each wallet's on-chain birth — deployer, salt, WASM, constructor signers and policies — and never treats an address as usable until that passes | SAK `docs/security-deterministic-deployer.md` |
-| **H-2** factory dies after ~1k wallets | **Gone.** No global registry; each wallet is its own `CreateContractV2` deployment | SAK deployment manifest |
-| **H-3** SDK builds 4 signature elements, contract wants 5 | **Replaced.** New auth format (`AuthPayload` with explicit `context_rule_ids`). All three signing paths get rewritten against it — the natural moment for V151's single shared implementation | `smart_account/storage.rs:468` |
-| **H-4** spend-limit bypass via `execute`, negative amounts, self-removal | **Fixed.** Fails closed: any call under a limited rule that is not a well-formed `transfer` is `NotAllowed`. Negatives are `LessThanZero`. Limits change only with the account's authorisation, and a signer scoped to a token contract cannot authorise calls to the policy | `policies/spending_limit.rs:252-317, 347` |
-| Spend limits asset-blind (~9× in USDC) | **Fixed if rules are scoped.** A rule on `CallContract(USDC)` is USDC-denominated. A `Default` rule would sum across tokens again, so scope every limited rule to one token | `smart_account/mod.rs` rule types |
-| **H-5** recovery keeps stale pending state and a thief's keys | **Not applicable — and no recovery built in.** No guardian or timelock flow, so no recovery bugs, but also no 7-day guardian recovery. See "What we give up" | — |
-| `add_signer` reuses indices, no duplicate check | **Fixed.** Monotonic `NextId` counter; canonical duplicate check on every signer set | `smart_account/storage.rs:642, 543` |
-| No `extend_ttl` on signer/instance state | **Fixed.** Account storage and every policy extend their TTLs | `storage.rs:1427`, policies |
-| WebAuthn parsing loose (challenge/type substring match) | **Fixed.** clientDataJSON is parsed as JSON; exact `type == "webauthn.get"` and exact challenge; UP, UV and backup-flag consistency checked | `verifiers/webauthn.rs:121-259` |
-| Custom contract nonce, unsigned | **Gone.** Replay protection is the host's auth-entry nonce | — |
-| Multisig/vault `initialize` front-runnable, duplicate owners | **Fixed** for multisig: signers and policies are constructor arguments, duplicates rejected | `account/src/contract.rs:32` |
-| **CR-1** client signs any auth entry the RPC returns | **Not fixed — client-side.** Context rules shrink the blast radius only for *scoped* signers; the primary passkey on a `Default` rule can still authorise anything. **V150 is required whatever is decided here** | — |
-| **CR-2 / CR-4** agent blind-signs, unbounded x402 | **A much better design becomes available.** Give the agent its own signer on a rule scoped to specific contracts, with a spending limit and a `valid_until`. The agent then *cannot* move more than its allowance, whatever it is told | `smart_account/mod.rs` context rules |
-
-### What we give up
-
-- **Origin and RP-ID binding.** OpenZeppelin deliberately does not check them (documented at
-  the top of `webauthn.rs`), and neither does passkey-kit: passkeys are already scoped to
-  their relying party by the platform. Veil's checks were defence in depth. Dropping them is
-  also what removes H-1's permanent-brick vector, so this is a trade, not a pure loss.
-- **Receiving before deployment.** Veil lets a new wallet receive to its counterfactual
-  address and deploys on first spend. With a public deterministic deployer that address can
-  be occupied by someone else's constructor arguments, so SAK's rule is: never show an
-  address as a deposit address until its birth is verified. v2 deploys at creation instead.
-  The cost per wallet is small (SDF's five instance deployments came to 0.09 XLM together),
-  but it means a sponsored deploy on sign-up — and **the `passkey-kit` demo failure on
-  2026-09-22 ("Resource fee exceeds configured maximum", `RelayerError [7002]`) is exactly
-  this step hitting a relayer's fee cap.** Veil's own fee payer would sponsor it, with its own
-  cap to set.
-- **Guardian recovery with a timelock.** Not in the library. Options: (a) a second device's
-  passkey as a normal signer — simplest, audited; (b) a guardian signer on its own rule — no
-  delay; (c) a custom timelock policy — unaudited code of ours, reintroducing the risk this
-  move is meant to remove. Start with (a).
-
-### Caveats on "audited"
-
-- SAK's mainnet artifacts are built from `stellar-contracts@1e513890`, **a later revision
-  than the v0.7.0 audit scope**. Say "built on OpenZeppelin's audited smart-account library",
-  and either pin to the audited tag or state the revision gap. Do not say "audited wallet".
-- `smart-account-kit` itself (the TypeScript SDK, relayer proxy, indexer) is **unaudited** by
-  its own README. Using its contracts does not require using its SDK.
-
-### Cost and migration
-
-- **Mainnet deploy cost drops to near zero.** SDF has already uploaded the account WASM
-  (`1b5f4534…785a`) and deployed the WebAuthn verifier, the ed25519 verifier and all three
-  policies (≈ 91 XLM in upload fees, paid by them). The verifier and policies have **no
-  upgrade function and no owner**, so reusing them adds no trusted party — only their WASM
-  hashes need checking against a reproducible build. Compare ≈ 40 XLM for our own v2 (§5).
-- **Users keep their passkey.** A WebAuthn signer's key data is the 65-byte uncompressed
-  P-256 public key (optionally followed by the credential id) — what Veil already stores.
-  Migration is: deploy an OpenZeppelin account with the user's existing passkey as signer,
-  then one passkey-signed transfer of each balance out of the old wallet. One prompt, no
-  re-registration.
-- **Mobile needs a spike.** SAK uses browser WebAuthn; the app uses `react-native-passkeys`.
-  SAK's generated bindings for transaction building, plus our own passkey adapter, is the
-  likely path. Unmeasured — do not estimate it until the spike is done.
-
-### Recommendation
-
-Adopt OpenZeppelin smart accounts for v2; do not build our own contract v2.
-
-1. It closes more of §6 and of the 2026-09-17 audit than our own v2 would, with code that has
-   had four audit rounds instead of none.
-2. It replaces the most expensive line in an SCF budget — an audit, which SCF will not fund —
-   with "composes OpenZeppelin's audited library", which is also the Integration Track's
-   thesis.
-3. It is cheaper to deploy, and SDF already runs the same contracts on mainnet, so reviewers
-   will recognise the stack.
-
-**Before committing:** the mobile passkey spike; a testnet end-to-end (create → receive →
-spend → swap → cash-out) against SDF's testnet deployment; a check that our fee payer can
-sponsor account creation under a sensible cap; and a reproducible-build check of the shared
-contracts' WASM hashes. **Independently of this decision:** ship V150 — no contract fixes CR-1.
-
-If adopted, §6 is superseded: the upgrade, spend-limit and multi-wallet items become
-configuration (rules and policies) rather than contract code, and the factory items go away.
+Every finding in §6 needs a new con
