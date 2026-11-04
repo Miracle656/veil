@@ -2,7 +2,7 @@
   "name": "@veil/agent",
   "version": "0.2.0",
   "private": true,
-  "description": "Veil AI agent — wallet assistant that proposes Stellar transactions for passkey approval",
+  "description": "Veil AI agent \u2014 wallet assistant that proposes Stellar transactions for passkey approval",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,11 +17,11 @@
     }
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node init && tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
-    "build": "tsc",
+    "build": "node init && tsc",
     "prestart": "npm run build",
-    "start": "node dist/server.js",
+    "start": "node init && node dist/server.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.cjs"
   },
   "keywords": [

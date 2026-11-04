@@ -5,9 +5,9 @@
   "type": "module",
   "sideEffects": false,
   "scripts": {
-    "dev": "remix vite:dev",
-    "build": "remix vite:build",
-    "start": "remix-serve ./build/server/index.js",
+    "dev": "node init && remix vite:dev",
+    "build": "node init && remix vite:build",
+    "start": "node init && remix-serve ./build/server/index.js",
     "typecheck": "tsc"
   },
   "dependencies": {
