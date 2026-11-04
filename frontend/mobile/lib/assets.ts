@@ -37,7 +37,7 @@ export interface RegisteredAsset {
   issuerName: string;
   homeDomain?: string;
   network: 'mainnet' | 'testnet' | 'all';
-  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native';
+  kind: 'treasury' | 'fund' | 'equity' | 'governance' | 'stablecoin' | 'native';
   reserveXlm?: number;
   sacContractId?: string;
 }
@@ -89,7 +89,7 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     issuerName: 'Aquarius',
     homeDomain: 'aqua.network',
     network: 'mainnet',
-    kind: 'equity',
+    kind: 'governance',
     reserveXlm: 0.5,
   },
   USDY: {

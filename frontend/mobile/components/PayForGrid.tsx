@@ -58,13 +58,9 @@ export const BILL_SERVICES: BillService[] = [
   { id: 'buy', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn', accent: true },
   { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'live', route: '/airtime' },
   { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
-  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'soon' },
+  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'live', route: '/electricity' },
   { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
-  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'soon' },
-  // The offramp: USDC out to a Nigerian bank account, via Linq. Live rather
-  // than 'soon' because the flow behind it exists — but the dashboard still
-  // hides it when the backend that holds the API key is unreachable, since
-  // there is no order to create without it.
+  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'not-planned' },
   { id: 'transfer', label: 'Cash out', hint: 'To any bank', Icon: BankIcon, status: 'live', route: '/cash-out' },
   { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
 ];
