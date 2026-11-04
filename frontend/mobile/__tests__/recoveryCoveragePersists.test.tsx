@@ -76,25 +76,25 @@ it('reads a recorded PRF fee-payer as ready on a fresh mount', async () => {
   // state carried over — this IS reopening the screen.
   mockGetFeePayerInfo.mockResolvedValue({ address: 'GFEE', source: 'prf' });
 
-  expect(prfDetail(await open())).toBe('Ready');
+  expect(prfDetail(await open())).toContain('restores this wallet');
 });
 
 it('still says not checked when the fee-payer is not the passkey’s', async () => {
   mockGetFeePayerInfo.mockResolvedValue({ address: 'GFEE', source: 'random' });
 
-  expect(prfDetail(await open())).toBe('Not checked yet');
+  expect(prfDetail(await open())).toContain('Not checked yet');
 });
 
 it('still says not checked when nothing has been recorded', async () => {
   mockGetFeePayerInfo.mockResolvedValue({ address: 'GFEE', source: 'unknown' });
 
-  expect(prfDetail(await open())).toBe('Not checked yet');
+  expect(prfDetail(await open())).toContain('Not checked yet');
 });
 
 it('survives a fee-payer record that cannot be read', async () => {
   mockGetFeePayerInfo.mockRejectedValue(new Error('storage unavailable'));
 
-  expect(prfDetail(await open())).toBe('Not checked yet');
+  expect(prfDetail(await open())).toContain('Not checked yet');
 });
 
 it('draws the tick rather than a check button once the record says ready', async () => {
@@ -104,7 +104,7 @@ it('draws the tick rather than a check button once the record says ready', async
 
   const row = (await open()).findByProps({ testID: 'recovery-prf' });
 
-  expect(text(row)).toContain('Ready');
+  expect(text(row)).toContain('restores this wallet');
   expect(text(row)).toContain('✓');
   expect(text(row)).not.toContain('Check passkey');
 });

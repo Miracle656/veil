@@ -53,6 +53,11 @@ jest.mock('../walletBreadcrumbs', () => ({
 }));
 jest.mock('../network', () => ({
   getNetworkName: () => mockGetNetworkName(),
+  // `writeSdkMirror` now writes through `sdkStorage`, which hydrates the
+  // network before namespacing the key. Without this the call throws and the
+  // `.catch` around the mirror write swallows it, so the test saw no writes
+  // at all rather than a failure.
+  hydrateNetwork: jest.fn(async () => undefined),
 }));
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,

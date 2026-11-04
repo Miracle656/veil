@@ -348,6 +348,7 @@ export default function AgentScreen() {
             the composer when in fact the composer had been pushed under it. */}
         <ScrollView showsVerticalScrollIndicator={false}
           ref={scrollRef}
+          testID="agent-thread"
           style={styles.flex}
           contentContainerStyle={[
             styles.thread,
@@ -412,7 +413,7 @@ export default function AgentScreen() {
             composer actually covers, so it holds whether the thread scrolls or
             not. The composer needs its own background once it floats, or the
             messages show through it. */}
-        <KeyboardStickyView style={styles.dock} offset={{ closed: 0, opened: insets.bottom }}>
+        <KeyboardStickyView testID="agent-composer-anchor" style={styles.dock} offset={{ closed: 0, opened: insets.bottom }}>
         <View style={styles.composer} onLayout={handleComposerLayout} testID="agent-composer">
           <ScrollView showsVerticalScrollIndicator={false} horizontal showsHorizontalScrollIndicator={false} style={styles.chips}>
             {SUGGESTIONS.map((suggestion) => (
