@@ -45,121 +45,162 @@ const POINTS = [
   '0 XLM needed for your first transaction',
 ]
 
+/**
+ * The app, drawn rather than screenshotted.
+ *
+ * It has to track the shipping build or it quietly becomes a lie: the Pay-for
+ * row, the asset list and the tab bar are what a new install actually shows,
+ * including the raised centre action. A real screenshot would be easier and is
+ * deliberately not used - the only ones we have carry a real address and a real
+ * balance, and neither belongs on a public page.
+ */
 function PhoneScreen() {
   return (
     <div className="flex h-full flex-col bg-[#0F0F0F] text-off-white">
-      {/* header: wordmark + the address chip the app actually shows */}
-      <div className="flex items-center justify-between px-3 pt-4 pb-3">
+      {/* header: wordmark, the contract address chip, and the spending account */}
+      <div className="flex items-center justify-between px-3 pb-3 pt-[18px]">
         <span className="font-anton text-[10px] tracking-[0.16em]" style={{ color: GOLD }}>
           VEIL
         </span>
-        <span
-          className="rounded-full px-[7px] py-[3px] font-mono text-[6px] tracking-wide"
-          style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(246,247,248,0.55)' }}
-        >
-          C4B3…9QX3
+        <span className="flex items-center gap-[5px]">
+          <span
+            className="rounded-full px-[7px] py-[3px] font-mono text-[6px] tracking-wide"
+            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(246,247,248,0.55)' }}
+          >
+            CDUS5S&hellip;MXQHK
+          </span>
+          <span
+            className="flex h-[13px] w-[13px] items-center justify-center rounded-full text-[6px] font-semibold"
+            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(246,247,248,0.5)' }}
+          >
+            G
+          </span>
         </span>
       </div>
 
       {/* the silver balance card, Send and Receive inside it as in the app */}
-      <div className="mx-3 rounded-[18px] bg-gradient-to-br from-[#e9eaec] via-[#fbfbfc] to-[#c2c5ca] px-3 pb-3 pt-[10px] text-[#0F0F0F]">
-        <p className="text-[6px] font-semibold tracking-[0.18em] opacity-50">TOTAL BALANCE</p>
-        <p className="mt-[3px] font-lora text-[23px] font-semibold leading-none tracking-tight">
-          ₦642,268
-        </p>
-        <p className="mt-[3px] font-mono text-[6.5px] opacity-55">412.98 USDC · earning 6.2%</p>
-        <div className="mt-[10px] grid grid-cols-2 gap-[6px]">
-          <span className="rounded-full bg-[#0F0F0F] py-[5px] text-center text-[7px] font-semibold text-off-white">
-            Send
-          </span>
-          <span className="rounded-full border border-[#0F0F0F]/25 py-[5px] text-center text-[7px] font-semibold">
-            Receive
-          </span>
+      <div className="relative mx-3 overflow-hidden rounded-[18px] px-3 pb-3 pt-[10px] text-[#0F0F0F]">
+        <div className="absolute inset-0 bg-gradient-to-br from-[#e9eaec] via-[#fbfbfc] to-[#c2c5ca]" />
+        {/* the sheen that makes it read as brushed metal, not grey paint */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(104deg, transparent 18%, rgba(255,255,255,0.7) 34%, transparent 52%)',
+          }}
+        />
+        <div className="relative">
+          <div className="flex items-start justify-between">
+            <p className="text-[6px] font-semibold tracking-[0.18em] opacity-50">TOTAL BALANCE</p>
+            <span className="text-[6px] opacity-35">&#9673;</span>
+          </div>
+          <p className="mt-[3px] font-lora text-[23px] font-semibold leading-none tracking-tight">
+            &#8358;642,268
+          </p>
+          <p className="mt-[3px] font-mono text-[6px] opacity-50">
+            412.98 USDC &middot; 180.4 XLM &middot; 60.0 USDT0
+          </p>
+          <div className="mt-[10px] grid grid-cols-2 gap-[6px]">
+            <span className="rounded-full bg-[#0F0F0F] py-[5px] text-center text-[7px] font-semibold text-off-white">
+              Send
+            </span>
+            <span className="rounded-full border border-[#0F0F0F]/25 py-[5px] text-center text-[7px] font-semibold">
+              Receive
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* pay for — Cash out is the live one, the rest are marked soon */}
-      <p className="mt-4 px-3 text-[6px] font-semibold tracking-[0.18em] opacity-40">PAY FOR</p>
-      <div className="mt-[6px] grid grid-cols-4 gap-[5px] px-3">
-        {[
-          ['Cash out', 'To any bank', true],
-          ['Airtime', 'All networks', false],
-          ['Data', 'Bundles', false],
-          ['TV', 'DStv', false],
-        ].map(([label, hint, live]) => (
-          <div
-            key={label as string}
-            className="rounded-[10px] border px-[4px] py-[6px] text-center"
-            style={{
-              borderColor: live ? 'rgba(253,218,36,0.32)' : 'rgba(255,255,255,0.07)',
-              background: live ? 'rgba(253,218,36,0.07)' : 'rgba(255,255,255,0.03)',
-            }}
-          >
-            <span
-              className="block text-[7px] font-semibold leading-tight"
-              style={{ color: live ? GOLD : 'rgba(246,247,248,0.8)' }}
-            >
-              {label}
-            </span>
-            <span className="mt-[1px] block text-[5px] leading-tight opacity-40">{hint}</span>
-          </div>
-        ))}
+      {/* pay for - the four tiles the dashboard ships with */}
+      <div className="mx-3 mt-3 rounded-[14px] bg-white/[0.035] px-[8px] pb-[9px] pt-[7px]">
+        <p className="text-[6px] font-semibold tracking-[0.18em]" style={{ color: GOLD }}>
+          PAY FOR
+        </p>
+        <div className="mt-[6px] grid grid-cols-4 gap-[5px]">
+          {[
+            ['Buy', 'With naira', true],
+            ['Airtime', 'All networks', false],
+            ['Cash out', 'To any bank', false],
+            ['More', 'All services', true],
+          ].map(([label, hint, accent]) => (
+            <div key={label as string} className="text-center">
+              <div
+                className="mx-auto h-[17px] w-[17px] rounded-[6px]"
+                style={{
+                  background: accent ? 'rgba(253,218,36,0.16)' : 'rgba(255,255,255,0.06)',
+                  border: accent
+                    ? '1px solid rgba(253,218,36,0.3)'
+                    : '1px solid rgba(255,255,255,0.07)',
+                }}
+              />
+              <span
+                className="mt-[3px] block text-[6.5px] font-semibold leading-tight"
+                style={{ color: accent ? GOLD : 'rgba(246,247,248,0.85)' }}
+              >
+                {label}
+              </span>
+              <span className="block text-[5px] leading-tight opacity-35">{hint}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* assets */}
-      <p className="mt-4 px-3 text-[6px] font-semibold tracking-[0.18em] opacity-40">ASSETS</p>
-      <div className="mx-3 mt-[6px] flex items-center justify-between rounded-[12px] border border-white/[0.06] bg-white/[0.03] px-[10px] py-[7px]">
-        <span className="flex items-center gap-[6px]">
-          <span
-            className="flex h-[15px] w-[15px] items-center justify-center rounded-full text-[7px] font-bold"
-            style={{ background: 'rgba(0,167,181,0.18)', color: TEAL }}
-          >
-            $
-          </span>
-          <span>
-            <span className="block text-[7.5px] font-semibold leading-tight">USDC</span>
-            <span className="block font-mono text-[5.5px] opacity-45">412.98</span>
-          </span>
-        </span>
-        <span className="text-[7.5px] font-semibold">₦642,268</span>
-      </div>
-
-      {/* activity */}
-      <div className="mt-4 flex items-baseline justify-between px-3">
-        <span className="text-[6px] font-semibold tracking-[0.18em] opacity-40">ACTIVITY</span>
-        <span className="text-[5.5px]" style={{ color: GOLD }}>
-          See all →
-        </span>
-      </div>
-      <div className="mt-[6px] flex-1 space-y-[9px] px-3">
+      {/* assets - the three a funded wallet holds */}
+      <p
+        className="mt-[13px] px-3 text-[6px] font-semibold tracking-[0.18em]"
+        style={{ color: GOLD }}
+      >
+        ASSETS
+      </p>
+      <div className="mx-3 mt-[5px] flex-1 space-y-[2px]">
         {[
-          ['Cashed out', 'Kuda · 2683', '−₦61,240', false],
-          ['Sent', 'GBQ4…TSK4', '−₦2,000', false],
-          ['Received', 'drips.network', '+₦640,430', true],
-        ].map(([title, sub, amt, isIn]) => (
-          <div key={title as string} className="flex items-start justify-between">
-            <span>
-              <span className="block text-[7.5px] font-medium leading-tight">{title}</span>
-              <span className="block font-mono text-[5.5px] opacity-40">{sub}</span>
+          ['Lumens', 'XLM', '180.4', '₦39,688', 'rgba(255,255,255,0.1)', '#F6F7F8'],
+          ['USD Coin', 'USDC', '412.98', '₦566,050', 'rgba(39,117,202,0.22)', '#4DA2E8'],
+          ['Tether USD', 'USDT0', '60.00', '₦82,230', 'rgba(0,167,181,0.2)', TEAL],
+        ].map(([name, code, amt, ngn, bg, fg]) => (
+          <div key={code as string} className="flex items-center justify-between py-[4px]">
+            <span className="flex items-center gap-[6px]">
+              <span
+                className="flex h-[15px] w-[15px] items-center justify-center rounded-full text-[6px] font-bold"
+                style={{ background: bg as string, color: fg as string }}
+              >
+                {(code as string).slice(0, 1)}
+              </span>
+              <span>
+                <span className="block text-[7.5px] font-semibold leading-tight">{name}</span>
+                <span className="block font-mono text-[5.5px] opacity-40">{code}</span>
+              </span>
             </span>
-            <span
-              className="text-[7.5px] font-semibold"
-              style={{ color: isIn ? TEAL : 'rgba(246,247,248,0.9)' }}
-            >
-              {amt}
+            <span className="text-right">
+              <span className="block font-mono text-[7px] font-semibold leading-tight">{amt}</span>
+              <span className="block font-mono text-[5.5px] opacity-40">{ngn}</span>
             </span>
           </div>
         ))}
       </div>
 
-      {/* the app's four tabs */}
-      <div className="mt-3 flex items-center justify-around border-t border-white/[0.07] px-2 py-[7px]">
-        {['Home', 'Earn', 'Agent', 'Settings'].map((tab, i) => (
+      {/* the tab bar, with the raised centre action the app actually has */}
+      <div className="mx-[10px] mb-[10px] mt-2 flex items-end justify-around rounded-full border border-white/[0.07] bg-white/[0.045] px-2 pb-[6px] pt-[7px]">
+        {['Wallet', 'Earn'].map((tab, i) => (
           <span
             key={tab}
-            className="text-[6px]"
+            className="text-[5.5px]"
             style={{ color: i === 0 ? GOLD : 'rgba(246,247,248,0.35)' }}
           >
+            {tab}
+          </span>
+        ))}
+        <span className="-mt-[13px] flex flex-col items-center">
+          <span
+            className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-[12px] font-light leading-none text-[#0F0F0F]"
+            style={{ background: GOLD, boxShadow: '0 4px 12px rgba(253,218,36,0.35)' }}
+          >
+            +
+          </span>
+        </span>
+        {['Agent', 'Settings'].map((tab) => (
+          <span key={tab} className="text-[5.5px]" style={{ color: 'rgba(246,247,248,0.35)' }}>
             {tab}
           </span>
         ))}
@@ -293,11 +334,41 @@ export function MobileIsLive({ t }: { t: Messages }) {
               filter: 'drop-shadow(0 40px 70px rgba(0,0,0,0.6))',
             }}
           >
-            <div className="rounded-[2.2rem] border border-white/[0.14] bg-[#1a1a1a] p-[9px]">
-              <div className="relative aspect-[9/19.2] overflow-hidden rounded-[1.75rem] bg-[#0F0F0F]">
-                {/* notch */}
-                <div className="absolute left-1/2 top-[7px] z-10 h-[14px] w-[74px] -translate-x-1/2 rounded-full bg-black" />
-                <PhoneScreen />
+            {/* the buttons, so the slab reads as a device and not a card */}
+            <div
+              aria-hidden="true"
+              className="absolute -left-[2px] top-[17%] h-[34px] w-[3px] rounded-l-sm bg-gradient-to-b from-[#3a3a3a] to-[#1d1d1d]"
+            />
+            <div
+              aria-hidden="true"
+              className="absolute -left-[2px] top-[26%] h-[52px] w-[3px] rounded-l-sm bg-gradient-to-b from-[#3a3a3a] to-[#1d1d1d]"
+            />
+            <div
+              aria-hidden="true"
+              className="absolute -right-[2px] top-[23%] h-[62px] w-[3px] rounded-r-sm bg-gradient-to-b from-[#3a3a3a] to-[#1d1d1d]"
+            />
+
+            {/* Two rings, not one: the outer is the polished rail and the inner
+                the matte bezel under the glass. A single border reads flat at
+                this size however dark you make it. */}
+            <div className="rounded-[2.35rem] bg-gradient-to-b from-[#4a4a4d] via-[#232325] to-[#131314] p-[1.5px]">
+              <div className="rounded-[2.28rem] bg-[#141415] p-[7px]">
+                <div className="relative aspect-[9/19.2] overflow-hidden rounded-[1.85rem] bg-[#0F0F0F]">
+                  {/* notch */}
+                  <div className="absolute left-1/2 top-[7px] z-20 h-[13px] w-[62px] -translate-x-1/2 rounded-full bg-black" />
+                  <PhoneScreen />
+                  {/* glass: one soft diagonal wipe across the screen itself, so
+                      the UI sits behind something rather than being printed on
+                      the front of the case. */}
+                  <div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 z-10"
+                    style={{
+                      background:
+                        'linear-gradient(118deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.02) 22%, transparent 46%)',
+                    }}
+                  />
+                </div>
               </div>
             </div>
             {/* a single specular edge, so the slab has a direction of light */}
@@ -316,25 +387,31 @@ export function MobileIsLive({ t }: { t: Messages }) {
   )
 }
 
-/** A decorative QR block. The real code is generated at the /app route. */
+/**
+ * The QR beside "Scan to install", encoding https://useveilapp.xyz/app.
+ *
+ * This used to be a hand-written pattern with a comment saying the real code
+ * was generated at `/app` - a route that did not exist. It looked like a QR
+ * and decoded to nothing, which is worse than no QR at all: the label promises
+ * an install and the camera just sits there.
+ *
+ * The content is a constant, so the matrix is generated once (qrcode.react,
+ * version 2, error correction M) and inlined rather than pulling an encoder
+ * into the bundle to re-derive the same 25x25 grid on every render. Regenerate
+ * it if the URL ever changes - it is not editable by hand.
+ */
 function QrGlyph() {
-  const cells = [
-    '1111111010001111111', '1000001011101000001', '1011101000101011101',
-    '1011101011001011101', '1011101010101011101', '1000001001001000001',
-    '1111111010101111111', '0000000011100000000', '1101011101011010110',
-    '0100110010110101001', '1110001110001110111', '0101100101101001010',
-    '1011011011010110101', '0000000110101101100', '1111111001010110101',
-    '1000001010110101011', '1011101011010110100', '1011101001101011011',
-    '1111111010110100101',
-  ]
   return (
-    <svg width="62" height="62" viewBox="0 0 19 19" shapeRendering="crispEdges" aria-hidden="true">
-      <rect width="19" height="19" fill="#F6F7F8" />
-      {cells.map((row, y) =>
-        row.split('').map((c, x) =>
-          c === '1' ? <rect key={`${x}-${y}`} x={x} y={y} width="1" height="1" fill="#0F0F0F" /> : null,
-        ),
-      )}
+    <svg
+      width="62"
+      height="62"
+      viewBox="0 0 25 25"
+      shapeRendering="crispEdges"
+      role="img"
+      aria-label="QR code to useveilapp.xyz/app"
+    >
+      <rect width="25" height="25" fill="#F6F7F8" />
+      <path d="M0 0h7v1H0zM11 0h1v1H11zM13 0h1v1H13zM18,0 h7v1H18zM0 1h1v1H0zM6 1h1v1H6zM8 1h2v1H8zM11 1h2v1H11zM18 1h1v1H18zM24,1 h1v1H24zM0 2h1v1H0zM2 2h3v1H2zM6 2h1v1H6zM8 2h1v1H8zM12 2h1v1H12zM15 2h1v1H15zM18 2h1v1H18zM20 2h3v1H20zM24,2 h1v1H24zM0 3h1v1H0zM2 3h3v1H2zM6 3h1v1H6zM8 3h1v1H8zM11 3h1v1H11zM13 3h2v1H13zM18 3h1v1H18zM20 3h3v1H20zM24,3 h1v1H24zM0 4h1v1H0zM2 4h3v1H2zM6 4h1v1H6zM9 4h1v1H9zM12 4h2v1H12zM16 4h1v1H16zM18 4h1v1H18zM20 4h3v1H20zM24,4 h1v1H24zM0 5h1v1H0zM6 5h1v1H6zM9 5h3v1H9zM13 5h2v1H13zM16 5h1v1H16zM18 5h1v1H18zM24,5 h1v1H24zM0 6h7v1H0zM8 6h1v1H8zM10 6h1v1H10zM12 6h1v1H12zM14 6h1v1H14zM16 6h1v1H16zM18,6 h7v1H18zM8 7h4v1H8zM0 8h1v1H0zM6 8h1v1H6zM8 8h1v1H8zM10 8h6v1H10zM17 8h2v1H17zM21 8h3v1H21zM1 9h4v1H1zM7 9h1v1H7zM10 9h1v1H10zM12 9h2v1H12zM15 9h1v1H15zM17 9h1v1H17zM19 9h5v1H19zM1 10h8v1H1zM10 10h3v1H10zM15 10h1v1H15zM18 10h2v1H18zM21 10h1v1H21zM23,10 h2v1H23zM2 11h1v1H2zM4 11h2v1H4zM7 11h3v1H7zM12 11h1v1H12zM16 11h2v1H16zM19 11h1v1H19zM21 11h1v1H21zM24,11 h1v1H24zM0 12h3v1H0zM6 12h2v1H6zM9 12h4v1H9zM16 12h1v1H16zM18 12h1v1H18zM24,12 h1v1H24zM0 13h2v1H0zM3 13h3v1H3zM8 13h1v1H8zM12 13h5v1H12zM19 13h1v1H19zM23 13h1v1H23zM0 14h1v1H0zM2 14h2v1H2zM6 14h5v1H6zM12 14h1v1H12zM15 14h7v1H15zM23,14 h2v1H23zM0 15h1v1H0zM3 15h1v1H3zM5 15h1v1H5zM8 15h1v1H8zM10 15h1v1H10zM12 15h1v1H12zM16 15h4v1H16zM21 15h2v1H21zM24,15 h1v1H24zM0 16h1v1H0zM2 16h5v1H2zM9 16h2v1H9zM13 16h2v1H13zM16 16h5v1H16zM22 16h1v1H22zM8 17h1v1H8zM10 17h2v1H10zM13 17h2v1H13zM16 17h1v1H16zM20 17h1v1H20zM0 18h7v1H0zM10 18h3v1H10zM14 18h1v1H14zM16 18h1v1H16zM18 18h1v1H18zM20 18h1v1H20zM24,18 h1v1H24zM0 19h1v1H0zM6 19h1v1H6zM9 19h1v1H9zM12 19h1v1H12zM15 19h2v1H15zM20 19h1v1H20zM0 20h1v1H0zM2 20h3v1H2zM6 20h1v1H6zM9 20h2v1H9zM13 20h1v1H13zM15 20h6v1H15zM22 20h1v1H22zM0 21h1v1H0zM2 21h3v1H2zM6 21h1v1H6zM10 21h2v1H10zM13 21h6v1H13zM23,21 h2v1H23zM0 22h1v1H0zM2 22h3v1H2zM6 22h1v1H6zM9 22h1v1H9zM13 22h2v1H13zM17 22h1v1H17zM21 22h2v1H21zM24,22 h1v1H24zM0 23h1v1H0zM6 23h1v1H6zM12 23h1v1H12zM14 23h1v1H14zM16 23h5v1H16zM24,23 h1v1H24zM0 24h7v1H0zM8 24h5v1H8zM16 24h2v1H16zM21 24h1v1H21zM24,24 h1v1H24z" fill="#0F0F0F" />
     </svg>
   )
 }
