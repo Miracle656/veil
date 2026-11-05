@@ -26,6 +26,7 @@ import {
   getFeePayerMode,
   clearFeePayer,
   resetFeePayer,
+  retryPrfFeePayer,
 } from '../feePayer'
 import { deriveFeePayerKeypair } from '../deriveFeePayer'
 
@@ -218,5 +219,93 @@ describe('cross-platform key agreement (issue #682 acceptance criterion)', () =>
 
     expect(getFeePayerMode()).toBe('prf-raw')
     expect(kp!.publicKey()).toBe(GOLDEN_FEE_PAYER_ADDRESS)
+  })
+})
+
+/**
+ * Getting out of the random fallback.
+ *
+ * A dismissed passkey sheet lands a wallet on `random`, which `ensureFeePayer`
+ * then pins and never revisits - deliberately, because silently re-deriving
+ * would move the address out from under a funded account. That left the person
+ * who tapped "cancel" once with no way back at all, which is what this path is
+ * for. It only ever runs from a tap, because both mobile platforms refuse a
+ * WebAuthn ceremony without a user gesture.
+ */
+describe('recovering from a cancelled PRF ceremony', () => {
+  const missing = async () => ({ ok: false, status: 404 }) as unknown as Response
+
+  it('adopts the passkey-derived key when the random account is empty', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const random = await ensureFeePayer(noPrf)
+    expect(getFeePayerMode()).toBe('random')
+    expect(localStorage.getItem(SECRET)).toBe(random!.secret())
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = jest.fn(missing)
+    try {
+      const result = await retryPrfFeePayer(withPrf)
+      expect(result.ok).toBe(true)
+      expect(getFeePayerMode()).toBe('prf-raw')
+      if (result.ok) expect(result.publicKey).not.toBe(random!.publicKey())
+      // C3 again: a PRF seed is re-derivable, so the localStorage copy the
+      // random key needed must not be left behind.
+      expect(localStorage.getItem(SECRET)).toBeNull()
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('refuses, and changes nothing, when the random account exists on chain', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const random = await ensureFeePayer(noPrf)
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = jest.fn(async () => ({ ok: true, status: 200 }) as Response)
+    try {
+      const result = await retryPrfFeePayer(withPrf)
+      expect(result).toMatchObject({ ok: false, reason: 'funded' })
+      // The key that can reach the balance is still the one on this device.
+      expect(getFeePayerMode()).toBe('random')
+      expect(localStorage.getItem(SECRET)).toBe(random!.secret())
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('refuses when the network cannot be reached, rather than assuming empty', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const random = await ensureFeePayer(noPrf)
+
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = jest.fn(async () => { throw new Error('offline') })
+    try {
+      const result = await retryPrfFeePayer(withPrf)
+      expect(result).toMatchObject({ ok: false, reason: 'network' })
+      expect(localStorage.getItem(SECRET)).toBe(random!.secret())
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('reports a dismissed prompt as a cancellation, not as a missing extension', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    await ensureFeePayer(noPrf)
+
+    const cancelled = async () => {
+      const err = new Error('The request is not allowed by the user agent or the platform in the current context.')
+      err.name = 'NotAllowedError'
+      throw err
+    }
+    const result = await retryPrfFeePayer(cancelled)
+    expect(result).toMatchObject({ ok: false, reason: 'cancelled' })
+    expect(getFeePayerMode()).toBe('random')
+  })
+
+  it('says so when the wallet is already on a passkey-derived fee payer', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    await ensureFeePayer(withPrf)
+    const result = await retryPrfFeePayer(withPrf)
+    expect(result).toMatchObject({ ok: false, reason: 'already-prf' })
   })
 })
