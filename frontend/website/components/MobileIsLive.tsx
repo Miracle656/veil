@@ -54,153 +54,170 @@ const POINTS = [
  * deliberately not used - the only ones we have carry a real address and a real
  * balance, and neither belongs on a public page.
  */
+/**
+ * The home screen as designed ("home v2 - silver card + center").
+ *
+ * Drawn, not screenshotted: the only real captures we have carry a real
+ * address and a real balance, and neither belongs on a public page.
+ *
+ * This follows the design rather than the current build. The Pay-for grid is
+ * the full eight tiles, several of which are still "soon" in the shipping app,
+ * so if this section is ever used to claim those flows are live, the claim is
+ * the thing to fix - not this file.
+ */
 function PhoneScreen() {
   return (
     <div className="flex h-full flex-col bg-[#0F0F0F] text-off-white">
-      {/* header: wordmark, the contract address chip, and the spending account */}
-      <div className="flex items-center justify-between px-3 pb-3 pt-[18px]">
-        <span className="font-anton text-[10px] tracking-[0.16em]" style={{ color: GOLD }}>
-          VEIL
-        </span>
+      {/* header: wordmark, and the account chip in a gold outline */}
+      <div className="flex items-center justify-between px-[11px] pb-[9px] pt-[15px]">
         <span className="flex items-center gap-[5px]">
-          <span
-            className="rounded-full px-[7px] py-[3px] font-mono text-[6px] tracking-wide"
-            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(246,247,248,0.55)' }}
-          >
-            CDUS5S&hellip;MXQHK
+          <span className="flex flex-col gap-[2px]" aria-hidden="true">
+            <span className="block h-[1.5px] w-[9px] rounded-full" style={{ background: GOLD }} />
+            <span className="block h-[1.5px] w-[6px] rounded-full" style={{ background: GOLD }} />
           </span>
-          <span
-            className="flex h-[13px] w-[13px] items-center justify-center rounded-full text-[6px] font-semibold"
-            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(246,247,248,0.5)' }}
-          >
-            G
+          <span className="font-anton text-[10px] tracking-[0.16em]" style={{ color: GOLD }}>
+            VEIL
           </span>
+        </span>
+        <span
+          className="rounded-full px-[8px] py-[3px] font-mono text-[6px] tracking-wide"
+          style={{ border: `1px solid ${GOLD}55`, color: GOLD }}
+        >
+          GDKF&hellip;9QX3
         </span>
       </div>
 
-      {/* the silver balance card, Send and Receive inside it as in the app */}
-      <div className="relative mx-3 overflow-hidden rounded-[18px] px-3 pb-3 pt-[10px] text-[#0F0F0F]">
-        <div className="absolute inset-0 bg-gradient-to-br from-[#e9eaec] via-[#fbfbfc] to-[#c2c5ca]" />
-        {/* the sheen that makes it read as brushed metal, not grey paint */}
+      {/* the silver card */}
+      <div className="relative mx-[11px] overflow-hidden rounded-[14px] px-[11px] pb-[11px] pt-[9px] text-[#0F0F0F]">
+        <div className="absolute inset-0 bg-gradient-to-br from-[#d8dade] via-[#fbfbfc] to-[#b9bcc2]" />
+        {/* the diagonal sheen that makes it brushed metal and not grey paint */}
         <div
           aria-hidden="true"
           className="absolute inset-0"
           style={{
             background:
-              'linear-gradient(104deg, transparent 18%, rgba(255,255,255,0.7) 34%, transparent 52%)',
+              'linear-gradient(104deg, transparent 16%, rgba(255,255,255,0.72) 33%, transparent 50%)',
           }}
         />
         <div className="relative">
           <div className="flex items-start justify-between">
-            <p className="text-[6px] font-semibold tracking-[0.18em] opacity-50">TOTAL BALANCE</p>
-            <span className="text-[6px] opacity-35">&#9673;</span>
-          </div>
-          <p className="mt-[3px] font-lora text-[23px] font-semibold leading-none tracking-tight">
-            &#8358;642,268
-          </p>
-          <p className="mt-[3px] font-mono text-[6px] opacity-50">
-            412.98 USDC &middot; 180.4 XLM &middot; 60.0 USDT0
-          </p>
-          <div className="mt-[10px] grid grid-cols-2 gap-[6px]">
-            <span className="rounded-full bg-[#0F0F0F] py-[5px] text-center text-[7px] font-semibold text-off-white">
-              Send
+            <p className="text-[5.5px] font-semibold tracking-[0.2em] opacity-55">TOTAL BALANCE</p>
+            <span className="flex flex-col gap-[1.5px]" aria-hidden="true">
+              <span className="block h-[1.2px] w-[7px] rounded-full bg-[#0F0F0F]/45" />
+              <span className="block h-[1.2px] w-[4px] rounded-full bg-[#0F0F0F]/45" />
             </span>
-            <span className="rounded-full border border-[#0F0F0F]/25 py-[5px] text-center text-[7px] font-semibold">
-              Receive
+          </div>
+          <p className="mt-[2px] font-lora text-[25px] font-semibold leading-none tracking-tight">
+            &#8358;642,384<span className="text-[13px] opacity-45">.10</span>
+          </p>
+          <div className="mt-[5px] flex items-center justify-between">
+            <p className="font-mono text-[6px] opacity-55">412.98 USDC &middot; earning 6.2%</p>
+            <span
+              className="rounded-full px-[6px] py-[2px] text-[6px] font-semibold text-off-white"
+              style={{ background: TEAL }}
+            >
+              +&#8358;109.32 today
+            </span>
+          </div>
+          <div className="mt-[9px] grid grid-cols-2 gap-[6px]">
+            <span className="rounded-full bg-[#0F0F0F] py-[6px] text-center text-[7px] font-semibold text-off-white">
+              &#8599; Send
+            </span>
+            <span className="rounded-full border border-[#0F0F0F]/30 py-[6px] text-center text-[7px] font-semibold">
+              &#8601; Receive
             </span>
           </div>
         </div>
       </div>
 
-      {/* pay for - the four tiles the dashboard ships with */}
-      <div className="mx-3 mt-3 rounded-[14px] bg-white/[0.035] px-[8px] pb-[9px] pt-[7px]">
-        <p className="text-[6px] font-semibold tracking-[0.18em]" style={{ color: GOLD }}>
+      {/* pay for - the full grid, two rows of four */}
+      <div className="mx-[11px] mt-[9px] rounded-[12px] border border-white/[0.05] bg-white/[0.025] px-[8px] pb-[8px] pt-[7px]">
+        <p className="text-[5.5px] font-semibold tracking-[0.2em]" style={{ color: GOLD }}>
           PAY FOR
         </p>
-        <div className="mt-[6px] grid grid-cols-4 gap-[5px]">
+        <div className="mt-[6px] grid grid-cols-4 gap-x-[4px] gap-y-[7px]">
           {[
-            ['Buy', 'With naira', true],
             ['Airtime', 'All networks', false],
-            ['Cash out', 'To any bank', false],
+            ['Data', 'Bundles', false],
+            ['Power', 'Prepaid', false],
+            ['TV', 'DStv · GOtv', false],
+            ['Bills', 'Water · waste', false],
+            ['Transfer', 'To any bank', false],
+            ['Betting', 'Top up', false],
             ['More', 'All services', true],
           ].map(([label, hint, accent]) => (
             <div key={label as string} className="text-center">
               <div
-                className="mx-auto h-[17px] w-[17px] rounded-[6px]"
+                className="mx-auto h-[14px] w-[14px] rounded-[5px]"
                 style={{
-                  background: accent ? 'rgba(253,218,36,0.16)' : 'rgba(255,255,255,0.06)',
+                  background: accent ? 'rgba(253,218,36,0.16)' : 'rgba(255,255,255,0.055)',
                   border: accent
-                    ? '1px solid rgba(253,218,36,0.3)'
-                    : '1px solid rgba(255,255,255,0.07)',
+                    ? '1px solid rgba(253,218,36,0.32)'
+                    : '1px solid rgba(255,255,255,0.06)',
                 }}
               />
               <span
-                className="mt-[3px] block text-[6.5px] font-semibold leading-tight"
-                style={{ color: accent ? GOLD : 'rgba(246,247,248,0.85)' }}
+                className="mt-[3px] block text-[6px] font-semibold leading-tight"
+                style={{ color: accent ? GOLD : 'rgba(246,247,248,0.9)' }}
               >
                 {label}
               </span>
-              <span className="block text-[5px] leading-tight opacity-35">{hint}</span>
+              <span className="block text-[4.5px] leading-tight opacity-35">{hint}</span>
             </div>
           ))}
         </div>
       </div>
 
-      {/* assets - the three a funded wallet holds */}
-      <p
-        className="mt-[13px] px-3 text-[6px] font-semibold tracking-[0.18em]"
-        style={{ color: GOLD }}
-      >
-        ASSETS
-      </p>
-      <div className="mx-3 mt-[5px] flex-1 space-y-[2px]">
+      {/* activity */}
+      <div className="mx-[11px] mt-[9px] rounded-[12px] border border-white/[0.05] bg-white/[0.025] px-[9px] pb-[9px] pt-[7px]">
+        <div className="flex items-baseline justify-between">
+          <p className="text-[5.5px] font-semibold tracking-[0.2em]" style={{ color: GOLD }}>
+            ACTIVITY
+          </p>
+          <span className="text-[5px] opacity-40">See all</span>
+        </div>
         {[
-          ['Lumens', 'XLM', '180.4', '₦39,688', 'rgba(255,255,255,0.1)', '#F6F7F8'],
-          ['USD Coin', 'USDC', '412.98', '₦566,050', 'rgba(39,117,202,0.22)', '#4DA2E8'],
-          ['Tether USD', 'USDT0', '60.00', '₦82,230', 'rgba(0,167,181,0.2)', TEAL],
-        ].map(([name, code, amt, ngn, bg, fg]) => (
-          <div key={code as string} className="flex items-center justify-between py-[4px]">
-            <span className="flex items-center gap-[6px]">
-              <span
-                className="flex h-[15px] w-[15px] items-center justify-center rounded-full text-[6px] font-bold"
-                style={{ background: bg as string, color: fg as string }}
-              >
-                {(code as string).slice(0, 1)}
-              </span>
-              <span>
-                <span className="block text-[7.5px] font-semibold leading-tight">{name}</span>
-                <span className="block font-mono text-[5.5px] opacity-40">{code}</span>
-              </span>
+          ['MTN Airtime', '0803 123 4567 · 2h', '−₦2,000', false],
+          ['Yield earned', 'Blend USDC pool · today', '+₦109.32', true],
+        ].map(([title, sub, amount, isIn]) => (
+          <div key={title as string} className="mt-[7px] flex items-start justify-between">
+            <span>
+              <span className="block text-[7px] font-semibold leading-tight">{title}</span>
+              <span className="mt-[1px] block font-mono text-[5px] opacity-35">{sub}</span>
             </span>
-            <span className="text-right">
-              <span className="block font-mono text-[7px] font-semibold leading-tight">{amt}</span>
-              <span className="block font-mono text-[5.5px] opacity-40">{ngn}</span>
+            <span
+              className="font-mono text-[7px] font-semibold"
+              style={{ color: isIn ? TEAL : 'rgba(246,247,248,0.92)' }}
+            >
+              {amount}
             </span>
           </div>
         ))}
       </div>
 
-      {/* the tab bar, with the raised centre action the app actually has */}
-      <div className="mx-[10px] mb-[10px] mt-2 flex items-end justify-around rounded-full border border-white/[0.07] bg-white/[0.045] px-2 pb-[6px] pt-[7px]">
-        {['Wallet', 'Earn'].map((tab, i) => (
+      <div className="flex-1" />
+
+      {/* the tab bar, with the raised centre action */}
+      <div className="mx-[11px] mb-[10px] mt-[9px] flex items-end justify-around rounded-full border border-white/[0.06] bg-white/[0.04] px-[6px] pb-[6px] pt-[7px]">
+        {['Home', 'Earn'].map((tab, i) => (
           <span
             key={tab}
-            className="text-[5.5px]"
+            className="text-[5px]"
             style={{ color: i === 0 ? GOLD : 'rgba(246,247,248,0.35)' }}
           >
             {tab}
           </span>
         ))}
-        <span className="-mt-[13px] flex flex-col items-center">
+        <span className="-mt-[15px] flex flex-col items-center">
           <span
-            className="flex h-[22px] w-[22px] items-center justify-center rounded-full text-[12px] font-light leading-none text-[#0F0F0F]"
-            style={{ background: GOLD, boxShadow: '0 4px 12px rgba(253,218,36,0.35)' }}
+            className="flex h-[24px] w-[24px] items-center justify-center rounded-full text-[14px] font-light leading-none text-[#0F0F0F]"
+            style={{ background: GOLD, boxShadow: '0 5px 14px rgba(253,218,36,0.4)' }}
           >
             +
           </span>
         </span>
         {['Agent', 'Settings'].map((tab) => (
-          <span key={tab} className="text-[5.5px]" style={{ color: 'rgba(246,247,248,0.35)' }}>
+          <span key={tab} className="text-[5px]" style={{ color: 'rgba(246,247,248,0.35)' }}>
             {tab}
           </span>
         ))}
@@ -329,7 +346,10 @@ export function MobileIsLive({ t }: { t: Messages }) {
           <div
             className="relative lg:-my-24"
             style={{
-              transform: 'rotateZ(-7deg) rotateY(11deg) rotateX(3deg)',
+              // Head-on, as the design draws it. This used to carry an
+              // 11-degree Y rotation, which threw the silver card's sheen off
+              // its diagonal and squashed the right-hand column of the Pay-for
+              // grid - the two things the design is actually about.
               transformStyle: 'preserve-3d',
               filter: 'drop-shadow(0 40px 70px rgba(0,0,0,0.6))',
             }}
@@ -353,7 +373,7 @@ export function MobileIsLive({ t }: { t: Messages }) {
                 this size however dark you make it. */}
             <div className="rounded-[2.35rem] bg-gradient-to-b from-[#4a4a4d] via-[#232325] to-[#131314] p-[1.5px]">
               <div className="rounded-[2.28rem] bg-[#141415] p-[7px]">
-                <div className="relative aspect-[9/19.2] overflow-hidden rounded-[1.85rem] bg-[#0F0F0F]">
+                <div className="relative aspect-[9/17.2] overflow-hidden rounded-[1.85rem] bg-[#0F0F0F]">
                   {/* notch */}
                   <div className="absolute left-1/2 top-[7px] z-20 h-[13px] w-[62px] -translate-x-1/2 rounded-full bg-black" />
                   <PhoneScreen />
