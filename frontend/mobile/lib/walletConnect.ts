@@ -9,8 +9,10 @@ import {
   Address,
   BASE_FEE,
   Contract,
+  FeeBumpTransaction,
   Keypair,
   Operation,
+  Transaction,
   TransactionBuilder,
   nativeToScVal,
   rpc as SorobanRpc,
@@ -22,6 +24,8 @@ import { getSdkError } from '@walletconnect/utils';
 import { WalletKit, type IWalletKit } from '@reown/walletkit';
 import { Buffer } from 'buffer';
 import * as Crypto from 'expo-crypto';
+
+import { assertEntryAuthorized, hostFunctionCalls } from '@veil/authguard';
 
 import { getNetwork } from './network';
 import { inclusionFee } from './fees';
@@ -357,11 +361,68 @@ async function attachPasskeyCredential(
  * footprint covers the wallet contract storage that `__check_auth` reads, then
  * assemble and sign with the fee payer.
  */
+/**
+ * What a WalletConnect request is allowed to be.
+ *
+ * Only the first operation is rebuilt and submitted below, so anything after
+ * it would be dropped from what the user approved while still appearing in the
+ * request they were shown. A fee-bump carries someone else's inner transaction
+ * and is not a contract call at all.
+ *
+ * The browser wallet has refused both since the audit; mobile did not, and
+ * cast `tx.operations[0]` to an invokeHostFunction without ever checking that
+ * it was one.
+ */
+function parseRequestTransaction(xdrString: string, networkPassphrase: string): Transaction {
+  let tx: Transaction | FeeBumpTransaction;
+  try {
+    tx = TransactionBuilder.fromXDR(xdrString, networkPassphrase);
+  } catch {
+    throw new Error('The request does not contain a readable Stellar transaction.');
+  }
+  if (tx instanceof FeeBumpTransaction) {
+    throw new Error('Fee-bump transactions are not accepted.');
+  }
+  if (tx.operations.length !== 1 || tx.operations[0].type !== 'invokeHostFunction') {
+    throw new Error('The request must be a single contract call (one invokeHostFunction operation).');
+  }
+  return tx;
+}
+
+/**
+ * Refuse any auth entry the passkey must not sign, before it is asked to sign
+ * anything.
+ *
+ * Three separate refusals, and the third is the one that matters most. An
+ * entry that authorises by source account would be authorised by the fee-payer
+ * key signing the envelope, with no passkey involved at all. An entry for a
+ * different address is not ours to sign. And an entry whose address genuinely
+ * is this wallet can still authorise a call the transaction does not make --
+ * that is the CR-1 attack, and an address check alone does not catch it, which
+ * is why `assertEntryAuthorized` compares the invocation.
+ *
+ * With nothing left for the passkey to sign, the fee payer would sign and pay
+ * for a transaction the user never authorised, so an empty set is refused too.
+ */
+function checkAuthEntries(
+  authEntries: xdr.SorobanAuthorizationEntry[],
+  walletAddress: string,
+  tx: Transaction,
+): void {
+  const allowed = hostFunctionCalls(tx);
+  for (const entry of authEntries) {
+    assertEntryAuthorized(entry, { walletAddress, allowed });
+  }
+  if (authEntries.length === 0) {
+    throw new Error('The request needs no authorization from this wallet, so there is nothing for it to sign.');
+  }
+}
+
 export async function signXdrPayload(xdrString: string): Promise<string> {
   const network = getNetwork();
   const rpc = getRpcServer();
   const feePayerKeypair = await getFeePayerKeypair();
-  const tx = TransactionBuilder.fromXDR(xdrString, network.networkPassphrase);
+  const tx = parseRequestTransaction(xdrString, network.networkPassphrase);
 
   // Small CPU leeway for host-function ECDSA verification not modeled by
   // recording-mode simulation.
@@ -394,6 +455,12 @@ export async function signXdrPayload(xdrString: string): Promise<string> {
   const authEntries = successSim.result?.auth;
 
   if (authEntries) {
+    // Before any passkey prompt: a refusal here must cost the user nothing but
+    // an error, not a ceremony they then have to judge.
+    const walletAddress = await getWalletAddress();
+    if (!walletAddress) throw new Error('No wallet registered');
+    checkAuthEntries(authEntries, walletAddress, tx);
+
     const networkId = await sha256(new TextEncoder().encode(network.networkPassphrase));
 
     for (const entry of authEntries) {

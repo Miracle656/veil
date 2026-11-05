@@ -17,6 +17,7 @@
 import {
   Account,
   Address,
+  Asset,
   Keypair,
   Networks,
   Operation,
@@ -76,6 +77,8 @@ jest.mock('../walletStore', () => ({
     require('@stellar/stellar-sdk').Keypair.fromRawEd25519Seed(Buffer.alloc(32, 0x55)).secret(),
   getPasskeyId: async () => 'dGVzdC1jcmVkZW50aWFs',
   getPasskeyPublicKey: async () => Buffer.from(mockPasskeyPublicKey).toString('hex'),
+  getWalletAddress: async () =>
+    require('@stellar/stellar-sdk').StrKey.encodeContract(Buffer.alloc(32, 0x11)),
 }));
 
 jest.mock('../network', () => ({
@@ -195,6 +198,15 @@ function recordingAuthEntry(): xdr.SorobanAuthorizationEntry {
   });
 }
 
+/**
+ * What recording-mode simulation hands back. `null` means the honest entry.
+ *
+ * The point of the guard is that this value is network input: the RPC chooses
+ * it, so every shape it can take has to be refused on its own merits rather
+ * than trusted because a simulation returned it.
+ */
+let authEntriesOverride: xdr.SorobanAuthorizationEntry[] | null = null;
+
 type NonceProbe = () => { error?: string; retval?: xdr.ScVal } | Error;
 
 let nonceProbe: NonceProbe;
@@ -236,7 +248,9 @@ async function fakeSimulate(tx: Transaction) {
     minResourceFee: enforce ? '90000' : '50000',
     results: [
       {
-        auth: enforce ? [] : [recordingAuthEntry().toXDR('base64')],
+        auth: enforce
+          ? []
+          : (authEntriesOverride ?? [recordingAuthEntry()]).map((e) => e.toXDR('base64')),
         xdr: xdr.ScVal.scvVoid().toXDR('base64'),
       },
     ],
@@ -283,6 +297,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  authEntriesOverride = null;
   mockCeremonies.length = 0;
   simulations = [];
   nonceProbe = () => ({ retval: nativeToScVal(WALLET_NONCE, { type: 'u64' }) });
@@ -491,5 +506,170 @@ describe('requirement 6: a 5-element signature vector', () => {
     const vector = signatureVector(await sign_());
 
     expect(vector).toHaveLength(4);
+  });
+});
+
+
+/**
+ * H-6: what the wallet refuses to sign, and refuses before asking.
+ *
+ * Mobile had none of these checks. `attachPasskeyCredential` read the contract
+ * address out of the entry, fetched a nonce for it and signed, never comparing
+ * it to this wallet; `signXdrPayload` cast `tx.operations[0]` to an
+ * invokeHostFunction without checking that it was one, and dropped every
+ * operation after the first.
+ *
+ * Each case asserts `mockCeremonies` is still empty. A guard that refuses after
+ * the user has already approved a passkey prompt has not protected anyone - and
+ * on this path the prompt is the only thing the user ever sees.
+ */
+describe('H-6: refusing what the simulation should not be allowed to ask for', () => {
+  const ATTACKER = StrKey.encodeContract(Buffer.alloc(32, 0x99));
+
+  function hostileEntry(options: {
+    credentialAddress?: string;
+    contract?: string;
+    fn?: string;
+    args?: xdr.ScVal[];
+  }): xdr.SorobanAuthorizationEntry {
+    const {
+      credentialAddress = WALLET,
+      contract = TOKEN,
+      fn = 'transfer',
+      args = TRANSFER_ARGS,
+    } = options;
+    return new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: Address.fromString(credentialAddress).toScAddress(),
+          nonce: xdr.Int64.fromString(AUTH_NONCE.toString()),
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: Address.fromString(contract).toScAddress(),
+            functionName: fn,
+            args,
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+  }
+
+  it('signs the honest entry, so the refusals below are not just a broken path', async () => {
+    await expect(sign_()).resolves.toBeDefined();
+    expect(mockCeremonies.length).toBe(1);
+  });
+
+  it('refuses an entry authorizing a call this transaction does not make', async () => {
+    // The CR-1 shape: the credential address genuinely IS this wallet, so an
+    // address check passes. What gives it away is the invocation - the dApp
+    // asked for `transfer`, the RPC came back asking to sign `set_admin`.
+    authEntriesOverride = [hostileEntry({ fn: 'set_admin' })];
+    await expect(sign_()).rejects.toThrow(/not a call this transaction makes/i);
+    expect(mockCeremonies).toHaveLength(0);
+  });
+
+  it('refuses an entry whose arguments were changed', async () => {
+    // Same contract, same function, different recipient. Comparing contract and
+    // function name alone would wave this through.
+    authEntriesOverride = [
+      hostileEntry({
+        args: [
+          nativeToScVal(Address.fromString(WALLET)),
+          nativeToScVal(Address.fromString(ATTACKER)),
+          nativeToScVal(100n, { type: 'i128' }),
+        ],
+      }),
+    ];
+    await expect(sign_()).rejects.toThrow(/not a call this transaction makes/i);
+    expect(mockCeremonies).toHaveLength(0);
+  });
+
+  it('refuses an entry that asks this wallet to authorize a different address', async () => {
+    authEntriesOverride = [hostileEntry({ credentialAddress: ATTACKER })];
+    await expect(sign_()).rejects.toThrow(/different address/i);
+    expect(mockCeremonies).toHaveLength(0);
+  });
+
+  it('refuses an entry credentialed by the source account', async () => {
+    // Nothing for the passkey to do: the fee-payer key signing the envelope
+    // would satisfy this entry on its own.
+    authEntriesOverride = [
+      new xdr.SorobanAuthorizationEntry({
+        credentials: xdr.SorobanCredentials.sorobanCredentialsSourceAccount(),
+        rootInvocation: hostileEntry({}).rootInvocation(),
+      }),
+    ];
+    await expect(sign_()).rejects.toThrow(/not an address credential/i);
+    expect(mockCeremonies).toHaveLength(0);
+  });
+
+  it('refuses a simulation that asks for no authorization at all', async () => {
+    // The fee payer would otherwise sign and pay for a transaction the user
+    // never authorized.
+    authEntriesOverride = [];
+    await expect(sign_()).rejects.toThrow(/nothing for it to sign/i);
+    expect(mockCeremonies).toHaveLength(0);
+  });
+
+  it('refuses a request carrying more than one operation', async () => {
+    // Only the first is rebuilt and submitted, so the rest would vanish from
+    // what the user approved.
+    const two = new TransactionBuilder(new Account(DAPP_SOURCE, '9'), {
+      fee: '100',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(
+        Operation.invokeContractFunction({ contract: TOKEN, function: 'transfer', args: TRANSFER_ARGS }),
+      )
+      .addOperation(
+        Operation.invokeContractFunction({ contract: TOKEN, function: 'set_admin', args: [] }),
+      )
+      .setTimeout(30)
+      .build()
+      .toXDR();
+    await expect(signXdrPayload(two)).rejects.toThrow(/single contract call/i);
+    expect(mockCeremonies).toHaveLength(0);
+  });
+
+  it('refuses a request whose only operation is not a contract call', async () => {
+    const payment = new TransactionBuilder(new Account(DAPP_SOURCE, '9'), {
+      fee: '100',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(
+        Operation.payment({ destination: RECIPIENT, asset: Asset.native(), amount: '1' }),
+      )
+      .setTimeout(30)
+      .build()
+      .toXDR();
+    await expect(signXdrPayload(payment)).rejects.toThrow(/single contract call/i);
+    expect(mockCeremonies).toHaveLength(0);
+  });
+
+  it('refuses a fee-bump, which wraps someone else’s transaction', async () => {
+    const inner = new TransactionBuilder(new Account(DAPP_SOURCE, '9'), {
+      fee: '100',
+      networkPassphrase: Networks.TESTNET,
+    })
+      .addOperation(
+        Operation.invokeContractFunction({ contract: TOKEN, function: 'transfer', args: TRANSFER_ARGS }),
+      )
+      .setTimeout(30)
+      .build();
+    inner.sign(FEE_PAYER);
+    const bumped = TransactionBuilder.buildFeeBumpTransaction(
+      FEE_PAYER,
+      '1000',
+      inner,
+      Networks.TESTNET,
+    ).toXDR();
+    await expect(signXdrPayload(bumped)).rejects.toThrow(/fee-bump/i);
+    expect(mockCeremonies).toHaveLength(0);
   });
 });

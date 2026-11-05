@@ -18,6 +18,7 @@ import {
   BASE_FEE,
   Operation,
   FeeBumpTransaction,
+  Transaction,
 } from '@stellar/stellar-sdk'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { walletContractErrorMessage } from './walletContractError'
@@ -57,7 +58,10 @@ async function getWalletNonce(
   }
 }
 import {
+  AuthEntryRejected,
+  assertEntryAuthorized,
   createSep43Wallet,
+  hostFunctionCalls,
   signSorobanAuthEntry,
   signMessage as sdkSignMessage,
   type WebAuthnSignature,
@@ -344,7 +348,15 @@ function parseRequestTransaction(xdrString: string, networkPassphrase: string) {
 function checkAuthEntries(
   authEntries: xdr.SorobanAuthorizationEntry[],
   walletAddress: string,
+  tx: Transaction,
 ): void {
+  // What this transaction actually calls. The entry has to match one of these:
+  // an address check alone does not catch CR-1, because the attack uses an
+  // entry whose address genuinely IS this wallet, authorizing a call the
+  // transaction never makes. A signed entry is bound to a nonce and an expiry,
+  // not to the envelope that carried it, so it can be lifted out and replayed
+  // inside someone else's transaction.
+  const allowed = hostFunctionCalls(tx)
   let forWallet = 0
   for (const entry of authEntries) {
     const cred = entry.credentials()
@@ -360,6 +372,14 @@ function checkAuthEntries(
         getSdkError('UNSUPPORTED_ACCOUNTS').code,
         `The request asks for authorization from ${address}, which is not the connected wallet ${walletAddress}.`,
       )
+    }
+    try {
+      assertEntryAuthorized(entry, { walletAddress, allowed })
+    } catch (err) {
+      if (err instanceof AuthEntryRejected) {
+        throw new WalletConnectRefusal(MALFORMED_REQUEST, err.message)
+      }
+      throw err
     }
     forWallet++
   }
@@ -398,7 +418,7 @@ async function signXdrPayload(
 
   const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
   const authEntries = successSim.result?.auth ?? []
-  checkAuthEntries(authEntries, walletAddress)
+  checkAuthEntries(authEntries, walletAddress, tx)
 
   // A dApp can only be answered by a contract that exists: `__check_auth`
   // runs on chain. Wallets are deployed on first use now, so stop here with
