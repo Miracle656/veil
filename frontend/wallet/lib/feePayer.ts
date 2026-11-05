@@ -322,6 +322,134 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
   return chosen.kp
 }
 
+/** What a retry did, or why it could not. */
+export type PrfRetryResult =
+  | { ok: true; mode: 'prf-raw'; publicKey: string; previousPublicKey: string }
+  | { ok: false; reason: 'already-prf' | 'no-passkey' | 'cancelled' | 'unsupported' | 'funded' | 'network'; message: string; detail?: string }
+
+/**
+ * Derive the fee payer from the passkey again, after a ceremony that did not
+ * produce a PRF output the first time.
+ *
+ * `ensureFeePayer` cannot do this on its own. Once a wallet is pinned to
+ * `random` it never asks the authenticator again (by design — re-deriving
+ * silently would move the address out from under a funded account), so a
+ * person who dismissed the passkey sheet once is pinned to a key no other
+ * device can reproduce, with no way back. That is what this is for, and it is
+ * deliberately only reachable from a button: iOS and Android both require a
+ * user gesture for WebAuthn, and a ceremony started from a mount effect fails
+ * with exactly the `NotAllowedError` that creates this state.
+ *
+ * The refusal that matters is `funded`. If the current fee payer holds
+ * anything, adopting the derived key would overwrite the only copy of the
+ * secret that can reach it — the account is not passkey-derived, which is
+ * the whole problem — and the balance would be beyond reach of every future
+ * install. So the move is offered only on an empty account, and refused
+ * otherwise rather than done and reported.
+ */
+export async function retryPrfFeePayer(evaluator?: PrfEvaluator): Promise<PrfRetryResult> {
+  if (!hasWindow()) return { ok: false, reason: 'network', message: 'Not available here.' }
+
+  const pinned = getFeePayerMode()
+  if (pinned === 'prf-raw' || pinned === 'prf-hkdf') {
+    return { ok: false, reason: 'already-prf', message: 'This wallet already derives its fee payer from your passkey.' }
+  }
+
+  const credentialId = walletLocal.getItem(KEY_ID)
+  if (!credentialId) {
+    return { ok: false, reason: 'no-passkey', message: 'No passkey is registered in this browser.' }
+  }
+
+  const existing = peekFeePayerSecret()
+  if (!existing) {
+    return { ok: false, reason: 'no-passkey', message: 'There is no fee payer on this device to replace.' }
+  }
+  const current = Keypair.fromSecret(existing)
+
+  // Ask the authenticator. A dismissed sheet lands here as an error, and is
+  // reported as a cancellation rather than as "this device cannot do PRF" —
+  // the two need different answers from the person reading it.
+  let prf: Uint8Array | null = null
+  try {
+    prf = await evaluateFeePayerPrf(credentialId, undefined, evaluator)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const cancelled = err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'AbortError')
+    return {
+      ok: false,
+      reason: cancelled ? 'cancelled' : 'unsupported',
+      message: cancelled
+        ? 'The passkey prompt was dismissed, so nothing changed. Tap again and complete it.'
+        : 'This authenticator did not return a PRF result, so the fee payer cannot be derived from it.',
+      detail: message,
+    }
+  }
+  if (!prf || prf.length < 32) {
+    return {
+      ok: false,
+      reason: 'unsupported',
+      message: 'This authenticator does not support the PRF extension, so the fee payer cannot be derived from it.',
+    }
+  }
+
+  const derived = Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32)))
+  if (derived.publicKey() === current.publicKey()) {
+    // Nothing to move; just record the mode so the ceremony is not repeated.
+    localStorage.setItem(MODE, 'prf-raw')
+    return { ok: true, mode: 'prf-raw', publicKey: derived.publicKey(), previousPublicKey: current.publicKey() }
+  }
+
+  // Refuse rather than strand. An account that does not exist on chain holds
+  // nothing, and is the only case where swapping the key costs nothing.
+  const { horizonUrl } = getNetwork()
+  let currentExists: boolean
+  try {
+    const res = await fetch(`${horizonUrl}/accounts/${current.publicKey()}`)
+    if (res.status === 404) currentExists = false
+    else if (res.ok) currentExists = true
+    else return { ok: false, reason: 'network', message: 'Could not check the current fee payer. Nothing was changed.' }
+  } catch {
+    // Unknown must count as funded: the answer decides whether a key that may
+    // control money is overwritten.
+    return { ok: false, reason: 'network', message: 'Could not reach the network to check the current fee payer. Nothing was changed.' }
+  }
+
+  if (currentExists) {
+    return {
+      ok: false,
+      reason: 'funded',
+      message:
+        'The current fee payer exists on chain, so replacing its key here would put whatever it holds beyond reach. '
+        + 'Move its balance out first, then try again.',
+      detail: current.publicKey(),
+    }
+  }
+
+  cached = derived
+  localStorage.setItem(MODE, 'prf-raw')
+  walletSession.setItem(SECRET, derived.secret())
+  walletSession.setItem(PUBKEY, derived.publicKey())
+  // A PRF seed is re-derivable from the passkey, so it must not be left in
+  // localStorage the way the random key it replaces was (ADR 0003, C3).
+  walletLocal.removeItem(SECRET)
+  walletLocal.removeItem(PUBKEY)
+
+  setDiagnostics({
+    at: new Date().toISOString(),
+    prfAttempted: true,
+    prfOutcome: 'success',
+    probed: true,
+    candidates: [
+      { mode: 'random', publicKey: current.publicKey(), status: 'not-found' },
+      { mode: 'prf-raw', publicKey: derived.publicKey(), status: 'not-probed' },
+    ],
+    chosenMode: 'prf-raw',
+    chosenPublicKey: derived.publicKey(),
+  })
+
+  return { ok: true, mode: 'prf-raw', publicKey: derived.publicKey(), previousPublicKey: current.publicKey() }
+}
+
 /** Cache + persist a diagnostics record (sessionStorage — metadata only, no secret). */
 function setDiagnostics(diagnostics: FeePayerDiagnostics): void {
   cachedDiagnostics = diagnostics

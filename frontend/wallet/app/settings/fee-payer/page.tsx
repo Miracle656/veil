@@ -11,8 +11,10 @@ import {
   getFeePayerDiagnostics,
   isFeePayerPrfDowngrade,
   formatFeePayerDiagnostics,
+  retryPrfFeePayer,
   type FeePayerMode,
   type FeePayerDiagnostics,
+  type PrfRetryResult,
 } from '@/lib/feePayer'
 
 const MODE_LABEL: Record<FeePayerMode, string> = {
@@ -44,6 +46,8 @@ export default function FeePayerSettingsPage() {
   const [mode, setMode] = useState<FeePayerMode | null>(null)
   const [diagnostics, setDiagnostics] = useState<FeePayerDiagnostics | null>(null)
   const [copied, setCopied] = useState<'address' | 'diagnostics' | null>(null)
+  const [retrying, setRetrying] = useState(false)
+  const [retry, setRetry] = useState<PrfRetryResult | null>(null)
 
   const refresh = useCallback(() => {
     setAddress(peekFeePayerKeypair()?.publicKey() ?? null)
@@ -59,6 +63,21 @@ export default function FeePayerSettingsPage() {
   }, [refresh])
 
   const downgraded = isFeePayerPrfDowngrade(diagnostics)
+
+  // Only from a tap. Both iOS and Android refuse a WebAuthn ceremony that is
+  // not driven by a user gesture, with the same NotAllowedError that produces
+  // this state in the first place.
+  async function tryAgain() {
+    setRetrying(true)
+    setRetry(null)
+    try {
+      const result = await retryPrfFeePayer()
+      setRetry(result)
+      if (result.ok) refresh()
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   async function copy(text: string, which: 'address' | 'diagnostics') {
     await navigator.clipboard.writeText(text)
@@ -108,6 +127,50 @@ export default function FeePayerSettingsPage() {
                 A PRF-capable device probes candidate accounts that exist on-chain,
                 so a funded legacy account is preserved across devices. The candidates below show exactly what was tried.
               </p>
+
+              {mode === 'random' && (
+                <>
+                  <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5, marginTop: '0.625rem' }}>
+                    If you dismissed the passkey prompt, that is why. Try it again
+                    and complete it &mdash; while this account is still empty, the
+                    fee payer can be moved onto a key your passkey can rebuild on
+                    any device.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={tryAgain}
+                    disabled={retrying}
+                    style={{
+                      marginTop: '0.75rem',
+                      background: 'var(--gold)',
+                      border: 'none',
+                      borderRadius: 999,
+                      color: '#0F0F0F',
+                      cursor: retrying ? 'default' : 'pointer',
+                      fontSize: '0.8125rem',
+                      fontWeight: 600,
+                      opacity: retrying ? 0.6 : 1,
+                      padding: '0.5rem 1rem',
+                    }}
+                  >
+                    {retrying ? 'Asking your passkey…' : 'Try your passkey again'}
+                  </button>
+                  {retry && (
+                    <p
+                      style={{
+                        fontSize: '0.8125rem',
+                        lineHeight: 1.5,
+                        marginTop: '0.625rem',
+                        color: retry.ok ? 'var(--teal)' : 'rgba(246,247,248,0.7)',
+                      }}
+                    >
+                      {retry.ok
+                        ? 'Done. Your fee payer is now derived from your passkey, so any device with it can rebuild this account.'
+                        : retry.message}
+                    </p>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
