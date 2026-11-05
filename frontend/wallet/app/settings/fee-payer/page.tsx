@@ -128,50 +128,60 @@ export default function FeePayerSettingsPage() {
                 so a funded legacy account is preserved across devices. The candidates below show exactly what was tried.
               </p>
 
-              {mode === 'random' && (
-                <>
-                  <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5, marginTop: '0.625rem' }}>
-                    If you dismissed the passkey prompt, that is why. Try it again
-                    and complete it &mdash; while this account is still empty, the
-                    fee payer can be moved onto a key your passkey can rebuild on
-                    any device.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={tryAgain}
-                    disabled={retrying}
-                    style={{
-                      marginTop: '0.75rem',
-                      background: 'var(--gold)',
-                      border: 'none',
-                      borderRadius: 999,
-                      color: '#0F0F0F',
-                      cursor: retrying ? 'default' : 'pointer',
-                      fontSize: '0.8125rem',
-                      fontWeight: 600,
-                      opacity: retrying ? 0.6 : 1,
-                      padding: '0.5rem 1rem',
-                    }}
-                  >
-                    {retrying ? 'Asking your passkey…' : 'Try your passkey again'}
-                  </button>
-                  {retry && (
-                    <p
-                      style={{
-                        fontSize: '0.8125rem',
-                        lineHeight: 1.5,
-                        marginTop: '0.625rem',
-                        color: retry.ok ? 'var(--teal)' : 'rgba(246,247,248,0.7)',
-                      }}
-                    >
-                      {retry.ok
-                        ? 'Done. Your fee payer is now derived from your passkey, so any device with it can rebuild this account.'
-                        : retry.message}
-                    </p>
-                  )}
-                </>
-              )}
             </div>
+          </div>
+        )}
+
+        {/* Repair.
+            Keyed off the pinned mode, NOT off `downgraded`: the downgrade card
+            needs `prfAttempted`, which is only true in the session where the
+            ceremony ran. Every later visit takes the pinned fast path and
+            records `prfAttempted: false`, so a card gated on it is invisible
+            exactly when someone comes looking for a way out. */}
+        {mode === 'random' && (
+          <div className="card-md" style={{ marginBottom: '1.5rem' }}>
+            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--off-white)', marginBottom: '0.375rem' }}>
+              Move this onto your passkey
+            </p>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
+              If you dismissed the passkey prompt when this wallet was set up,
+              that is why this account is random. Try again and complete it
+              &mdash; while this account is still empty, the fee payer can move
+              onto a key your passkey rebuilds on any device.
+            </p>
+            <button
+              type="button"
+              onClick={tryAgain}
+              disabled={retrying}
+              style={{
+                marginTop: '0.875rem',
+                background: 'var(--gold)',
+                border: 'none',
+                borderRadius: 999,
+                color: '#0F0F0F',
+                cursor: retrying ? 'default' : 'pointer',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                opacity: retrying ? 0.6 : 1,
+                padding: '0.5rem 1rem',
+              }}
+            >
+              {retrying ? 'Asking your passkey…' : 'Try your passkey again'}
+            </button>
+            {retry && (
+              <p
+                style={{
+                  fontSize: '0.8125rem',
+                  lineHeight: 1.5,
+                  marginTop: '0.75rem',
+                  color: retry.ok ? 'var(--teal)' : 'rgba(246,247,248,0.7)',
+                }}
+              >
+                {retry.ok
+                  ? 'Done. Your fee payer is now derived from your passkey, so any device with it can rebuild this account.'
+                  : retry.message}
+              </p>
+            )}
           </div>
         )}
 
