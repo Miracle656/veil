@@ -8,10 +8,17 @@
  * "No public key found. Call register() first", while the key was sitting in the
  * secure store or, failing that, in the wallet's own recovery entries on chain.
  *
- * The key is resolved from both, and used only if it derives to exactly the
- * wallet address being deployed. The address is a pure function of the factory,
- * the network and the key, so a key that derives elsewhere would deploy a
- * different, empty contract — refusing is the only safe answer.
+ * The key is resolved from all three sources below, and used only if it derives
+ * to exactly the wallet address being deployed. The address is a pure function
+ * of the factory, the network and the key, so a key that derives elsewhere would
+ * deploy a different, empty contract — refusing is the only safe answer.
+ *
+ * The third source exists because the first two can both be empty through no
+ * fault of the user: a wallet created while its fee-payer was still unfunded
+ * could not write breadcrumbs, and a later `ensureBreadcrumbs` retry records
+ * only `veil:wallet` when the secure store has no key either. Such a wallet
+ * holds real money at an address nothing can deploy. Recovering the key from a
+ * passkey signature fixes those wallets without a backup or a redeploy.
  */
 
 import { Buffer } from 'buffer';
@@ -20,6 +27,7 @@ import { computeWalletAddress } from '@veil/sdk';
 import { getFeePayerAddress } from './activity';
 import { isWalletDeployed } from './contractSpend';
 import { getNetwork } from './network';
+import { recoverWalletPublicKey } from './recoverPasskeyKey';
 import { readBreadcrumbs } from './walletBreadcrumbs';
 import { getPasskeyPublicKey, getSignerSecret, setPasskeyPublicKey } from './walletStore';
 
@@ -38,8 +46,15 @@ function hexKey(hex: string | null): Uint8Array | null {
  * Secure store first, since it needs no network. Then the recovery entries on the
  * spending account, which exist for exactly this case; a key found there is
  * written back to the secure store so the next deploy needs no lookup.
+ *
+ * Last, when `allowPasskeyPrompt`, the passkey itself: one assertion recovers the
+ * key cryptographically. That costs a prompt, so it is opt-in and callers that
+ * only want to preview a transaction pass false and get null instead.
  */
-export async function resolveWalletPublicKey(walletAddress: string): Promise<Uint8Array | null> {
+export async function resolveWalletPublicKey(
+  walletAddress: string,
+  allowPasskeyPrompt = false,
+): Promise<Uint8Array | null> {
   const net = getNetwork();
 
   const stored = hexKey(await getPasskeyPublicKey().catch(() => null));
@@ -56,6 +71,12 @@ export async function resolveWalletPublicKey(walletAddress: string): Promise<Uin
     void setPasskeyPublicKey(Buffer.from(crumbs.publicKeyBytes).toString('hex')).catch(() => undefined);
     return crumbs.publicKeyBytes;
   }
+
+  // Nothing recorded the key. Ask the passkey to sign, and recover it from the
+  // signature — `recoverWalletPublicKey` accepts a candidate only when it
+  // reproduces `walletAddress`, so this is the same derivation check again.
+  if (allowPasskeyPrompt) return recoverWalletPublicKey(walletAddress);
+
   return null;
 }
 
@@ -68,10 +89,12 @@ export async function deployWalletIfNeeded(deploy: DeployFn, walletAddress: stri
     throw new Error('No spending key on this device to pay for setting up the wallet on-chain.');
   }
 
-  const publicKey = await resolveWalletPublicKey(walletAddress);
+  const publicKey = await resolveWalletPublicKey(walletAddress, true);
   if (!publicKey) {
     throw new Error(
-      "This device can't find the passkey key for this wallet, so it can't set the wallet up on-chain yet. Your funds are safe at the wallet address.",
+      "This device couldn't confirm the passkey for this wallet, so it can't set the wallet up on-chain yet. " +
+        'Make sure you approve the passkey prompt with the passkey this wallet was created with. ' +
+        'Your funds are safe at the wallet address.',
     );
   }
 

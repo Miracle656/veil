@@ -906,7 +906,7 @@ const createStyles = (colors: ThemeColors) =>
     sheet: { backgroundColor: colors.surfaceMd, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40, gap: 4 },
     sheetTitle: { color: colors.textFaint, fontFamily: fontFamily.bodySemiBold, fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 },
     sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
-    sheetName: { color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 15 },
+    sheetName: { flex: 1, color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 15 },
     reviewContent: { flex: 1, marginTop: 12 },
     refusalBanner: {
       color: colors.danger,

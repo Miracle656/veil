@@ -27,6 +27,44 @@ function fmtAmount(raw: string): string {
  * a token badge, name, on-chain balance, and its value in the user's currency.
  * Mirrors the assets list every consumer wallet shows under the balance.
  */
+/**
+ * Last-known holdings, surviving the remount that unlocking causes.
+ *
+ * The balance card above already does this; the asset list did not, so every
+ * unlock dropped back to skeletons and refetched from nothing even though the
+ * answer had not changed.
+ *
+ * Scoped to the wallet ADDRESS for the same reason the card's is: after a reset
+ * or a new wallet, the previous wallet's assets must never paint under the new
+ * address.
+ */
+const lastKnown: { address: string | null; holdings: Holding[] | null } = {
+  address: null,
+  holdings: null,
+};
+
+/** Keep a load for the next mount. Switching address discards the old one. */
+function remember(address: string, holdings: Holding[]): void {
+  lastKnown.address = address;
+  lastKnown.holdings = holdings;
+}
+
+export type AssetsView = 'loading' | 'empty' | 'error' | 'list';
+
+/**
+ * Which of the four states the card is in.
+ *
+ * The distinction this exists to protect: `null` holdings means **not known
+ * yet**, and an empty array means **known, and empty**. Collapsing the two is
+ * what put "No assets yet. Fund this wallet to get started." in front of a
+ * funded wallet every time the app unlocked.
+ */
+export function assetsView(holdings: Holding[] | null, loadError: boolean): AssetsView {
+  if (holdings === null) return 'loading';
+  if (holdings.length > 0) return 'list';
+  return loadError ? 'error' : 'empty';
+}
+
 export function AssetsList({
   address,
   fallbackXlm = null,
@@ -44,29 +82,44 @@ export function AssetsList({
   const { mask } = useHiddenAmounts();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [holdings, setHoldings] = useState<Holding[] | null>(null);
+  const [holdings, setHoldings] = useState<Holding[] | null>(() =>
+    address && lastKnown.address === address ? lastKnown.holdings : null,
+  );
   const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(async () => {
-    if (!address) {
-      setHoldings([]);
-      return;
-    }
+    // No address yet means "not known yet", which is what `null` holdings
+    // already says — so leave the state alone and keep the skeleton up.
+    //
+    // This used to `setHoldings([])`, and an empty array is how this component
+    // asserts that a wallet HAS NOTHING. The dashboard reads the stored address
+    // asynchronously, so for the first frames after an unlock it passes null,
+    // and the card answered a question it had not asked yet: "No assets yet.
+    // Fund this wallet to get started." in front of a funded wallet.
+    if (!address) return;
     try {
-      setHoldings(await loadHoldings(address));
+      const next = await loadHoldings(address);
+      remember(address, next);
+      setHoldings(next);
       setLoadError(false);
     } catch (err) {
       console.warn('[assets] loadHoldings failed:', err instanceof Error ? `${err.name}: ${err.message}` : err);
       // Fall back to the dashboard's own balance figure (fetched through a
       // different, independently-working path) rather than showing nothing.
       if (fallbackXlm) {
-        setHoldings([
+        const fallback: Holding[] = [
           { code: 'XLM', name: 'Lumens', issuer: null, balance: fallbackXlm, usd: fallbackUsd, native: true },
-        ]);
+        ];
+        remember(address, fallback);
+        setHoldings(fallback);
         setLoadError(false);
       } else {
-        setHoldings([]);
+        // Flag the error, but do not overwrite holdings we already have. An
+        // empty array here would replace a correct list with "no assets"
+        // because one refresh could not reach the network — and `assetsView`
+        // keeps showing a stale list over an error for the same reason.
         setLoadError(true);
+        setHoldings((prev) => prev ?? []);
       }
     }
   }, [address, fallbackXlm, fallbackUsd]);
@@ -82,10 +135,15 @@ export function AssetsList({
     }, [load]),
   );
 
+  // One source of truth for which state is on screen, so the loading/empty
+  // distinction lives in a tested function rather than in a chain of ternaries
+  // where `null` and `[]` read the same.
+  const view = assetsView(holdings, loadError);
+
   return (
     <View style={styles.card}>
       <Text style={styles.heading}>Assets</Text>
-      {holdings === null ? (
+      {view === 'loading' ? (
         // Shaped like the rows that replace it — icon, name over code, balance
         // over fiat — so the card keeps its height and nothing jumps on load.
         <View>
@@ -105,12 +163,12 @@ export function AssetsList({
             </View>
           ))}
         </View>
-      ) : holdings.length === 0 ? (
-        <Text style={styles.empty}>
-          {loadError ? "Couldn't load assets — pull to refresh." : 'No assets yet. Fund this wallet to get started.'}
-        </Text>
+      ) : view === 'error' ? (
+        <Text style={styles.empty}>Couldn’t load assets — pull to refresh.</Text>
+      ) : view === 'empty' ? (
+        <Text style={styles.empty}>No assets yet. Fund this wallet to get started.</Text>
       ) : (
-        holdings.map((h, i) => (
+        (holdings ?? []).map((h, i) => (
           <Pressable
             key={`${h.code}-${h.issuer ?? 'native'}`}
             onPress={() => router.push(`/token/${encodeURIComponent(h.issuer ? `${h.code}:${h.issuer}` : h.code)}`)}
@@ -131,6 +189,28 @@ export function AssetsList({
             </View>
           </Pressable>
         ))
+      )}
+
+      {/* The way in to the assets Veil knows but this wallet does not hold yet.
+          USDT0 has been shipped end to end since the wave — registry, trustline,
+          send, receive, swap — and the only route to turning it on was Settings
+          → "Trustlines & reserves". An asset you cannot find is an asset you do
+          not have, so the list that would show it also offers to add it. */}
+      {view === 'loading' ? null : (
+        <Pressable
+          onPress={() => router.push('/assets')}
+          accessibilityRole="button"
+          accessibilityLabel="Add an asset"
+          style={({ pressed }) => [styles.addRow, pressed && styles.pressed]}
+        >
+          <View style={styles.addDisc}>
+            <Text style={styles.addPlus}>+</Text>
+          </View>
+          <View>
+            <Text style={styles.addLabel}>Add an asset</Text>
+            <Text style={styles.addHint}>USDC, USDT0, EURC and more</Text>
+          </View>
+        </Pressable>
       )}
     </View>
   );
@@ -179,6 +259,41 @@ const createStyles = (colors: ThemeColors) =>
       gap: 6,
     },
     pressed: { opacity: 0.6 },
+    addRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 13,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    addDisc: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.surfaceMd,
+    },
+    addPlus: {
+      color: colors.accent,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 20,
+      lineHeight: 24,
+    },
+    addLabel: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 14.5,
+    },
+    addHint: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.body,
+      fontSize: 11,
+      marginTop: 2,
+    },
     left: {
       flexDirection: 'row',
       alignItems: 'center',

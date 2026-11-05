@@ -2,6 +2,7 @@ import { getNetwork } from '../../lib/network';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
@@ -59,6 +60,16 @@ export default function Welcome() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="welcome-screen">
+      {/* The gold lift at the top edge, per the design. Drawn behind the content
+          rather than as a background on the screen, so it stays a wash over
+          `colors.background` and does not have to be re-derived per theme.
+          pointerEvents none so it never eats a tap meant for the header. */}
+      <LinearGradient
+        colors={[`${colors.accent}1F`, `${colors.accent}08`, 'transparent']}
+        locations={[0, 0.45, 1]}
+        style={styles.glow}
+        pointerEvents="none"
+      />
       <View style={styles.body}>
         {/* Header — brand + network */}
         <View style={styles.headerRow}>
@@ -114,6 +125,13 @@ const createStyles = (colors: ThemeColors) =>
     screen: {
       flex: 1,
       backgroundColor: colors.background,
+    },
+    glow: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      height: '42%',
     },
     body: {
       flex: 1,

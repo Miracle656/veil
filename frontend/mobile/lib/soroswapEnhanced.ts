@@ -54,7 +54,12 @@ export async function enhanceQuoteWithSpread(
   amountIn: number,
   thresholdPct: number = 5.0,
 ): Promise<HonestSwapQuote> {
-  const priceImpactPct = quote.priceImpact * 100;
+  // Already a percentage. `quote.priceImpact` is read straight off the
+  // provider's `priceImpactPct` field in `soroswap.ts`, so multiplying by 100
+  // converted it a second time: a real 0.18% impact was shown as 18.00% and
+  // tripped the 5% guard, which refused a 1 XLM trade that the order book
+  // said was priced better than its own bid.
+  const priceImpactPct = quote.priceImpact;
 
   const lookup = await fetchOrderBookSpread(classicAsset(from), classicAsset(to));
   const spread = lookup.status === 'measured' ? lookup.spread : undefined;

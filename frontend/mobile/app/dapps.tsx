@@ -36,6 +36,19 @@ export default function DappDirectoryScreen() {
         <FlowHeader title="Discover" />
       </View>
 
+      {/* Said before they try, not after.
+          Veil does not inject a wallet provider into the browser, so a dApp's
+          "Connect wallet" list cannot contain Veil — it has no way to see it.
+          Someone who taps Connect and finds only Freighter and xBull has no way
+          to tell a missing feature from a broken one, and will reasonably
+          assume their wallet is at fault. */}
+      <View style={styles.notice}>
+        <Text style={styles.noticeText}>
+          You can browse these, but not connect yet. Signing from inside a dApp
+          is still being built — for now, use Send, Swap and Earn in Veil.
+        </Text>
+      </View>
+
       <View style={styles.searchWrap}>
         <TextInput
           value={query}
@@ -152,6 +165,21 @@ const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
     header: { paddingHorizontal: 20, paddingTop: 16 },
+    notice: {
+      marginHorizontal: 20,
+      marginTop: 12,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      backgroundColor: colors.surface,
+    },
+    noticeText: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 18,
+    },
     searchWrap: { paddingHorizontal: 20, paddingTop: 12 },
     search: {
       backgroundColor: colors.surfaceMd,

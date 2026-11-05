@@ -22,15 +22,6 @@ import type { ThemeColors } from '../../lib/theme';
 import { getWalletAddress } from '../../lib/walletStore';
 import { recoverStoredWalletFeePayer } from '../../lib/passkeyLogin';
 import ActivityFeed from '../../components/ActivityFeed';
-import { FeePayerBanner } from '../../components/FeePayerBanner';
-import { checkFeePayerFunding, type FeePayerFundingState } from '../../lib/feePayerCheck';
-
-/**
- * How long a healthy fee-payer result is reused before Horizon is asked again.
- * A funded account does not become unfunded on its own, and the dashboard polls
- * every 15s for the life of the screen.
- */
-const FEE_CHECK_HEALTHY_INTERVAL_MS = 5 * 60_000;
 import { useInitActivityFeed, hydrateActivityFeed, type TxRecord } from '../../lib/activityFeed';
 import { loadHorizonActivity } from '../../lib/horizonActivity';
 import { usePolling } from '../../hooks/usePolling';
@@ -40,7 +31,6 @@ import { loadHoldings } from '../../lib/holdings';
 import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
 import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
 import { useNetwork } from '../../hooks/useNetwork';
-import { recheckPendingBillOrders } from '../../lib/billOrders';
 
 // Attempted once per launch, not once per focus: the sweep is a transaction,
 // and even the "nothing to do" answer costs a pair of Horizon reads.
@@ -121,8 +111,6 @@ export default function DashboardTab() {
   // used to show XLM only, so a wallet holding mostly USDC looked nearly empty.
   const [totalUsd, setTotalUsd] = useState<number | null>(() => lastKnown.totalUsd);
   const [breakdown, setBreakdown] = useState<string | null>(() => lastKnown.breakdown);
-  const [reservedXlm, setReservedXlm] = useState<number | null>(null);
-  const [reserveReason, setReserveReason] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   // Whether the Horizon activity load has finished once. On testnet the Wraith
   // feed is deliberately skipped, so `loading` below reports false immediately
@@ -140,24 +128,6 @@ export default function DashboardTab() {
   // Probed once per mount rather than per render: a 503 here means "no offramp
   // on this deployment", which is also what a sleeping backend looks like.
   const [offrampReady, setOfframpReady] = useState(false);
-  // Fee-payer funding (V193 / #766): a wallet recovered without PRF gets a
-  // fresh random fee-payer holding zero XLM. The balance loads, the passkey
-  // signs, and then every submission fails — so the dashboard names the gap
-  // up front instead of failing at submission time with a network error.
-  const [feeFunding, setFeeFunding] = useState<FeePayerFundingState | null>(null);
-  // Which fee-payer the banner was dismissed for. Cleared once funded (or when
-  // there is nothing to show), so it reappears if the account is drained again
-  // but stays hidden while still unfunded after an explicit dismiss.
-  const [feeBannerDismissedFor, setFeeBannerDismissedFor] = useState<string | null>(null);
-  // When the last funding check ran. A healthy fee-payer is the overwhelmingly
-  // common case and does not change on its own, so re-asking Horizon every 15s
-  // for the life of the screen is mobile data spent to learn nothing. While
-  // something is actually wrong the check runs every refresh, because that is
-  // when the user is funding the account and wants the banner to clear.
-  const feeCheckedAtRef = useRef(0);
-  // `refreshAll` is a useCallback with no deps, so it cannot read `feeFunding`
-  // state — the ref is the copy it can see.
-  const feeFundingRef = useRef<FeePayerFundingState | null>(null);
   const detailSheetRef = useRef<BottomSheetModal>(null);
 
   const handleSelectTx = useCallback((tx: TxRecord) => {
@@ -183,8 +153,6 @@ export default function DashboardTab() {
         lastKnown.price = p;
         setBalance(data.xlmBalance);
         setPrice(p);
-        setReservedXlm(data.reserveXlm ?? null);
-        setReserveReason(data.reserveReason ?? null);
         setBalanceError(false);
       } catch {
         // Keep the last-known values. Only flag an error the card will show —
@@ -213,9 +181,6 @@ export default function DashboardTab() {
         // Keep the last known total; the XLM figure still renders meanwhile.
       }
       try {
-        // Re-check any pending bill orders on open/refresh so orders resolve
-        void recheckPendingBillOrders().catch(() => undefined);
-
         // Merge, don't replace: this runs every 15s, and any single source
         // blinking (rate-limited RPC, slow Horizon page) would otherwise blank
         // the feed until the next poll refilled it.
@@ -227,29 +192,6 @@ export default function DashboardTab() {
         // Settled, not "succeeded": a failed load must still stop the skeleton,
         // otherwise it spins forever with no way to say what went wrong.
         setActivitySettled(true);
-      }
-      // Fee-payer funding is re-checked on refresh (mount, focus, poll,
-      // pull-to-refresh) so the banner clears without an app restart once
-      // funded. An unreachable Horizon reports `unknown` and shows nothing —
-      // a failed lookup must never read as a broken wallet.
-      //
-      // Throttled while healthy: see feeCheckedAtRef.
-      const healthyAndFresh =
-        feeFundingRef.current?.status === 'healthy' &&
-        Date.now() - feeCheckedAtRef.current < FEE_CHECK_HEALTHY_INTERVAL_MS;
-      if (!healthyAndFresh) {
-        try {
-          feeCheckedAtRef.current = Date.now();
-          const funding = await checkFeePayerFunding();
-          feeFundingRef.current = funding;
-          setFeeFunding(funding);
-          if (funding.status !== 'missing' && funding.status !== 'underfunded') {
-            setFeeBannerDismissedFor(null);
-          }
-        } catch {
-          // Leave the last funding state in place; the banner is supplementary
-          // and must never break the balance/activity refresh around it.
-        }
       }
     },
     [],
@@ -377,18 +319,6 @@ export default function DashboardTab() {
         {walletAddress ? <WalletAddressChip contractAddress={walletAddress} /> : null}
       </View>
 
-      {(feeFunding?.status === 'missing' || feeFunding?.status === 'underfunded') &&
-      feeBannerDismissedFor !== feeFunding.feePayerAddress ? (
-        <FeePayerBanner
-          feePayerAddress={feeFunding.feePayerAddress}
-          missing={feeFunding.status === 'missing'}
-          balance={feeFunding.balance}
-          needed={feeFunding.needed}
-          shortfall={feeFunding.shortfall}
-          onDismiss={() => setFeeBannerDismissedFor(feeFunding.feePayerAddress)}
-        />
-      ) : null}
-
       <SilverBalanceCard
         balance={balance === '—' ? undefined : balance}
         usd={usd}
@@ -396,8 +326,6 @@ export default function DashboardTab() {
         error={balance === '—' && balanceError}
         totalUsd={totalUsd}
         breakdown={breakdown}
-        reservedXlm={reservedXlm}
-        reserveReason={reserveReason}
       />
 
 

@@ -43,24 +43,33 @@ export class OfframpUnavailable extends Error {}
 export class OfframpTimeout extends Error {}
 
 /**
+ * The backend will not show us this order.
+ *
+ * Reading an order back needs the bearer token issued when it was created
+ * (wraith #216). Two cases land here and the backend deliberately does not
+ * distinguish them: no token at all (401), and a token that is not this
+ * order's (404, identical to an unknown id so a stranger cannot probe for
+ * real ids). Both mean the same thing to us — this install cannot follow
+ * this order any more — and neither means the order failed. It settles, and
+ * the naira arrives, whether or not we can poll it.
+ *
+ * Orders created by an app build that predates the token are exactly this
+ * case, so it must read as "we lost the receipt", never as "it went wrong".
+ */
+export class OfframpOrderUnreadable extends Error {}
+
+/**
  * The assets the cash-out rails price.
  *
  * `coin` is required by the backend now, so it is part of this client's API
  * rather than something the server guesses. It is still read back off every
- * response — see `getOfframpRate`.
+ * response - see `getOfframpRate`.
  */
 export type OfframpCoin = 'xlm' | 'usdc';
 
 export interface OfframpRate {
   rate: number;
-  /**
-   * Which asset `rate` is naira-per-one-unit-of.
-   *
-   * A string rather than `OfframpCoin`: an older backend passed Linq's own
-   * `USDC` straight through, and an installed APK has to keep working against
-   * one. What protects the money is the runtime check in `getOfframpRate`, not
-   * this type.
-   */
+  currency: string;
   coin: string;
   /** Always true: the binding rate is the one locked into an order. */
   indicative: boolean;
@@ -85,6 +94,14 @@ export interface OfframpOrder {
   rate: number;
   status: string;
   replayed?: boolean;
+  /**
+   * Bearer credential for reading this order back. Shown once at creation —
+   * wraith keeps only its SHA-256 — so it has to be stored here and now.
+   *
+   * Optional because an older backend deploy does not send one, and an
+   * installed app outlives a deploy in both directions.
+   */
+  accessToken?: string;
 }
 
 export interface OfframpStatus {
@@ -103,8 +120,12 @@ export interface OfframpStatus {
   createdAt?: string;
   /** The provider's own status word, before it was reworded for older apps. */
   providerStatus?: string;
-  /** 'cache' means the backend could not reach Linq and served its own row. */
-  source?: 'linq' | 'cache';
+  /**
+   * 'cache' means the backend could not reach the provider and served its own
+   * row. 'live' is a fresh answer; 'linq' is what older deploys called the
+   * same thing, kept so this stays assignable against either.
+   */
+  source?: 'live' | 'linq' | 'cache';
 }
 
 /**
@@ -125,7 +146,7 @@ export function withoutProviderName(message: string): string {
 
 async function call<T>(
   path: string,
-  init: { method?: string; body?: unknown; timeoutMs?: number } = {},
+  init: { method?: string; body?: unknown; timeoutMs?: number; token?: string } = {},
 ): Promise<T> {
   if (!BASE_URL) throw new OfframpUnavailable('No backend configured for offramp.');
   const controller = new AbortController();
@@ -134,12 +155,21 @@ async function call<T>(
     const res = await fetch(`${BASE_URL}${path}`, {
       method: init.method ?? 'GET',
       signal: controller.signal,
-      headers: init.body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: {
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.token ? { Authorization: `Bearer ${init.token}` } : {}),
+      },
       ...(init.body ? { body: JSON.stringify(init.body) } : {}),
     });
     const text = await res.text();
     const data = text ? JSON.parse(text) : {};
     if (res.status === 503) throw new OfframpUnavailable(withoutProviderName(data?.error ?? 'Offramp unavailable'));
+    // Only on a read, and only when we were trying to authenticate one: a 404
+    // from anything else is an ordinary failure, and a 401 on create would be
+    // a backend misconfiguration rather than a lost credential.
+    if ((res.status === 401 || res.status === 404) && (init.method ?? 'GET') === 'GET') {
+      throw new OfframpOrderUnreadable('This device can no longer read that cash-out.');
+    }
     if (!res.ok) throw new Error(withoutProviderName(data?.error ?? `Request failed (${res.status})`));
     return data as T;
   } catch (err) {
@@ -159,20 +189,18 @@ async function call<T>(
  * Used to gate the entry point: the backend holds the key, so if it is asleep
  * or unconfigured there is no order to create and the CTA should say so before
  * the user types an amount.
- *
- * This used to call `/offramp/rate`, which made a pricing endpoint the health
- * check for the feature: once the backend started requiring `coin`, a 400 read
- * as "cash-out is down" and the tile disappeared for every build that had not
- * been updated. `/offramp/availability` answers the question actually being
- * asked, makes no provider call, and so spends none of the rate allowance every
- * user shares.
  */
 export async function isOfframpAvailable(): Promise<boolean> {
   try {
+    // NOT `/offramp/rate`: that made a pricing endpoint the health check for
+    // the feature, so once the backend started requiring `coin`, a 400 read as
+    // "cash-out is down" and the tile vanished for every installed build.
+    // `/offramp/availability` answers the question actually being asked, makes
+    // no provider call, and spends none of the rate allowance users share.
     const answer = await call<{ available?: boolean }>('/offramp/availability');
-    // A 200 whose body cannot be read is not an answer. `call` resolves whatever
-    // parsed, and treating that as available would offer a flow that fails on
-    // the first tap.
+    // A 200 whose body cannot be read is not an answer; `call` resolves
+    // whatever parsed, and treating that as available offers a flow that fails
+    // on the first tap.
     if (answer?.available !== true) throw new Error('Unrecognised availability answer');
     void AsyncStorage.setItem(AVAILABILITY_KEY, '1');
     return true;
@@ -211,9 +239,9 @@ export async function lastKnownAvailability(): Promise<boolean> {
  *
  * The answer is then checked against the question. The server names the coin it
  * priced for, and cash-out divides naira by that number to work out how much
- * asset the user has to send — so a response for anything other than what was
- * asked must not be used, however plausible it looks. Compared
- * case-insensitively because an older backend returned Linq's `USDC`.
+ * asset to send - so a response for anything other than what was asked must not
+ * be used, however plausible it looks. Compared case-insensitively because an
+ * older backend returned Linq's `USDC`.
  */
 export async function getOfframpRate(coin: OfframpCoin): Promise<OfframpRate> {
   const answer = await call<OfframpRate>(`/offramp/rate?coin=${encodeURIComponent(coin)}`);
@@ -267,8 +295,10 @@ export async function createOrder(params: CreateOrderParams): Promise<OfframpOrd
   }
 }
 
-export function getOrderStatus(orderId: string): Promise<OfframpStatus> {
-  return call<OfframpStatus>(`/offramp/orders/${encodeURIComponent(orderId)}`);
+export function getOrderStatus(orderId: string, accessToken?: string): Promise<OfframpStatus> {
+  return call<OfframpStatus>(`/offramp/orders/${encodeURIComponent(orderId)}`, {
+    token: accessToken,
+  });
 }
 
 /**
@@ -282,18 +312,61 @@ export function getOrderStatus(orderId: string): Promise<OfframpStatus> {
 /** AsyncStorage key holding the in-flight cash-out order. Wallet-derived: cleared on reset. */
 export const OFFRAMP_ACTIVE_ORDER_KEY = 'veil_offramp_active_order';
 
-export async function rememberActiveOrder(orderId: string): Promise<void> {
+/** The pointer to an order in flight: its id, and the token needed to read it. */
+export interface ActiveOrder {
+  id: string;
+  /** Absent for an order created before the backend issued tokens. */
+  token?: string;
+}
+
+/**
+ * Remember the order, and the credential for reading it back.
+ *
+ * The token lives beside the id in AsyncStorage rather than the keychain, which
+ * is a deliberate line: it reads one order's payout details and nothing else,
+ * it cannot move funds, and `forgetActiveOrder` deletes it the moment the order
+ * settles. Splitting the record across two stores would mean two reset paths
+ * for one pointer, and a token left behind by a reset that cleared only the id
+ * is a worse outcome than the one this would be guarding against.
+ */
+export async function rememberActiveOrder(orderId: string, accessToken?: string): Promise<void> {
   try {
-    await AsyncStorage.setItem(OFFRAMP_ACTIVE_ORDER_KEY, orderId);
+    await AsyncStorage.setItem(
+      OFFRAMP_ACTIVE_ORDER_KEY,
+      JSON.stringify({ id: orderId, ...(accessToken ? { token: accessToken } : {}) }),
+    );
   } catch {
     // Losing the pointer is survivable — the order still settles server-side —
     // so this must never take the creation flow down with it.
   }
 }
 
-export async function activeOrderId(): Promise<string | null> {
+/**
+ * The order in flight, or null.
+ *
+ * Reads both shapes on purpose. This key held a bare id string until orders
+ * needed a token, and an app update does not clear it: someone mid-cash-out
+ * when they updated has a bare id sitting here, and that id is still worth
+ * returning — the status read will come back `OfframpOrderUnreadable`, which is
+ * the honest answer, rather than the screen silently forgetting a cash-out that
+ * real money is already on its way to.
+ */
+export async function activeOrder(): Promise<ActiveOrder | null> {
   try {
-    return await AsyncStorage.getItem(OFFRAMP_ACTIVE_ORDER_KEY);
+    const raw = await AsyncStorage.getItem(OFFRAMP_ACTIVE_ORDER_KEY);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === 'object' && typeof (parsed as ActiveOrder).id === 'string') {
+        const { id, token } = parsed as ActiveOrder;
+        return { id, ...(typeof token === 'string' && token ? { token } : {}) };
+      }
+      // Valid JSON that is not our record (a bare numeric id, say): treat the
+      // original text as the id, which is what it was before this was JSON.
+      return { id: raw };
+    } catch {
+      return { id: raw };
+    }
   } catch {
     return null;
   }
