@@ -62,6 +62,18 @@ export interface PrfCipherConfig {
     storage?: PrfSecretStore;
     /** Override the PRF ceremony (defaults to a browser navigator.credentials.get). */
     evaluator?: PrfEvaluator;
+    /**
+     * Permit a random key kept in `storage` when the authenticator has no PRF.
+     *
+     * Off by default, and named at the call site rather than inferred from the
+     * presence of `storage`. The fallback key is persisted as base64 plaintext
+     * beside the data it encrypts, so the cipher is no longer passkey-bound:
+     * anything that can read the store can read the data. That is a reasonable
+     * trade for an authenticator that genuinely cannot do PRF, and it is not a
+     * decision this library should make on a caller's behalf without being
+     * asked.
+     */
+    allowPlaintextFallback?: boolean;
 }
 
 /** A symmetric cipher bound either to the passkey (PRF) or to a local fallback key. */
@@ -262,6 +274,20 @@ export async function decryptWithKey(key: CryptoKey, payload: string): Promise<U
 
 // ── Fallback key management ─────────────────────────────────────────────────
 
+/**
+ * Whether a failed ceremony was the user declining it.
+ *
+ * WebAuthn reports a dismissed or timed-out prompt as `NotAllowedError`, and an
+ * aborted one as `AbortError`. Neither says anything about whether the
+ * authenticator supports PRF, so neither may be treated as "no PRF here" - the
+ * answer to a cancelled prompt is to ask again, not to quietly stop using the
+ * passkey.
+ */
+function isCeremonyCancellation(err: unknown): boolean {
+    const name = (err as { name?: unknown })?.name;
+    return name === 'NotAllowedError' || name === 'AbortError';
+}
+
 /** Load the persisted fallback key, or generate, persist, and return a fresh one. */
 async function loadOrCreateFallbackKey(storage: PrfSecretStore): Promise<Uint8Array> {
     const existing = await storage.getItem(FALLBACK_KEY_STORAGE);
@@ -276,16 +302,25 @@ async function loadOrCreateFallbackKey(storage: PrfSecretStore): Promise<Uint8Ar
 /**
  * Build a {@link LocalCipher} for the given passkey credential.
  *
- * Attempts a PRF assertion first; if PRF is unsupported (or the ceremony
- * returns no result) it falls back to a random key persisted via `storage`.
- * The derived key is cached on the returned cipher, so the (interactive) PRF
- * ceremony runs at most once per cipher instance.
+ * Attempts a PRF assertion first. If the authenticator has no PRF, and the
+ * caller passed `allowPlaintextFallback`, it falls back to a random key
+ * persisted via `storage`. The derived key is cached on the returned cipher,
+ * so the (interactive) PRF ceremony runs at most once per cipher instance.
  *
- * @throws if PRF is unavailable AND no `storage` adapter was provided — there is
- *         then no safe place to keep a fallback key.
+ * A cancelled ceremony is not a missing PRF extension and never falls back.
+ * This used to swallow every error from the evaluator, including the
+ * `NotAllowedError` a user gets for dismissing the prompt, and continue with a
+ * plaintext key - so declining the passkey silently downgraded the encryption
+ * instead of stopping. The comment said a genuine cancellation should surface;
+ * the code reached that branch only when `storage` was absent, and the one
+ * caller always passes it.
+ *
+ * @throws the original error if the ceremony was cancelled.
+ * @throws if PRF is unavailable and no fallback was permitted, or none is
+ *         possible because no `storage` adapter was provided.
  */
 export async function createLocalCipher(config: PrfCipherConfig): Promise<LocalCipher> {
-    const { credentialId, rpId, storage } = config;
+    const { credentialId, rpId, storage, allowPlaintextFallback = false } = config;
     const evaluator = config.evaluator
         ?? (isPrfSupported() ? browserPrfEvaluator(credentialId, rpId) : null);
 
@@ -297,8 +332,8 @@ export async function createLocalCipher(config: PrfCipherConfig): Promise<LocalC
         try {
             prfOutput = await evaluator(PRF_SALT);
         } catch (err) {
-            // A genuine cancellation should surface; a missing-PRF failure falls back.
-            if (!storage) throw err;
+            // A genuine cancellation surfaces; a missing-PRF failure falls back.
+            if (isCeremonyCancellation(err)) throw err;
             prfOutput = null;
         }
     }
@@ -310,6 +345,12 @@ export async function createLocalCipher(config: PrfCipherConfig): Promise<LocalC
         if (!storage) {
             throw new Error(
                 'WebAuthn PRF is unavailable and no storage adapter was provided for a fallback key.'
+            );
+        }
+        if (!allowPlaintextFallback) {
+            throw new Error(
+                'WebAuthn PRF is unavailable. Pass allowPlaintextFallback to accept a locally stored key '
+                    + 'that is not bound to the passkey.'
             );
         }
         key = await importRawAesKey(await loadOrCreateFallbackKey(storage));

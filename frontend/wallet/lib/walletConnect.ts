@@ -567,10 +567,13 @@ export function getWalletConnectSep43Wallet(): Sep43Wallet {
     signMessage: async (message) => {
       const keyId = walletLocal.getItem('invisible_wallet_key_id')
       if (!keyId) throw new Error('No passkey registered')
+      // keyId is still the precondition for signing, but it is no longer put
+      // into the result: that object goes to whichever dApp asked for it, and
+      // for a legacy wallet the credential ID is the input its fee-payer key
+      // was derived from.
       const signed = await sdkSignMessage(
         new TextEncoder().encode(message),
-        signAuthEntry,
-        keyId
+        signAuthEntry
       )
       return JSON.stringify(signed)
     },

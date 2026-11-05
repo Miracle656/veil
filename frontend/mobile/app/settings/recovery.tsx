@@ -197,7 +197,7 @@ const createStyles = (colors: ThemeColors) =>
       gap: 12,
       padding: 18,
     },
-    copy: { flex: 1, gap: 5 },
+    copy: { flex: 1, gap: 5, minWidth: '46%' },
     label: { fontFamily: fontFamily.bodySemiBold, fontSize: 16, color: colors.textStrong },
     detail: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.textMuted },
     ready: { fontFamily: fontFamily.bodySemiBold, fontSize: 20, color: colors.accentText },
@@ -208,8 +208,11 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 11,
       minHeight: 40,
       justifyContent: 'center',
+      // Without this the pill sizes to its label and the detail text beside it
+      // collapses into a column of single words.
+      flexShrink: 1,
     },
-    buttonText: { fontFamily: fontFamily.bodySemiBold, fontSize: 13, color: colors.onAccent },
+    buttonText: { fontFamily: fontFamily.bodySemiBold, fontSize: 13, color: colors.onAccent, textAlign: 'center' },
     noticeCard: {
       backgroundColor: colors.surface,
       borderColor: colors.accent,

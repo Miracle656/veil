@@ -46,9 +46,13 @@ type Step = 'form' | 'review' | 'signing' | 'submitting' | 'done' | 'error';
 /**
  * The tokens on offer, built from the verified registry for the network — XLM
  * plus each registered asset live there, issuer included (#793). The list used
- * to be bare codes (XLM, USDC, EURC, AQUA) resolved to contracts by symbol from
- * Soroswap's token list; EURC and AQUA are not in the registry, so they cannot
- * be addressed by issuer and are no longer offered.
+ * to be bare codes resolved to contracts by symbol from Soroswap's token list,
+ * which is how an impostor sharing a code got traded as the real thing.
+ *
+ * Every code in `SWAP_DEST_CODES` carries its registered issuer, and one that
+ * is mainnet-only simply does not appear on testnet. Dropping a code from that
+ * list silently removes a pair users already trade, so it is the list to check
+ * when someone reports an asset missing.
  */
 function tokensFor(network: NetworkName): Token[] {
   return swapDestinations(network).map((a) => ({

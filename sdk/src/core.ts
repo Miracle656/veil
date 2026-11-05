@@ -2468,7 +2468,17 @@ export class InvisibleWalletCore {
         if (this.cipher) return this.cipher;
         const credentialId = await this.store.getItem('invisible_wallet_key_id');
         if (!credentialId) throw new Error('No passkey credential found. Please register first.');
-        this.cipher = await createLocalCipher({ credentialId, rpId: this.config.rpId, storage: this.store });
+        this.cipher = await createLocalCipher({
+            credentialId,
+            rpId: this.config.rpId,
+            storage: this.store,
+            // Stated here rather than inferred inside the cipher. Plenty of
+            // Android authenticators have no PRF at all, and refusing them
+            // would lock those users out of their own encrypted data, so the
+            // fallback stays on for this caller - but it is now a visible
+            // choice, and `encryptionMode()` reports which key is in use.
+            allowPlaintextFallback: true,
+        });
         return this.cipher;
     }
 
@@ -2521,12 +2531,14 @@ export class InvisibleWalletCore {
                 }
             },
             signMessage: async (message: string) => {
+                // Still read, still a precondition: signing needs a registered
+                // passkey. It is no longer passed on, because the result of
+                // this call goes to whichever site asked for it.
                 const keyId = await this.store.getItem('invisible_wallet_key_id');
                 if (!keyId) throw new Error('No passkey registered.');
                 const signed = await signMessage(
                     new TextEncoder().encode(message),
-                    this.signAuthEntry,
-                    keyId
+                    this.signAuthEntry
                 );
                 return JSON.stringify(signed);
             },

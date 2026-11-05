@@ -114,13 +114,13 @@ exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
   "serializeAdditionalSigners: function(arity: 1)",
   "serializeBackup: function(arity: 1)",
   "sha256: function(arity: 1)",
-  "signMessage: function(arity: 3)",
+  "signMessage: function(arity: 2)",
   "signSorobanAuthEntry: function(arity: 2)",
   "spendableNativeXlm: function(arity: 1)",
   "submitSep8Transaction: function(arity: 1)",
   "useInvisibleWallet: function(arity: 1)",
   "verifyAttestation: function(arity: 1)",
-  "verifyMessage: function(arity: 3)",
+  "verifyMessage: function(arity: 4)",
   "verifyRevisedTransaction: function(arity: 2)",
 ]
 `;
