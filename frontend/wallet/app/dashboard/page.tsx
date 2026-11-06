@@ -961,7 +961,7 @@ function DashboardPageContent() {
         <div className="vw-center-col">
           {/* ── Activity feed ── */}
           <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', padding: '20px 0 4px' }}>
               <div className="vw-label">Activity</div>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/activity')}>See all</button>
             </div>
@@ -1016,7 +1016,7 @@ function DashboardPageContent() {
             truth (#740). */}
         <div className="vw-rail">
           <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', padding: '20px 0 6px' }}>
               <div className="vw-label">Assets</div>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
             </div>

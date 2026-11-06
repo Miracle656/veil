@@ -527,12 +527,28 @@ body {
   max-width: 380px;
 }
 
-@media (max-width: 1023px) {
-  .vw-dash-row > .vw-center-col { flex: 1 1 auto; max-width: none; }
-}
+/* Below 1024px the two columns stack. `align-items: flex-start` is what the
+   row wants while it IS a row — but once the direction flips to column that
+   same property governs the HORIZONTAL axis, so each card shrink-wrapped to
+   its own content: the assets panel rendered as a stub around the word
+   "Loading…", and its "ASSETS"/"Manage" head had no space left to distribute
+   so the two ran together. Stretch them back to the full width.
 
+   `.vw-dash-row > .vw-rail` (0,2,0) also outranks the `.vw-rail { width: 100% }`
+   inside the old media block (0,1,0) — a media query adds no specificity — so
+   the rail kept `width: auto` no matter how narrow the screen got. These rules
+   match at the same specificity and come later, which is why they win. */
 @media (max-width: 1023px) {
-  .vw-dash-row { flex-direction: column; }
+  .vw-dash-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .vw-dash-row > .vw-center-col,
+  .vw-dash-row > .vw-rail {
+    flex: 0 0 auto;
+    width: 100%;
+    max-width: none;
+  }
 }
 
 .vw-center-col {
