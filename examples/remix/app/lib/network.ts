@@ -36,8 +36,3 @@ export function clientEnv(): PublicEnv {
   return window.ENV
 }
 
-declare global {
-  interface Window {
-    ENV: PublicEnv
-  }
-}
