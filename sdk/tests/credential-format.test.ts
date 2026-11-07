@@ -19,85 +19,86 @@
  *   label when the format changes.
  */
 
+import { vi } from 'vitest';
 import fixtureV1 from './fixtures/credential-v1.json';
 import { hexToUint8Array } from '../src/utils';
 import { renderHook, act } from '@testing-library/react';
 import { useInvisibleWallet } from '../src/useInvisibleWallet';
 
 // ── @stellar/stellar-sdk mock ──────────────────────────────────────────────────
-jest.mock('@stellar/stellar-sdk', () => ({
+vi.mock('@stellar/stellar-sdk', () => ({
   Networks: {
     TESTNET: 'Test SDF Network ; September 2015',
     PUBLIC:  'Public Global Stellar Network ; September 2015',
   },
   BASE_FEE: '100',
   rpc: {
-    Server: jest.fn().mockImplementation(() => ({
-      getContractData:     jest.fn().mockResolvedValue({}),
-      simulateTransaction: jest.fn().mockResolvedValue({
+    Server: vi.fn().mockImplementation(() => ({
+      getContractData:     vi.fn().mockResolvedValue({}),
+      simulateTransaction: vi.fn().mockResolvedValue({
         result: { retval: {} },
         minResourceFee: '0',
         transactionData: {},
         events: [],
         latestLedger: 1,
       }),
-      sendTransaction: jest.fn().mockResolvedValue({ status: 'PENDING', hash: 'mock-hash' }),
-      getTransaction:  jest.fn().mockResolvedValue({ status: 'SUCCESS' }),
+      sendTransaction: vi.fn().mockResolvedValue({ status: 'PENDING', hash: 'mock-hash' }),
+      getTransaction:  vi.fn().mockResolvedValue({ status: 'SUCCESS' }),
     })),
     Api: {
       GetTransactionStatus: { SUCCESS: 'SUCCESS', NOT_FOUND: 'NOT_FOUND', FAILED: 'FAILED' },
-      isSimulationError: jest.fn(() => false),
+      isSimulationError: vi.fn(() => false),
     },
     Durability: { Persistent: 'persistent', Temporary: 'temporary' },
-    assembleTransaction: jest.fn().mockReturnValue({
-      build: jest.fn().mockReturnValue({ sign: jest.fn(), toXDR: jest.fn() }),
+    assembleTransaction: vi.fn().mockReturnValue({
+      build: vi.fn().mockReturnValue({ sign: vi.fn(), toXDR: vi.fn() }),
     }),
   },
   Horizon: {
-    Server: jest.fn().mockImplementation(() => ({
-      loadAccount: jest.fn().mockResolvedValue({
+    Server: vi.fn().mockImplementation(() => ({
+      loadAccount: vi.fn().mockResolvedValue({
         balances: [],
         sequence: '0',
         account_id: 'GPUBKEY',
       }),
     })),
   },
-  Account: jest.fn().mockImplementation((_id: string, seq: string) => ({
+  Account: vi.fn().mockImplementation((_id: string, seq: string) => ({
     accountId: () => _id,
     sequenceNumber: () => seq,
-    incrementSequenceNumber: jest.fn(),
+    incrementSequenceNumber: vi.fn(),
   })),
-  Contract: jest.fn().mockImplementation(() => ({
-    call: jest.fn().mockReturnValue({ toXDR: jest.fn() }),
+  Contract: vi.fn().mockImplementation(() => ({
+    call: vi.fn().mockReturnValue({ toXDR: vi.fn() }),
   })),
   Keypair: {
-    random:     jest.fn().mockReturnValue({ publicKey: () => 'GPUBKEY', secret: () => 'SSECRET' }),
-    fromSecret: jest.fn().mockReturnValue({ publicKey: () => 'GPUBKEY', secret: () => 'SSECRET' }),
+    random:     vi.fn().mockReturnValue({ publicKey: () => 'GPUBKEY', secret: () => 'SSECRET' }),
+    fromSecret: vi.fn().mockReturnValue({ publicKey: () => 'GPUBKEY', secret: () => 'SSECRET' }),
   },
-  TransactionBuilder: jest.fn().mockImplementation(() => ({
-    addOperation: jest.fn().mockReturnThis(),
-    setTimeout:   jest.fn().mockReturnThis(),
-    build:        jest.fn().mockReturnValue({ sign: jest.fn(), toXDR: jest.fn() }),
+  TransactionBuilder: vi.fn().mockImplementation(() => ({
+    addOperation: vi.fn().mockReturnThis(),
+    setTimeout:   vi.fn().mockReturnThis(),
+    build:        vi.fn().mockReturnValue({ sign: vi.fn(), toXDR: vi.fn() }),
   })),
   StrKey: {
-    isValidContract:          jest.fn(() => true),
-    isValidEd25519PublicKey:  jest.fn(() => true),
+    isValidContract:          vi.fn(() => true),
+    isValidEd25519PublicKey:  vi.fn(() => true),
   },
   xdr: {
-    ScVal: { scvLedgerKeyContractInstance: jest.fn().mockReturnValue({}) },
+    ScVal: { scvLedgerKeyContractInstance: vi.fn().mockReturnValue({}) },
   },
-  nativeToScVal:  jest.fn().mockReturnValue({}),
-  scValToNative:  jest.fn().mockReturnValue(BigInt(0)),
+  nativeToScVal:  vi.fn().mockReturnValue({}),
+  scValToNative:  vi.fn().mockReturnValue(BigInt(0)),
   Asset: {
-    native: jest.fn().mockReturnValue({ contractId: jest.fn().mockReturnValue('CSAC') }),
+    native: vi.fn().mockReturnValue({ contractId: vi.fn().mockReturnValue('CSAC') }),
   },
-  hash: jest.fn().mockReturnValue(Buffer.alloc(32)),
+  hash: vi.fn().mockReturnValue(Buffer.alloc(32)),
 }));
 
 // ── WebAuthn mock ──────────────────────────────────────────────────────────────
-const mockCredentialsGet = jest.fn();
+const mockCredentialsGet = vi.fn();
 Object.defineProperty(global, 'navigator', {
-  value: { credentials: { create: jest.fn(), get: mockCredentialsGet } },
+  value: { credentials: { create: vi.fn(), get: mockCredentialsGet } },
   writable: true,
   configurable: true,
 });

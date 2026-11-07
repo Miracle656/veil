@@ -124,6 +124,12 @@ jobs:
       - run: npm test --if-present
       - name: Run Jest with coverage
         run: npx jest --coverage
+      # The Vitest suites in tests/ were never executed by CI, which is how
+      # `npm run test:vitest` stayed broken (it collected zero tests) without
+      # anyone noticing. Jest no longer claims tests/ — see the testMatch entry
+      # in sdk/package.json — so this is the only gate on those files.
+      - name: Run Vitest with coverage
+        run: npm run test:vitest
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
@@ -214,6 +220,10 @@ jobs:
       - run: npm run build
       - name: Run Jest with coverage
         run: npx jest --coverage
+      # Companion to the Jest step: tests/ is Vitest-only now (see testMatch in
+      # jest.config.js), so without this nothing would exercise those suites.
+      - name: Run Vitest with coverage
+        run: npm run test:vitest
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:

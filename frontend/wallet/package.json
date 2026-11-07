@@ -24,7 +24,6 @@
     "@stellar/js-xdr": "^3.1.2",
     "@stellar/stellar-sdk": "^14.6.1",
     "@supabase/supabase-js": "^2.117.3",
-    "@vitest/coverage-v8": "^1.3.0",
     "@walletconnect/utils": "2.26.0",
     "framer-motion": "^12.43.0",
     "invisible-wallet-sdk": "file:../../sdk",
@@ -36,8 +35,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "size-limit": "^12.1.0",
-    "stellar-private-payments": "^0.1.0",
-    "vitest": "^1.3.0"
+    "stellar-private-payments": "^0.1.0"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
@@ -54,6 +52,8 @@
     "postcss": "^8.5.22",
     "tailwindcss": "^3.4.17",
     "ts-jest": "^29.4.14",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.12",
+    "@vitest/coverage-v8": "^4.1.12"
   }
 }
