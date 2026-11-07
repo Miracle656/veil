@@ -342,7 +342,24 @@ async function tryModels(
 
 // ── DeepSeek (OpenAI-compatible chat completions) ────────────────────────────
 
+/**
+ * DeepSeek's economical tool-calling model: DeepSeek-V4.1-Flash.
+ *
+ * Verified against the live API on 2026-10-05 rather than the docs, which
+ * describe the ids as `deepseek-v4-pro` / `deepseek-v4-flash`. `GET /models`
+ * answers:
+ *
+ *     deepseek-flash    DeepSeek-V4.1-Flash
+ *     deepseek-v4-pro   DeepSeek-V4-Pro
+ *
+ * So `deepseek-flash` is current and correct. `deepseek-v4-flash` does resolve,
+ * but the completion it returns reports `"model": "deepseek-flash"` — it is an
+ * alias, not the canonical id.
+ */
 export const DEFAULT_DEEPSEEK_MODEL = 'deepseek-flash'
+
+/** The larger model, for when quality matters more than cost. */
+export const DEEPSEEK_PRO_MODEL = 'deepseek-v4-pro'
 export const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 
 export function deepseekProvider(options: { apiKey: string; model?: string }): LlmProvider {
