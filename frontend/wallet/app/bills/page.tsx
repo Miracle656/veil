@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 
-import { AccentCard, Card, PageHeader, PrimaryAction, SectionLabel } from '@/components/ui/primitives'
+import { AccentCard, Card, PageHeader, PrimaryAction, SectionLabel, Tag } from '@/components/ui/primitives'
 import { previewBillSpendFee, sendBillPayment } from '@/lib/billSpend'
 import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import {
@@ -64,6 +64,36 @@ const PREFIXES: Record<string, string[]> = {
 }
 
 const NETWORKS = Object.keys(PREFIXES)
+
+interface Service {
+  id: string
+  name: string
+  sub: string
+  icon: string
+  tone: 'gold' | 'teal' | 'lilac'
+  status: 'live' | 'soon'
+  /** Live services that live on another page link there; airtime is this page. */
+  route?: string
+}
+
+// What the web wallet can actually pay for today. Unshipped categories stay
+// honestly marked Soon rather than looking clickable.
+const SERVICES: Service[] = [
+  { id: 'airtime', name: 'Airtime', sub: 'All networks', icon: '☎', tone: 'gold', status: 'live' },
+  { id: 'data', name: 'Data', sub: 'Bundles', icon: '▦', tone: 'gold', status: 'soon' },
+  { id: 'power', name: 'Power', sub: 'Prepaid units', icon: '⌁', tone: 'teal', status: 'soon' },
+  { id: 'tv', name: 'TV', sub: 'DStv · GOtv', icon: '▤', tone: 'lilac', status: 'soon' },
+  { id: 'water', name: 'Water', sub: 'State boards', icon: '◈', tone: 'teal', status: 'soon' },
+  { id: 'transfer', name: 'Transfer', sub: 'To any bank', icon: '↗', tone: 'gold', status: 'live', route: '/cashout' },
+  { id: 'betting', name: 'Betting', sub: 'Top up', icon: '◉', tone: 'lilac', status: 'soon' },
+  { id: 'education', name: 'Education', sub: 'WAEC · JAMB', icon: '✎', tone: 'teal', status: 'soon' },
+]
+
+const TONE_FG = {
+  gold: 'var(--gold)',
+  teal: 'var(--teal)',
+  lilac: 'var(--lilac)',
+} as const
 
 function detectNetwork(phone: string): string | null {
   const p = phone.replace(/\D/g, '')
@@ -388,6 +418,60 @@ export default function BillsPage() {
 
       <div className="flex gap-5 mt-[26px] items-start max-xl:flex-col">
         <div className="flex-1 min-w-0 flex flex-col gap-5 w-full">
+          <Card>
+            <SectionLabel>Pay for</SectionLabel>
+            <div className="grid grid-cols-4 max-md:grid-cols-2 gap-3 mt-[18px]">
+              {SERVICES.map((s) => {
+                const isLive = s.status === 'live'
+                const commonClass =
+                  'bg-[rgba(255,255,255,0.04)] border rounded-[18px] px-4 py-[18px] flex flex-col gap-[5px] text-left transition-colors'
+                if (isLive) {
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => {
+                        if (s.route) router.push(s.route)
+                      }}
+                      className={`${commonClass} border-[rgba(253,218,36,0.3)] hover:border-gold cursor-pointer`}
+                    >
+                      <div className="flex justify-between items-center w-full">
+                        <span className="text-[17px]" style={{ color: TONE_FG[s.tone] }}>
+                          {s.icon}
+                        </span>
+                        <Tag tone="gold">Live</Tag>
+                      </div>
+                      <div className="text-sm font-semibold mt-1 whitespace-nowrap text-off-white">
+                        {s.name}
+                      </div>
+                      <div className="text-[11px] text-[rgba(246,247,248,0.55)] whitespace-nowrap">
+                        {s.sub}
+                      </div>
+                    </button>
+                  )
+                }
+                return (
+                  <div
+                    key={s.id}
+                    aria-disabled="true"
+                    title="Coming soon"
+                    className={`${commonClass} border-border-dim opacity-60`}
+                  >
+                    <div className="flex justify-between items-center w-full">
+                      <span className="text-[17px]" style={{ color: TONE_FG[s.tone] }}>
+                        {s.icon}
+                      </span>
+                      <Tag tone="dim">Soon</Tag>
+                    </div>
+                    <div className="text-sm font-semibold mt-1 whitespace-nowrap">{s.name}</div>
+                    <div className="text-[11px] text-[rgba(246,247,248,0.4)] whitespace-nowrap">
+                      {s.sub}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </Card>
           {mismatch && (
             <Card className="border-[rgba(220,38,38,0.35)]">
               <p className="text-[15px] font-semibold text-off-white mb-2">

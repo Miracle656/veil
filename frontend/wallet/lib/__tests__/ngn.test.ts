@@ -361,3 +361,71 @@ describe('classifyBillStatus', () => {
     expect(classifyBillStatus('unknown_code')).toBe('pending')
   })
 })
+
+describe('bills on the shared naira client', () => {
+  const DEPOSIT_WALLET = 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7'
+  const REFUND_WALLET = 'GBDEVU63Y6NTHJQQZIKVTC23NWLQVP3WJ2RI2OTSJTNYOIGICST6DUXR'
+
+  it('reserves a bill on POST /ngn/bills with the mainnet header', async () => {
+    respondWith({
+      id: 'bill_98765432',
+      customerRef: 'veil_4sjjjzwamdoe',
+      wallet: DEPOSIT_WALLET,
+      status: 'pending',
+    })
+    const { payBill } = loadModule()
+
+    const order = await payBill({
+      customerRef: 'veil_4sjjjzwamdoe',
+      billCategory: 'airtime',
+      provider: 'MTN',
+      customerId: '08035124471',
+      amountNgn: 1000,
+      amountStableCoin: 0.6666667,
+      rate: 1500,
+      coin: 'usdc',
+      refundAddress: REFUND_WALLET,
+    })
+
+    expect(order).toEqual({
+      id: 'bill_98765432',
+      customerRef: 'veil_4sjjjzwamdoe',
+      wallet: DEPOSIT_WALLET,
+      status: 'pending',
+    })
+
+    const { url, init } = lastRequest()
+    expect(url).toBe(`${WRAITH}/ngn/bills`)
+    expect(init.method).toBe('POST')
+    expect((init.headers as Record<string, string>)['x-network']).toBe('mainnet')
+    expect(JSON.parse(String(init.body))).toEqual({
+      customerRef: 'veil_4sjjjzwamdoe',
+      billCategory: 'airtime',
+      provider: 'MTN',
+      customerId: '08035124471',
+      amountNgn: 1000,
+      amountStableCoin: 0.6666667,
+      rate: 1500,
+      coin: 'usdc',
+      refundAddress: REFUND_WALLET,
+    })
+  })
+
+  it('queries bill status with both orderId and customerRef url-encoded', async () => {
+    respondWith({
+      orderId: 'bill_98765432',
+      customerRef: 'veil_4sjjjzwamdoe',
+      status: 'completed',
+      billCategory: 'airtime',
+      amountNgn: 1000,
+      amountStableCoin: 0.6666667,
+      wallet: DEPOSIT_WALLET,
+      description: 'MTN 08035124471',
+    })
+    const { getBillStatus } = loadModule()
+
+    const status = await getBillStatus('veil_a b', 'bill/1')
+    expect(status.status).toBe('completed')
+    expect(lastRequest().url).toBe(`${WRAITH}/ngn/bills/bill%2F1?customerRef=veil_a%20b`)
+  })
+})
