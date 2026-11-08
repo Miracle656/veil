@@ -42,6 +42,21 @@
 //! Reusing the id would make an indexer read a fresh registration as the same
 //! collectible changing hands, which it is not.
 //!
+//! ## This one is upgradeable, unlike the wallet
+//!
+//! The wallet and factory have no upgrade path, and that is why three defects
+//! in the deployed wallet can never be fixed. A rented-name registry carries
+//! the same risk and worse odds: the price bands, the length of the recovery
+//! window and the term bounds are all product decisions, the pricing model has
+//! already been respec'd once, and none of them can be corrected by deploying
+//! a second registry — the names are in the first one.
+//!
+//! So `upgrade` exists, gated on the admin. The honest cost is that whoever
+//! holds the admin key can replace the logic governing names other people
+//! paid for. `set_admin` is the mitigation path: hand the admin to a multisig,
+//! or to a timelock, once there is one to hand it to. Until then the admin is
+//! a trusted party and the registry should not be described as trustless.
+//!
 //! ## Validation lives here, not only in the client
 //!
 //! The page and the API both check the charset, the length and the reserved
@@ -52,8 +67,8 @@
 //! enforced on-chain, and the client copies exist only to fail fast.
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
-    String, Symbol,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, BytesN,
+    Env, String, Symbol,
 };
 use stellar_tokens::non_fungible::{
     burnable::NonFungibleBurnable, Base, NonFungibleToken,
@@ -291,12 +306,49 @@ impl VeilNames {
         );
     }
 
+    /// Who currently holds the admin role.
+    ///
+    /// Worth exposing because the admin can replace this contract's logic, so
+    /// "who is it" is a thing a holder is entitled to check rather than infer
+    /// from deployment notes.
+    pub fn get_admin(e: Env) -> Address {
+        admin(&e)
+    }
+
+    /// Replace this contract's WASM.
+    ///
+    /// The registry holds names people paid for, so it cannot be replaced by
+    /// deploying a second one — a new contract starts empty and every existing
+    /// name stays in the old one. An upgrade is the only way to correct a
+    /// price band, the recovery window or a term bound after launch.
+    ///
+    /// `new_wasm_hash` must already be uploaded to the ledger. Nothing here
+    /// checks that the incoming WASM keeps this contract's storage layout; a
+    /// mismatched upgrade reads existing `Record` entries as garbage, so the
+    /// replacement has to be built from this source, not merely resemble it.
+    pub fn upgrade(e: Env, new_wasm_hash: BytesN<32>) {
+        admin(&e).require_auth();
+        e.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
+    /// Hand the admin role to someone else.
+    ///
+    /// The point of this is to get the admin out of a single key: a multisig
+    /// or a timelock contract is a valid `new_admin`. There is deliberately no
+    /// way to renounce the role by setting it to a burn address — that would
+    /// freeze the reserved-name list and the upgrade path together, which is
+    /// the state this contract was changed to avoid.
+    pub fn set_admin(e: Env, new_admin: Address) {
+        admin(&e).require_auth();
+        e.storage().instance().set(&DataKey::Admin, &new_admin);
+    }
+
     /// Mark names nobody may register.
     ///
-    /// Admin-held rather than compiled in, because this contract cannot be
-    /// upgraded and the list will certainly need adding to — a partner brand,
-    /// a product name that does not exist yet. A list baked into the WASM
-    /// would be frozen on the day of deployment.
+    /// Admin-held rather than compiled in because the list will certainly need
+    /// adding to — a partner brand, a product name that does not exist yet.
+    /// Keeping it in storage means adding one is an admin call rather than an
+    /// upgrade.
     pub fn reserve(e: Env, name: String) {
         admin(&e).require_auth();
         e.storage()
