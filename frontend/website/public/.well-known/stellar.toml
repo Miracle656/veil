@@ -1,7 +1,13 @@
 # SEP-1 public metadata for useveilapp.xyz.
 #
-# The federation URL is the planned production endpoint. The wallet backend
-# still needs to implement and deploy it before SEP-2 name resolution works.
+# The federation endpoint is live and answers SEP-2 `type=name`. It resolves
+# against the Veil Names registry contract, which is not deployed yet, so every
+# lookup is currently a 404 — a truthful "no such name" rather than the HTML
+# 404 this URL used to return before the route existed.
+#
+# `type=id` (reverse lookup) is answered with a 404 on purpose: the registry is
+# keyed name -> address with no reverse index. See
+# frontend/wallet/app/api/federation/route.ts.
 FEDERATION_SERVER = "https://app.useveilapp.xyz/api/federation"
 
 [DOCUMENTATION]
