@@ -45,12 +45,59 @@ import {
   BASE_FEE,
   Contract,
   nativeToScVal,
+  Networks,
   rpc as SorobanRpc,
   scValToNative,
   TransactionBuilder,
 } from '@stellar/stellar-sdk'
 
-import { getNetwork } from './network'
+/**
+ * Network config is read here rather than from `./network`.
+ *
+ * `lib/network.ts` imports `@veil/sdk`, whose entry point exports a React
+ * hook, so anything importing it becomes a client module. Pulling it into this
+ * route handler failed the wallet build outright:
+ *
+ *     You're importing a module that depends on `useEffect` into a React
+ *     Server Component module.
+ *
+ * The values below mirror `NETWORKS` in that file for the two fields this
+ * module needs, with one deliberate difference noted on `rpcUrl`.
+ */
+interface ServerNetwork {
+  name: 'mainnet' | 'testnet'
+  networkPassphrase: string
+  rpcUrl: string
+}
+
+function serverNetwork(): ServerNetwork {
+  const name = process.env.NEXT_PUBLIC_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
+
+  if (name === 'mainnet') {
+    return {
+      name,
+      networkPassphrase: Networks.PUBLIC,
+      // `resolveMainnetRpcUrl()` in ./network.ts returns the same-origin proxy
+      // `/api/rpc/mainnet`, and an empty string when there is no `window` —
+      // which is always, here. The proxy's own upstream is the server-side
+      // `MAINNET_RPC_URL`, so this reads that directly rather than asking the
+      // server to proxy to itself.
+      rpcUrl:
+        process.env.MAINNET_RPC_URL?.trim()
+        || process.env.NEXT_PUBLIC_MAINNET_RPC_URL?.trim()
+        || '',
+    }
+  }
+
+  return {
+    name,
+    networkPassphrase: Networks.TESTNET,
+    rpcUrl:
+      process.env.NEXT_PUBLIC_SOROBAN_RPC_URL?.trim()
+      || process.env.NEXT_PUBLIC_RPC_URL?.trim()
+      || 'https://soroban-testnet.stellar.org',
+  }
+}
 
 /** The domain Veil names are issued under, and the only one we answer for. */
 export const HOME_DOMAIN = 'useveilapp.xyz'
@@ -110,7 +157,7 @@ export function parseFederationName(q: string): ParsedFederationName | null {
  */
 export function getNamesContractId(): string | null {
   const perNetwork =
-    getNetwork().name === 'mainnet'
+    serverNetwork().name === 'mainnet'
       ? process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_MAINNET?.trim()
       : process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_TESTNET?.trim()
 
@@ -140,7 +187,11 @@ export async function resolveOnChain(name: string): Promise<string | null> {
   if (!contractId) return null
 
   try {
-    const network = getNetwork()
+    const network = serverNetwork()
+    // No RPC configured means no way to read the registry. Returning null is
+    // a 404 — "no such name" — which is the honest half of what is true.
+    if (!network.rpcUrl) return null
+
     const server = new SorobanRpc.Server(network.rpcUrl)
     const contract = new Contract(contractId)
 
