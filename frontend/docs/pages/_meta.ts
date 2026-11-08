@@ -13,6 +13,7 @@ export default {
   'sdk-errors': 'SDK Error Reference',
   troubleshooting: 'Troubleshooting',
   guides: 'Guides',
+  names: 'Veil Names',
   invest: 'Invest Rail & Disclosures',
   cookbook: 'Cookbook',
   'agent-integration': 'Agent Integration',

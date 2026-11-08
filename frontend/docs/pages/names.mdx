@@ -1,0 +1,272 @@
+---
+title: Veil Names
+description: Rent a human-readable Stellar address — pricing by length, yearly terms, the 90-day recovery window, and how resolution works over SEP-2 federation.
+---
+
+import { Callout, Steps } from "nextra/components";
+
+# Veil Names
+
+A Veil Name replaces a contract address with something a person can type:
+
+```
+jack*useveilapp.xyz
+```
+
+instead of
+
+```
+CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4
+```
+
+It resolves over [SEP-2 federation](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0002.md), the Stellar standard for named addresses, so any wallet that speaks it can resolve a Veil Name without knowing anything about Veil.
+
+<Callout type="warning">
+A Veil Name points at a **smart contract address** (`C…`). A classic Stellar
+payment cannot address a contract, so **you cannot withdraw from an exchange to
+a Veil Name.** It works from Veil, and from anything that speaks Soroban. This
+is a property of how Stellar's classic and Soroban layers differ, not a gap we
+expect to close — see [The exchange limitation](#the-exchange-limitation).
+</Callout>
+
+## What it costs
+
+Names are **rented by the year**, not bought outright. The price depends on length:
+
+| Length | Per year |
+| --- | --- |
+| 3–5 characters | **3 USDC** |
+| 6–10 characters | **5 USDC** |
+| 11–20 characters | **2 USDC** |
+
+The middle band is the dearest, which looks like a mistake and is not. Most real
+first names are six to ten characters, so that is where demand sits. The table
+prices **demand, not scarcity** — short names are not automatically the most
+valuable, they are simply the ones most often assumed to be.
+
+A term is **one to five years**, paid in full at registration. The total is
+always `price per year × years`, computed on-chain:
+
+```
+ada      3 characters  × 5 years  =  15 USDC
+adebayo  7 characters  × 1 year   =   5 USDC
+adebayoakinola  14 characters × 2 years = 4 USDC
+```
+
+<Callout type="info">
+Payment is in **USDC** on Stellar mainnet. Your wallet needs a USDC trustline
+and a USDC balance; the contract cannot take XLM for a name.
+</Callout>
+
+## Buying a name
+
+<Steps>
+
+### Pick a name
+
+It must be 3–20 characters of lowercase `a–z`, digits `0–9`, and underscore.
+No underscore at the start or end, and never two in a row. See
+[What a name may be](#what-a-name-may-be) for why the rules are this narrow.
+
+### Choose a term
+
+One to five years. Longer terms are not discounted — five years costs exactly
+five times one year. The reason to take a longer term is to stop thinking about
+renewals, not to save money.
+
+### Pay and register
+
+The contract takes the full amount in USDC and sends it to the Veil treasury in
+the same transaction that creates the name. There is no separate invoice, no
+pending state, and no refund path: the registration either completes or the
+payment never leaves your wallet.
+
+### Receive the name as an NFT
+
+Registration mints a token to you. That token **is** the name — hold it and the
+name resolves to you, transfer it and the name follows it to the new holder.
+You do not need to do anything else to point the name at your wallet.
+
+</Steps>
+
+## Renewal, and what "subscription" means here
+
+A Veil Name is closer to a domain name than to a subscription. **Nothing charges
+you automatically.** There is no card on file, no recurring authorisation, and
+no way for the contract to take money from you after registration. If you want
+the name to continue, someone has to pay to renew it.
+
+That cuts both ways: you can never be charged by surprise, and you can never be
+protected by autopay. The [recovery window](#what-happens-when-a-name-expires)
+exists because of the second half.
+
+**Anyone can renew anyone's name.** Renewal takes a payer, a name and a term —
+the payer does not have to be the holder. Renewing a friend's name is a gift
+they do not have to accept or even notice.
+
+How the new expiry is calculated depends on when you renew:
+
+| When you renew | New expiry is measured from |
+| --- | --- |
+| While the name is still active | its **existing expiry** — you lose no time by renewing early |
+| During the 90-day recovery window | **today** — the lapsed time is gone |
+| After recovery has closed | you cannot renew; the name is open to anyone |
+
+A renewal may not push the total term past **five years** in one go. A name with
+four years left can be extended by one, not by three.
+
+<Callout type="info">
+A "year" here is a flat **365 days**, never a calendar year. The contract, the
+server and the app must all compute one expiry, and "a year from 29 February"
+has no single answer.
+</Callout>
+
+## What happens when a name expires
+
+A name moves through three states, and the middle one is the whole design.
+
+| State | Resolves? | Who may register it |
+| --- | --- | --- |
+| **Active** | yes | nobody |
+| **Recovery** — 90 days after expiry | **no** | the previous holder only |
+| **Open** | no | anyone |
+
+The instant a name expires it **stops resolving**. It does not keep working
+until someone else buys it.
+
+That matters more than it first appears. If a lapsed name went straight back on
+sale, it would keep working in every contact list that already had it — and
+would quietly begin paying whoever bought it next. The person who lost the name
+would not notice, and neither would anyone sending to it.
+
+So the 90-day window does two jobs at once:
+
+- Someone who simply forgot a 3 USDC renewal gets their name back, rather than
+  losing it to whoever was watching the expiry list.
+- Every stale contact fails for a full quarter before a repoint is even
+  possible, so a sender finds out by a failed payment rather than by a
+  successful one to a stranger.
+
+## What a name may be
+
+The character rules are deliberately narrow, and the reason is always the same:
+a name that reads as somebody else's name is a payment redirect.
+
+- **3 to 20 characters.** Shorter names are reserved rather than merely invalid.
+- **Lowercase `a–z`, digits `0–9`, and underscore only.**
+- **No leading, trailing, or doubled underscore** — `_jack`, `jack_` and
+  `ja__ck` are all refused.
+- **No Unicode.** A Cyrillic `а` is rejected outright, not converted to a Latin
+  `a`. Folding lookalikes would be the bug: it would let one name resolve to a
+  different holder's payment destination.
+- **Case is not part of a name.** `Jack`, `JACK` and `jack` are the same name.
+
+Around forty names — `veil`, `admin`, `support`, `security`, `payments`,
+`verify` and similar — are **permanently reserved** and can never be registered,
+so nobody can pose as Veil or its team.
+
+<Callout type="info">
+These rules are enforced **on-chain**, not just in the app. The page and the API
+check them too, but only so they can fail fast — anyone can call the contract
+directly, so the contract is the authority.
+</Callout>
+
+## How resolution works
+
+Veil publishes a federation server in its
+[`stellar.toml`](https://www.useveilapp.xyz/.well-known/stellar.toml):
+
+```toml
+FEDERATION_SERVER = "https://app.useveilapp.xyz/api/federation"
+```
+
+A wallet resolving `jack*useveilapp.xyz` asks:
+
+```
+GET https://app.useveilapp.xyz/api/federation?q=jack*useveilapp.xyz&type=name
+```
+
+and receives:
+
+```json
+{
+  "stellar_address": "jack*useveilapp.xyz",
+  "account_id": "CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4"
+}
+```
+
+The endpoint reads the registry contract directly, so there is no database to
+fall out of step with the ledger. An expired name returns a 404, because the
+contract itself stops answering for it.
+
+Reverse lookup (`type=id`, address → name) returns 404 by design: the registry
+is keyed name → address with no reverse index, so answering would mean scanning
+every name.
+
+## The exchange limitation
+
+A Veil wallet is a Soroban contract account, so a Veil Name resolves to a `C…`
+address. Stellar's classic `payment` operation cannot address a contract at all.
+
+In practice:
+
+| Sending from | Works? |
+| --- | --- |
+| Veil (mobile or web) | yes |
+| Any Soroban-aware wallet or contract | yes |
+| An exchange withdrawal | **no** |
+| A classic-only wallet | **no** |
+
+CAP-84's muxed contract addresses (`W…`, arriving with Protocol 30) do not
+change this — a muxed contract address is also not a classic payment
+destination.
+
+We return the contract address rather than inventing a classic one because that
+is where the money actually is. A `G…` address that merely forwarded would be a
+second place for funds to go wrong.
+
+## On-chain reference
+
+| | |
+| --- | --- |
+| Registry contract | `CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4` |
+| Network | Stellar mainnet |
+| Payment asset | USDC — `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
+| USDC issuer | `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` |
+
+Read-only entry points anyone can call: `quote(name, years)`, `resolve(name)`,
+`state(name)`, `expires_at(name)`, `get_admin()`.
+
+State-changing: `register(buyer, name, years)`, `renew(payer, name, years)`,
+`set_target(name, target)`.
+
+<Callout type="warning">
+Unlike the Veil wallet and factory, this contract **can be upgraded** by its
+admin. That is deliberate: the registry holds names people paid for and cannot
+be replaced by deploying a second one, so a price band or a window length that
+turns out wrong has to be fixable. The cost is that the admin is a trusted
+party, and the registry should not be described as trustless until that role
+sits behind a multisig. See
+[Contract Upgrades & Immutability](/contract-upgrades).
+</Callout>
+
+## Storage rent
+
+Stellar charges rent for stored data rather than selling permanent storage.
+Every entry has a time-to-live, and an entry whose TTL lapses is *archived* —
+not destroyed, but unreadable until it is restored.
+
+The registry handles this for you: **every read or write of a name pushes that
+name's TTL back to 30 days**, so a name anyone actually uses keeps itself alive
+as a side effect of being used. A name nobody touches for a month archives and
+needs a small restore before it resolves again. The holder's ownership and
+expiry date are unaffected either way.
+
+## Current status
+
+<Callout type="warning">
+**As of 8 November 2026:** the registry contract is deployed to mainnet and the
+federation endpoint is live, but **the `/names` page in the Veil app has not
+shipped yet**. Names can currently only be registered by calling the contract
+directly. Buying a name from the app is the next piece of work.
+</Callout>

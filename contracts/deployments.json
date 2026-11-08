@@ -8,6 +8,19 @@
       "factory_wasm_sha256": "3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853",
       "wallet_wasm_sha256": "b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5",
       "source_commit": "ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2"
+    },
+    "names": {
+      "_comment": "Veil Names registry. The wasm_sha256 here is the DEPLOYED artifact, built with `stellar contract build` for the wasm32v1-none target. It deliberately differs from contracts/expected-hashes.json, which records a plain `cargo build --target wasm32-unknown-unknown` artifact: that one enables reference-types and Soroban's VM rejects it outright (WasmVm, InvalidAction). Two different builds of the same source, only one of which can be deployed.",
+      "contract_id": "CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4",
+      "wasm_sha256": "16b73b96116b0ecada435c30b8c2a1761275cf5152b2c1e4f8651f25522d03e9",
+      "source_commit": "09fc5e49",
+      "deployed": "2026-11-08",
+      "admin": "GDWBFMW565JIDKUQZMGPS6SHRLM7ZIFVVRKBPBJZPJG6EOJQ7LDK3YVX",
+      "treasury": "GB3JS2AJZ3FKIGVOOPXDEYYR3XOHQA474WGCYAMNFSGX6OW5HGWCKUZW",
+      "pay_token": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "pay_token_note": "Mainnet USDC SAC, issuer GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "upgradeable": true,
+      "ttl_note": "Soroban entries archive when their TTL lapses. A name's TTL is bumped to 30 days on every read or write by the contract itself, so active names keep themselves alive. The contract's own wasm and instance are NOT self-renewing and need `stellar contract extend` roughly monthly, paid from the admin account, or the whole registry stops resolving."
     }
   }
 }
