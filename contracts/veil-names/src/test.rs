@@ -12,7 +12,7 @@ extern crate std;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token::StellarAssetClient,
-    Address, Env, String,
+    Address, BytesN, Env, String,
 };
 
 use crate::{
@@ -24,6 +24,7 @@ struct Fixture {
     e: Env,
     client: VeilNamesClient<'static>,
     usdc: Address,
+    admin: Address,
     treasury: Address,
     alice: Address,
     bob: Address,
@@ -49,7 +50,18 @@ fn setup() -> Fixture {
     let client = VeilNamesClient::new(&e, &contract_id);
     client.initialize(&admin, &usdc, &treasury);
 
-    Fixture { e, client, usdc, treasury, alice, bob }
+    Fixture { e, client, usdc, admin, treasury, alice, bob }
+}
+
+/// A contract error as the generated client actually surfaces it.
+///
+/// Every entrypoint here panics with an error code rather than returning
+/// `Result<_, Error>`, so the error side of a `try_` call is
+/// `soroban_sdk::Error`, not this crate's enum. Asserting against the enum
+/// directly does not compile, which is how this file came to be committed
+/// without ever having been built.
+fn err(code: Error) -> soroban_sdk::Error {
+    soroban_sdk::Error::from_contract_error(code as u32)
 }
 
 fn name(e: &Env, s: &str) -> String {
@@ -101,12 +113,12 @@ fn rejects_a_name_outside_the_length_bounds() {
     let f = setup();
     assert_eq!(
         f.client.try_register(&f.alice, &name(&f.e, "ab"), &1),
-        Err(Ok(Error::NameTooShort))
+        Err(Ok(err(Error::NameTooShort)))
     );
     assert_eq!(
         f.client
             .try_register(&f.alice, &name(&f.e, "abcdefghijklmnopqrstu"), &1),
-        Err(Ok(Error::NameTooLong))
+        Err(Ok(err(Error::NameTooLong)))
     );
 }
 
@@ -116,7 +128,7 @@ fn rejects_everything_outside_lowercase_digits_and_underscore() {
     for bad in ["Ada", "ja-ck", "ja ck", "jack!", "ja.ck"] {
         assert_eq!(
             f.client.try_register(&f.alice, &name(&f.e, bad), &1),
-            Err(Ok(Error::BadCharset)),
+            Err(Ok(err(Error::BadCharset))),
             "expected {bad} to be refused"
         );
     }
@@ -129,7 +141,7 @@ fn rejects_a_cyrillic_homoglyph_rather_than_folding_it() {
     let f = setup();
     assert_eq!(
         f.client.try_register(&f.alice, &name(&f.e, "j\u{0430}ck"), &1),
-        Err(Ok(Error::BadCharset))
+        Err(Ok(err(Error::BadCharset)))
     );
 }
 
@@ -139,7 +151,7 @@ fn rejects_a_leading_trailing_or_doubled_underscore() {
     for bad in ["_jack", "jack_", "ja__ck"] {
         assert_eq!(
             f.client.try_register(&f.alice, &name(&f.e, bad), &1),
-            Err(Ok(Error::BadSeparator)),
+            Err(Ok(err(Error::BadSeparator))),
             "expected {bad} to be refused"
         );
     }
@@ -162,14 +174,14 @@ fn refuses_a_reserved_name_and_its_underscored_disguise() {
 
     assert_eq!(
         f.client.try_register(&f.alice, &name(&f.e, "support"), &1),
-        Err(Ok(Error::Reserved))
+        Err(Ok(err(Error::Reserved)))
     );
     // Without stripping, `s_u_p_p_o_r_t` is a 13-character name at the cheapest
     // tier that reads as support in every screen that renders it.
     assert_eq!(
         f.client
             .try_register(&f.alice, &name(&f.e, "s_u_p_p_o_r_t"), &1),
-        Err(Ok(Error::Reserved))
+        Err(Ok(err(Error::Reserved)))
     );
 }
 
@@ -178,12 +190,12 @@ fn rejects_a_term_outside_one_to_five_years() {
     let f = setup();
     assert_eq!(
         f.client.try_register(&f.alice, &name(&f.e, "adebayo"), &0),
-        Err(Ok(Error::BadTerm))
+        Err(Ok(err(Error::BadTerm)))
     );
     assert_eq!(
         f.client
             .try_register(&f.alice, &name(&f.e, "adebayo"), &(MAX_TERM_YEARS + 1)),
-        Err(Ok(Error::BadTerm))
+        Err(Ok(err(Error::BadTerm)))
     );
 }
 
@@ -213,7 +225,7 @@ fn an_active_name_cannot_be_taken() {
     f.client.register(&f.alice, &name(&f.e, "adebayo"), &1);
     assert_eq!(
         f.client.try_register(&f.bob, &name(&f.e, "adebayo"), &1),
-        Err(Ok(Error::NameTaken))
+        Err(Ok(err(Error::NameTaken)))
     );
 }
 
@@ -299,7 +311,7 @@ fn a_stranger_cannot_take_a_name_during_recovery() {
         warp(&f, expiry + offset);
         assert_eq!(
             f.client.try_register(&f.bob, &n, &1),
-            Err(Ok(Error::InRecovery)),
+            Err(Ok(err(Error::InRecovery))),
             "bob took the name {offset}s into recovery"
         );
     }
@@ -418,7 +430,7 @@ fn a_renewal_cannot_push_the_term_past_the_maximum() {
     f.client.register(&f.alice, &n, &5);
     assert_eq!(
         f.client.try_renew(&f.alice, &n, &1),
-        Err(Ok(Error::TermTooLong))
+        Err(Ok(err(Error::TermTooLong)))
     );
 }
 
@@ -433,7 +445,7 @@ fn a_name_past_recovery_cannot_be_renewed() {
     warp(&f, start + YEAR_SECONDS + RECOVERY_SECONDS);
     assert_eq!(
         f.client.try_renew(&f.alice, &n, &1),
-        Err(Ok(Error::NameNotFound))
+        Err(Ok(err(Error::NameNotFound)))
     );
 }
 
@@ -442,7 +454,7 @@ fn an_unregistered_name_cannot_be_renewed() {
     let f = setup();
     assert_eq!(
         f.client.try_renew(&f.alice, &name(&f.e, "nobodyhasthis"), &1),
-        Err(Ok(Error::NameNotFound))
+        Err(Ok(err(Error::NameNotFound)))
     );
 }
 
@@ -468,7 +480,7 @@ fn an_expired_name_cannot_be_re_targeted() {
     warp(&f, start + YEAR_SECONDS);
     assert_eq!(
         f.client.try_set_target(&n, &f.bob),
-        Err(Ok(Error::NameNotFound))
+        Err(Ok(err(Error::NameNotFound)))
     );
 }
 
@@ -480,6 +492,93 @@ fn cannot_be_initialized_twice() {
     let other = Address::generate(&f.e);
     assert_eq!(
         f.client.try_initialize(&other, &f.usdc, &other),
-        Err(Ok(Error::AlreadyInitialized))
+        Err(Ok(err(Error::AlreadyInitialized)))
     );
+}
+
+// ───────────────────────── admin and upgrade ─────────────────────────
+//
+// The registry is upgradeable where the wallet is not, which buys the ability
+// to correct a price band after launch and costs a trusted admin. These tests
+// cover the gate and the hand-over, because those are what bound the cost.
+//
+// The successful WASM swap is deliberately not tested here: it needs a second
+// contract already uploaded to the ledger, and a unit test cannot upload this
+// crate's own build output. That path belongs to a deploy rehearsal on
+// testnet, not to `cargo test`.
+
+#[test]
+fn initialize_sets_the_admin_and_it_is_readable() {
+    let f = setup();
+    assert_eq!(f.client.get_admin(), f.admin);
+}
+
+#[test]
+fn admin_can_hand_the_role_to_a_successor() {
+    let f = setup();
+    let successor = Address::generate(&f.e);
+
+    f.client.set_admin(&successor);
+
+    // The whole point of the hand-over is that a multisig or timelock can hold
+    // the role, so the only thing that must be true afterwards is that the
+    // contract now names the successor.
+    assert_eq!(f.client.get_admin(), successor);
+}
+
+#[test]
+fn the_role_can_be_handed_on_more_than_once() {
+    let f = setup();
+    let second = Address::generate(&f.e);
+    let third = Address::generate(&f.e);
+
+    f.client.set_admin(&second);
+    f.client.set_admin(&third);
+
+    assert_eq!(f.client.get_admin(), third);
+}
+
+#[test]
+fn set_admin_needs_the_admin_signature() {
+    let f = setup();
+    let attacker = Address::generate(&f.e);
+
+    // `setup` calls `mock_all_auths`, which would make any admin-gated test
+    // vacuous. Clearing the auths for the next invocation is what actually
+    // exercises the gate.
+    f.e.set_auths(&[]);
+    assert!(f.client.try_set_admin(&attacker).is_err());
+
+    assert_eq!(f.client.get_admin(), f.admin);
+}
+
+#[test]
+fn upgrade_needs_the_admin_signature() {
+    let f = setup();
+
+    // `require_auth` runs before the WASM is swapped, so an unauthorised call
+    // fails without ever touching the (here nonexistent) target hash.
+    f.e.set_auths(&[]);
+    assert!(f
+        .client
+        .try_upgrade(&BytesN::from_array(&f.e, &[0u8; 32]))
+        .is_err());
+}
+
+#[test]
+fn reserve_needs_the_admin_signature() {
+    let f = setup();
+    let n = name(&f.e, "partnerbrand");
+
+    f.e.set_auths(&[]);
+    assert!(f.client.try_reserve(&n).is_err());
+
+    // `set_auths` stays in force for every later invocation, so mocking has to
+    // be turned back on or the registration below fails for the wrong reason.
+    f.e.mock_all_auths();
+
+    // Still registrable by an ordinary user, which is the observable proof the
+    // unauthorised reserve did not land.
+    f.client.register(&f.alice, &n, &1);
+    assert_eq!(f.client.resolve(&n), Some(f.alice.clone()));
 }
