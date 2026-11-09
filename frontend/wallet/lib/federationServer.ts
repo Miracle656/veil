@@ -41,6 +41,7 @@
  */
 
 import { namesContractIdFor } from './namesContractId'
+import { mainnetUpstreams } from './rpcFailover'
 
 import {
   Account,
@@ -87,15 +88,16 @@ function serverNetwork(): ServerNetwork {
     return {
       name,
       networkPassphrase: Networks.PUBLIC,
-      // `resolveMainnetRpcUrl()` in ./network.ts returns the same-origin proxy
-      // `/api/rpc/mainnet`, and an empty string when there is no `window` —
-      // which is always, here. The proxy's own upstream is the server-side
-      // `MAINNET_RPC_URL`, so this reads that directly rather than asking the
-      // server to proxy to itself.
-      rpcUrl:
-        process.env.MAINNET_RPC_URL?.trim()
-        || process.env.NEXT_PUBLIC_MAINNET_RPC_URL?.trim()
-        || '',
+      // The same list `/api/rpc/mainnet` forwards to, not a bespoke env read.
+      //
+      // `resolveMainnetRpcUrl()` in ./network.ts returns that proxy's path and
+      // an empty string when there is no `window` — which is always, here. The
+      // first version of this reached past the proxy for `MAINNET_RPC_URL`
+      // directly, on the assumption that a working proxy meant the variable
+      // was set. It does not: `mainnetUpstreams()` falls back to public
+      // endpoints, so the proxy answered while this read an empty string and
+      // every federation lookup gave up before making a request.
+      rpcUrl: mainnetUpstreams()[0] ?? '',
     }
   }
 
