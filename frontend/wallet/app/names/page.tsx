@@ -247,15 +247,20 @@ export default function NamesPage() {
           </p>
 
           <div className="mt-9">
-            <label htmlFor="name-search" className="sr-only">
-              Search for a Veil name
-            </label>
             {/* 76px tall, and the suffix is fixed text rather than part of the
                 placeholder, so `*useveilapp.xyz` stays put and the caret sits
                 against the name being typed. Inconsolata is monospaced, which
                 makes `ch` an exact measure — the input can be sized to its own
                 content without measuring anything in JavaScript. */}
-            <div className="flex h-[76px] cursor-text items-center gap-[14px] rounded-pill border border-border-dim bg-[#161616] pl-6 pr-[14px] transition-colors focus-within:border-gold/50">
+            {/* A <label>, not a <div>. The input is only as wide as its own
+                content — about 120px of a 760px bar — so with a div the other
+                85% of the bar swallowed the click and nothing focused. The
+                `cursor-text` was telling the truth about the intent and
+                lying about the behaviour. */}
+            <label
+              htmlFor="name-search"
+              className="flex h-[76px] cursor-text items-center gap-[14px] rounded-pill border border-border-dim bg-[#161616] pl-6 pr-[14px] transition-colors focus-within:border-gold/50"
+            >
               <svg
                 className="h-[22px] w-[22px] shrink-0 text-off-white/50"
                 viewBox="0 0 24 24"
@@ -280,6 +285,7 @@ export default function NamesPage() {
                     setQuery(e.target.value.replace(SUFFIX, '').replace(/\*.*$/, ''))
                   }
                   placeholder="yourname"
+                  aria-label="Search for a Veil name"
                   autoComplete="off"
                   autoCapitalize="none"
                   spellCheck={false}
@@ -291,7 +297,7 @@ export default function NamesPage() {
                   {SUFFIX}
                 </span>
               </span>
-            </div>
+            </label>
 
             <p className="mt-3 text-sm text-off-white/50" aria-live="polite">
               {problem

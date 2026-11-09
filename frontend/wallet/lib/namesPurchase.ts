@@ -188,20 +188,61 @@ export type ChainAvailability =
   | 'unknown'
 
 /**
- * Ask the contract whether this wallet could register this name, by simulating
- * the real `register` call.
+ * Read a `register` failure for a name `state()` has already said is **Open**.
  *
- * Simulation runs in *recording* auth mode, which does not execute
- * `__check_auth` — so this answers without prompting for a passkey, while
- * still exercising every check the real call makes: the charset and length
- * rules, the reserved list, whether the name is held or inside somebody's
- * recovery window, and whether the buyer can actually pay, since the USDC
- * transfer happens inside `register`.
+ * Exported so the error-table collision stays pinned by a test. `register`
+ * calls the USDC SAC, and the two contracts number their errors
+ * independently: SAC `BalanceError` is 10 where veil-names `InRecovery` is 10,
+ * and SAC `TrustlineMissingError` is 13 where veil-names `TermTooLong` is 13.
+ * Trusting the code without knowing which contract raised it reported a free
+ * name as lapsed.
  *
- * That is the whole reason to ask this way rather than reading `state(name)`.
- * `state` cannot see the reserved list — the contract exposes no getter for it
- * — and cannot see the buyer's balance at all, so a name could read as
- * available and still fail the moment somebody approved it with a fingerprint.
+ * The caller has already established the name is Open, and veil-names raises
+ * every one of its own register errors before reaching the transfer. So only
+ * the shape, reserved and term codes can be its; anything else is the SAC
+ * saying the buyer cannot pay.
+ */
+export function interpretOpenNameFailure(code: string | undefined): ChainAvailability {
+  switch (code) {
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '8':
+      return 'invalid'
+    case '7':
+      return 'reserved'
+    default:
+      return 'insufficient_funds'
+  }
+}
+
+/**
+ * Ask the contract whether this wallet could register this name.
+ *
+ * Two calls, and the order matters.
+ *
+ * `state(name)` is asked **first** because it is unambiguous: Active, Recovery
+ * or Open, decided by the registry alone with no payment involved.
+ *
+ * Only then is `register` simulated, for the things `state` cannot see — the
+ * reserved list, which the contract exposes no getter for, and whether the
+ * buyer can actually pay, since the USDC transfer happens inside `register`.
+ * Simulation runs in recording auth mode, so it never prompts for a passkey.
+ *
+ * ## Why `register` alone is not enough
+ *
+ * Its failure carries `Error(Contract, #N)` — but **N belongs to whichever
+ * contract raised it**, and `register` calls the USDC SAC. The two error tables
+ * collide: SAC `BalanceError` is 10 and veil-names `InRecovery` is 10; SAC
+ * `TrustlineMissingError` is 13 and veil-names `TermTooLong` is 13. Reading the
+ * first code in the diagnostics reported a free name as lapsed, and told
+ * somebody only its previous holder could take it back.
+ *
+ * `state` settles it. veil-names raises 3–10 before it ever reaches the
+ * transfer, so once `state` says Open, codes 9 and 10 cannot have come from
+ * veil-names — anything outside the shape, reserved and term codes is the SAC
+ * saying the buyer cannot pay.
  */
 export async function checkNameAvailability(
   walletAddress: string,
@@ -214,6 +255,30 @@ export async function checkNameAvailability(
   const net = getNetwork()
   const rpc = new SorobanRpc.Server(net.rpcUrl)
 
+  // ── 1. Who holds it, if anyone ──────────────────────────────────────────
+  const state = await simulateRead(
+    rpc,
+    contractId,
+    'state',
+    [nativeToScVal(name, { type: 'string' })],
+    net.networkPassphrase,
+  )
+
+  // NameState: 0 Active, 1 Recovery, 2 Open.
+  if (state === 0) {
+    const holder = await simulateRead(
+      rpc,
+      contractId,
+      'resolve',
+      [nativeToScVal(name, { type: 'string' })],
+      net.networkPassphrase,
+    )
+    return holder === walletAddress ? 'yours' : 'taken'
+  }
+  if (state === 1) return 'in_recovery'
+  if (state !== 2) return 'unknown'
+
+  // ── 2. Open. Reserved? Affordable? ──────────────────────────────────────
   try {
     const tx = new TransactionBuilder(probeAccount(), {
       fee: inclusionFee(),
@@ -233,37 +298,7 @@ export async function checkNameAvailability(
     const sim = await rpc.simulateTransaction(tx)
     if (!SorobanRpc.Api.isSimulationError(sim)) return 'available'
 
-    const code = /Error\(Contract, #(\d+)\)/.exec(sim.error)?.[1]
-    switch (code) {
-      case '3':
-      case '4':
-      case '5':
-      case '6':
-      case '8':
-        return 'invalid'
-      case '7':
-        return 'reserved'
-      case '9': {
-        // Held — but possibly by this very wallet, moments after buying it.
-        // Reporting "belongs to another Veil wallet" for a name the user just
-        // paid for is worse than saying nothing, so ask who holds it.
-        const holder = await simulateRead(
-          rpc,
-          contractId,
-          'resolve',
-          [nativeToScVal(name, { type: 'string' })],
-          net.networkPassphrase,
-        )
-        return holder === walletAddress ? 'yours' : 'taken'
-      }
-      case '10':
-        return 'in_recovery'
-      default:
-        // A failed SAC transfer is the overwhelmingly likely other outcome,
-        // and it is worth naming rather than lumping into "unknown": the user
-        // can do something about it.
-        return /insufficient|balance/i.test(sim.error) ? 'insufficient_funds' : 'unknown'
-    }
+    return interpretOpenNameFailure(/Error\(Contract, #(\d+)\)/.exec(sim.error)?.[1])
   } catch {
     return 'unknown'
   }

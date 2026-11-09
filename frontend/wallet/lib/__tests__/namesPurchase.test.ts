@@ -7,7 +7,12 @@ import {
   TESTNET_NAMES_CONTRACT_ID,
   namesContractIdFor,
 } from '../namesContractId'
-import { NAME_ERROR_MESSAGES, formatUsdc, nameErrorMessage } from '../namesPurchase'
+import {
+  NAME_ERROR_MESSAGES,
+  formatUsdc,
+  interpretOpenNameFailure,
+  nameErrorMessage,
+} from '../namesPurchase'
 
 describe('namesContractIdFor', () => {
   const saved = { ...process.env }
@@ -130,5 +135,44 @@ describe('nameErrorMessage', () => {
     for (const code of [3, 4, 5, 6, 7, 8, 9, 10, 13]) {
       expect(NAME_ERROR_MESSAGES[code]).toBeTruthy()
     }
+  })
+})
+
+describe('interpretOpenNameFailure', () => {
+  // These run only for a name `state()` has already reported as Open, which is
+  // what makes the SAC codes unambiguous.
+
+  it('reads the codes veil-names raises before the transfer', () => {
+    expect(interpretOpenNameFailure('3')).toBe('invalid') // too short
+    expect(interpretOpenNameFailure('4')).toBe('invalid') // too long
+    expect(interpretOpenNameFailure('5')).toBe('invalid') // charset
+    expect(interpretOpenNameFailure('6')).toBe('invalid') // separator
+    expect(interpretOpenNameFailure('8')).toBe('invalid') // term
+    expect(interpretOpenNameFailure('7')).toBe('reserved')
+  })
+
+  // The bug this exists for: `register` calls the USDC SAC, and the two
+  // contracts number their errors independently. Reading a code without
+  // knowing which contract raised it told somebody a name nobody has ever
+  // owned had "lapsed recently", and that only its previous holder could take
+  // it back.
+  it('never reports a SAC failure as a veil-names state', () => {
+    // SAC BalanceError is 10; veil-names InRecovery is also 10.
+    expect(interpretOpenNameFailure('10')).toBe('insufficient_funds')
+    expect(interpretOpenNameFailure('10')).not.toBe('in_recovery')
+
+    // SAC TrustlineMissingError is 13; veil-names TermTooLong is also 13.
+    expect(interpretOpenNameFailure('13')).toBe('insufficient_funds')
+
+    // veil-names NameTaken is 9, impossible once state() says Open.
+    expect(interpretOpenNameFailure('9')).toBe('insufficient_funds')
+    expect(interpretOpenNameFailure('9')).not.toBe('taken')
+  })
+
+  it('treats an unreadable failure as the buyer being unable to pay', () => {
+    // Open means nothing in veil-names can still refuse, so the transfer is
+    // the only step left that can fail.
+    expect(interpretOpenNameFailure(undefined)).toBe('insufficient_funds')
+    expect(interpretOpenNameFailure('999')).toBe('insufficient_funds')
   })
 })
