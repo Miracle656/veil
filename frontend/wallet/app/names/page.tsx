@@ -200,8 +200,15 @@ export default function NamesPage() {
   // can cover the difference. The second case is the common one: USDC lands on
   // the fee-payer and the contract starts empty.
   const needsTopUp = chainState === 'insufficient_funds' && funding !== null && !funding.short
+  // A name already held is not claimable, whoever holds it — including the
+  // person looking at it. Without the last two clauses the fee-payer route
+  // kept its button live after a successful purchase, offering to buy a name
+  // its owner had just paid for. The contract refused with NameTaken, so no
+  // second charge landed, but the offer should never have been made.
+  const alreadySettled = Boolean(boughtHash) || chainState === 'taken' || chainState === 'yours'
   const canBuy =
     (chainState === 'available' || needsTopUp || lockedOrigin !== null) &&
+    !alreadySettled &&
     !isBuying &&
     Boolean(walletAddress)
 
@@ -499,6 +506,12 @@ export default function NamesPage() {
                   origin permanently, so this browser can never sign for it —
                   but the fee-payer is an ordinary Stellar account and can buy
                   the name outright. */}
+              {boughtHash && lockedOrigin && (
+                <p className="mt-3 text-center text-sm text-off-white/50">
+                  It points at your fee-payer account, not your wallet contract — moving it is a
+                  one-way step for now, so it stays here until names work in the mobile app.
+                </p>
+              )}
               {lockedOrigin && !boughtHash && (
                 <p className="mt-3 text-center text-sm text-off-white/50">
                   This wallet was first used in the mobile app, so it can only be signed there.

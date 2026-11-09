@@ -97,16 +97,23 @@ describe('getNamesContractId', () => {
     process.env = { ...saved }
   })
 
-  it('is null with nothing configured, because the registry is not deployed', () => {
+  it('falls back to the deployed mainnet registry with nothing configured', () => {
+    // Written when this returned null, because no registry existed. One does
+    // now, its address is baked in like the factory's, and the server answers
+    // for mainnet unless told otherwise — so a fresh deployment resolves names
+    // with no configuration at all.
     delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID
     delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_MAINNET
     delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_TESTNET
-    expect(getNamesContractId()).toBeNull()
+    expect(getNamesContractId()).toBe('CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4')
   })
 
   it('treats a blank value as unset rather than as a contract id', () => {
+    // Blank must not be mistaken for an address; it falls through to the
+    // default rather than being used as one.
     process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID = '   '
-    expect(getNamesContractId()).toBeNull()
+    expect(getNamesContractId()).not.toBe('   ')
+    expect(getNamesContractId()).toBe('CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4')
   })
 
   it('reads the shared variable when no per-network one is set', () => {
@@ -154,5 +161,42 @@ describe('lookupFederationName', () => {
 
   it('treats an empty resolver answer as unregistered, not as an address', async () => {
     expect(await lookupFederationName('adebayo*useveilapp.xyz', async () => '')).toBeNull()
+  })
+})
+
+describe('which network the federation server answers for', () => {
+  const saved = { ...process.env }
+  afterEach(() => {
+    process.env = { ...saved }
+    jest.resetModules()
+  })
+
+  async function contractIdWith(network: string | undefined) {
+    jest.resetModules()
+    if (network === undefined) delete process.env.NEXT_PUBLIC_NETWORK
+    else process.env.NEXT_PUBLIC_NETWORK = network
+    delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID
+    delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_MAINNET
+    delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_TESTNET
+    const mod = await import('../federationServer')
+    return mod.getNamesContractId()
+  }
+
+  it('answers for mainnet when nothing says otherwise', async () => {
+    // The browser defaults to testnet because a person may have switched
+    // networks, and that choice lives in localStorage. A federation server has
+    // neither. Defaulting to testnet made every lookup 404 against a registry
+    // that does not exist there — including names just bought on mainnet.
+    const { MAINNET_NAMES_CONTRACT_ID } = await import('../namesContractId')
+    expect(await contractIdWith(undefined)).toBe(MAINNET_NAMES_CONTRACT_ID)
+  })
+
+  it('answers for mainnet when explicitly set to mainnet', async () => {
+    const { MAINNET_NAMES_CONTRACT_ID } = await import('../namesContractId')
+    expect(await contractIdWith('mainnet')).toBe(MAINNET_NAMES_CONTRACT_ID)
+  })
+
+  it('only drops to testnet when explicitly told to', async () => {
+    expect(await contractIdWith('testnet')).toBeNull()
   })
 })

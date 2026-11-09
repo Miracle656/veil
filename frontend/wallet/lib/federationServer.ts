@@ -73,7 +73,15 @@ interface ServerNetwork {
 }
 
 function serverNetwork(): ServerNetwork {
-  const name = process.env.NEXT_PUBLIC_NETWORK === 'mainnet' ? 'mainnet' : 'testnet'
+  // Mainnet unless told otherwise, which is the opposite of the browser's
+  // default and deliberately so. `getNetwork()` can fall back to testnet
+  // because a person switched networks in the UI and that choice lives in
+  // localStorage. A federation server has no localStorage and no person: it
+  // answers whoever published `FEDERATION_SERVER` in their stellar.toml, and
+  // that file names the production domain. Defaulting to testnet here made
+  // every lookup 404 against a registry that does not exist there, including
+  // names that had just been bought on mainnet.
+  const name = process.env.NEXT_PUBLIC_NETWORK === 'testnet' ? 'testnet' : 'mainnet'
 
   if (name === 'mainnet') {
     return {
