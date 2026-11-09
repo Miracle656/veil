@@ -1,6 +1,7 @@
 'use client'
 import { isNonSafariIOS } from '@/lib/iosBrowser'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
 
 export const dynamic = 'force-dynamic'
 
@@ -633,43 +634,8 @@ function DashboardPageContent() {
     setIsSweeping(true)
     setSweepError(null)
     try {
-      const signerSecret = walletSession.getItem('veil_signer_secret')
-        || walletLocal.getItem('veil_signer_secret')
-      if (!signerSecret) throw new Error('Signing key not found. Return to dashboard and tap "Set up fee-payer".')
-      const feePayerKp = Keypair.fromSecret(signerSecret)
-
-      const localSignAuthEntry = async (payload: Uint8Array): Promise<WebAuthnSignature | null> => {
-        const keyId        = walletLocal.getItem('invisible_wallet_key_id')
-        const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
-        if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
-
-        const challenge  = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer
-        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
-        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
-        const credIdBin  = atob(padded)
-        const credId     = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
-
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge,
-            allowCredentials: [{ id: credId, type: 'public-key' }],
-            userVerification: 'required',
-          },
-        }) as PublicKeyCredential | null
-
-        if (!assertion) return null
-
-        const response   = assertion.response as AuthenticatorAssertionResponse
-        const rawSig     = derToRawSignature(response.signature)
-        const publicKeyBytes = hexToUint8Array(publicKeyHex)
-
-        return {
-          publicKey:      publicKeyBytes,
-          authData:       new Uint8Array(response.authenticatorData),
-          clientDataJSON: new Uint8Array(response.clientDataJSON),
-          signature:      rawSig,
-        }
-      }
+      const feePayerKp = getFeePayerKeypair()
+      const localSignAuthEntry = buildSignAuthEntry()
 
       // Moving the contract's own balance is a call `__check_auth` answers, so
       // the contract must exist. Wallets are deployed on first use; funds can

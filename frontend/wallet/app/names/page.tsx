@@ -20,6 +20,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { walletSession } from '@/lib/walletStorage'
+import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
+import {
+  type ChainAvailability,
+  checkNameAvailability,
+  nameErrorMessage,
+  registerName,
+} from '@/lib/namesPurchase'
 import {
   MAX_NAME_LENGTH,
   MAX_TERM_YEARS,
@@ -100,6 +107,10 @@ export default function NamesPage() {
   const [availability, setAvailability] = useState<Availability | null>(null)
   const [years, setYears] = useState(MIN_TERM_YEARS)
   const latestLookup = useRef(0)
+  const [chainState, setChainState] = useState<ChainAvailability | null>(null)
+  const [isBuying, setIsBuying] = useState(false)
+  const [buyError, setBuyError] = useState<string | null>(null)
+  const [boughtHash, setBoughtHash] = useState<string | null>(null)
 
   useEffect(() => {
     setWalletAddress(walletSession.getItem('invisible_wallet_address'))
@@ -118,14 +129,70 @@ export default function NamesPage() {
       return
     }
     setAvailability('checking')
+    setChainState(null)
     const seq = ++latestLookup.current
     const timer = setTimeout(() => {
-      void lookupAvailability(name).then((state) => {
+      // With a wallet, ask the registry by simulating the real `register`
+      // call: it is the only answer that accounts for the reserved list and
+      // the buyer's USDC at once, and simulation never prompts for a passkey.
+      // Without one, fall back to the indexer — there is no buyer to simulate.
+      const lookup = walletAddress
+        ? checkNameAvailability(walletAddress, name, years).then((chain) => {
+            if (seq === latestLookup.current) setChainState(chain)
+            switch (chain) {
+              case 'available':
+              case 'insufficient_funds':
+                return 'available' as Availability
+              case 'yours':
+                return 'yours' as Availability
+              case 'taken':
+              case 'in_recovery':
+                return 'taken' as Availability
+              case 'reserved':
+                return 'reserved' as Availability
+              default:
+                return 'unknown' as Availability
+            }
+          })
+        : lookupAvailability(name)
+
+      void lookup.then((state) => {
         if (seq === latestLookup.current) setAvailability(state)
       })
     }, 350)
     return () => clearTimeout(timer)
-  }, [name, shapeOk])
+  }, [name, shapeOk, walletAddress, years])
+
+  const canBuy = chainState === 'available' && !isBuying && Boolean(walletAddress)
+
+  const handleBuy = async () => {
+    if (!walletAddress) return
+    setIsBuying(true)
+    setBuyError(null)
+    try {
+      const hash = await registerName({
+        walletAddress,
+        name,
+        years,
+        feePayerKeypair: getFeePayerKeypair(),
+        signAuthEntry: buildSignAuthEntry(),
+      })
+      setBoughtHash(hash)
+      setChainState('taken')
+      setAvailability('yours')
+    } catch (err: unknown) {
+      const raw = err instanceof Error ? err.message : String(err)
+      // A dismissed passkey prompt is not a failure worth a red error about a
+      // broken purchase — nothing was charged and nothing was signed.
+      if (/cancelled|NotAllowedError/i.test(raw)) {
+        setBuyError('Passkey verification was cancelled. Nothing was charged.')
+      } else {
+        setBuyError(nameErrorMessage(err) ?? raw)
+      }
+    } finally {
+      setIsBuying(false)
+    }
+  }
 
   const result = availability ? describeAvailability(availability, name) : null
   const perYear = shapeOk ? pricePerYear(name.length) : 0
@@ -299,16 +366,42 @@ export default function NamesPage() {
               ) : (
                 <button
                   type="button"
-                  disabled={!result.claimable}
+                  disabled={!canBuy}
+                  onClick={() => void handleBuy()}
                   className="w-full rounded-pill bg-gold px-6 py-3 font-semibold text-near-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-surface-md disabled:text-off-white/40"
                 >
-                  {availability === 'unknown' ? 'Not available yet' : 'Claim'}
+                  {isBuying
+                    ? 'Confirm with your passkey…'
+                    : chainState === 'insufficient_funds'
+                      ? `Not enough USDC — ${total} needed`
+                      : availability === 'unknown'
+                        ? 'Not available yet'
+                        : `Claim for ${total} USDC`}
                 </button>
               )}
-              {availability === 'unknown' && (
+              {boughtHash && (
+                <p className="mt-3 text-center text-sm text-gold">
+                  {name}{SUFFIX} is yours until {until}.
+                </p>
+              )}
+              {buyError && (
+                <p className="mt-3 text-center text-sm text-red-400">{buyError}</p>
+              )}
+              {chainState === 'insufficient_funds' && !buyError && (
                 <p className="mt-3 text-center text-sm text-off-white/50">
-                  Names are not on sale yet. Nothing can be claimed or paid for until the registry
-                  is live.
+                  This wallet needs {total} USDC to claim {name}{SUFFIX} for {years}{' '}
+                  {years === 1 ? 'year' : 'years'}.
+                </p>
+              )}
+              {chainState === 'in_recovery' && (
+                <p className="mt-3 text-center text-sm text-off-white/50">
+                  That name lapsed recently. For 90 days only its previous holder can take it
+                  back.
+                </p>
+              )}
+              {availability === 'unknown' && !walletAddress && (
+                <p className="mt-3 text-center text-sm text-off-white/50">
+                  Sign in to check whether a name is free and claim it.
                 </p>
               )}
             </div>

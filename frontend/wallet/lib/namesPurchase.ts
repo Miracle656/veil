@@ -176,6 +176,99 @@ export async function canAfford(
   return { ok: true, priceStroops, balanceStroops }
 }
 
+/** What the registry says about a name, read straight from the chain. */
+export type ChainAvailability =
+  | 'available'
+  | 'yours'
+  | 'taken'
+  | 'reserved'
+  | 'in_recovery'
+  | 'insufficient_funds'
+  | 'invalid'
+  | 'unknown'
+
+/**
+ * Ask the contract whether this wallet could register this name, by simulating
+ * the real `register` call.
+ *
+ * Simulation runs in *recording* auth mode, which does not execute
+ * `__check_auth` — so this answers without prompting for a passkey, while
+ * still exercising every check the real call makes: the charset and length
+ * rules, the reserved list, whether the name is held or inside somebody's
+ * recovery window, and whether the buyer can actually pay, since the USDC
+ * transfer happens inside `register`.
+ *
+ * That is the whole reason to ask this way rather than reading `state(name)`.
+ * `state` cannot see the reserved list — the contract exposes no getter for it
+ * — and cannot see the buyer's balance at all, so a name could read as
+ * available and still fail the moment somebody approved it with a fingerprint.
+ */
+export async function checkNameAvailability(
+  walletAddress: string,
+  name: string,
+  years: number,
+): Promise<ChainAvailability> {
+  const contractId = namesContractId()
+  if (!contractId) return 'unknown'
+
+  const net = getNetwork()
+  const rpc = new SorobanRpc.Server(net.rpcUrl)
+
+  try {
+    const tx = new TransactionBuilder(probeAccount(), {
+      fee: inclusionFee(),
+      networkPassphrase: net.networkPassphrase,
+    })
+      .addOperation(
+        new Contract(contractId).call(
+          'register',
+          nativeToScVal(walletAddress, { type: 'address' }),
+          nativeToScVal(name, { type: 'string' }),
+          nativeToScVal(years, { type: 'u32' }),
+        ),
+      )
+      .setTimeout(30)
+      .build()
+
+    const sim = await rpc.simulateTransaction(tx)
+    if (!SorobanRpc.Api.isSimulationError(sim)) return 'available'
+
+    const code = /Error\(Contract, #(\d+)\)/.exec(sim.error)?.[1]
+    switch (code) {
+      case '3':
+      case '4':
+      case '5':
+      case '6':
+      case '8':
+        return 'invalid'
+      case '7':
+        return 'reserved'
+      case '9': {
+        // Held — but possibly by this very wallet, moments after buying it.
+        // Reporting "belongs to another Veil wallet" for a name the user just
+        // paid for is worse than saying nothing, so ask who holds it.
+        const holder = await simulateRead(
+          rpc,
+          contractId,
+          'resolve',
+          [nativeToScVal(name, { type: 'string' })],
+          net.networkPassphrase,
+        )
+        return holder === walletAddress ? 'yours' : 'taken'
+      }
+      case '10':
+        return 'in_recovery'
+      default:
+        // A failed SAC transfer is the overwhelmingly likely other outcome,
+        // and it is worth naming rather than lumping into "unknown": the user
+        // can do something about it.
+        return /insufficient|balance/i.test(sim.error) ? 'insufficient_funds' : 'unknown'
+    }
+  } catch {
+    return 'unknown'
+  }
+}
+
 export interface RegisterNameParams {
   /** The `C…` Veil wallet buying the name. */
   walletAddress: string
