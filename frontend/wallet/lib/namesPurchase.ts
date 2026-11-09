@@ -314,7 +314,17 @@ export async function checkNameAvailability(
       usdcBalance(walletAddress),
       quoteFromChain(name, years),
     ])
-    if (balance !== null && price !== null && balance < price) return 'insufficient_funds'
+    if (balance !== null && price !== null && balance < price) {
+      // Log both sides. "Not enough USDC" against a wallet its owner knows is
+      // funded usually means the balance was read somewhere other than where
+      // the money is, and that is only visible with the address beside it.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[names] ${walletAddress} holds ${balance} stroops of USDC via SAC ${getUsdcSacId()}; ` +
+          `${name} for ${years}y costs ${price}`,
+      )
+      return 'insufficient_funds'
+    }
 
     // Funded, and still refused. Surfacing the raw failure is the only honest
     // move: the user is told it could not be checked, and the reason is in the

@@ -24,8 +24,10 @@ import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
 import {
   type ChainAvailability,
   checkNameAvailability,
+  formatUsdc,
   nameErrorMessage,
   registerName,
+  usdcBalance,
 } from '@/lib/namesPurchase'
 import {
   MAX_NAME_LENGTH,
@@ -112,6 +114,7 @@ export default function NamesPage() {
   const [buyError, setBuyError] = useState<string | null>(null)
   const [boughtHash, setBoughtHash] = useState<string | null>(null)
   const [demoMode, setDemoMode] = useState<'address' | 'name'>('address')
+  const [balanceUsdc, setBalanceUsdc] = useState<string | null>(null)
 
   useEffect(() => {
     setWalletAddress(walletSession.getItem('invisible_wallet_address'))
@@ -138,8 +141,19 @@ export default function NamesPage() {
       // the buyer's USDC at once, and simulation never prompts for a passkey.
       // Without one, fall back to the indexer — there is no buyer to simulate.
       const lookup = walletAddress
-        ? checkNameAvailability(walletAddress, name, years).then((chain) => {
+        ? checkNameAvailability(walletAddress, name, years).then(async (chain) => {
             if (seq === latestLookup.current) setChainState(chain)
+            if (chain === 'insufficient_funds') {
+              // Read it again for display. The check already compared the two,
+              // but the number it compared never reached the screen, which is
+              // what made "not enough USDC" impossible to argue with.
+              const stroops = await usdcBalance(walletAddress)
+              if (seq === latestLookup.current) {
+                setBalanceUsdc(stroops === null ? null : formatUsdc(stroops))
+              }
+            } else if (seq === latestLookup.current) {
+              setBalanceUsdc(null)
+            }
             switch (chain) {
               case 'available':
               case 'insufficient_funds':
@@ -418,9 +432,14 @@ export default function NamesPage() {
                 <p className="mt-3 text-center text-sm text-red-400">{buyError}</p>
               )}
               {chainState === 'insufficient_funds' && !buyError && (
+                /* Says what it read, not just what it wanted. "Not enough USDC"
+                   on a wallet the owner knows is funded is unarguable and
+                   undiagnosable; the balance beside it turns a dead end into
+                   something checkable. */
                 <p className="mt-3 text-center text-sm text-off-white/50">
                   This wallet needs {total} USDC to claim {name}{SUFFIX} for {years}{' '}
-                  {years === 1 ? 'year' : 'years'}.
+                  {years === 1 ? 'year' : 'years'}
+                  {balanceUsdc !== null ? ` — it holds ${balanceUsdc} USDC.` : '.'}
                 </p>
               )}
               {chainState === 'in_recovery' && (
@@ -589,13 +608,13 @@ export default function NamesPage() {
             <div className="flex flex-col gap-5">
               <p className="font-anton text-[14px] uppercase tracking-[0.14em] text-gold">Pricing</p>
               <h2 className="font-lora text-[clamp(36px,4.2vw,56px)] font-semibold italic leading-[1.06] tracking-[-0.02em]">
-                Priced by demand, not length.
+                Mid-length names cost the most.
               </h2>
             </div>
             <p className="max-w-[430px] text-[16px] leading-[1.6] text-off-white/[0.64] text-pretty">
-              Six to ten characters costs the most, because that is where real first names sit.
-              Prices are set in USDC. You pay from your Veil wallet with your passkey, and Veil
-              covers the network fee.
+              Length sets the price, but not in a straight line: six to ten characters cost
+              the most, because that is where real first names sit. Prices are set in USDC. You
+              pay from your Veil wallet with your passkey, and Veil covers the network fee.
             </p>
           </div>
 
