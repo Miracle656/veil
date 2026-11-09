@@ -40,6 +40,8 @@
  * marketed as an address you can give anyone — see `docs/IDENTIFIER_ADDRESSES.md`.
  */
 
+import { namesContractIdFor } from './namesContractId'
+
 import {
   Account,
   BASE_FEE,
@@ -149,20 +151,12 @@ export function parseFederationName(q: string): ParsedFederationName | null {
 /**
  * The deployed names registry, or null when there is not one on this network.
  *
- * Follows the `NEXT_PUBLIC_FACTORY_CONTRACT_ID` convention in `./network.ts` —
- * a per-network variable winning over a shared one. There is deliberately no
- * baked-in default: the registry is not deployed, and a hardcoded placeholder
- * would make this module answer with confidence about a contract that does not
- * exist.
+ * The address itself lives in `./namesContractId.ts`, shared with the `/names`
+ * page — the server resolves names and the browser buys them, and a contract
+ * address written in both places is one that will eventually differ.
  */
 export function getNamesContractId(): string | null {
-  const perNetwork =
-    serverNetwork().name === 'mainnet'
-      ? process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_MAINNET?.trim()
-      : process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_TESTNET?.trim()
-
-  const id = perNetwork || process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID?.trim()
-  return id && id.length > 0 ? id : null
+  return namesContractIdFor(serverNetwork().name)
 }
 
 /** Resolves a bare name to the address holding it, or null. */

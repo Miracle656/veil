@@ -46,6 +46,7 @@ describe('NAV_MAIN', () => {
     '/bills',
     '/dapps',
     '/agent',
+    '/names',
   ]
 
   it.each(expectedDestinations)(
@@ -55,8 +56,11 @@ describe('NAV_MAIN', () => {
     },
   )
 
-  it('has exactly ten primary destinations', () => {
-    expect(NAV_MAIN).toHaveLength(10)
+  // The count is pinned so an addition is a decision rather than a drift. It
+  // went from ten to eleven when /names landed, which a drawer can carry —
+  // every entry has a visible label — where the old ten-glyph strip could not.
+  it('lists every primary destination and no more', () => {
+    expect(NAV_MAIN).toHaveLength(expectedDestinations.length)
   })
 })
 
