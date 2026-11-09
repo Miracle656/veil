@@ -70,19 +70,29 @@ import {
 interface ServerNetwork {
   name: 'mainnet' | 'testnet'
   networkPassphrase: string
-  rpcUrl: string
+  /** Every endpoint worth trying, in order. */
+  rpcUrls: string[]
 }
 
 function serverNetwork(): ServerNetwork {
-  // Mainnet unless told otherwise, which is the opposite of the browser's
-  // default and deliberately so. `getNetwork()` can fall back to testnet
-  // because a person switched networks in the UI and that choice lives in
-  // localStorage. A federation server has no localStorage and no person: it
-  // answers whoever published `FEDERATION_SERVER` in their stellar.toml, and
-  // that file names the production domain. Defaulting to testnet here made
-  // every lookup 404 against a registry that does not exist there, including
-  // names that had just been bought on mainnet.
-  const name = process.env.NEXT_PUBLIC_NETWORK === 'testnet' ? 'testnet' : 'mainnet'
+  // Mainnet unless a **server-side** variable says otherwise, and deliberately
+  // not `NEXT_PUBLIC_NETWORK`.
+  //
+  // Two reasons. First, the browser's default is a person's choice, kept in
+  // localStorage; a federation server has neither a person nor localStorage,
+  // and answers whoever read `FEDERATION_SERVER` out of a stellar.toml — a
+  // file that names the production domain.
+  //
+  // Second, and the one that actually bit: `NEXT_PUBLIC_*` is **inlined at
+  // build time**. A repository `.env.local` carrying `NEXT_PUBLIC_NETWORK=
+  // testnet` is compiled into the server bundle, so this route answered for
+  // testnet no matter what the running deployment was configured to do, and
+  // no amount of setting the variable afterwards would change it. Every
+  // lookup 404'd against a registry that does not exist on testnet.
+  //
+  // `VEIL_FEDERATION_NETWORK` is read at runtime, so a deployment can be
+  // pointed elsewhere without a rebuild, and the default needs no config.
+  const name = process.env.VEIL_FEDERATION_NETWORK === 'testnet' ? 'testnet' : 'mainnet'
 
   if (name === 'mainnet') {
     return {
@@ -97,17 +107,18 @@ function serverNetwork(): ServerNetwork {
       // was set. It does not: `mainnetUpstreams()` falls back to public
       // endpoints, so the proxy answered while this read an empty string and
       // every federation lookup gave up before making a request.
-      rpcUrl: mainnetUpstreams()[0] ?? '',
+      rpcUrls: mainnetUpstreams(),
     }
   }
 
   return {
     name,
     networkPassphrase: Networks.TESTNET,
-    rpcUrl:
+    rpcUrls: [
       process.env.NEXT_PUBLIC_SOROBAN_RPC_URL?.trim()
-      || process.env.NEXT_PUBLIC_RPC_URL?.trim()
-      || 'https://soroban-testnet.stellar.org',
+        || process.env.NEXT_PUBLIC_RPC_URL?.trim()
+        || 'https://soroban-testnet.stellar.org',
+    ],
   }
 }
 
@@ -190,36 +201,57 @@ export async function resolveOnChain(name: string): Promise<string | null> {
   const contractId = getNamesContractId()
   if (!contractId) return null
 
-  try {
-    const network = serverNetwork()
-    // No RPC configured means no way to read the registry. Returning null is
-    // a 404 — "no such name" — which is the honest half of what is true.
-    if (!network.rpcUrl) return null
+  const network = serverNetwork()
+  const upstreams = network.rpcUrls
+  if (upstreams.length === 0) return null
 
-    const server = new SorobanRpc.Server(network.rpcUrl)
-    const contract = new Contract(contractId)
+  // Every upstream in turn, not just the first.
+  //
+  // One attempt was enough to make this route answer "no such name" for a name
+  // that plainly existed: the first endpoint in the list failed the TLS
+  // handshake from inside the server runtime (`EPROTO`, SSL alert 80) while
+  // being perfectly reachable from a plain script. A federation server that
+  // reports a name as unregistered because one provider was unreachable is
+  // worse than one that is down — the answer looks authoritative.
+  let sawTransportFailure = false
 
-    // Any valid account works as a simulation source; this one is the
-    // all-zero ed25519 key, which cannot sign and never needs to.
-    const source = new Account('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', '0')
+  for (const rpcUrl of upstreams) {
+    try {
+      const server = new SorobanRpc.Server(rpcUrl)
+      const contract = new Contract(contractId)
 
-    const tx = new TransactionBuilder(source, {
-      fee: BASE_FEE,
-      networkPassphrase: network.networkPassphrase,
-    })
-      .addOperation(contract.call('resolve', nativeToScVal(name, { type: 'string' })))
-      .setTimeout(30)
-      .build()
+      // Any valid account works as a simulation source; this one is the
+      // all-zero ed25519 key, which cannot sign and never needs to.
+      const source = new Account('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', '0')
 
-    const sim = await server.simulateTransaction(tx)
-    if (!SorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) return null
+      const tx = new TransactionBuilder(source, {
+        fee: BASE_FEE,
+        networkPassphrase: network.networkPassphrase,
+      })
+        .addOperation(contract.call('resolve', nativeToScVal(name, { type: 'string' })))
+        .setTimeout(30)
+        .build()
 
-    // `resolve` returns `Option<Address>`; a `None` natives to null/undefined.
-    const value = scValToNative(sim.result.retval)
-    return typeof value === 'string' && value.length > 0 ? value : null
-  } catch {
-    return null
+      const sim = await server.simulateTransaction(tx)
+      if (!SorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) {
+        // The chain answered and the answer was "no". That is a real result,
+        // not a transport problem, so no other provider would say otherwise.
+        return null
+      }
+
+      // `resolve` returns `Option<Address>`; a `None` natives to null/undefined.
+      const value = scValToNative(sim.result.retval)
+      return typeof value === 'string' && value.length > 0 ? value : null
+    } catch {
+      sawTransportFailure = true
+    }
   }
+
+  if (sawTransportFailure) {
+    // eslint-disable-next-line no-console
+    console.warn(`[federation] every RPC upstream failed resolving ${name}`)
+  }
+  return null
 }
 
 /** A SEP-2 `type=name` answer. */

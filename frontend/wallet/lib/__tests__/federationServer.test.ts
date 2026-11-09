@@ -165,6 +165,9 @@ describe('lookupFederationName', () => {
 })
 
 describe('which network the federation server answers for', () => {
+  // Read at runtime, never NEXT_PUBLIC_*: those are inlined at build time, so
+  // a repository .env.local was baked into the server bundle and pinned this
+  // route to testnet regardless of how the deployment was configured.
   const saved = { ...process.env }
   afterEach(() => {
     process.env = { ...saved }
@@ -173,8 +176,8 @@ describe('which network the federation server answers for', () => {
 
   async function contractIdWith(network: string | undefined) {
     jest.resetModules()
-    if (network === undefined) delete process.env.NEXT_PUBLIC_NETWORK
-    else process.env.NEXT_PUBLIC_NETWORK = network
+    if (network === undefined) delete process.env.VEIL_FEDERATION_NETWORK
+    else process.env.VEIL_FEDERATION_NETWORK = network
     delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID
     delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_MAINNET
     delete process.env.NEXT_PUBLIC_NAMES_CONTRACT_ID_TESTNET
