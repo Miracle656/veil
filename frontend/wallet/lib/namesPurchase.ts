@@ -32,7 +32,7 @@ import type { WebAuthnSignature } from '@veil/sdk'
 
 import { inclusionFee } from './fees'
 import { namesContractIdFor } from './namesContractId'
-import { invokeAsWallet, type AuthEntrySigner } from './walletInvoke'
+import { invokeAsFeePayer, invokeAsWallet, type AuthEntrySigner } from './walletInvoke'
 import { getNetwork } from './network'
 
 /** The registry on whichever network the browser is pointed at. */
@@ -334,6 +334,86 @@ export async function checkNameAvailability(
     return 'unknown'
   } catch {
     return 'unknown'
+  }
+}
+
+/**
+ * Move USDC from the fee-payer into the wallet contract.
+ *
+ * A Veil wallet keeps two balances: the `C…` contract, which is the wallet
+ * proper, and the `G…` fee-payer that pays network fees. The dashboard sums
+ * XLM across both but lists every other asset from the fee-payer alone, so
+ * USDC bought or swapped lands on the `G…` and the contract shows nothing —
+ * which is how somebody can be certain they hold plenty and still be unable to
+ * buy a name.
+ *
+ * `register` spends from the contract, so the money has to be there. A classic
+ * payment cannot address a contract, so this goes through the USDC SAC, signed
+ * by the fee-payer.
+ */
+export async function topUpWalletUsdc(params: {
+  walletAddress: string
+  feePayerKeypair: Keypair
+  amountStroops: bigint
+}): Promise<string> {
+  const sacId = getUsdcSacId()
+  if (!sacId) throw new Error('No USDC contract is configured for this network.')
+
+  const net = getNetwork()
+  return invokeAsFeePayer({
+    contractId: sacId,
+    method: 'transfer',
+    args: [
+      nativeToScVal(params.feePayerKeypair.publicKey(), { type: 'address' }),
+      nativeToScVal(params.walletAddress, { type: 'address' }),
+      nativeToScVal(params.amountStroops, { type: 'i128' }),
+    ],
+    feePayerKeypair: params.feePayerKeypair,
+    rpcUrl: net.rpcUrl,
+    networkPassphrase: net.networkPassphrase,
+    label: 'names-topup',
+  })
+}
+
+/** Where the money is, and whether a purchase can be completed from it. */
+export interface FundingPlan {
+  priceStroops: bigint
+  walletStroops: bigint
+  feePayerStroops: bigint
+  /** Shortfall on the contract; 0n when it can already pay. */
+  topUpStroops: bigint
+  /** True when contract + fee-payer together still fall short. */
+  short: boolean
+}
+
+/**
+ * Read both balances and work out what a purchase needs.
+ *
+ * The SAC answers for a classic account too — it reads the trustline — so one
+ * code path covers the `C…` contract and the `G…` fee-payer.
+ */
+export async function planFunding(
+  walletAddress: string,
+  feePayerAddress: string,
+  name: string,
+  years: number,
+): Promise<FundingPlan | null> {
+  const [price, wallet, feePayer] = await Promise.all([
+    quoteFromChain(name, years),
+    usdcBalance(walletAddress),
+    usdcBalance(feePayerAddress),
+  ])
+  if (price === null || wallet === null) return null
+
+  const feePayerStroops = feePayer ?? 0n
+  const topUpStroops = wallet >= price ? 0n : price - wallet
+
+  return {
+    priceStroops: price,
+    walletStroops: wallet,
+    feePayerStroops,
+    topUpStroops,
+    short: topUpStroops > feePayerStroops,
   }
 }
 

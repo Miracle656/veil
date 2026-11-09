@@ -23,11 +23,13 @@ import { walletSession } from '@/lib/walletStorage'
 import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
 import {
   type ChainAvailability,
+  type FundingPlan,
   checkNameAvailability,
   formatUsdc,
   nameErrorMessage,
+  planFunding,
   registerName,
-  usdcBalance,
+  topUpWalletUsdc,
 } from '@/lib/namesPurchase'
 import {
   MAX_NAME_LENGTH,
@@ -114,7 +116,8 @@ export default function NamesPage() {
   const [buyError, setBuyError] = useState<string | null>(null)
   const [boughtHash, setBoughtHash] = useState<string | null>(null)
   const [demoMode, setDemoMode] = useState<'address' | 'name'>('address')
-  const [balanceUsdc, setBalanceUsdc] = useState<string | null>(null)
+  const [funding, setFunding] = useState<FundingPlan | null>(null)
+  const [topUpStage, setTopUpStage] = useState(false)
 
   useEffect(() => {
     setWalletAddress(walletSession.getItem('invisible_wallet_address'))
@@ -144,15 +147,22 @@ export default function NamesPage() {
         ? checkNameAvailability(walletAddress, name, years).then(async (chain) => {
             if (seq === latestLookup.current) setChainState(chain)
             if (chain === 'insufficient_funds') {
-              // Read it again for display. The check already compared the two,
-              // but the number it compared never reached the screen, which is
-              // what made "not enough USDC" impossible to argue with.
-              const stroops = await usdcBalance(walletAddress)
-              if (seq === latestLookup.current) {
-                setBalanceUsdc(stroops === null ? null : formatUsdc(stroops))
+              // The contract cannot pay. That does not mean the user cannot:
+              // USDC bought or swapped lands on the fee-payer, and the
+              // dashboard has been showing them that balance all along. Look
+              // at both before telling anybody they are short.
+              let feePayer: string | null = null
+              try {
+                feePayer = getFeePayerKeypair().publicKey()
+              } catch {
+                feePayer = null
               }
+              const plan = feePayer
+                ? await planFunding(walletAddress, feePayer, name, years)
+                : null
+              if (seq === latestLookup.current) setFunding(plan)
             } else if (seq === latestLookup.current) {
-              setBalanceUsdc(null)
+              setFunding(null)
             }
             switch (chain) {
               case 'available':
@@ -178,13 +188,30 @@ export default function NamesPage() {
     return () => clearTimeout(timer)
   }, [name, shapeOk, walletAddress, years])
 
-  const canBuy = chainState === 'available' && !isBuying && Boolean(walletAddress)
+  // A purchase is possible when the contract can pay, or when the fee-payer
+  // can cover the difference. The second case is the common one: USDC lands on
+  // the fee-payer and the contract starts empty.
+  const needsTopUp = chainState === 'insufficient_funds' && funding !== null && !funding.short
+  const canBuy = (chainState === 'available' || needsTopUp) && !isBuying && Boolean(walletAddress)
 
   const handleBuy = async () => {
     if (!walletAddress) return
     setIsBuying(true)
     setBuyError(null)
     try {
+      // Move the shortfall into the contract first. Two transactions, one
+      // button: nobody should have to learn that their wallet keeps money in
+      // two places before they can buy a name.
+      if (needsTopUp && funding && funding.topUpStroops > 0n) {
+        setTopUpStage(true)
+        await topUpWalletUsdc({
+          walletAddress,
+          feePayerKeypair: getFeePayerKeypair(),
+          amountStroops: funding.topUpStroops,
+        })
+        setTopUpStage(false)
+      }
+
       const hash = await registerName({
         walletAddress,
         name,
@@ -206,6 +233,7 @@ export default function NamesPage() {
       }
     } finally {
       setIsBuying(false)
+      setTopUpStage(false)
     }
   }
 
@@ -415,12 +443,16 @@ export default function NamesPage() {
                   className="w-full rounded-pill bg-gold px-6 py-3 font-semibold text-near-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:bg-surface-md disabled:text-off-white/40"
                 >
                   {isBuying
-                    ? 'Confirm with your passkey…'
-                    : chainState === 'insufficient_funds'
-                      ? `Not enough USDC — ${total} needed`
-                      : availability === 'unknown'
-                        ? 'Could not check'
-                        : `Claim for ${total} USDC`}
+                    ? topUpStage
+                      ? 'Moving USDC into your wallet…'
+                      : 'Confirm with your passkey…'
+                    : needsTopUp
+                      ? `Top up and claim for ${total} USDC`
+                      : chainState === 'insufficient_funds'
+                        ? `Not enough USDC — ${total} needed`
+                        : availability === 'unknown'
+                          ? 'Could not check'
+                          : `Claim for ${total} USDC`}
                 </button>
               )}
               {boughtHash && (
@@ -431,7 +463,14 @@ export default function NamesPage() {
               {buyError && (
                 <p className="mt-3 text-center text-sm text-red-400">{buyError}</p>
               )}
-              {chainState === 'insufficient_funds' && !buyError && (
+              {needsTopUp && funding && !buyError && (
+                <p className="mt-3 text-center text-sm text-off-white/50">
+                  {formatUsdc(funding.topUpStroops)} USDC will move from your fee-payer into your
+                  wallet first — your wallet holds {formatUsdc(funding.walletStroops)} of the{' '}
+                  {total} needed.
+                </p>
+              )}
+              {chainState === 'insufficient_funds' && !needsTopUp && !buyError && (
                 /* Says what it read, not just what it wanted. "Not enough USDC"
                    on a wallet the owner knows is funded is unarguable and
                    undiagnosable; the balance beside it turns a dead end into
@@ -439,7 +478,9 @@ export default function NamesPage() {
                 <p className="mt-3 text-center text-sm text-off-white/50">
                   This wallet needs {total} USDC to claim {name}{SUFFIX} for {years}{' '}
                   {years === 1 ? 'year' : 'years'}
-                  {balanceUsdc !== null ? ` — it holds ${balanceUsdc} USDC.` : '.'}
+                  {funding !== null
+                    ? ` — it holds ${formatUsdc(funding.walletStroops)}, and your fee-payer ${formatUsdc(funding.feePayerStroops)}.`
+                    : '.'}
                 </p>
               )}
               {chainState === 'in_recovery' && (

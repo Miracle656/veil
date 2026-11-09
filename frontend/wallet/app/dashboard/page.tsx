@@ -44,6 +44,7 @@ const network = getNetwork()
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 import type { WalletAsset } from '@/lib/walletTypes'
+import { mergeAssetBalances, readContractAssetBalances } from '@/lib/contractAssets'
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -420,10 +421,16 @@ function DashboardPageContent() {
     }
 
     // ── 5. Combine and display ───────────────────────────────────────────────
+    // XLM was already summed across the contract and the fee-payer; every
+    // other asset came from the fee-payer alone. So USDC sitting in the wallet
+    // contract was invisible, and a wallet could show plenty while the
+    // contract that actually spends it held nothing — which is exactly what
+    // happened the first time somebody tried to buy a name.
+    const contractAssets = await readContractAssetBalances(walletAddress, otherAssets)
     const totalXlm = (contractXlm + feePayerXlm).toFixed(7)
     const finalAssets: WalletAsset[] = [
       { code: 'XLM', issuer: null, balance: totalXlm },
-      ...otherAssets,
+      ...mergeAssetBalances(otherAssets, contractAssets),
     ]
     cachedAssets = finalAssets
     setAssets(finalAssets)

@@ -323,3 +323,67 @@ export async function invokeAsWallet(params: InvokeAsWalletParams): Promise<stri
 
   throw new Error('Transaction timed out — check status manually')
 }
+
+/**
+ * Invoke a contract as the **fee-payer**, a classic `G…` account.
+ *
+ * Far simpler than {@link invokeAsWallet}: a classic account authorises a
+ * Soroban call with an ordinary signature, so there is no `__check_auth`, no
+ * WebAuthn assertion, no nonce vector, and no enforce-mode re-simulation —
+ * nothing in the footprint depends on a contract's instance storage.
+ *
+ * This is the move that gets money *into* the wallet contract. A classic
+ * payment operation cannot address a `C…` account at all, so topping up a Veil
+ * wallet from its own fee-payer has to go through the asset's SAC.
+ */
+export async function invokeAsFeePayer(params: {
+  contractId: string
+  method: string
+  args: xdr.ScVal[]
+  feePayerKeypair: Keypair
+  rpcUrl: string
+  networkPassphrase: string
+  label?: string
+}): Promise<string> {
+  const { contractId, method, args, feePayerKeypair, rpcUrl, networkPassphrase } = params
+  const label = params.label ?? 'soroban'
+
+  const rpc = new SorobanRpc.Server(rpcUrl)
+  const source = await rpc.getAccount(feePayerKeypair.publicKey())
+
+  const tx = new TransactionBuilder(source, {
+    fee: inclusionFee(),
+    networkPassphrase,
+  })
+    .addOperation(new Contract(contractId).call(method, ...args))
+    .setTimeout(30)
+    .build()
+
+  const sim = await rpc.simulateTransaction(tx)
+  if (SorobanRpc.Api.isSimulationError(sim)) {
+    throw new Error(`Simulation failed: ${sim.error}`)
+  }
+
+  const assembled = SorobanRpc.assembleTransaction(tx, sim).build()
+  assembled.sign(feePayerKeypair)
+
+  const sendResult = await rpc.sendTransaction(assembled)
+  if (sendResult.status === 'ERROR') {
+    throw new Error(
+      `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown'}`,
+    )
+  }
+
+  for (let i = 0; i < 30; i++) {
+    const result = await rpc.getTransaction(sendResult.hash)
+    if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
+      if (result.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+        throw new Error(`Transaction failed: ${describeFailure(result, label)}`)
+      }
+      return sendResult.hash
+    }
+    await new Promise((r) => setTimeout(r, 1_000))
+  }
+
+  throw new Error('Transaction timed out — check status manually')
+}
