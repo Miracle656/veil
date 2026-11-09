@@ -217,25 +217,30 @@ export default function NamesPage() {
           <div className="absolute inset-0 bg-gradient-to-b from-transparent via-near-black/60 to-near-black" />
         </div>
 
-        <div className="relative mx-auto max-w-2xl text-center">
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.22em] text-gold">
+        <div className="relative mx-auto max-w-[760px] text-center">
+          <p className="font-anton text-[14px] uppercase tracking-[0.14em] text-gold">
             Veil Names
           </p>
-          <h1 className="mt-5 text-display-sm font-bold sm:text-display">
+          {/* Lora italic 600 for the whole line, not just the highlighted word:
+              the display face *is* the design here, and setting only "name" in
+              it left the headline reading as ordinary bold sans. */}
+          <h1 className="mt-5 font-lora text-[clamp(48px,7.2vw,86px)] font-semibold italic leading-[1.02] tracking-[-0.025em] text-balance">
             Get paid by{' '}
-            {/* The gold rule sits behind the word, so the word carries its own
-                stacking context rather than a negative z-index — `-z-10` drops
-                it behind the section background and it disappears. */}
-            <span className="relative isolate whitespace-nowrap font-lora italic">
-              <span
-                aria-hidden
-                className="absolute inset-x-0 bottom-[0.1em] z-0 h-[0.3em] bg-gold/70"
-              />
-              <span className="relative z-10">name</span>
+            {/* A highlighter band across the lower half of the word rather than
+                a rule under it. As a background gradient it needs no stacking
+                context, so the word cannot be painted behind the section. */}
+            <span
+              className="whitespace-nowrap px-[0.06em]"
+              style={{
+                background:
+                  'linear-gradient(180deg, rgba(253,218,36,0) 60%, rgba(253,218,36,0.42) 60%, rgba(253,218,36,0.42) 92%, rgba(253,218,36,0) 92%)',
+              }}
+            >
+              name
             </span>
             .
           </h1>
-          <p className="mx-auto mt-5 max-w-md text-base leading-relaxed text-off-white/70">
+          <p className="mx-auto mt-[22px] max-w-[520px] text-[clamp(16px,1.4vw,18px)] leading-[1.6] text-off-white/[0.64] text-pretty">
             A Veil name points to your wallet, so anyone on Veil can pay you without copying a
             56-character address.
           </p>
@@ -244,29 +249,47 @@ export default function NamesPage() {
             <label htmlFor="name-search" className="sr-only">
               Search for a Veil name
             </label>
-            <div className="flex items-center gap-3 rounded-pill border border-border-dim bg-surface px-5 py-4 transition-colors focus-within:border-gold/50">
+            {/* 76px tall, and the suffix is fixed text rather than part of the
+                placeholder, so `*useveilapp.xyz` stays put and the caret sits
+                against the name being typed. Inconsolata is monospaced, which
+                makes `ch` an exact measure — the input can be sized to its own
+                content without measuring anything in JavaScript. */}
+            <div className="flex h-[76px] cursor-text items-center gap-[14px] rounded-pill border border-border-dim bg-[#161616] pl-6 pr-[14px] transition-colors focus-within:border-gold/50">
               <svg
-                className="h-5 w-5 shrink-0 text-off-white/40"
+                className="h-[22px] w-[22px] shrink-0 text-off-white/50"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="2"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
                 aria-hidden
               >
-                <circle cx="11" cy="11" r="7" />
-                <path d="m20 20-3.5-3.5" strokeLinecap="round" />
+                <circle cx="11" cy="11" r="8" />
+                <path d="m21 21-4.3-4.3" />
               </svg>
-              <input
-                id="name-search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={`yourname${SUFFIX}`}
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                maxLength={MAX_NAME_LENGTH + SUFFIX.length}
-                className="w-full bg-transparent font-mono text-lg text-off-white outline-none placeholder:text-off-white/30"
-              />
+              <span className="flex min-w-0 flex-1 items-baseline overflow-hidden font-mono text-[clamp(20px,2.4vw,30px)] leading-[1.2]">
+                <input
+                  id="name-search"
+                  value={query}
+                  onChange={(e) =>
+                    // The suffix is fixed text beside the field, so somebody
+                    // pasting a whole address should not end up typing it
+                    // twice and failing the charset rule.
+                    setQuery(e.target.value.replace(SUFFIX, '').replace(/\*.*$/, ''))
+                  }
+                  placeholder="yourname"
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  maxLength={MAX_NAME_LENGTH}
+                  style={{ width: `${Math.max(query.length || 8, 1)}ch` }}
+                  className="shrink-0 border-0 bg-transparent p-0 font-[inherit] text-off-white caret-gold outline-none placeholder:text-off-white/30"
+                />
+                <span aria-hidden className="whitespace-nowrap text-off-white/[0.38]">
+                  {SUFFIX}
+                </span>
+              </span>
             </div>
 
             <p className="mt-3 text-sm text-off-white/50" aria-live="polite">
