@@ -213,7 +213,11 @@ export function interpretOpenNameFailure(code: string | undefined): ChainAvailab
     case '7':
       return 'reserved'
     default:
-      return 'insufficient_funds'
+      // Deliberately NOT 'insufficient_funds'. Everything left is some other
+      // contract's error table, and guessing one reads as a confident,
+      // checkable claim about the user's money that may simply be false.
+      // The caller measures the balance instead.
+      return 'unknown'
   }
 }
 
@@ -298,7 +302,26 @@ export async function checkNameAvailability(
     const sim = await rpc.simulateTransaction(tx)
     if (!SorobanRpc.Api.isSimulationError(sim)) return 'available'
 
-    return interpretOpenNameFailure(/Error\(Contract, #(\d+)\)/.exec(sim.error)?.[1])
+    const verdict = interpretOpenNameFailure(
+      /Error\(Contract, #(\d+)\)/.exec(sim.error)?.[1],
+    )
+    if (verdict !== 'unknown') return verdict
+
+    // The simulation failed for a reason this module cannot name. Rather than
+    // assert the likeliest one, read the balance and the price and compare
+    // them — a measurement the page can state without hedging.
+    const [balance, price] = await Promise.all([
+      usdcBalance(walletAddress),
+      quoteFromChain(name, years),
+    ])
+    if (balance !== null && price !== null && balance < price) return 'insufficient_funds'
+
+    // Funded, and still refused. Surfacing the raw failure is the only honest
+    // move: the user is told it could not be checked, and the reason is in the
+    // console for whoever looks.
+    // eslint-disable-next-line no-console
+    console.warn('[names] register simulation failed for a funded wallet:', sim.error)
+    return 'unknown'
   } catch {
     return 'unknown'
   }

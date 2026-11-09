@@ -405,7 +405,7 @@ export default function NamesPage() {
                     : chainState === 'insufficient_funds'
                       ? `Not enough USDC — ${total} needed`
                       : availability === 'unknown'
-                        ? 'Not available yet'
+                        ? 'Could not check'
                         : `Claim for ${total} USDC`}
                 </button>
               )}
@@ -432,6 +432,15 @@ export default function NamesPage() {
               {availability === 'unknown' && !walletAddress && (
                 <p className="mt-3 text-center text-sm text-off-white/50">
                   Sign in to check whether a name is free and claim it.
+                </p>
+              )}
+              {/* Signed in and still unanswered. Saying "not available yet"
+                  here claimed something about the name; this says what is
+                  actually true, which is that we do not know. */}
+              {availability === 'unknown' && walletAddress && (
+                <p className="mt-3 text-center text-sm text-off-white/50">
+                  Could not check this name just now. Try again in a moment — nothing has been
+                  charged.
                 </p>
               )}
             </div>
@@ -566,19 +575,25 @@ export default function NamesPage() {
       </section>
 
       {/* ── Pricing ───────────────────────────────────────────────────── */}
-      {/* "Shorter names cost more" is the design's headline and it is the
-          honest one: the bands are not a descending curve, and leading with
-          the rule stops the middle band reading as a mistake. */}
+      {/* The design's headline here is "Shorter names cost more." It is not
+          true of the prices the contract charges: three characters cost 3
+          USDC and seven cost 5, so short names are *cheaper* than mid-length
+          ones. The curve is deliberately not monotonic — `price_per_year` in
+          contracts/veil-names says so and warns against "correcting" it —
+          because six to ten characters is where real first names sit and
+          therefore where demand is. The headline states that instead, so the
+          table below cannot read as a mistake. */}
       <section className="border-t border-border-dim px-[clamp(20px,5vw,72px)] py-[clamp(88px,10vw,140px)]">
         <div className="mx-auto flex max-w-[1200px] flex-col gap-12">
           <div className="flex flex-wrap items-end justify-between gap-6">
             <div className="flex flex-col gap-5">
               <p className="font-anton text-[14px] uppercase tracking-[0.14em] text-gold">Pricing</p>
               <h2 className="font-lora text-[clamp(36px,4.2vw,56px)] font-semibold italic leading-[1.06] tracking-[-0.02em]">
-                Shorter names cost more.
+                Priced by demand, not length.
               </h2>
             </div>
             <p className="max-w-[430px] text-[16px] leading-[1.6] text-off-white/[0.64] text-pretty">
+              Six to ten characters costs the most, because that is where real first names sit.
               Prices are set in USDC. You pay from your Veil wallet with your passkey, and Veil
               covers the network fee.
             </p>

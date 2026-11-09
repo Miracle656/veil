@@ -158,21 +158,24 @@ describe('interpretOpenNameFailure', () => {
   // it back.
   it('never reports a SAC failure as a veil-names state', () => {
     // SAC BalanceError is 10; veil-names InRecovery is also 10.
-    expect(interpretOpenNameFailure('10')).toBe('insufficient_funds')
     expect(interpretOpenNameFailure('10')).not.toBe('in_recovery')
 
     // SAC TrustlineMissingError is 13; veil-names TermTooLong is also 13.
-    expect(interpretOpenNameFailure('13')).toBe('insufficient_funds')
+    expect(interpretOpenNameFailure('13')).not.toBe('invalid')
 
     // veil-names NameTaken is 9, impossible once state() says Open.
-    expect(interpretOpenNameFailure('9')).toBe('insufficient_funds')
     expect(interpretOpenNameFailure('9')).not.toBe('taken')
   })
 
-  it('treats an unreadable failure as the buyer being unable to pay', () => {
-    // Open means nothing in veil-names can still refuse, so the transfer is
-    // the only step left that can fail.
-    expect(interpretOpenNameFailure(undefined)).toBe('insufficient_funds')
-    expect(interpretOpenNameFailure('999')).toBe('insufficient_funds')
+  it('never guesses "insufficient funds" from an unrecognised code', () => {
+    // The first version defaulted to 'insufficient_funds', which told a funded
+    // wallet it could not pay. A guess about somebody's money reads as a
+    // measurement, so anything unrecognised is 'unknown' and the caller reads
+    // the actual balance instead.
+    expect(interpretOpenNameFailure('10')).toBe('unknown')
+    expect(interpretOpenNameFailure('13')).toBe('unknown')
+    expect(interpretOpenNameFailure('9')).toBe('unknown')
+    expect(interpretOpenNameFailure('999')).toBe('unknown')
+    expect(interpretOpenNameFailure(undefined)).toBe('unknown')
   })
 })
