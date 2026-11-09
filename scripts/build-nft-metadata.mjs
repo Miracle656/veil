@@ -20,22 +20,38 @@
  * The `image` field is a placeholder until the art is final — see
  * `brand/veil-masquerade/README.md`. Nothing is minted from this yet.
  */
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..')
 export const collectionDir = join(repoRoot, 'brand', 'veil-masquerade')
 export const metadataDir = join(collectionDir, 'metadata')
+export const artDir = join(collectionDir, 'art')
 
 /**
- * Where the images will live once they exist.
+ * Where the wallet serves the collection from.
  *
- * Deliberately an obvious placeholder, not a guessed URL: metadata that points
- * at a plausible-looking address nobody has uploaded to is worse than metadata
- * that admits it is unfinished, because the first kind mints.
+ * The art and the metadata are published together, to one directory, because
+ * `token_uri` resolves to `<base>/NN.json` and that file's `image` resolves to
+ * `<base>/NN.jpg`. Split them across two hosts and one can go dark while the
+ * other answers, which looks like a broken token rather than a broken deploy.
  */
-export const IMAGE_BASE = 'ipfs://REPLACE_WITH_COLLECTION_CID'
+export const publishDir = join(repoRoot, 'frontend', 'wallet', 'public', 'masquerade')
+
+/**
+ * Where the images live.
+ *
+ * Read from `brand/veil-masquerade/image-base.txt`, which holds the CID of the
+ * pinned `art/` directory. Until that file exists the base is an obvious
+ * placeholder rather than a guessed URL: metadata pointing at a
+ * plausible-looking address nobody has uploaded to is worse than metadata that
+ * admits it is unfinished, because the first kind mints.
+ */
+const IMAGE_BASE_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'brand', 'veil-masquerade', 'image-base.txt')
+export const IMAGE_BASE = existsSync(IMAGE_BASE_FILE)
+  ? readFileSync(IMAGE_BASE_FILE, 'utf8').trim()
+  : 'ipfs://REPLACE_WITH_COLLECTION_CID'
 
 export const TRAIT_FIELDS = [
   ['Crown', 'crown'],
@@ -47,6 +63,19 @@ export const TRAIT_FIELDS = [
 
 export function pad(id) {
   return String(id).padStart(2, '0')
+}
+
+/**
+ * The art file for a token, named by the trait table rather than guessed.
+ *
+ * The extension used to be hardcoded `.png` while the art is `.jpg`, which
+ * would have minted twenty tokens pointing at files that do not exist.
+ */
+export function imageFile(token) {
+  if (!token.image) {
+    throw new Error(`Token #${pad(token.id)} has no \`image\` in traits.json`)
+  }
+  return token.image
 }
 
 export class FigureAlreadyBoundError extends Error {
@@ -147,7 +176,7 @@ export function buildToken(token, counts, total, rarityTraits) {
       `${traitSentence} ` +
       `${rarityLine(rarest, total)} ` +
       `No face — where the cloth is open, it is cloth removed rather than features drawn on.${boundSentence}`,
-    image: `${IMAGE_BASE}/${pad(token.id)}.png`,
+    image: `${IMAGE_BASE}/${imageFile(token)}`,
     external_url: 'https://useveilapp.xyz',
     attributes,
   }
@@ -160,7 +189,7 @@ export function buildCollection(source, counts) {
     symbol: collection.symbol,
     description: collection.description,
     external_url: collection.externalUrl,
-    image: `${IMAGE_BASE}/cover.png`,
+    image: `${IMAGE_BASE}/01.jpg`,
     total_supply: source.tokens.length,
     /** Counted from the trait table, never asserted. */
     trait_counts: counts,
@@ -198,8 +227,7 @@ export function getFigureForClaim(claimOrder, customSource) {
     figure: {
       id: token.id,
       name: `Veil Masquerade #${pad(token.id)}`,
-      image: `${IMAGE_BASE}/${pad(token.id)}.png`,
-      canvaMediaId: token.canvaMediaId,
+      image: `${IMAGE_BASE}/${imageFile(token)}`,
       crown: token.crown,
       aperture: token.aperture,
       ornament: token.ornament,
@@ -263,7 +291,7 @@ export function bindClaimToFigure(claimOrder, name, options = {}) {
 }
 
 export function buildMetadataFiles(source, options = {}) {
-  const { check = false, targetDir = collectionDir } = options
+  const { check = false, targetDir = collectionDir, flat = false } = options
   const { tokens } = source
 
   if (tokens.length !== source.collection.size) {
@@ -290,16 +318,17 @@ export function buildMetadataFiles(source, options = {}) {
     }
   }
 
-  const outMetaDir = join(targetDir, 'metadata')
+  // Served flat, so `<base>/NN.json` and `<base>/NN.jpg` sit together; kept
+  // under metadata/ in the repo, where the art has its own directory.
   const files = [
     ['collection.json', buildCollection(source, counts)],
     ...tokens.map((token) => [
-      join('metadata', `${pad(token.id)}.json`),
+      flat ? `${pad(token.id)}.json` : join('metadata', `${pad(token.id)}.json`),
       buildToken(token, counts, tokens.length, rarityTraits),
     ]),
   ]
 
-  mkdirSync(outMetaDir, { recursive: true })
+  mkdirSync(flat ? targetDir : join(targetDir, 'metadata'), { recursive: true })
 
   let stale = 0
   for (const [relative, document] of files) {
@@ -339,6 +368,37 @@ export function buildMetadataFiles(source, options = {}) {
   return { written: files.length }
 }
 
+/**
+ * Copy the art into the wallet's public directory.
+ *
+ * The originals stay in `brand/veil-masquerade/art/` and are not served: those
+ * are the mint-quality source, and losing them would be unrecoverable. The
+ * published copies are re-encoded for the web by `scripts/publish-nft-art.py`.
+ * This only checks that every token has one, because metadata pointing at a
+ * missing image is the failure that cannot be fixed after a mint.
+ */
+export function checkPublishedArt(source, { fix = false } = {}) {
+  const missing = []
+  for (const token of source.tokens) {
+    const name = imageFile(token)
+    const published = join(publishDir, name)
+    if (existsSync(published)) continue
+    const original = join(artDir, name)
+    if (fix && existsSync(original)) {
+      mkdirSync(publishDir, { recursive: true })
+      copyFileSync(original, published)
+      continue
+    }
+    missing.push(name)
+  }
+  if (missing.length) {
+    throw new Error(
+      `${missing.length} image(s) are not published to frontend/wallet/public/masquerade: ` +
+        `${missing.join(', ')}. Run: python scripts/publish-nft-art.py`,
+    )
+  }
+}
+
 function main() {
   const args = process.argv.slice(2)
   const check = args.includes('--check')
@@ -372,6 +432,10 @@ function main() {
 
   const source = JSON.parse(readFileSync(join(collectionDir, 'traits.json'), 'utf8'))
   buildMetadataFiles(source, { check })
+  // The served copy is generated too, so the thing a buyer's wallet fetches
+  // cannot drift from the thing in the repo.
+  buildMetadataFiles(source, { check, targetDir: publishDir, flat: true })
+  checkPublishedArt(source)
 }
 
 if (process.argv[1] && process.argv[1].endsWith('build-nft-metadata.mjs')) main()

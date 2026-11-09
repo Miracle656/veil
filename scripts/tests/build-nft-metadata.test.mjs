@@ -12,23 +12,36 @@ import {
   buildMetadataFiles,
   FigureAlreadyBoundError,
   pad,
+  IMAGE_BASE,
+  imageFile,
 } from '../build-nft-metadata.mjs'
 
 describe('build-nft-metadata', () => {
   const sampleTokens = [
-    { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe' },
-    { id: 2, crown: 'Horns', aperture: 'Slot', ornament: 'Diamonds', palette: 'Gold', hem: 'Scalloped' },
-    { id: 3, crown: 'Beaded dome', aperture: 'Slot', ornament: 'Zigzag', palette: 'Lilac', hem: 'Scalloped' },
+    { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe', image: '01.jpg' },
+    { id: 2, crown: 'Drum cap', aperture: 'Slot', ornament: 'Diamonds', palette: 'Gold + teal', hem: 'Scalloped', image: '02.jpg' },
+    { id: 3, crown: 'Beaded dome', aperture: 'Slot', ornament: 'Zigzag', palette: 'Lilac', hem: 'Scalloped', image: '03.jpg' },
   ]
+
+  test('a token with no image is refused rather than given a guessed extension', () => {
+    // The extension used to be hardcoded `.png` while the art is `.jpg`, which
+    // would have minted twenty tokens pointing at files that are not there.
+    // Nothing downstream can fix that, so it fails here instead.
+    assert.throws(
+      () => imageFile({ id: 7 }),
+      /#07 has no `image`/,
+    )
+    assert.equal(imageFile({ id: 7, image: '07.jpg' }), '07.jpg')
+  })
 
   test('countTraits tallies frequencies dynamically from token attributes', () => {
     const counts = countTraits(sampleTokens)
     assert.equal(counts['Crown']['Plume'], 1)
-    assert.equal(counts['Crown']['Horns'], 1)
+    assert.equal(counts['Crown']['Drum cap'], 1)
     assert.equal(counts['Aperture']['Slot'], 2)
     assert.equal(counts['Aperture']['Twin slits'], 1)
     assert.equal(counts['Palette']['Lilac'], 2)
-    assert.equal(counts['Palette']['Gold'], 1)
+    assert.equal(counts['Palette']['Gold + teal'], 1)
     assert.equal(counts['Hem']['Scalloped'], 2)
     // No Name present yet
     assert.equal(counts['Name'], undefined)
@@ -49,7 +62,7 @@ describe('build-nft-metadata', () => {
     // Token without name
     const doc1 = buildToken(sampleTokens[0], counts, 3, rarityTraits)
     assert.equal(doc1.name, 'Veil Masquerade #01')
-    assert.equal(doc1.image, 'ipfs://REPLACE_WITH_COLLECTION_CID/01.png')
+    assert.equal(doc1.image, `${IMAGE_BASE}/01.jpg`)
     assert.equal(doc1.attributes.some((a) => a.trait_type === 'Name'), false)
     assert.equal(doc1.attributes.find((a) => a.trait_type === 'Crown')?.value, 'Plume')
 
@@ -125,8 +138,8 @@ describe('build-nft-metadata', () => {
         identityTraits: ['Crown', 'Ornament', 'Name'],
         rarityTraits: ['Aperture'],
         tokens: [
-          { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe' },
-          { id: 2, crown: 'Horns', aperture: 'Twin slits', ornament: 'Diamonds', palette: 'Gold', hem: 'Scalloped' },
+          { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe', image: '01.jpg' },
+          { id: 2, crown: 'Drum cap', aperture: 'Twin slits', ornament: 'Diamonds', palette: 'Gold + teal', hem: 'Scalloped', image: '02.jpg' },
         ],
       }
 

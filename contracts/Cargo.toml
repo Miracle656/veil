@@ -6,6 +6,7 @@ members = [
     "multisig-wallet",
     "vault",
     "veil-names",
+    "veil-masquerade",
 ]
 resolver = "2"
 
