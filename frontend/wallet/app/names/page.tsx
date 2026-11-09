@@ -25,10 +25,12 @@ import {
   type ChainAvailability,
   type FundingPlan,
   checkNameAvailability,
+  foreignPlatformOrigin,
   formatUsdc,
   nameErrorMessage,
   planFunding,
   registerName,
+  registerNameAsFeePayer,
   topUpWalletUsdc,
 } from '@/lib/namesPurchase'
 import {
@@ -118,10 +120,16 @@ export default function NamesPage() {
   const [demoMode, setDemoMode] = useState<'address' | 'name'>('address')
   const [funding, setFunding] = useState<FundingPlan | null>(null)
   const [topUpStage, setTopUpStage] = useState(false)
+  // Non-null when this wallet is bound to another platform and cannot sign
+  // here at all. Read once, up front: finding out by burning a passkey prompt
+  // on a transaction that can only revert is the worst way to learn it.
+  const [lockedOrigin, setLockedOrigin] = useState<string | null>(null)
 
   useEffect(() => {
-    setWalletAddress(walletSession.getItem('invisible_wallet_address'))
+    const addr = walletSession.getItem('invisible_wallet_address')
+    setWalletAddress(addr)
     setCheckedWallet(true)
+    if (addr) void foreignPlatformOrigin(addr).then(setLockedOrigin)
   }, [])
 
   const name = useMemo(() => normalizeName(query), [query])
@@ -192,13 +200,32 @@ export default function NamesPage() {
   // can cover the difference. The second case is the common one: USDC lands on
   // the fee-payer and the contract starts empty.
   const needsTopUp = chainState === 'insufficient_funds' && funding !== null && !funding.short
-  const canBuy = (chainState === 'available' || needsTopUp) && !isBuying && Boolean(walletAddress)
+  const canBuy =
+    (chainState === 'available' || needsTopUp || lockedOrigin !== null) &&
+    !isBuying &&
+    Boolean(walletAddress)
 
   const handleBuy = async () => {
     if (!walletAddress) return
     setIsBuying(true)
     setBuyError(null)
     try {
+      // A wallet bound to another platform cannot sign here, so the fee-payer
+      // buys instead. No top-up: the USDC is already on the account doing the
+      // buying, and moving it into a contract that cannot spend it would strand
+      // it there.
+      if (lockedOrigin) {
+        const hash = await registerNameAsFeePayer({
+          feePayerKeypair: getFeePayerKeypair(),
+          name,
+          years,
+        })
+        setBoughtHash(hash)
+        setChainState('taken')
+        setAvailability('yours')
+        return
+      }
+
       // Move the shortfall into the contract first. Two transactions, one
       // button: nobody should have to learn that their wallet keeps money in
       // two places before they can buy a name.
@@ -445,8 +472,12 @@ export default function NamesPage() {
                   {isBuying
                     ? topUpStage
                       ? 'Moving USDC into your wallet…'
-                      : 'Confirm with your passkey…'
-                    : needsTopUp
+                      : lockedOrigin
+                        ? 'Registering…'
+                        : 'Confirm with your passkey…'
+                    : lockedOrigin
+                      ? `Claim to your fee-payer for ${total} USDC`
+                      : needsTopUp
                       ? `Top up and claim for ${total} USDC`
                       : chainState === 'insufficient_funds'
                         ? `Not enough USDC — ${total} needed`
@@ -463,14 +494,26 @@ export default function NamesPage() {
               {buyError && (
                 <p className="mt-3 text-center text-sm text-red-400">{buyError}</p>
               )}
-              {needsTopUp && funding && !buyError && (
+              {/* Said before the button is pressed, not after it fails. A wallet
+                  deployed from the phone carries that platform's WebAuthn
+                  origin permanently, so this browser can never sign for it —
+                  but the fee-payer is an ordinary Stellar account and can buy
+                  the name outright. */}
+              {lockedOrigin && !boughtHash && (
+                <p className="mt-3 text-center text-sm text-off-white/50">
+                  This wallet was first used in the mobile app, so it can only be signed there.
+                  Your fee-payer account can buy the name instead — it will point at your
+                  fee-payer, and you can move it to your wallet later from mobile.
+                </p>
+              )}
+              {needsTopUp && funding && !lockedOrigin && !buyError && (
                 <p className="mt-3 text-center text-sm text-off-white/50">
                   {formatUsdc(funding.topUpStroops)} USDC will move from your fee-payer into your
                   wallet first — your wallet holds {formatUsdc(funding.walletStroops)} of the{' '}
                   {total} needed.
                 </p>
               )}
-              {chainState === 'insufficient_funds' && !needsTopUp && !buyError && (
+              {chainState === 'insufficient_funds' && !needsTopUp && !lockedOrigin && !buyError && (
                 /* Says what it read, not just what it wanted. "Not enough USDC"
                    on a wallet the owner knows is funded is unarguable and
                    undiagnosable; the balance beside it turns a dead end into

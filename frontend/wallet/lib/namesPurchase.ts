@@ -33,6 +33,7 @@ import type { WebAuthnSignature } from '@veil/sdk'
 import { inclusionFee } from './fees'
 import { namesContractIdFor } from './namesContractId'
 import { invokeAsFeePayer, invokeAsWallet, type AuthEntrySigner } from './walletInvoke'
+import { fetchContractOrigin, isWrongPlatformOrigin } from './platformLimitation'
 import { getNetwork } from './network'
 
 /** The registry on whichever network the browser is pointed at. */
@@ -459,6 +460,68 @@ export async function registerName(params: RegisterNameParams): Promise<string> 
     networkPassphrase: net.networkPassphrase,
     label: 'names',
   })
+}
+
+/**
+ * Buy a name with the fee-payer `G…` account instead of the wallet contract.
+ *
+ * A Veil wallet contract stores one WebAuthn origin at deploy and
+ * `__check_auth` compares it byte-for-byte, with no setter and no upgrade
+ * path. A wallet first spent from the mobile app therefore carries an
+ * `android:apk-key-hash:…` origin and **can never be signed from the web** —
+ * contract issue #1003. That is not a state the browser can recover from, and
+ * it leaves such a wallet unable to buy a name at all.
+ *
+ * `register` takes any address as `buyer`, and a classic account authorises a
+ * Soroban call with an ordinary signature: no passkey, no `__check_auth`,
+ * nothing platform-bound. So the fee-payer can buy the name, and the USDC
+ * comes from where the dashboard was showing it all along.
+ *
+ * The name then resolves to the `G…`. That is a real difference, not a
+ * workaround detail — see `pointNameAt` for why moving it afterwards is a
+ * one-way door for a platform-locked wallet.
+ */
+export async function registerNameAsFeePayer(params: {
+  feePayerKeypair: Keypair
+  name: string
+  years: number
+}): Promise<string> {
+  const contractId = namesContractId()
+  if (!contractId) {
+    throw new Error('The Veil Names registry is not configured on this deployment.')
+  }
+
+  const net = getNetwork()
+  return invokeAsFeePayer({
+    contractId,
+    method: 'register',
+    args: [
+      nativeToScVal(params.feePayerKeypair.publicKey(), { type: 'address' }),
+      nativeToScVal(params.name, { type: 'string' }),
+      nativeToScVal(params.years, { type: 'u32' }),
+    ],
+    feePayerKeypair: params.feePayerKeypair,
+    rpcUrl: net.rpcUrl,
+    networkPassphrase: net.networkPassphrase,
+    label: 'names',
+  })
+}
+
+/**
+ * Is this wallet able to sign here at all?
+ *
+ * Returns the stored origin when the wallet is bound to another platform, and
+ * null when it can sign normally (or when the answer cannot be read, which is
+ * treated as "no objection" rather than a block).
+ */
+export async function foreignPlatformOrigin(walletAddress: string): Promise<string | null> {
+  try {
+    const origin = await fetchContractOrigin(getNetwork().rpcUrl, walletAddress)
+    if (!origin) return null
+    return isWrongPlatformOrigin(origin) ? origin : null
+  } catch {
+    return null
+  }
 }
 
 /** Contract error codes, mapped to what a buyer can do about them. */
