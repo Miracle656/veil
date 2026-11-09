@@ -111,6 +111,7 @@ export default function NamesPage() {
   const [isBuying, setIsBuying] = useState(false)
   const [buyError, setBuyError] = useState<string | null>(null)
   const [boughtHash, setBoughtHash] = useState<string | null>(null)
+  const [demoMode, setDemoMode] = useState<'address' | 'name'>('address')
 
   useEffect(() => {
     setWalletAddress(walletSession.getItem('invisible_wallet_address'))
@@ -433,68 +434,179 @@ export default function NamesPage() {
       )}
 
       {/* ── What a name does ──────────────────────────────────────────── */}
-      <section className="border-t border-border-dim px-4 py-16">
-        <div className="mx-auto max-w-2xl">
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.22em] text-off-white/40">
-            What a name does
-          </p>
-          <h2 className="mt-4 text-display-sm font-bold">Send to a name instead of an address.</h2>
-          <p className="mt-4 text-base leading-relaxed text-off-white/70">
-            Every Veil wallet has a 56-character address. A name points to the same wallet, so you
-            can type it from memory or read it out over the phone.
-          </p>
+      {/* Two columns with a working Send card, as the design has it: the point
+          lands when you can see a name sitting in the field an address would
+          otherwise fill, so the comparison is the control itself rather than
+          two flat swatches of text beside each other. */}
+      <section
+        className="border-t border-border-dim px-[clamp(20px,5vw,72px)] py-[clamp(88px,10vw,140px)]"
+        style={{
+          background:
+            'radial-gradient(900px 520px at 88% 50%, rgba(253,218,36,0.05), rgba(253,218,36,0) 70%), #0F0F0F',
+        }}
+      >
+        <div className="mx-auto grid max-w-[1200px] items-center gap-[clamp(48px,6vw,96px)] [grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))]">
+          <div className="flex max-w-[520px] flex-col gap-[22px]">
+            <p className="font-anton text-[14px] uppercase tracking-[0.14em] text-gold">
+              What a name does
+            </p>
+            <h2 className="font-lora text-[clamp(36px,4.2vw,56px)] font-semibold italic leading-[1.06] tracking-[-0.02em] text-balance">
+              Send to a name instead of an address.
+            </h2>
+            <p className="text-[17px] leading-[1.65] text-off-white/[0.64] text-pretty">
+              Every Veil wallet has a 56-character address. A name points to the same wallet, so
+              you can type it from memory or read it out over the phone.
+            </p>
+          </div>
 
-          <div className="mt-8 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl border border-border-dim bg-surface p-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-off-white/40">
-                Address
+          <div
+            className="flex flex-col gap-5 rounded-[28px] border border-white/[0.08] bg-[#141414] p-[clamp(20px,2.4vw,28px)]"
+            style={{
+              boxShadow: '0 34px 80px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06)',
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="font-anton text-[13px] uppercase tracking-[0.14em] text-off-white/[0.58]">
+                Send
               </p>
-              <p className="mt-3 break-all font-mono text-sm text-off-white/60">
-                CDUS5S3AENE5QREEHCIEHGKMP6LMBDELUYB35ZSFYETXETN2674MXQHK
-              </p>
+              <div role="tablist" aria-label="Send to an address or a name" className="flex gap-[2px] rounded-pill border border-white/[0.08] bg-[#0F0F0F] p-1">
+                {(['address', 'name'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={demoMode === mode}
+                    onClick={() => setDemoMode(mode)}
+                    className={`h-8 rounded-pill px-[14px] text-[13px] font-semibold capitalize transition-colors ${
+                      demoMode === mode
+                        ? 'bg-off-white text-near-black'
+                        : 'bg-transparent text-off-white/60 hover:text-off-white'
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="rounded-2xl border border-gold/30 bg-gold/5 p-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-gold">Name</p>
-              <p className="mt-3 font-mono text-sm">
-                ada<span className="text-off-white/40">{SUFFIX}</span>
-              </p>
+
+            <div className="flex flex-col gap-[10px]">
+              <p className="text-[13px] text-off-white/[0.58]">To</p>
+              {/* Both states occupy the same grid cell so the card never
+                  changes height when the toggle flips. */}
+              <div
+                className={`grid min-h-[118px] items-center rounded-[18px] border bg-[#0F0F0F] px-5 py-[18px] transition-colors duration-500 ${
+                  demoMode === 'name' ? 'border-gold/40' : 'border-white/[0.08]'
+                }`}
+              >
+                <p
+                  aria-hidden={demoMode !== 'address'}
+                  className={`[grid-area:1/1] break-all font-mono text-[clamp(17px,1.7vw,21px)] leading-[1.5] tracking-[0.03em] transition-[opacity,filter] duration-500 ${
+                    demoMode === 'address' ? 'opacity-100 blur-0' : 'opacity-0 blur-[6px]'
+                  }`}
+                >
+                  CDUS5S3AENE5QREEHCIEHGKMP6LMBDELUYB35ZSFYETXETN2674MXQHK
+                </p>
+                <div
+                  aria-hidden={demoMode !== 'name'}
+                  className={`pointer-events-none flex [grid-area:1/1] items-center gap-[14px] transition-[opacity,filter] duration-500 ${
+                    demoMode === 'name' ? 'opacity-100 blur-0' : 'opacity-0 blur-[6px]'
+                  }`}
+                >
+                  <span className="flex h-[46px] w-[46px] flex-none items-center justify-center rounded-full bg-gold/20 font-semibold text-gold">
+                    A
+                  </span>
+                  <span className="flex flex-wrap items-baseline text-[clamp(24px,2.6vw,32px)]">
+                    <span className="font-semibold tracking-[-0.01em]">ada</span>
+                    <span className="font-mono text-[0.86em] text-off-white/50">{SUFFIX}</span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex min-h-[22px] flex-wrap items-center justify-between gap-3 text-[13px]">
+                <span className="text-off-white/[0.58]">
+                  {demoMode === 'name'
+                    ? 'Points to the same wallet.'
+                    : 'Fifty-six characters, and every one of them matters.'}
+                </span>
+                <span
+                  className={`flex items-center gap-[6px] text-[#00A7B5] transition-opacity duration-500 ${
+                    demoMode === 'name' ? 'opacity-100' : 'opacity-0'
+                  }`}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  <span className="font-mono text-[14px]">CDUS5S…4MXQHK</span>
+                </span>
+              </div>
+            </div>
+
+            {/* USDC is what the registry actually charges and what the wallet
+                actually sends, so it is the figure shown. A local-currency
+                headline would be a conversion this page cannot make. */}
+            <div className="flex flex-wrap items-end justify-between gap-3 border-t border-white/[0.07] pt-[18px]">
+              <span className="flex flex-col gap-[6px]">
+                <span className="text-[13px] text-off-white/[0.58]">Amount</span>
+                <span className="text-[clamp(26px,2.6vw,32px)] font-semibold tracking-[-0.02em] tabular-nums">
+                  13.77{' '}
+                  <span className="font-mono text-[0.55em] font-normal text-off-white/[0.55]">
+                    USDC
+                  </span>
+                </span>
+              </span>
             </div>
           </div>
         </div>
       </section>
 
       {/* ── Pricing ───────────────────────────────────────────────────── */}
-      <section className="border-t border-border-dim px-4 py-16">
-        <div className="mx-auto max-w-2xl">
-          <p className="font-mono text-xs font-semibold uppercase tracking-[0.22em] text-off-white/40">
-            Pricing
-          </p>
-          <h2 className="mt-4 text-display-sm font-bold">A name is rented by the year.</h2>
-          <p className="mt-4 text-base leading-relaxed text-off-white/70">
-            Prices are set in USDC. You pay from your Veil wallet with your passkey, and Veil covers
-            the network fee. A name can be registered for up to {MAX_TERM_YEARS} years at a time and
-            renewed before it runs out.
-          </p>
+      {/* "Shorter names cost more" is the design's headline and it is the
+          honest one: the bands are not a descending curve, and leading with
+          the rule stops the middle band reading as a mistake. */}
+      <section className="border-t border-border-dim px-[clamp(20px,5vw,72px)] py-[clamp(88px,10vw,140px)]">
+        <div className="mx-auto flex max-w-[1200px] flex-col gap-12">
+          <div className="flex flex-wrap items-end justify-between gap-6">
+            <div className="flex flex-col gap-5">
+              <p className="font-anton text-[14px] uppercase tracking-[0.14em] text-gold">Pricing</p>
+              <h2 className="font-lora text-[clamp(36px,4.2vw,56px)] font-semibold italic leading-[1.06] tracking-[-0.02em]">
+                Shorter names cost more.
+              </h2>
+            </div>
+            <p className="max-w-[430px] text-[16px] leading-[1.6] text-off-white/[0.64] text-pretty">
+              Prices are set in USDC. You pay from your Veil wallet with your passkey, and Veil
+              covers the network fee.
+            </p>
+          </div>
 
-          <ul className="mt-8 divide-y divide-border-dim overflow-hidden rounded-2xl border border-border-dim">
+          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))]">
             {priceTable().map((row) => (
-              <li key={row.label} className="flex items-center justify-between gap-4 bg-surface p-5">
-                <div className="min-w-0">
-                  <p className="font-semibold">{row.label}</p>
-                  <p className="mt-1 truncate font-mono text-sm text-off-white/50">
+              <div
+                key={row.label}
+                className="flex flex-col gap-[34px] rounded-[26px] border border-white/[0.08] bg-[#141414] p-7"
+                style={{ boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)' }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-anton text-[13px] uppercase tracking-[0.12em] text-gold">
+                    {row.label}
+                  </span>
+                  <span className="truncate font-mono text-[15px] text-off-white/[0.55]">
                     {row.example}
                     {SUFFIX}
-                  </p>
+                  </span>
                 </div>
-                <p className="shrink-0 font-mono text-lg font-semibold text-gold">
-                  {row.perYearUsdc} USDC
-                  <span className="ml-1 text-sm font-normal text-off-white/50">/ yr</span>
-                </p>
-              </li>
+                <div className="flex flex-col gap-2">
+                  <span className="text-[clamp(34px,3.4vw,44px)] font-semibold leading-[1.05] tracking-[-0.025em] tabular-nums">
+                    {row.perYearUsdc} USDC
+                  </span>
+                  <span className="text-[14px] text-off-white/[0.58]">
+                    per year · up to {MAX_TERM_YEARS} years at a time
+                  </span>
+                </div>
+              </div>
             ))}
-          </ul>
+          </div>
 
-          <p className="mt-6 text-sm leading-relaxed text-off-white/50">
+          <p className="max-w-[760px] text-sm leading-relaxed text-off-white/50">
             Names are {MIN_NAME_LENGTH} to {MAX_NAME_LENGTH} characters: lowercase letters, numbers
             and underscores. Names that could be used to pose as Veil or its team are reserved. If a
             name expires it stops working immediately, and only its previous holder can take it back
