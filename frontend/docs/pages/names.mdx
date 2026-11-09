@@ -54,8 +54,10 @@ adebayoakinola  14 characters × 2 years = 4 USDC
 ```
 
 <Callout type="info">
-Payment is in **USDC** on Stellar mainnet. Your wallet needs a USDC trustline
-and a USDC balance; the contract cannot take XLM for a name.
+Payment is in **USDC** on Stellar mainnet — the contract cannot take XLM for a
+name. You need a USDC balance, but **not** a trustline: a Veil wallet is a
+contract account, and the Stellar Asset Contract holds balances for contracts
+in its own storage. Trustlines are a classic-account requirement.
 </Callout>
 
 ## Buying a name
