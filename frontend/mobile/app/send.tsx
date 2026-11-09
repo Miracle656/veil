@@ -10,7 +10,8 @@ import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
-import { isValidDestination } from '../lib/address';
+import { isFederatedAddress, isValidDestination } from '../lib/address';
+import { resolveFederation } from '../lib/federation';
 import { ContactPicker } from '../components/ContactPicker';
 import { QrScanner } from '../components/QrScanner';
 import type { Contact } from '../hooks/useContacts';
@@ -300,6 +301,30 @@ export default function SendScreen() {
     try {
       setStep('authorizing');
 
+      // A federated address is a lookup, not an address. `isValidDestination`
+      // accepts `name*domain` so the field does not reject one, but every
+      // sending path below needs an account — handing the raw string to the
+      // transaction builder is what produced "Unsupported address type" for a
+      // name Lobstr could pay perfectly well.
+      //
+      // Resolved once here so both the contract path and the fee-payer path
+      // get the same answer, and a name that resolves differently between two
+      // lookups cannot send to one account while the review screen showed
+      // another.
+      let destination = recipient.trim();
+      if (isFederatedAddress(destination)) {
+        try {
+          const record = await resolveFederation(destination);
+          destination = record.account_id;
+        } catch (err) {
+          throw new Error(
+            err instanceof Error && err.message === 'address not found'
+              ? `No wallet is registered for ${recipient.trim()}.`
+              : `Could not look up ${recipient.trim()} — the name server did not answer.`,
+          );
+        }
+      }
+
       // Smart-wallet spend: explicit "Smart wallet" source, or the automatic
       // fallback when the fee-payer alone can't cover the amount. The transfer
       // is FROM the contract — the passkey signs the Soroban auth entry and
@@ -339,7 +364,7 @@ export default function SendScreen() {
           // recovered wallet never wrote, and refused.
           await deployWalletIfNeeded(wallet.deploy, stored);
           setStep('submitting');
-          const hash = await sendAssetFromContract(stored, recipient.trim(), amount, spendAsset);
+          const hash = await sendAssetFromContract(stored, destination, amount, spendAsset);
           setHash(hash);
           setStep('done');
           // TODO(#1003): remove platform limitation call when multi-origin contract ships
@@ -362,7 +387,7 @@ export default function SendScreen() {
       const signer = await requireSigner();
       setStep('submitting');
       const result = await sendPayment(
-        recipient,
+        destination,
         amount,
         signer,
         memo,
