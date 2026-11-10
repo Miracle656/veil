@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import { getFeePayerKeypair } from '@/lib/passkeySigner'
+import type { IndexerFreshness } from '@/lib/nfts'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import {
@@ -38,6 +40,9 @@ export default function NFTGalleryPage() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [showRawJson, setShowRawJson] = useState(false)
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({})
+  // Not an error and not a result: the indexer answered, and told us its answer
+  // is not current. An empty gallery means nothing until this is null.
+  const [freshness, setFreshness] = useState<IndexerFreshness | null>(null)
 
   // Load wallet session
   useEffect(() => {
@@ -56,6 +61,7 @@ export default function NFTGalleryPage() {
     setLoading(true)
     setError(null)
     setErrorKind('fetch')
+    setFreshness(null)
     try {
       if (simulateError) {
         throw new Error('Wraith Indexer API request failed (503 Service Unavailable)')
@@ -64,7 +70,52 @@ export default function NFTGalleryPage() {
         setNfts([])
         return
       }
-      const items = await fetchWalletNFTs(walletAddress)
+
+      // Both accounts, not just the contract.
+      //
+      // A Veil wallet is two addresses: the `C…` contract and the `G…`
+      // fee-payer. Which one ends up holding a token is not a detail the owner
+      // chose — a wallet bound to another platform cannot sign here at all, so
+      // its purchases are made by, and land on, the fee-payer. Asking only the
+      // contract told the buyer of the first Veil-ian that they owned nothing,
+      // minutes after the chain recorded that they did.
+      let feePayer: string | null = null
+      try {
+        feePayer = getFeePayerKeypair().publicKey()
+      } catch {
+        feePayer = null
+      }
+
+      const addresses = feePayer && feePayer !== walletAddress
+        ? [walletAddress, feePayer]
+        : [walletAddress]
+
+      // One failing account must not blank the other: a token that is really
+      // held should still be shown when the other lookup is the thing that
+      // broke. An outright failure is only reported when nothing answered.
+      let staleMeta: IndexerFreshness | null = null
+      const results = await Promise.allSettled(
+        addresses.map((a) => fetchWalletNFTs(a, { onStale: (m) => { staleMeta = m } })),
+      )
+      setFreshness(staleMeta)
+      const answered = results.filter((r) => r.status === 'fulfilled')
+      if (answered.length === 0) {
+        const first = results[0]
+        throw first.status === 'rejected' ? first.reason : new Error('No account answered.')
+      }
+
+      // Same token from two lookups is one token. Keyed by contract and id
+      // rather than by `id`, which is only unique within one indexer answer.
+      const seen = new Set<string>()
+      const items: NFTItem[] = []
+      for (const r of answered) {
+        for (const item of (r as PromiseFulfilledResult<NFTItem[]>).value) {
+          const key = `${item.contractId}:${item.tokenId}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          items.push(item)
+        }
+      }
       setNfts(items)
     } catch (err: unknown) {
       if (err instanceof IndexerNotConfiguredError) setErrorKind('unconfigured')
@@ -415,10 +466,22 @@ export default function NFTGalleryPage() {
               </svg>
             </div>
             <h3 style={{ fontFamily: 'Lora, Georgia, serif', fontStyle: 'italic', fontSize: '1.375rem', marginBottom: '0.5rem', color: 'var(--off-white)' }}>
-              No CAP-46 NFTs Found
+              {/* An indexer that is not running has not told us the wallet is
+                  empty. It has told us nothing, and the two must not share a
+                  headline — this one said "No NFTs Found" to the owner of a
+                  token the chain had already recorded. */}
+              {freshness && !freshness.running
+                ? 'Collectibles cannot be listed right now'
+                : freshness
+                ? 'This list may be out of date'
+                : 'No CAP-46 NFTs Found'}
             </h3>
             <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', marginBottom: '1.75rem', lineHeight: 1.6 }}>
-              {simulateEmpty
+              {freshness && !freshness.running
+                ? 'The indexer for this network is not running, so nothing can be listed — including tokens you do hold. Your tokens are safe: ownership lives on Stellar, and this page only reads a cache of it.'
+                : freshness
+                ? `The indexer is behind the chain${freshness.asOfLedger ? `, last current at ledger ${freshness.asOfLedger.toLocaleString()}` : ''}. Anything bought recently may not appear yet.`
+                : simulateEmpty
                 ? 'Simulated empty state mode is active. Tap below or turn off the toggle to display fixture NFTs.'
                 : searchQuery
                 ? `No NFTs matching "${searchQuery}". Try clearing your search query.`
