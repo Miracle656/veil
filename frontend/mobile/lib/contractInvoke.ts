@@ -21,7 +21,9 @@ import { getNetwork } from './network';
 import { rejectionFromResult } from './networkErrors';
 import { registerPasskeySigner } from './passkey';
 import { pollForResult } from './sendPayment';
+import { signAndSubmitSorobanXdr } from './sorobanTx';
 import { signXdrPayload } from './walletConnect';
+import { getSignerSecret } from './walletStore';
 
 /**
  * Invoke `method(...args)` on `contractId`, authorised by the wallet's passkey.
@@ -62,6 +64,55 @@ export async function invokeAsWallet(
   } finally {
     unregister();
   }
+}
+
+/**
+ * Invoke `method(...args)` on `contractId` as the spending account itself.
+ *
+ * A classic account authorises a Soroban call with its ordinary signature, so
+ * there is no passkey prompt and no `__check_auth`. The web wallet buys names
+ * and figures this way for a wallet whose passkey it cannot use, which leaves
+ * the name on the spending account; anything gated on that name then has to be
+ * bought by the same account, on the phone as well.
+ *
+ * `expected` is the account the caller read the gate and the balance for. If
+ * the key on this device is no longer that account, nothing is sent: the
+ * numbers on screen were about somebody else.
+ */
+export async function invokeAsSpendingAccount(
+  expected: string,
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[],
+  flow: string,
+): Promise<string> {
+  const secret = await getSignerSecret();
+  if (!secret) throw new Error('No spending account on this device yet.');
+  if (Keypair.fromSecret(secret).publicKey() !== expected) {
+    throw new Error(
+      'The spending account on this device has changed. Reopen this screen and try again.',
+    );
+  }
+
+  const network = getNetwork();
+  // Only a carrier for the operation. `signAndSubmitSorobanXdr` lifts it into a
+  // transaction on a fresh sequence number and simulates that before signing.
+  const carrier = new TransactionBuilder(new Account(expected, '0'), {
+    fee: inclusionFee(),
+    networkPassphrase: network.networkPassphrase,
+  })
+    .addOperation(new Contract(contractId).call(method, ...args))
+    .setTimeout(120)
+    .build();
+
+  return signAndSubmitSorobanXdr({
+    xdr: carrier.toXDR(),
+    signerSecret: secret,
+    rpcUrl: network.rpcUrl,
+    networkPassphrase: network.networkPassphrase,
+    horizonUrl: network.horizonUrl,
+    flow,
+  });
 }
 
 /**

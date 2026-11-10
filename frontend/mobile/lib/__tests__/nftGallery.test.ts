@@ -77,4 +77,47 @@ describe('loadGallery', () => {
 
     expect(gallery).toEqual({ items: [item('COTHER', '1')], indexerError: null });
   });
+
+  describe('with both of a user’s accounts', () => {
+    const SPENDING = 'GASPENDING0000000000000000000000000000000000000000000001';
+
+    it('asks the indexer about each account and the chain about both at once', async () => {
+      const fetchIndexed = jest.fn(async (address: string) =>
+        address === SPENDING ? [item('COTHER', '1')] : [],
+      );
+      const fetchOnChain = jest.fn(async () => [item('CVEILIANS', '9')]);
+
+      const gallery = await loadGallery([WALLET, SPENDING], { fetchIndexed, fetchOnChain });
+
+      expect(fetchIndexed.mock.calls.map(([a]) => a)).toEqual([WALLET, SPENDING]);
+      expect(fetchOnChain).toHaveBeenCalledWith([WALLET, SPENDING]);
+      expect(gallery.items.map((i) => i.id)).toEqual(['COTHER:1', 'CVEILIANS:9']);
+      expect(gallery.indexerError).toBeNull();
+    });
+
+    it('keeps what one account’s lookup found when the other lookup fails', async () => {
+      const gallery = await loadGallery([WALLET, SPENDING], {
+        fetchIndexed: (address) =>
+          address === WALLET ? Promise.resolve([item('COTHER', '1')]) : indexerDown(),
+        fetchOnChain: async () => [],
+      });
+
+      expect(gallery.items.map((i) => i.id)).toEqual(['COTHER:1']);
+      expect(gallery.indexerError).toBe('Indexer returned HTTP 500');
+    });
+
+    it('still fails when no lookup answered and the chain lists nothing', async () => {
+      await expect(
+        loadGallery([WALLET, SPENDING], { fetchIndexed: indexerDown, fetchOnChain: async () => [] }),
+      ).rejects.toThrow('Indexer returned HTTP 500');
+    });
+
+    it('does not ask twice about the same account, or at all about a missing one', async () => {
+      const fetchIndexed = jest.fn(async () => [] as NFTItem[]);
+
+      await loadGallery([WALLET, '', WALLET], { fetchIndexed, fetchOnChain: async () => [] });
+
+      expect(fetchIndexed).toHaveBeenCalledTimes(1);
+    });
+  });
 });

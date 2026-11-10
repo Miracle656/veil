@@ -48,7 +48,7 @@ import {
 } from '../lib/nfts';
 import type { ThemeColors } from '../lib/theme';
 import { useNetwork } from '../hooks/useNetwork';
-import { getWalletAddress } from '../lib/walletStore';
+import { getOwnAddresses, listOwn } from '../lib/ownAddresses';
 import { fontFamily } from '../theme/typography';
 
 type State =
@@ -97,15 +97,15 @@ export default function NFTsScreen() {
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
     try {
-      const address = await getWalletAddress();
-      if (!address) {
+      const own = await getOwnAddresses();
+      if (!own.wallet) {
         setState({ kind: 'no-wallet' });
         return;
       }
-      // The indexer merged with the chain read of Veil's own collection; an
-      // indexer failure no longer hides what the chain lists. See
-      // `lib/nftGallery.ts`.
-      setState({ kind: 'ready', ...(await loadGallery(address)) });
+      // The indexer merged with the chain read of Veil's own collection, for
+      // the smart wallet AND the spending account: what the web wallet buys
+      // for a phone-made wallet lands on the second. See `lib/nftGallery.ts`.
+      setState({ kind: 'ready', ...(await loadGallery(listOwn(own))) });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {
         setState({ kind: 'unconfigured', message: err.message });
@@ -122,15 +122,15 @@ export default function NFTsScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const address = await getWalletAddress();
-      if (!address) {
+      const own = await getOwnAddresses();
+      if (!own.wallet) {
         setState({ kind: 'no-wallet' });
         return;
       }
-      // The indexer merged with the chain read of Veil's own collection; an
-      // indexer failure no longer hides what the chain lists. See
-      // `lib/nftGallery.ts`.
-      setState({ kind: 'ready', ...(await loadGallery(address)) });
+      // The indexer merged with the chain read of Veil's own collection, for
+      // the smart wallet AND the spending account: what the web wallet buys
+      // for a phone-made wallet lands on the second. See `lib/nftGallery.ts`.
+      setState({ kind: 'ready', ...(await loadGallery(listOwn(own))) });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {
         setState({ kind: 'unconfigured', message: err.message });

@@ -44,7 +44,7 @@ import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { errorMessage } from '../lib/errorMessage';
 import { isPasskeyCancellation } from '../lib/passkeyOutcome';
-import { getWalletAddress } from '../lib/walletStore';
+import { getOwnAddresses } from '../lib/ownAddresses';
 import { namesContractId } from '../lib/veilIans';
 import {
   MAX_NAME_LENGTH,
@@ -71,6 +71,9 @@ export default function NamesScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  // The spending account (`G…`). A name bought on the web for a phone-made
+  // wallet is held there, and it is still this user's name.
+  const [spendingAddress, setSpendingAddress] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [years, setYears] = useState(MIN_TERM_YEARS);
   const [state, setState] = useState<NameState | null>(null);
@@ -86,9 +89,10 @@ export default function NamesScreen() {
   const registryId = useMemo(() => namesContractId(), []);
 
   useEffect(() => {
-    void getWalletAddress()
-      .then(setWalletAddress)
-      .catch(() => setWalletAddress(null));
+    void getOwnAddresses().then((own) => {
+      setWalletAddress(own.wallet);
+      setSpendingAddress(own.spending);
+    });
   }, []);
 
   const refreshBalance = useCallback(async () => {
@@ -117,7 +121,8 @@ export default function NamesScreen() {
     const mine = ++seq.current;
     const timer = setTimeout(() => {
       void Promise.all([
-        nameState(name, walletAddress ?? undefined),
+        // Both accounts: a name bought on the web is on the spending account.
+        nameState(name, [walletAddress ?? '', spendingAddress ?? '']),
         quoteFromChain(name, years),
       ]).then(([s, q]) => {
         // A slow answer for an earlier keystroke must not overwrite what is on
@@ -130,7 +135,7 @@ export default function NamesScreen() {
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [name, years, shapeOk, registryId, walletAddress]);
+  }, [name, years, shapeOk, registryId, walletAddress, spendingAddress]);
 
   const chargeText = quote !== null ? formatUsdc(quote) : null;
   const short = balance !== null && quote !== null && balance < quote;
@@ -159,7 +164,7 @@ export default function NamesScreen() {
       } else {
         setError(nameErrorMessage(err, registryId) ?? errorMessage(err));
       }
-      if (shapeOk) setState(await nameState(name, walletAddress));
+      if (shapeOk) setState(await nameState(name, [walletAddress, spendingAddress ?? '']));
     } finally {
       setBusy(false);
     }

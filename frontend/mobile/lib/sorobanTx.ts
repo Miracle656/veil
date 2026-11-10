@@ -60,7 +60,10 @@ export async function signAndSubmitSorobanXdr(params: {
   rpcUrl: string;
   networkPassphrase: string;
   horizonUrl: string;
+  /** What this is, for error messages. Defaults to the first caller, a swap. */
+  flow?: string;
 }): Promise<string> {
+  const flow = params.flow ?? 'Swap';
   const rpc = new SorobanRpc.Server(params.rpcUrl);
   const signer = Keypair.fromSecret(params.signerSecret);
 
@@ -104,14 +107,14 @@ export async function signAndSubmitSorobanXdr(params: {
   // The footprint and resource fees have to be assembled before submit; the
   // simulation also revalidates the invocation against the current ledger.
   const encoded = built.toXDR();
-  assertRoundTrips(encoded, params.networkPassphrase, 'Swap');
+  assertRoundTrips(encoded, params.networkPassphrase, flow);
 
   const sim = await rpc.simulateTransaction(built);
   if (SorobanRpc.Api.isSimulationError(sim)) {
     throw new Error(
       simulationErrorMessage({
         error: sim.error,
-        flow: 'Swap',
+        flow,
         rpcUrl: params.rpcUrl,
         network: params.networkPassphrase.includes('Test') ? 'testnet' : 'mainnet',
         xdrLength: encoded.length,

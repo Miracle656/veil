@@ -13,7 +13,9 @@
  * 1. **Sold, available, and "could not read."** A failed read offers nothing
  *    rather than offering everything.
  * 2. **No name, and could not check for one.** The gate is read from the
- *    registry; null is not "you have no name".
+ *    registry; null is not "you have no name". And it is read for BOTH of the
+ *    user's accounts: a name bought on the web by a phone-made wallet is on
+ *    the spending account, and that account is then the one that buys.
  * 3. **Short of USDC, and could not read the balance.** Only a balance that was
  *    actually read can say someone is short.
  */
@@ -36,7 +38,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlowHeader } from '../components/FlowHeader';
 import { SlideToConfirm } from '../components/SlideToConfirm';
 import { useTheme } from '../hooks/useTheme';
-import { getWalletAddress } from '../lib/walletStore';
+import { getOwnAddresses, listOwn } from '../lib/ownAddresses';
+import { fetchOwnedVeilIans } from '../lib/veilIansOwned';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { errorMessage } from '../lib/errorMessage';
@@ -49,11 +52,12 @@ import {
   type Figure,
 } from '../lib/veilIansFigures';
 import {
-  type BuyerState,
+  type Purchase,
   buyFigure,
+  buyFigureFromSpending,
   collectionContractId,
   formatUsdc,
-  readBuyerState,
+  readPurchase,
   soldFigures,
   veilIanErrorMessage,
 } from '../lib/veilIans';
@@ -67,11 +71,16 @@ export default function VeilIansScreen() {
   // The smart wallet's `C…` address, which is the buyer: `buy` spends its USDC
   // and `__check_auth` is what authorises the call.
   const [contractAddress, setContractAddress] = useState<string | null>(null);
+  // The spending account (`G…`). It can hold the name instead, and then it is
+  // the buyer: see `choosePurchase`.
+  const [spendingAddress, setSpendingAddress] = useState<string | null>(null);
 
   const [sold, setSold] = useState<number[] | null>(null);
   const [soldReadFailed, setSoldReadFailed] = useState(false);
   const [owned, setOwned] = useState<number[]>([]);
-  const [buyer, setBuyer] = useState<BuyerState | null>(null);
+  const [purchase, setPurchase] = useState<Purchase | null>(null);
+  const buyer = purchase?.state ?? null;
+  const fromSpending = purchase?.payer === 'spending';
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -83,9 +92,10 @@ export default function VeilIansScreen() {
   const collectionId = useMemo(() => collectionContractId(), []);
 
   useEffect(() => {
-    void getWalletAddress()
-      .then(setContractAddress)
-      .catch(() => setContractAddress(null));
+    void getOwnAddresses().then((own) => {
+      setContractAddress(own.wallet);
+      setSpendingAddress(own.spending);
+    });
   }, []);
 
   const load = useCallback(async () => {
@@ -96,9 +106,19 @@ export default function VeilIansScreen() {
     const list = await soldFigures();
     setSold(list);
     setSoldReadFailed(list === null);
-    if (contractAddress) setBuyer(await readBuyerState(contractAddress));
+    if (contractAddress) {
+      const own = { wallet: contractAddress, spending: spendingAddress };
+      const [next, mine] = await Promise.all([
+        readPurchase(contractAddress, spendingAddress),
+        // Which ones are already this user's, on either account. A failed read
+        // only leaves a piece marked "Taken" instead of "In your wallet".
+        fetchOwnedVeilIans(listOwn(own)).catch(() => []),
+      ]);
+      setPurchase(next);
+      setOwned((prev) => [...new Set([...prev, ...mine.map((item) => Number(item.tokenId))])]);
+    }
     setLoading(false);
-  }, [collectionId, contractAddress]);
+  }, [collectionId, contractAddress, spendingAddress]);
 
   useEffect(() => {
     void load();
@@ -137,11 +157,15 @@ export default function VeilIansScreen() {
     !boughtHash;
 
   const handleBuy = async () => {
-    if (!contractAddress || !open) return;
+    if (!contractAddress || !open || !purchase) return;
     setBusy(true);
     setBuyError(null);
     try {
-      const hash = await buyFigure(contractAddress, open.id);
+      // As whichever account holds the name: the contract checks the buyer.
+      const hash =
+        purchase.payer === 'spending'
+          ? await buyFigureFromSpending(purchase.address, open.id)
+          : await buyFigure(contractAddress, open.id);
       setBoughtHash(hash);
       setOwned((prev) => (prev.includes(open.id) ? prev : [...prev, open.id]));
       await load();
@@ -301,7 +325,9 @@ export default function VeilIansScreen() {
                 {boughtHash ? (
                   <View style={styles.field}>
                     <Text style={styles.question}>
-                      It is now in your Veil wallet, next to your money.
+                      {fromSpending
+                        ? 'It is now yours, kept by your spending account next to your Veil name.'
+                        : 'It is now in your Veil wallet, next to your money.'}
                     </Text>
                     <Pressable
                       style={styles.primaryBtn}
@@ -315,10 +341,16 @@ export default function VeilIansScreen() {
                   </View>
                 ) : (
                   <>
+                    {fromSpending && (
+                      <Text style={styles.hint} testID="veil-ians-from-spending">
+                        Your Veil name is on your spending account, so that account buys this
+                        one: the {price} USDC comes from its balance and the piece is kept there.
+                      </Text>
+                    )}
                     {buyer?.short && (
                       <Text style={styles.hintWarn}>
-                        Not enough USDC in your wallet — you have{' '}
-                        {formatUsdc(buyer.balanceStroops ?? 0n)}.
+                        Not enough USDC in your {fromSpending ? 'spending account' : 'wallet'} — you
+                        have {formatUsdc(buyer.balanceStroops ?? 0n)}.
                       </Text>
                     )}
                     {openShelf === 'sold' && (
@@ -339,7 +371,11 @@ export default function VeilIansScreen() {
                           disabled={!canBuy}
                           onConfirm={() => void handleBuy()}
                         />
-                        <Text style={styles.centeredHint}>Then confirm with your passkey</Text>
+                        <Text style={styles.centeredHint}>
+                          {fromSpending
+                            ? 'Paid by your spending account'
+                            : 'Then confirm with your passkey'}
+                        </Text>
                       </>
                     )}
                   </>

@@ -27,15 +27,20 @@ import {
 import { collectionContractId } from './veilIans';
 
 /**
- * The Veil-ians this address owns, as gallery items.
+ * The Veil-ians held by any of these addresses, as gallery items.
+ *
+ * More than one address because a Veil user has two accounts and a figure can
+ * be on either (`lib/ownAddresses.ts`). Each item's `owner` is the address
+ * that actually holds it.
  *
  * Empty when the collection is not on this network or nothing could be read:
  * the caller merges this with the indexer's answer, so a failure costs nothing
  * beyond what was already missing.
  */
-export async function fetchOwnedVeilIans(address: string): Promise<NFTItem[]> {
+export async function fetchOwnedVeilIans(address: string | readonly string[]): Promise<NFTItem[]> {
   const contractId = collectionContractId();
-  if (!contractId || !address) return [];
+  const mine = new Set((typeof address === 'string' ? [address] : address).filter(Boolean));
+  if (!contractId || mine.size === 0) return [];
 
   // Only sold ids can have an owner; asking the rest is reads that can only
   // answer "nobody".
@@ -56,8 +61,8 @@ export async function fetchOwnedVeilIans(address: string): Promise<NFTItem[]> {
   );
 
   return owners
-    .filter((o) => o.owner === address)
-    .map(({ id }) => {
+    .filter((o): o is { id: number; owner: string } => o.owner !== null && mine.has(o.owner))
+    .map(({ id, owner }) => {
       const figure = FIGURES[id - 1];
       return {
         id: `${contractId}:${id}`,
@@ -69,7 +74,7 @@ export async function fetchOwnedVeilIans(address: string): Promise<NFTItem[]> {
           'A veiled figure for Veil: a crowned mask over layered, patterned cloth falling to an uneven hem.',
         image: figureImageUrl(id),
         tokenUri: figureMetadataUrl(id),
-        owner: address,
+        owner,
         standard: 'CAP-46' as const,
         attributes: [
           { trait_type: 'Crown', value: figure.crown },

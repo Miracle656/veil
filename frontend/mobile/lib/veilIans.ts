@@ -17,7 +17,7 @@
 
 import { nativeToScVal, xdr } from '@stellar/stellar-sdk';
 
-import { invokeAsWallet, simulateRead } from './contractInvoke';
+import { invokeAsSpendingAccount, invokeAsWallet, simulateRead } from './contractInvoke';
 import { getNetwork } from './network';
 import { COLLECTION_SIZE, FIGURE_PRICE_STROOPS } from './veilIansFigures';
 
@@ -150,11 +150,94 @@ export async function readBuyerState(walletAddress: string): Promise<BuyerState>
   };
 }
 
+/** Which of a user's two accounts does the buying. See `lib/ownAddresses.ts`. */
+export type Payer = 'wallet' | 'spending';
+
+/** One account and what was read about it. */
+export type Candidate = { address: string; state: BuyerState };
+
+/** The account a purchase would be made as, and what the shop knows about it. */
+export type Purchase = {
+  payer: Payer;
+  /** `buy` is called as this account: it pays, and the figure is minted to it. */
+  address: string;
+  state: BuyerState;
+};
+
+/**
+ * Pick the account that buys.
+ *
+ * The contract's gate is `balance(buyer) > 0` on the names registry, so the
+ * buyer has to be the account the name is actually on. That is the smart
+ * wallet for a name bought on the phone and the spending account for one
+ * bought on the web by a phone-made wallet. Asking only the smart wallet told
+ * a name-holder to go and get a name.
+ *
+ * Of the accounts that pass the gate, one that can also pay is preferred, and
+ * the smart wallet when that does not separate them.
+ *
+ * When neither passes, `hasName` is `false` only if every account that exists
+ * was read and said so. One unreadable answer leaves it `null`: "could not
+ * check" must never be shown as "you have no name".
+ */
+export function choosePurchase(wallet: Candidate, spending: Candidate | null): Purchase {
+  const named: { payer: Payer; account: Candidate }[] = [];
+  if (wallet.state.hasName === true) named.push({ payer: 'wallet', account: wallet });
+  if (spending?.state.hasName === true) named.push({ payer: 'spending', account: spending });
+
+  const pick = named.find((n) => !n.account.state.short) ?? named[0];
+  if (pick) return { payer: pick.payer, address: pick.account.address, state: pick.account.state };
+
+  const nobodyHoldsOne =
+    wallet.state.hasName === false && (spending === null || spending.state.hasName === false);
+  return {
+    payer: 'wallet',
+    address: wallet.address,
+    state: { ...wallet.state, hasName: nobodyHoldsOne ? false : null },
+  };
+}
+
+/** Read both accounts and decide which one buys. */
+export async function readPurchase(
+  walletAddress: string,
+  spendingAddress: string | null,
+): Promise<Purchase> {
+  const [wallet, spending] = await Promise.all([
+    readBuyerState(walletAddress),
+    spendingAddress ? readBuyerState(spendingAddress) : Promise.resolve(null),
+  ]);
+  return choosePurchase(
+    { address: walletAddress, state: wallet },
+    spendingAddress && spending ? { address: spendingAddress, state: spending } : null,
+  );
+}
+
 /** Buy a figure. Prompts the passkey. Resolves with the transaction hash. */
 export async function buyFigure(walletAddress: string, tokenId: number): Promise<string> {
   const id = collectionContractId();
   if (!id) throw new Error('The Veil-ians collection is not available on this network.');
   return invokeAsWallet(id, 'buy', [addr(walletAddress), nativeToScVal(tokenId, { type: 'u32' })]);
+}
+
+/**
+ * Buy a figure as the spending account, with its own USDC.
+ *
+ * No passkey: a classic account signs for itself. The figure is minted to the
+ * spending account, which is where that user's name already is.
+ */
+export async function buyFigureFromSpending(
+  spendingAddress: string,
+  tokenId: number,
+): Promise<string> {
+  const id = collectionContractId();
+  if (!id) throw new Error('The Veil-ians collection is not available on this network.');
+  return invokeAsSpendingAccount(
+    spendingAddress,
+    id,
+    'buy',
+    [addr(spendingAddress), nativeToScVal(tokenId, { type: 'u32' })],
+    'Veil-ian purchase',
+  );
 }
 
 /** Stroops as a human USDC string, e.g. 50000000n -> "5". */
