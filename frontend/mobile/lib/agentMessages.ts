@@ -34,6 +34,14 @@ export type InvestIntent = {
   asset?: { code: string; issuer: string };
 };
 
+/** A two-step swap into USDC followed by a Blend deposit of the realized output. */
+export type SwapDepositPlanIntent = {
+  from: string;
+  to: 'USDC';
+  amount: string;
+  usdcIssuer: string;
+};
+
 /** A cash-out hand-off; bank selection and verification stay on the Cash Out screen. */
 export type CashOutIntent = { amountNGN: number; rate: number };
 
@@ -58,6 +66,8 @@ export type AgentMessage =
   | { id: string; kind: 'swap'; text: string; intent: SwapIntent }
   /** An issued-asset purchase or buy request handed to Earn/Invest. */
   | { id: string; kind: 'invest'; text: string; intent: InvestIntent }
+  /** A complete plan; opening it does not approve either transaction. */
+  | { id: string; kind: 'plan'; text: string; intent: SwapDepositPlanIntent }
   /** A read-rate cash-out hand-off to the screen that verifies and creates orders. */
   | { id: string; kind: 'cashout'; text: string; intent: CashOutIntent }
   /** A failure, from the service or from this app. */

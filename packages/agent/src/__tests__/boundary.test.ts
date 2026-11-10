@@ -57,7 +57,7 @@ const WRITE_PATHS = [
   /Keypair\.fromSecret/,
 ]
 // Statements that hand something to the user for action.
-const HANDOFF_SETS = /\b(pendingTxXdr|pendingTxSummary|swapIntent|investIntent)\s*=[^=]/
+const HANDOFF_SETS = /\b(pendingTxXdr|pendingTxSummary|swapIntent|investIntent|planIntent)\s*=[^=]/
 const STAGES_TX = /\b(pendingTxXdr|pendingTxSummary)\s*=[^=]/
 
 /** The body of `case '<name>': { ... }` in the executeTool source. */
@@ -123,6 +123,7 @@ describe('tool registry declares the boundary', () => {
       get_wallet_balance: 'read',
       open_invest: 'prepare',
       open_swap: 'prepare',
+      prepare_swap_deposit_plan: 'prepare',
       build_payment: 'prepare',
       request_user_approval: 'prepare',
     })
@@ -236,6 +237,7 @@ const hostileInputs: Record<string, Record<string, unknown>> = {
   get_wallet_balance: { address: HOSTILE },
   open_invest: { code: HOSTILE, asset_code: 'USDY', asset_issuer: SECRET, amount: RPC_URL },
   open_swap: { from_asset: HOSTILE, to_asset: SECRET, amount: RPC_URL },
+  prepare_swap_deposit_plan: { from_asset: HOSTILE, amount: RPC_URL },
   build_payment: { to_address: HOSTILE, asset: 'XLM', amount: 1, wallet_address: FEE_PAYER, memo: HOSTILE },
   request_user_approval: { transaction_xdr: 'AAAA', summary: HOSTILE },
 }

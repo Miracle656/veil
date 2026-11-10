@@ -1,6 +1,6 @@
 import { errorMessage } from '../lib/errorMessage';
 import { Keypair } from '@stellar/stellar-sdk';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -26,7 +26,7 @@ import {
   type NetworkName,
   type SwapAsset,
 } from '../lib/swapAssets';
-import { getRegisteredAsset } from '../lib/assets';
+import { getAssetIssuer, getRegisteredAsset } from '../lib/assets';
 import { fetchContractAssetBalance, getFeePayerAddress } from '../lib/activity';
 import { getFeePayerXlm, sendAssetFromContract, type FeePayerXlm } from '../lib/contractSpend';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
@@ -38,6 +38,7 @@ import { requirePasskey } from '../lib/passkey';
 import { isPasskeyCancellation, PasskeyCeremonyError } from '../lib/passkeyOutcome';
 import { getWalletAddress, getSignerSecret } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
+import { realizedOutputAmount } from '../lib/agentPlan';
 
 /** A swappable asset: a registry-checked code:issuer (issuer null = XLM). */
 type Token = SwapAsset & { name: string };
@@ -62,6 +63,7 @@ const DEBOUNCE_MS = 600;
 const PRICE_IMPACT_THRESHOLD_PCT = 5.0; // Refuse orders exceeding 5% total impact
 
 export default function SwapScreen() {
+  const router = useRouter();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // Soroswap is mainnet-only; on testnet we route through the classic DEX.
@@ -75,7 +77,17 @@ export default function SwapScreen() {
   // A swap handed over by the agent: /swap?from=XLM&to=USDC&amount=10. Only
   // codes this screen lists and a plain positive amount are taken; anything else
   // leaves the ordinary defaults, so a bad link opens an ordinary form.
-  const prefill = useLocalSearchParams<{ from?: string; to?: string; amount?: string }>();
+  const prefill = useLocalSearchParams<{
+    from?: string;
+    to?: string;
+    amount?: string;
+    plan?: string;
+    planIssuer?: string;
+    planBefore?: string;
+  }>();
+  const planIssuer = typeof prefill.planIssuer === 'string' ? prefill.planIssuer : '';
+  const planBefore = typeof prefill.planBefore === 'string' ? Number(prefill.planBefore) : Number.NaN;
+  const isBlendDepositPlan = prefill.plan === 'blend-deposit';
   // A code from the agent resolves to the one registered asset with that code.
   const prefillToken = (code: string | string[] | undefined): Token | undefined =>
     typeof code === 'string' ? TOKENS.find((t) => t.code === code.toUpperCase()) : undefined;
@@ -166,9 +178,47 @@ export default function SwapScreen() {
 
   const [step, setStep] = useState<Step>('form');
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [planContinueError, setPlanContinueError] = useState<string | null>(null);
   const [execError, setExecError] = useState<string | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  async function continuePlanWithRealizedOutput() {
+    setPlanContinueError(null);
+    if (!txHash || planIssuer !== getAssetIssuer('USDC', networkName) || !Number.isFinite(planBefore)) {
+      setPlanContinueError('The plan details do not match this network. The swap is complete; no deposit was started.');
+      return;
+    }
+    try {
+      const walletAddress = await getWalletAddress();
+      if (!walletAddress) throw new Error('Unlock the wallet to read the completed swap output.');
+      let received: string | null = null;
+      // Horizon can lag behind transaction confirmation. Use the observed
+      // balance increase, never the quote, and do not start step two on zero.
+      for (let attempt = 0; attempt < 8 && !received; attempt++) {
+        const current = await loadHoldings(walletAddress);
+        const balance = current.find((holding) =>
+          holding.code === 'USDC' && holding.issuer === planIssuer,
+        );
+        if (balance) received = realizedOutputAmount(planBefore, Number(balance.balance));
+        if (!received && attempt < 7) await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      if (!received) {
+        throw new Error('No positive USDC balance increase was observed. The swap completed, but the deposit was not started.');
+      }
+      router.push({
+        pathname: '/earn',
+        params: {
+          asset: 'USDC',
+          issuer: planIssuer,
+          amount: received,
+          planSwapHash: txHash,
+        },
+      });
+    } catch (cause) {
+      setPlanContinueError(cause instanceof Error ? cause.message : 'Could not read the swap output. The deposit was not started.');
+    }
+  }
 
   // ── Quote fetching (debounced) — unchanged engine ──────────────────────────
   useEffect(() => {
@@ -618,6 +668,14 @@ export default function SwapScreen() {
               FromIcon={SwapVerticalIcon}
             />
             {txHash ? <Text style={styles.resultHash}>tx {txHash.slice(0, 8)}…{txHash.slice(-6)}</Text> : null}
+            {isBlendDepositPlan ? (
+              <>
+                {planContinueError ? <Text style={{ color: colors.danger, textAlign: 'center' }}>{planContinueError}</Text> : null}
+                <Pressable style={[styles.primaryBtn, styles.doneCta]} onPress={() => void continuePlanWithRealizedOutput()}>
+                  <Text style={styles.primaryText}>Continue with actual USDC received</Text>
+                </Pressable>
+              </>
+            ) : null}
             <Pressable style={[styles.primaryBtn, styles.doneCta]} onPress={() => { setStep('form'); setAmountIn(''); setTxHash(null); }}>
               <Text style={styles.primaryText}>Done</Text>
             </Pressable>
@@ -728,7 +786,7 @@ export default function SwapScreen() {
 
         {execError ? (
           <Text style={styles.errorBanner} testID="swap-error">
-            {execError}
+            {execError}{isBlendDepositPlan ? ' The swap did not complete, so the deposit was not started.' : ''}
           </Text>
         ) : null}
 

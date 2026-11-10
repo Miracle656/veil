@@ -16,6 +16,7 @@ const mockSecret = Keypair.random().secret();
 
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ from: 'XLM', to: 'USDC', amount: '1' }),
+  useRouter: () => ({ push: jest.fn() }),
 }));
 jest.mock('../hooks/useTheme', () => ({
   useTheme: () => ({ colors: new Proxy({}, { get: () => '#000000' }), isDark: false }),

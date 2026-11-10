@@ -10,7 +10,13 @@
  */
 
 import { StrKey } from '@stellar/stellar-sdk';
-import type { AgentMessage, CashOutIntent, InvestIntent, SwapIntent } from './agentMessages';
+import type {
+  AgentMessage,
+  CashOutIntent,
+  InvestIntent,
+  SwapDepositPlanIntent,
+  SwapIntent,
+} from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -64,6 +70,7 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
         message.kind === 'proposal' ||
         message.kind === 'swap' ||
         message.kind === 'invest' ||
+        message.kind === 'plan' ||
         message.kind === 'cashout') &&
       message.text.trim()
     ) {
@@ -96,6 +103,7 @@ export type AgentReply = {
   pendingTxSummary?: string;
   swapIntent?: SwapIntent;
   investIntent?: InvestIntent;
+  planIntent?: SwapDepositPlanIntent;
   cashOutIntent?: CashOutIntent;
 };
 
@@ -156,6 +164,19 @@ export function parseInvestIntent(value: unknown): InvestIntent | undefined {
   return { code, issuer, amount, ...(quoteCurrency ? { quoteCurrency } : {}), asset: { code, issuer } };
 }
 
+/** Accept only the supported two-step shape; never pass arbitrary route data through. */
+export function parseSwapDepositPlanIntent(value: unknown): SwapDepositPlanIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const from = typeof v.from === 'string' ? v.from.trim().toUpperCase() : '';
+  const amount = typeof v.amount === 'string' ? v.amount.trim() : '';
+  const issuer = typeof v.usdcIssuer === 'string' ? v.usdcIssuer.trim() : '';
+  if (from !== 'XLM') return undefined;
+  if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) return undefined;
+  if (!StrKey.isValidEd25519PublicKey(issuer)) return undefined;
+  return { from, to: 'USDC', amount, usdcIssuer: issuer };
+}
+
 export type AgentRequest = {
   message: string;
   walletAddress: string;
@@ -193,6 +214,7 @@ export async function sendAgentMessage(
       pendingTxSummary: typeof data.pendingTxSummary === 'string' ? data.pendingTxSummary : undefined,
       swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
       investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
+      planIntent: parseSwapDepositPlanIntent((data as { planIntent?: unknown }).planIntent),
       cashOutIntent: parseCashOutIntent((data as { cashOutIntent?: unknown }).cashOutIntent),
     };
   } catch (err) {

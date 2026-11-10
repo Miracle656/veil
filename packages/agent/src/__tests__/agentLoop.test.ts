@@ -294,6 +294,27 @@ describe('runAgent', () => {
     expect(result.investIntent).toEqual({ asset: { code: 'USDY', issuer }, amount: '50' })
   })
 
+  it('returns a read-only swap and deposit plan without preparing a transaction', async () => {
+    const llm = scripted([
+      { text: '', toolCalls: [{ id: 'p', name: 'prepare_swap_deposit_plan', input: { from_asset: 'xlm', amount: '5' } }] },
+      { text: 'Review both steps.', toolCalls: [] },
+    ])
+    const result = await runAgent('swap 5 XLM to USDC and deposit it', wallet, [], undefined, undefined, llm)
+    expect(result.planIntent).toEqual({ from: 'XLM', to: 'USDC', amount: '5', usdcIssuer: INVEST_ISSUER })
+    expect(result.pendingTxXdr).toBeUndefined()
+    expect(llm.results[0][0].content).toContain('realized_output_from_step_1')
+  })
+
+  it('rejects invalid swap and deposit plan inputs', async () => {
+    const llm = scripted([
+      { text: '', toolCalls: [{ id: 'p', name: 'prepare_swap_deposit_plan', input: { from_asset: 'USDC', amount: '-5' } }] },
+      { text: 'Cannot prepare that plan.', toolCalls: [] },
+    ])
+    const result = await runAgent('plan it', wallet, [], undefined, undefined, llm)
+    expect(result.planIntent).toBeUndefined()
+    expect(llm.results[0][0].content).toMatch(/error/)
+  })
+
   it('refuses a malformed investment intent', async () => {
     const llm = scripted([
       { text: '', toolCalls: [{ id: 'i', name: 'open_invest', input: { asset_code: 'USDY', asset_issuer: 'not-an-issuer', amount: '50' } }] },
