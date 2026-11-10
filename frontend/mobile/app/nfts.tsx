@@ -11,6 +11,11 @@
  * button) when the indexer is missing or unreachable. Image/metadata failures
  * degrade to a placeholder tile, never a crash.
  *
+ * Framed like every other destination — `SafeAreaView` + `FlowHeader` — rather
+ * than `ScreenScaffold`, which also wrapped this screen's `FlatList` in its own
+ * `ScrollView`: a virtualised list inside a scroller renders every row at once
+ * and fights it for the gesture.
+ *
  * Read-only: nothing here signs, so the walletConnect signing path is untouched.
  */
 
@@ -22,13 +27,14 @@ import {
   Modal,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ScreenScaffold } from '../components/ScreenScaffold';
+import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
 import { errorMessage } from '../lib/errorMessage';
 import { fetchOwnedVeilIans } from '../lib/veilIansOwned';
@@ -257,29 +263,23 @@ export default function NFTsScreen() {
   };
 
   return (
-    <ScreenScaffold
-      eyebrow="CAP-46"
-      title="NFTs"
-      description="The CAP-46 tokens this wallet holds — the same items the web gallery shows."
-      testID="nfts-screen"
-    >
-      <SafeAreaView edges={[]} style={styles.flex}>
-        {renderBody()}
-      </SafeAreaView>
+    <SafeAreaView style={styles.screen} edges={['top']} testID="nfts-screen">
+      <View style={styles.header}>
+        <FlowHeader title="NFTs" />
+      </View>
+      <View style={styles.body}>{renderBody()}</View>
 
       <Modal visible={selected !== null} animationType="slide" onRequestClose={() => setSelected(null)}>
         <SafeAreaView style={styles.modalRoot} edges={['top', 'bottom']}>
-          <Pressable
-            onPress={() => setSelected(null)}
-            accessibilityRole="button"
-            accessibilityLabel="Close NFT details"
-            hitSlop={12}
-            style={styles.closeRow}
-          >
-            <Text style={styles.closeLabel}>← Back</Text>
-          </Pressable>
+          <View style={styles.header}>
+            <FlowHeader title={selected?.name ?? 'NFT'} onBack={() => setSelected(null)} />
+          </View>
           {selected ? (
-            <View style={styles.modalBody} testID="nft-detail-view">
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalBody}
+              testID="nft-detail-view"
+            >
               <NftImage item={selected} size="detail" />
               <Text style={styles.detailCollection}>{selected.collectionName ?? 'Soroban CAP-46 NFT'}</Text>
               <Text style={styles.detailTitle}>{selected.name}</Text>
@@ -310,17 +310,19 @@ export default function NFTsScreen() {
               ) : (
                 <Text style={styles.muted}>This token publishes no traits.</Text>
               )}
-            </View>
+            </ScrollView>
           ) : null}
         </SafeAreaView>
       </Modal>
-    </ScreenScaffold>
+    </SafeAreaView>
   );
 }
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    flex: { flex: 1 },
+    screen: { flex: 1, backgroundColor: colors.background },
+    header: { paddingHorizontal: 20, paddingTop: 16 },
+    body: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
     center: { alignItems: 'center', gap: 12, paddingVertical: 48 },
     muted: {
       color: colors.textMuted,
@@ -451,9 +453,7 @@ const createStyles = (colors: ThemeColors) =>
     cardTitle: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
     contract: { color: colors.textMuted, fontSize: 12, fontFamily: fontFamily.address },
     modalRoot: { flex: 1, backgroundColor: colors.background },
-    closeRow: { paddingHorizontal: 20, paddingVertical: 12 },
-    closeLabel: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
-    modalBody: { paddingHorizontal: 20, paddingBottom: 32, gap: 10 },
+    modalBody: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32, gap: 10 },
     detailImage: { width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: colors.surfaceMd },
     detailFallback: {
       width: '100%',
