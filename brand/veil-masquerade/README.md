@@ -1,12 +1,22 @@
-# Veil Masquerade — a 20-piece collection
+# Veil-ians — a 20-piece collection
+
+> **The collection is called Veil-ians.** It was drafted here as "Veil Masquerade",
+> and that name survives in the directory and the crate (`brand/veil-masquerade`,
+> `contracts/veil-masquerade`) because renaming those buys nothing. Everything a
+> buyer sees — the on-chain name `Veil-ians`, the symbol `VEILIAN`, the token
+> titles `Veil-ian #01` — is the real one, matching the Veil-ians Collection
+> design and the `/veil-ians` page. Nothing was deployed under the old name.
 
 Twenty cloth figures drawn from the mascot direction in
 [`docs/BRAND_MASCOT.md`](../../docs/BRAND_MASCOT.md). Same form throughout — a
 crowned mask over layered, patterned cloth falling to an uneven hem — varied
 across five traits.
 
-**Nothing here is minted, and the art is not final.** This is the metadata and
-the trait system; the images are still concept art. See *What is missing* below.
+**The art is in, the metadata is served, and the contract is written and
+tested — nothing is minted yet.** The twenty images live in `art/`; what the
+chain points at is published from `frontend/wallet/public/masquerade/`. One
+open question remains, and it is about exclusivity rather than readiness — see
+*Rights* below.
 
 ## What metadata is, if you have not done this before
 
@@ -18,9 +28,9 @@ So there are three separate things, and they are usually confused:
 
 | | What it is | Where it lives |
 | --- | --- | --- |
-| The token | id + owner | the contract, on Stellar |
-| The metadata | this JSON | wherever you host it |
-| The image | a PNG | wherever you host it, named by the metadata |
+| The token | id + owner | `contracts/veil-masquerade`, on Stellar |
+| The metadata | this JSON | `app.useveilapp.xyz/masquerade/NN.json` |
+| The image | a JPEG | `app.useveilapp.xyz/masquerade/NN.jpg`, named by the metadata |
 
 A wallet showing an NFT reads the token's `tokenUri`, fetches that JSON, and
 renders `name`, `image` and `attributes` from it. Veil already does exactly
@@ -31,17 +41,28 @@ indexers read it too; none of it is Veil-specific.
 ## The files
 
 ```
-traits.json              the source of truth — edit THIS
-collection.json          generated: collection-level metadata, with counted rarity
+traits.json                  the source of truth — edit THIS
+art/01.jpg … 20.jpg          the mint-quality originals; never served directly
+image-base.txt               where the collection is served from
+collection.json              generated: collection-level metadata, with counted rarity
 metadata/01.json … 20.json   generated: one document per token
 ```
 
-`collection.json` and `metadata/` are **generated**. Do not edit them by hand:
+`collection.json`, `metadata/` and everything under
+`frontend/wallet/public/masquerade/` are **generated**. Do not edit them by
+hand:
 
 ```bash
-node scripts/build-nft-metadata.mjs          # rebuild from traits.json
-node scripts/build-nft-metadata.mjs --check  # fail if they are stale
+python scripts/publish-nft-art.py            # re-encode art/ for the web
+node scripts/build-nft-metadata.mjs          # rebuild metadata, repo + served copy
+node scripts/build-nft-metadata.mjs --check  # fail if either is stale
 ```
+
+The served copy is generated from the same `traits.json` as the repo copy, so
+what a buyer's wallet fetches cannot drift from what is committed. `image-base.txt`
+holds the prefix the metadata is written with; changing it and rebuilding is
+how the collection moves to IPFS, and the contract's `set_base_uri` is how the
+chain is told.
 
 Twenty hand-edited files drift, and rarity has to be *counted* rather than
 claimed — "1 of 20" written by hand is an assertion, counted from the trait
@@ -57,11 +78,13 @@ over them means something:
 
 | Aperture | | Palette | | Hem | |
 | --- | --- | --- | --- | --- | --- |
-| Slot | 7 | Gold | 5 | Scalloped | 4 |
-| Twin slits | 6 | Lilac | 4 | Beaded fringe | 3 |
-| Woven band | 6 | Bone · Teal · Bone+lilac · Bone+teal · Gold+teal | 2 each | Pointed · Ragged | 3 each |
-| **None** | **1** | Gold + lilac | 1 | Layered · Long fringe · Straight | 2 each |
-| | | | | Pointed fringe | 1 |
+| Slot | 7 | Gold · Gold+teal · Lilac | 4 each | Scalloped | 4 |
+| Twin slits | 6 | Bone · Bone+lilac · Gold+lilac | 2 each | Beaded fringe · Pointed · Ragged | 3 each |
+| Woven band | 6 | Bone + teal | 1 | Layered · Long fringe · Straight | 2 each |
+| **None** | **1** | **Teal** | **1** | Pointed fringe | 1 |
+
+These counts are printed by `build-nft-metadata.mjs` on every rebuild; the
+table above is a copy, and the build is the authority.
 
 **#09 is the only closed mask in the set** — no aperture at all. That is the
 piece most faithful to the direction's own argument that no face is the point,
@@ -71,7 +94,18 @@ The build refuses to treat a trait as rarity-bearing if every token's value is
 unique, because a "1 of 20" drawn from a trait that is unique by construction
 reads as significant and says nothing.
 
-## Binding Names to Figures (V274 / #1078)
+## Binding Names to Figures (V274 / #1078) — superseded
+
+> **This section describes the earlier design and is kept for the reasoning in
+> it.** Figures are no longer awarded with a name. They are a separate purchase:
+> **5 USDC, and only to an address that already holds a Veil name**, with the
+> buyer choosing which of the twenty they want. `bindClaimToFigure` and the
+> `Name` trait still work and are still tested — a figure *can* be bound to a
+> name — but nothing awards one automatically, and `contracts/veil-masquerade`
+> has no concept of claim order.
+>
+> What survives unchanged is the argument about #09 below: it is sold like the
+> other nineteen, with no reserve and no discretion.
 
 The first twenty names claimed through Veil get the twenty Masquerade figures in sequence:
 - Claim #1 gets Veil Masquerade #01.
@@ -154,12 +188,21 @@ it is not a precondition anyone else gets to impose.
 
 ## What is missing before this can be minted
 
-1. **Final art**, if the collection is sold on scarcity — see *Rights* above.
-   The images are AI-generated concepts at preview resolution either way.
-2. **Hosting.** `image` is `ipfs://REPLACE_WITH_COLLECTION_CID/NN.png` — a
-   deliberate placeholder, not a guessed URL. Metadata that points at a
-   plausible-looking address nobody has uploaded to is worse than metadata that
-   admits it is unfinished, because the first kind mints.
-3. **A contract.** Veil's wallet reads CAP-46 tokens. Nothing in this directory
-   assumes a particular contract; the metadata is what any of them would point
-   at.
+1. ~~**A contract.**~~ Done: `contracts/veil-masquerade`. Twenty fixed ids, no
+   mint function beyond them, 5 USDC to the treasury, and a buyer must already
+   hold a Veil name. Upgradeable, unlike the wallet, because the tokens live in
+   it and a second deployment would start empty.
+2. ~~**Hosting.**~~ Done, with a caveat: the collection is served from
+   `app.useveilapp.xyz`, not IPFS. That is a real deployment rather than a
+   placeholder, and it is reversible — pin `art/` and the twenty JSON files,
+   put the CID in `image-base.txt`, rebuild, and call `set_base_uri`. The
+   contract has that function for exactly this reason.
+3. **Final art, if the collection is sold on exclusivity** — see *Rights*
+   above. These are the AI-generated images at full resolution (1088×1456).
+   The *token* supply is provably twenty; the *image* is not provably
+   exclusive, and those are different promises. Nothing in the listing claims
+   the second one.
+4. **Deploy and initialize.** The contract is built and tested but not on
+   mainnet. `initialize` takes the admin, USDC, the treasury, the names
+   registry (`CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4`) and
+   the base URI.

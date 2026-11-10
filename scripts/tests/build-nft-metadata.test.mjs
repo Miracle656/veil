@@ -12,23 +12,36 @@ import {
   buildMetadataFiles,
   FigureAlreadyBoundError,
   pad,
+  IMAGE_BASE,
+  imageFile,
 } from '../build-nft-metadata.mjs'
 
 describe('build-nft-metadata', () => {
   const sampleTokens = [
-    { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe' },
-    { id: 2, crown: 'Horns', aperture: 'Slot', ornament: 'Diamonds', palette: 'Gold', hem: 'Scalloped' },
-    { id: 3, crown: 'Beaded dome', aperture: 'Slot', ornament: 'Zigzag', palette: 'Lilac', hem: 'Scalloped' },
+    { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe', image: '01.jpg' },
+    { id: 2, crown: 'Drum cap', aperture: 'Slot', ornament: 'Diamonds', palette: 'Gold + teal', hem: 'Scalloped', image: '02.jpg' },
+    { id: 3, crown: 'Beaded dome', aperture: 'Slot', ornament: 'Zigzag', palette: 'Lilac', hem: 'Scalloped', image: '03.jpg' },
   ]
+
+  test('a token with no image is refused rather than given a guessed extension', () => {
+    // The extension used to be hardcoded `.png` while the art is `.jpg`, which
+    // would have minted twenty tokens pointing at files that are not there.
+    // Nothing downstream can fix that, so it fails here instead.
+    assert.throws(
+      () => imageFile({ id: 7 }),
+      /#07 has no `image`/,
+    )
+    assert.equal(imageFile({ id: 7, image: '07.jpg' }), '07.jpg')
+  })
 
   test('countTraits tallies frequencies dynamically from token attributes', () => {
     const counts = countTraits(sampleTokens)
     assert.equal(counts['Crown']['Plume'], 1)
-    assert.equal(counts['Crown']['Horns'], 1)
+    assert.equal(counts['Crown']['Drum cap'], 1)
     assert.equal(counts['Aperture']['Slot'], 2)
     assert.equal(counts['Aperture']['Twin slits'], 1)
     assert.equal(counts['Palette']['Lilac'], 2)
-    assert.equal(counts['Palette']['Gold'], 1)
+    assert.equal(counts['Palette']['Gold + teal'], 1)
     assert.equal(counts['Hem']['Scalloped'], 2)
     // No Name present yet
     assert.equal(counts['Name'], undefined)
@@ -48,8 +61,8 @@ describe('build-nft-metadata', () => {
 
     // Token without name
     const doc1 = buildToken(sampleTokens[0], counts, 3, rarityTraits)
-    assert.equal(doc1.name, 'Veil Masquerade #01')
-    assert.equal(doc1.image, 'ipfs://REPLACE_WITH_COLLECTION_CID/01.png')
+    assert.equal(doc1.name, 'Veil-ian #01')
+    assert.equal(doc1.image, `${IMAGE_BASE}/01.jpg`)
     assert.equal(doc1.attributes.some((a) => a.trait_type === 'Name'), false)
     assert.equal(doc1.attributes.find((a) => a.trait_type === 'Crown')?.value, 'Plume')
 
@@ -84,13 +97,13 @@ describe('build-nft-metadata', () => {
     const claim1 = getFigureForClaim(1)
     assert.equal(claim1.hasFigure, true)
     assert.equal(claim1.figure.id, 1)
-    assert.equal(claim1.figure.name, 'Veil Masquerade #01')
+    assert.equal(claim1.figure.name, 'Veil-ian #01')
 
     // Claimant #9 gets the unique closed mask (#09)
     const claim9 = getFigureForClaim(9)
     assert.equal(claim9.hasFigure, true)
     assert.equal(claim9.figure.id, 9)
-    assert.equal(claim9.figure.name, 'Veil Masquerade #09')
+    assert.equal(claim9.figure.name, 'Veil-ian #09')
     assert.equal(claim9.figure.aperture, 'None')
     assert.equal(claim9.figure.isClosedMask, true)
     assert.match(claim9.message, /goes to the ninth claimant in sequence/)
@@ -99,14 +112,14 @@ describe('build-nft-metadata', () => {
     const claim20 = getFigureForClaim(20)
     assert.equal(claim20.hasFigure, true)
     assert.equal(claim20.figure.id, 20)
-    assert.equal(claim20.figure.name, 'Veil Masquerade #20')
+    assert.equal(claim20.figure.name, 'Veil-ian #20')
 
     // Claimant #21 gets told there is no figure before paying
     const claim21 = getFigureForClaim(21)
     assert.equal(claim21.hasFigure, false)
     assert.equal(claim21.figure, null)
-    assert.match(claim21.message, /All 20 Veil Masquerade figures have been allocated/)
-    assert.match(claim21.message, /no Masquerade figure token/)
+    assert.match(claim21.message, /All 20 Veil-ians have been allocated/)
+    assert.match(claim21.message, /no Veil-ian/)
   })
 
   test('bindClaimToFigure permanently binds figure, prevents re-assignment, and updates metadata with Name trait passing --check', () => {
@@ -115,7 +128,7 @@ describe('build-nft-metadata', () => {
     try {
       const mockTraits = {
         collection: {
-          name: 'Veil Masquerade Test',
+          name: 'Veil-ians Test',
           symbol: 'VMASQ',
           size: 2,
           description: 'Test',
@@ -125,8 +138,8 @@ describe('build-nft-metadata', () => {
         identityTraits: ['Crown', 'Ornament', 'Name'],
         rarityTraits: ['Aperture'],
         tokens: [
-          { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe' },
-          { id: 2, crown: 'Horns', aperture: 'Twin slits', ornament: 'Diamonds', palette: 'Gold', hem: 'Scalloped' },
+          { id: 1, crown: 'Plume', aperture: 'Twin slits', ornament: 'Chevrons', palette: 'Lilac', hem: 'Beaded fringe', image: '01.jpg' },
+          { id: 2, crown: 'Drum cap', aperture: 'Twin slits', ornament: 'Diamonds', palette: 'Gold + teal', hem: 'Scalloped', image: '02.jpg' },
         ],
       }
 

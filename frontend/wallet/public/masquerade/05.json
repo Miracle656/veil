@@ -1,0 +1,28 @@
+{
+  "name": "Veil-ian #05",
+  "description": "A veiled figure for Veil: a crowned mask over layered, patterned cloth falling to an uneven hem. Crown: Crescent. Aperture: Twin slits. Ornament: Dotted grid. Palette: Gold + lilac. Hem: Straight. Its hem is shared with one other in the set of 20. No face — where the cloth is open, it is cloth removed rather than features drawn on.",
+  "image": "https://app.useveilapp.xyz/masquerade/05.jpg",
+  "external_url": "https://useveilapp.xyz",
+  "attributes": [
+    {
+      "trait_type": "Crown",
+      "value": "Crescent"
+    },
+    {
+      "trait_type": "Aperture",
+      "value": "Twin slits"
+    },
+    {
+      "trait_type": "Ornament",
+      "value": "Dotted grid"
+    },
+    {
+      "trait_type": "Palette",
+      "value": "Gold + lilac"
+    },
+    {
+      "trait_type": "Hem",
+      "value": "Straight"
+    }
+  ]
+}

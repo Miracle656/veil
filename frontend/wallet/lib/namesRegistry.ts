@@ -287,9 +287,20 @@ export class NamesRegistry {
     signatureVerifier?: PasskeySignatureVerifier
     initialRecords?: ClaimedNameRecord[]
   }) {
-    this.paymentVerifier =
-      options?.paymentVerifier ?? (async (txHash) => Boolean(txHash && txHash.trim().length > 0))
-    this.signatureVerifier = options?.signatureVerifier ?? (async () => true)
+    // Both defaults refuse. They used to accept — `paymentVerifier` returned
+    // true for any non-empty string and `signatureVerifier` returned true
+    // unconditionally — and because `globalNamesRegistry` is constructed with
+    // no options, that made the deployed `POST /api/names/claim` hand out any
+    // unreserved name to any caller who sent a one-character `paymentTxHash`,
+    // bound to whatever `passkeyPublicKey` they supplied, with
+    // `Access-Control-Allow-Origin: *`.
+    //
+    // A stub that stands in for money has to fail closed, or the day someone
+    // wires a route to it is the day names become free. A caller that wants
+    // permissive behaviour — a unit test exercising charset or reserved-list
+    // logic — passes its own verifier and says so explicitly.
+    this.paymentVerifier = options?.paymentVerifier ?? (async () => false)
+    this.signatureVerifier = options?.signatureVerifier ?? (async () => false)
 
     if (options?.initialRecords) {
       for (const rec of options?.initialRecords) {
@@ -438,7 +449,14 @@ export class NamesRegistry {
         throw new UnpaidClaimError('Payment verification failed for 5 USDC.')
       }
 
-      // 2. Verify passkey signature if provided or required
+      // 2. Verify the passkey signature when one is supplied.
+      //
+      // Only when supplied — omitting `signature` skips the check rather than
+      // failing it, so this proves nothing about possession of the passkey the
+      // name is being bound to. That is a real gap and it is left here
+      // deliberately: the on-chain registry (`contracts/veil-names`) requires
+      // `buyer` auth for `register`, so possession is proven by the ledger
+      // rather than by this module, which the route gate below retires.
       if (signature) {
         const payload = `${normalized}:${walletAddress}:${paymentTxHash}`
         const isValidSignature = await this.signatureVerifier(passkeyPublicKey, payload, signature)

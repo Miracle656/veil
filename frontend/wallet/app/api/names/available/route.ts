@@ -1,45 +1,24 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { globalNamesRegistry } from '@/lib/namesRegistry'
+/**
+ * `GET /api/names/available` — closed.
+ *
+ * It used to answer from the in-process registry in `lib/namesRegistry.ts`,
+ * which is always empty in production, so every name came back
+ * `available: true` with `Cache-Control: public, max-age=10` on it. A client
+ * could cache a yes for a name that is registered on-chain. See
+ * `lib/namesApiGate.ts` for why this is shut rather than flagged.
+ */
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url)
-  const name = searchParams.get('name')
+import { NextResponse } from 'next/server'
 
-  if (!name) {
-    return NextResponse.json(
-      { error: 'Query parameter "name" is required.' },
-      { status: 400, headers: corsHeaders() },
-    )
-  }
+import { namesCorsHeaders, namesUnavailable } from '@/lib/namesApiGate'
 
-  const result = globalNamesRegistry.checkAvailability(name)
-
-  return NextResponse.json(
-    {
-      name,
-      ...result,
-    },
-    {
-      status: 200,
-      headers: {
-        ...corsHeaders(),
-        'Cache-Control': 'public, max-age=10, s-maxage=10',
-      },
-    },
-  )
+export async function GET() {
+  return namesUnavailable()
 }
 
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 204,
-    headers: corsHeaders(),
+    headers: namesCorsHeaders(),
   })
-}
-
-function corsHeaders(): Record<string, string> {
-  return {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  }
 }

@@ -2,114 +2,50 @@
  * @jest-environment node
  */
 
+/**
+ * The names API is closed (`lib/namesApiGate.ts`).
+ *
+ * This file previously drove the in-process registry through the routes and
+ * asserted a 201 on `paymentTxHash: 'tx_valid_jupiter'` — encoding, as
+ * intended behaviour, that any non-empty string buys a name. Those cases are
+ * gone with the behaviour. What the registry itself does with a reserved
+ * name, a taken name or a bad charset is covered directly in
+ * `lib/__tests__/namesRegistry.test.ts`, so nothing unique moved out of
+ * coverage here.
+ *
+ * What is left is the thing that must not regress: both routes refuse, and
+ * they refuse for every shape of request, including a well-formed one.
+ */
+
 import { NextRequest } from 'next/server'
+
 import { POST as claimPOST, OPTIONS as claimOPTIONS } from '../claim/route'
-import { GET as availableGET } from '../available/route'
-import { globalNamesRegistry } from '@/lib/namesRegistry'
+import { GET as availableGET, OPTIONS as availableOPTIONS } from '../available/route'
 
-describe('/api/names/claim and /api/names/available routes (Issue #1073)', () => {
-  beforeEach(() => {
-    globalNamesRegistry.reset()
-  })
-
+describe('the names API is closed until the registry is on-chain', () => {
   describe('POST /api/names/claim', () => {
-    it('returns 400 when required fields are missing', async () => {
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'myname' }),
-      })
+    it('refuses a well-formed claim with 503', async () => {
+      const res = await claimPOST()
+      expect(res.status).toBe(503)
 
-      const res = await claimPOST(req)
-      expect(res.status).toBe(400)
       const data = await res.json()
-      expect(data.error).toContain('Missing required fields')
+      expect(data.code).toBe('NAMES_NOT_AVAILABLE')
     })
 
-    it('returns 402 for unpaid claims', async () => {
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'cooperative',
-          walletAddress: 'GA_WALLET_123',
-          passkeyPublicKey: 'pk_unpaid_route',
-          paymentTxHash: '',
-        }),
-      })
-
-      const res = await claimPOST(req)
-      expect(res.status).toBe(402)
-      const data = await res.json()
-      expect(data.code).toBe('UNPAID_CLAIM')
+    it('never answers 201, whatever the body says', async () => {
+      // The body is ignored entirely — the route takes no request argument.
+      // Asserting the status directly is the point: there is no combination
+      // of fields that reaches the registry any more.
+      const res = await claimPOST()
+      expect(res.status).not.toBe(201)
     })
 
-    it('returns 403 when claiming a reserved name', async () => {
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'admin',
-          walletAddress: 'GA_SQUATTER',
-          passkeyPublicKey: 'pk_squatter',
-          paymentTxHash: 'tx_hash_squatter',
-        }),
-      })
-
-      const res = await claimPOST(req)
-      expect(res.status).toBe(403)
-      const data = await res.json()
-      expect(data.code).toBe('RESERVED_NAME')
+    it('is not cached, so lifting the gate takes effect immediately', async () => {
+      const res = await claimPOST()
+      expect(res.headers.get('Cache-Control')).toBe('no-store')
     })
 
-    it('returns 201 when claim succeeds', async () => {
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'jupiter',
-          walletAddress: 'GA_JUPITER_WALLET',
-          passkeyPublicKey: 'pk_jupiter_pk',
-          paymentTxHash: 'tx_valid_jupiter',
-        }),
-      })
-
-      const res = await claimPOST(req)
-      expect(res.status).toBe(201)
-      const data = await res.json()
-      expect(data.success).toBe(true)
-      expect(data.record.name).toBe('jupiter')
-      expect(data.record.stellar_address).toBe('jupiter*useveilapp.xyz')
-      expect(data.record.tokenId).toBe('1')
-    })
-
-    it('returns 409 when claiming an already taken name', async () => {
-      // First claim
-      await globalNamesRegistry.claimName({
-        name: 'saturn',
-        walletAddress: 'GA_SATURN',
-        passkeyPublicKey: 'pk_saturn',
-        paymentTxHash: 'tx_saturn',
-      })
-
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'saturn',
-          walletAddress: 'GA_SATURN_2',
-          passkeyPublicKey: 'pk_saturn_2',
-          paymentTxHash: 'tx_saturn_2',
-        }),
-      })
-
-      const res = await claimPOST(req)
-      expect(res.status).toBe(409)
-      const data = await res.json()
-      expect(data.code).toBe('NAME_ALREADY_TAKEN')
-    })
-
-    it('responds to OPTIONS preflight with 204 and CORS headers', async () => {
+    it('answers an OPTIONS preflight with 204 and CORS headers', async () => {
       const res = await claimOPTIONS()
       expect(res.status).toBe(204)
       expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*')
@@ -117,34 +53,36 @@ describe('/api/names/claim and /api/names/available routes (Issue #1073)', () =>
   })
 
   describe('GET /api/names/available', () => {
-    it('returns 400 if name parameter is missing', async () => {
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/available')
-      const res = await availableGET(req)
-      expect(res.status).toBe(400)
+    it('refuses with 503 rather than claiming a name is free', async () => {
+      const res = await availableGET()
+      expect(res.status).toBe(503)
+
+      const data = await res.json()
+      expect(data.code).toBe('NAMES_NOT_AVAILABLE')
+      // The old route returned `available: true` for every name, because the
+      // in-process registry is always empty in production.
+      expect(data.available).toBeUndefined()
     })
 
-    it('returns available: true for untaken valid name', async () => {
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/available?name=available-name')
-      const res = await availableGET(req)
-      expect(res.status).toBe(200)
-      const data = await res.json()
-      expect(data.available).toBe(true)
+    it('does not let a client cache the refusal as an answer', async () => {
+      const res = await availableGET()
+      expect(res.headers.get('Cache-Control')).toBe('no-store')
     })
 
-    it('returns available: false for taken name', async () => {
-      await globalNamesRegistry.claimName({
-        name: 'pluto',
-        walletAddress: 'GA_PLUTO',
-        passkeyPublicKey: 'pk_pluto',
-        paymentTxHash: 'tx_pluto',
-      })
+    it('answers an OPTIONS preflight with 204 and CORS headers', async () => {
+      const res = await availableOPTIONS()
+      expect(res.status).toBe(204)
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*')
+    })
+  })
 
-      const req = new NextRequest('https://app.useveilapp.xyz/api/names/available?name=pluto')
-      const res = await availableGET(req)
-      expect(res.status).toBe(200)
-      const data = await res.json()
-      expect(data.available).toBe(false)
-      expect(data.reason).toBe('Name is already taken')
+  describe('the request type still compiles against NextRequest', () => {
+    it('constructs a request the route would have received', () => {
+      // Kept so the import does not drift out of the file while the routes
+      // take no argument; when the gate lifts, these handlers take a
+      // NextRequest again and this is the shape they get.
+      const req = new NextRequest('https://app.useveilapp.xyz/api/names/available?name=adebayo')
+      expect(new URL(req.url).searchParams.get('name')).toBe('adebayo')
     })
   })
 })

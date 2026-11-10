@@ -1,14 +1,14 @@
 {
-  "name": "Veil Masquerade",
-  "symbol": "VMASQ",
-  "description": "Twenty cloth figures for Veil, a Stellar passkey wallet. Each is the same masquerade-inspired form — a crowned mask over layered, patterned cloth falling to an uneven hem — varied across five traits. No faces: where a figure is open, it is cloth removed rather than features drawn on.",
+  "name": "Veil-ians",
+  "symbol": "VEILIAN",
+  "description": "Twenty veiled figures made for the Veil community, a Stellar passkey wallet. Each is the same masquerade-inspired form — a crowned mask over layered, patterned cloth falling to an uneven hem — varied across five traits. No faces: where a figure is open, it is cloth removed rather than features drawn on.",
   "external_url": "https://useveilapp.xyz",
-  "image": "ipfs://REPLACE_WITH_COLLECTION_CID/cover.png",
+  "image": "https://app.useveilapp.xyz/masquerade/01.jpg",
   "total_supply": 20,
   "trait_counts": {
     "Crown": {
       "Plume": 1,
-      "Horns": 1,
+      "Drum cap": 1,
       "Beaded dome": 1,
       "Flat cap": 1,
       "Crescent": 1,
@@ -57,13 +57,13 @@
     },
     "Palette": {
       "Lilac": 4,
-      "Gold": 5,
+      "Gold + teal": 4,
       "Bone": 2,
-      "Teal": 2,
-      "Gold + lilac": 1,
-      "Bone + teal": 2,
+      "Gold + lilac": 2,
+      "Gold": 4,
+      "Teal": 1,
       "Bone + lilac": 2,
-      "Gold + teal": 2
+      "Bone + teal": 1
     },
     "Hem": {
       "Beaded fringe": 3,
