@@ -21,6 +21,24 @@
       "pay_token_note": "Mainnet USDC SAC, issuer GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
       "upgradeable": true,
       "ttl_note": "Soroban entries archive when their TTL lapses. A name's TTL is bumped to 30 days on every read or write by the contract itself, so active names keep themselves alive. The contract's own wasm and instance are NOT self-renewing and need `stellar contract extend` roughly monthly, paid from the admin account, or the whole registry stops resolving."
+    },
+    "veil_ians": {
+      "_comment": "Veil-ians, the 20-piece collection. `wasm_sha256` is the DEPLOYED artifact, built with `stellar contract build` for wasm32v1-none; it differs from contracts/expected-hashes.json, which records the plain wasm32-unknown-unknown build that Soroban's VM rejects outright. Two builds of one source, only one deployable.",
+      "contract_id": "CA5TXFITGGMG6HG6FJIHWOTXSZ43EIR4F5UCTAAY5FJWB5FWBG5Z3WPN",
+      "wasm_sha256": "e7980246fbc5f32d50d1763ae3dd1426b5adb97fbb43bd47ae072161a3ff2c7f",
+      "deploy_tx": "709c410adf10c63579f0df6eff0aa0d0b4fe542161b32c14bc7bba3c8fa4e18b",
+      "upload_tx": "8589e956ff8a0b1dfb09627a113fe54120bfef93e47a3da47db3ea128e50d135",
+      "source_commit": "2d9fd49a",
+      "deployed": "2026-11-10",
+      "admin": "GDWBFMW565JIDKUQZMGPS6SHRLM7ZIFVVRKBPBJZPJG6EOJQ7LDK3YVX",
+      "treasury": "GB3JS2AJZ3FKIGVOOPXDEYYR3XOHQA474WGCYAMNFSGX6OW5HGWCKUZW",
+      "pay_token": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+      "pay_token_note": "Mainnet USDC SAC, issuer GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "names_registry": "CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4",
+      "base_uri": "https://app.useveilapp.xyz/masquerade/",
+      "base_uri_note": "The trailing slash is load-bearing: the contract composes base + a two-digit id + '.json'. Served from our own domain rather than IPFS; moving is a CID in brand/veil-masquerade/image-base.txt, a metadata rebuild, and one `set_base_uri` call.",
+      "upgradeable": true,
+      "ttl_note": "A sold figure's entry is bumped to 30 days on purchase, but nothing re-bumps it afterwards and the contract's own wasm and instance never self-renew. `stellar contract extend` on all three roughly monthly, from the admin account, or the collection stops answering."
     }
   }
 }

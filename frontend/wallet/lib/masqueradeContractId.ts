@@ -8,14 +8,14 @@
  */
 
 /**
- * Not deployed yet.
+ * Deployed 2026-11-10 from wasm e7980246fbc5f32d50d1763ae3dd1426b5adb97fbb43bd47ae072161a3ff2c7f.
  *
- * Null rather than a guessed or placeholder address. Everything downstream
- * treats null as "the collection is not available on this network" and says
- * so, which is recoverable; a wrong address would have the shop reading sold
- * state from a contract that is not this collection, and that is not.
+ * Baked in rather than left to configuration, following `namesContractId`: a
+ * fresh clone should show the collection without secret config, and an
+ * environment variable still wins for a deployment pointed elsewhere.
  */
-export const MAINNET_MASQUERADE_CONTRACT_ID: string | null = null
+export const MAINNET_MASQUERADE_CONTRACT_ID: string | null =
+  'CA5TXFITGGMG6HG6FJIHWOTXSZ43EIR4F5UCTAAY5FJWB5FWBG5Z3WPN'
 
 /** Testnet has no default, as with names: a rehearsal deployment goes stale. */
 export const TESTNET_MASQUERADE_CONTRACT_ID: string | null = null
