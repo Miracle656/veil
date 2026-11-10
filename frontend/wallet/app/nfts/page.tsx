@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { getFeePayerKeypair } from '@/lib/passkeySigner'
 import type { IndexerFreshness } from '@/lib/nfts'
+import { fetchOwnedVeilIans } from '@/lib/veilIansOwned'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import {
@@ -94,28 +95,38 @@ export default function NFTGalleryPage() {
       // held should still be shown when the other lookup is the thing that
       // broke. An outright failure is only reported when nothing answered.
       let staleMeta: IndexerFreshness | null = null
-      const results = await Promise.allSettled(
-        addresses.map((a) => fetchWalletNFTs(a, { onStale: (m) => { staleMeta = m } })),
-      )
+      const results = await Promise.allSettled([
+        ...addresses.map((a) => fetchWalletNFTs(a, { onStale: (m) => { staleMeta = m } })),
+        // Veil's own collection, read from the contract rather than the
+        // indexer. See `lib/veilIansOwned.ts`: for twenty tokens with a known
+        // address, asking the chain is both cheaper and the only answer that
+        // cannot be stale.
+        ...addresses.map((a) => fetchOwnedVeilIans(a)),
+      ])
       setFreshness(staleMeta)
-      const answered = results.filter((r) => r.status === 'fulfilled')
-      if (answered.length === 0) {
-        const first = results[0]
-        throw first.status === 'rejected' ? first.reason : new Error('No account answered.')
-      }
-
-      // Same token from two lookups is one token. Keyed by contract and id
+      // Same token from two sources is one token. Keyed by contract and id
       // rather than by `id`, which is only unique within one indexer answer.
       const seen = new Set<string>()
       const items: NFTItem[] = []
-      for (const r of answered) {
-        for (const item of (r as PromiseFulfilledResult<NFTItem[]>).value) {
+      for (const r of results) {
+        if (r.status !== 'fulfilled') continue
+        for (const item of r.value) {
           const key = `${item.contractId}:${item.tokenId}`
           if (seen.has(key)) continue
           seen.add(key)
           items.push(item)
         }
       }
+
+      // Report a failure only when there is nothing to show for it. One source
+      // failing while another found tokens is not worth an error screen over
+      // the tokens it found — and a token read from the chain is no less real
+      // for the indexer having been down when it was read.
+      if (items.length === 0) {
+        const failed = results.find((r) => r.status === 'rejected')
+        if (failed) throw (failed as PromiseRejectedResult).reason
+      }
+
       setNfts(items)
     } catch (err: unknown) {
       if (err instanceof IndexerNotConfiguredError) setErrorKind('unconfigured')
