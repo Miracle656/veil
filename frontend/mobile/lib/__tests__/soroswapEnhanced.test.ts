@@ -28,6 +28,10 @@ const USDY: SwapAsset = {
   code: 'USDY',
   issuer: 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6',
 };
+const CETES: SwapAsset = {
+  code: 'CETES',
+  issuer: 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC',
+};
 
 const baseQuote: SwapQuote = {
   amountOut: '8224500000', // 822.45, 7 decimals
@@ -46,6 +50,7 @@ const thinSpread = {
   askCount: 2,
   bidDepth: 800,
   askDepth: 600,
+  askInputDepth: 688.9,
 };
 
 const mocked = spreadCalculator as jest.Mocked<typeof spreadCalculator>;
@@ -143,6 +148,24 @@ describe('enhanceQuoteWithSpread', () => {
     // An AMM-only pair is a normal case, so it is disclosed, not blocked...
     expect(enhanced.shouldRefuse).toBe(false);
     expect(enhanced.impactAnalysis.disclosure).toMatch(/could not be measured/i);
+  });
+
+  it('refuses stablebond trading when the live USDC book is missing or one-sided', async () => {
+    mocked.fetchOrderBookSpread.mockResolvedValue({ status: 'no-book' });
+    const enhanced = await enhanceQuoteWithSpread(baseQuote, USDC, CETES, 10, 5.0);
+    expect(enhanced.shouldRefuse).toBe(true);
+    expect(enhanced.refusalReason).toMatch(/one-sided|unavailable/i);
+  });
+
+  it('refuses a stablebond order above live ask depth and reports the fillable amount', async () => {
+    mocked.fetchOrderBookSpread.mockResolvedValue({
+      status: 'measured',
+      spread: { ...thinSpread, bestBid: 1, bestAsk: 1.001, spreadPct: 0.1 },
+    });
+    const enhanced = await enhanceQuoteWithSpread(baseQuote, USDC, CETES, 700, 5.0);
+    expect(enhanced.shouldRefuse).toBe(true);
+    expect(enhanced.maxBookInput).toBe(688.9);
+    expect(enhanced.refusalReason).toContain('688.9000000 USDC');
   });
 
   it('still refuses on price impact alone when the spread is unknown', async () => {
