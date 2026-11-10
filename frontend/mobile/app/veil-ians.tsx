@@ -280,7 +280,7 @@ export default function VeilIansScreen() {
                 <Image
                   source={{ uri: figureImageUrl(open.id) }}
                   style={styles.sheetArt}
-                  resizeMode="cover"
+                  resizeMode="contain"
                 />
                 <Text style={styles.eyebrow}>
                   VEIL-IANS · {pad(open.id)} / {COLLECTION_SIZE}
@@ -504,9 +504,19 @@ const createStyles = (colors: ThemeColors) => {
       maxHeight: '92%',
       gap: 12,
     },
+    // Capped, not `aspectRatio: 3/4`.
+    //
+    // At full width that aspect makes the image 549px tall on a 412×860 phone,
+    // which with eight trait rows put the buy slider about 230px below the fold
+    // — you had to scroll an already-scrolled sheet to reach the only control
+    // that does anything. Measured, not guessed.
+    //
+    // `contain` rather than `cover` because these are full-length figures: a
+    // cropped one shows a band of cloth and no crown, which is the half that
+    // tells them apart.
     sheetArt: {
       width: '100%',
-      aspectRatio: 3 / 4,
+      height: 260,
       borderRadius: 18,
       backgroundColor: colors.surfaceMd,
     },
