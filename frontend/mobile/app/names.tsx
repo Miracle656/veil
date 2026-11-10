@@ -303,9 +303,10 @@ const createStyles = (colors: ThemeColors) => {
     field: {
       flexDirection: 'row',
       alignItems: 'center',
-      // borderStrong-equivalent: `border` is too faint to read as an input.
+      // `border` is a hairline and disappears on a light screen; this is the
+      // thing the screen is asking you to type into.
       borderWidth: 1,
-      borderColor: colors.textFaint,
+      borderColor: colors.borderStrong,
       backgroundColor: colors.surface,
       borderRadius: 999,
       paddingHorizontal: 18,
