@@ -48,7 +48,7 @@ jest.mock('@blend-capital/blend-sdk', () => ({
   RequestType: { Supply: 2, Withdraw: 3 },
 }));
 
-import { loadBlendPools, loadBlendPositions, withdrawAllAmount } from '../blend';
+import { loadBlendPools, loadBlendPositions, loadBlendPositionSnapshot, withdrawAllAmount } from '../blend';
 
 type ReserveStub = { assetId: string; supply: bigint; apy: number };
 
@@ -225,6 +225,23 @@ describe('blend', () => {
       mockPoolV1Load.mockRejectedValue(new Error('rpc down'));
 
       await expect(loadBlendPositions('GUSER')).resolves.toEqual([]);
+    });
+  });
+
+  describe('loadBlendPositionSnapshot', () => {
+    it('returns an available empty position list when the pool has no supplied assets', async () => {
+      process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
+      mockPoolV2Load.mockResolvedValue(poolStub({ id: 'CPOOL1', reserves: [{ assetId: 'CUSDC', supply: 1n, apy: 0 }] }));
+
+      await expect(loadBlendPositionSnapshot('GUSER')).resolves.toEqual({ status: 'available', positions: [] });
+    });
+
+    it('marks pool read failures unavailable instead of reporting no positions', async () => {
+      process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
+      mockPoolV2Load.mockRejectedValue(new Error('rpc down'));
+      mockPoolV1Load.mockRejectedValue(new Error('rpc down'));
+
+      await expect(loadBlendPositionSnapshot('GUSER')).resolves.toEqual({ status: 'unavailable', positions: [] });
     });
   });
 
