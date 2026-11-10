@@ -13,7 +13,7 @@
  * right. `sendAssetFromContract` is now one of the three.
  */
 
-import { Contract, TransactionBuilder, rpc as SorobanRpc, xdr } from '@stellar/stellar-sdk';
+import { Account, Contract, Keypair, TransactionBuilder, rpc as SorobanRpc, xdr } from '@stellar/stellar-sdk';
 
 import { getFeePayerAddress } from './activity';
 import { inclusionFee } from './fees';
@@ -81,11 +81,14 @@ export async function simulateRead(
     const network = getNetwork();
     const server = new SorobanRpc.Server(network.rpcUrl);
 
-    // Simulation does not check the source account, so the fee-payer serves
-    // and nothing else has to exist or be funded.
-    const feePayer = await getFeePayerAddress();
-    if (!feePayer) return null;
-    const account = await server.getAccount(feePayer);
+    // Simulation does not check the source account, so any address serves and
+    // none of this needs a funded account. It must not need the FEE-PAYER
+    // either: requiring one meant a phone with no wallet yet could not read
+    // the Veil-ians grid at all, and the screen reported that as "could not
+    // read which pieces are available" — a browse blocked by a signing key it
+    // was never going to use.
+    const probe = Keypair.random().publicKey();
+    const account = new Account(probe, '0');
 
     const tx = new TransactionBuilder(account, {
       fee: inclusionFee(),

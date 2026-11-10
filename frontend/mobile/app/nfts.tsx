@@ -31,6 +31,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 import { useTheme } from '../hooks/useTheme';
 import { errorMessage } from '../lib/errorMessage';
+import { fetchOwnedVeilIans } from '../lib/veilIansOwned';
 import {
   fetchWalletNFTs,
   formatTokenId,
@@ -94,7 +95,16 @@ export default function NFTsScreen() {
         setState({ kind: 'no-wallet' });
         return;
       }
-      const items = await fetchWalletNFTs(address);
+      // The indexer, and the chain for Veil's own collection. The indexer is
+      // the only thing that can enumerate a collection nobody told us about;
+      // it is NOT the authority on one whose address we ship — see
+      // `lib/veilIansOwned.ts` for the chain of failures that taught us.
+      const [indexed, onChain] = await Promise.all([
+        fetchWalletNFTs(address),
+        fetchOwnedVeilIans(address).catch(() => [] as NFTItem[]),
+      ]);
+      const seen = new Set(indexed.map((i) => `${i.contractId}:${i.tokenId}`));
+      const items = [...indexed, ...onChain.filter((i) => !seen.has(`${i.contractId}:${i.tokenId}`))];
       setState({ kind: 'ready', items });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {
@@ -117,7 +127,16 @@ export default function NFTsScreen() {
         setState({ kind: 'no-wallet' });
         return;
       }
-      const items = await fetchWalletNFTs(address);
+      // The indexer, and the chain for Veil's own collection. The indexer is
+      // the only thing that can enumerate a collection nobody told us about;
+      // it is NOT the authority on one whose address we ship — see
+      // `lib/veilIansOwned.ts` for the chain of failures that taught us.
+      const [indexed, onChain] = await Promise.all([
+        fetchWalletNFTs(address),
+        fetchOwnedVeilIans(address).catch(() => [] as NFTItem[]),
+      ]);
+      const seen = new Set(indexed.map((i) => `${i.contractId}:${i.tokenId}`));
+      const items = [...indexed, ...onChain.filter((i) => !seen.has(`${i.contractId}:${i.tokenId}`))];
       setState({ kind: 'ready', items });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {

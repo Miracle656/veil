@@ -1,39 +1,44 @@
 /**
  * Veil names — buy one from the phone.
  *
- * The native counterpart of `frontend/wallet/app/names/page.tsx`, against the
- * same registry. Mobile could already *send* to a name (`lib/federation.ts`);
- * this is where one is bought.
+ * A flow screen, built like Airtime and Send: `SafeAreaView` + `FlowHeader`
+ * over a `ScrollView`, Anton labels, hairline cards, and `SlideToConfirm` for
+ * the one action that spends money. Mobile could already *send* to a name
+ * (`lib/federation.ts`); this is where one is bought.
  *
  * The lookup is debounced and sequence-guarded: a slow answer for an earlier
  * keystroke must never overwrite the answer for what is on screen now, or the
- * field ends up saying "available" about a name the user has already edited
- * away from.
+ * field ends up saying "available" about a name the user has edited away from.
  *
  * Three states kept apart, as on web:
  *
- * 1. **Taken, free, and "could not ask."** `unknown` is never rendered as
- *    available — telling somebody a name is free when nothing can grant it is
- *    how a person pays for nothing.
- * 2. **The local price and the chain's price.** The local one prices a name as
- *    it is typed; the chain's is what will actually be charged, and that is the
- *    number on the button.
- * 3. **Short of USDC, and could not read the balance.** Only a balance that was
- *    read can say someone is short.
+ *   1. Taken, free, and "could not ask". `unknown` is never rendered as
+ *      available — saying a name is free when nothing can grant it is how
+ *      somebody pays for nothing.
+ *   2. The local price and the chain's price. The local one prices a name as it
+ *      is typed; the chain's is what will be charged, and that is the number on
+ *      the slider.
+ *   3. Short of USDC, and could not read the balance. Only a balance that was
+ *      read can say somebody is short.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
-import { ScreenScaffold } from '../components/ScreenScaffold';
+import { FlowHeader } from '../components/FlowHeader';
+import { SlideToConfirm } from '../components/SlideToConfirm';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
@@ -56,7 +61,6 @@ import {
   pricePerYear,
   quoteFromChain,
   registerName,
-  totalUsdc,
   usdcBalance,
   validateName,
 } from '../lib/names';
@@ -75,7 +79,7 @@ export default function NamesScreen() {
   const [balance, setBalance] = useState<bigint | null>(null);
 
   const [busy, setBusy] = useState(false);
-  const [buyError, setBuyError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [boughtHash, setBoughtHash] = useState<string | null>(null);
 
   const seq = useRef(0);
@@ -108,7 +112,7 @@ export default function NamesScreen() {
     }
     setChecking(true);
     setBoughtHash(null);
-    setBuyError(null);
+    setError(null);
 
     const mine = ++seq.current;
     const timer = setTimeout(() => {
@@ -128,8 +132,7 @@ export default function NamesScreen() {
     return () => clearTimeout(timer);
   }, [name, years, shapeOk, registryId, walletAddress]);
 
-  const localTotal = shapeOk ? totalUsdc(name.length, years) : 0;
-  const chargeText = quote !== null ? formatUsdc(quote) : String(localTotal);
+  const chargeText = quote !== null ? formatUsdc(quote) : null;
   const short = balance !== null && quote !== null && balance < quote;
 
   const canBuy =
@@ -144,7 +147,7 @@ export default function NamesScreen() {
   const handleBuy = async () => {
     if (!walletAddress || !shapeOk) return;
     setBusy(true);
-    setBuyError(null);
+    setError(null);
     try {
       const hash = await registerName(walletAddress, name, years);
       setBoughtHash(hash);
@@ -152,244 +155,290 @@ export default function NamesScreen() {
       await refreshBalance();
     } catch (err: unknown) {
       if (isPasskeyCancellation(err)) {
-        setBuyError('Cancelled. Nothing was charged.');
+        setError('Cancelled. Nothing was charged.');
       } else {
-        setBuyError(nameErrorMessage(err, registryId) ?? errorMessage(err));
+        setError(nameErrorMessage(err, registryId) ?? errorMessage(err));
       }
-      // It may have gone while this was in flight.
-      if (shapeOk) {
-        const s = await nameState(name, walletAddress);
-        setState(s);
-      }
+      if (shapeOk) setState(await nameState(name, walletAddress));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <ScreenScaffold
-      eyebrow="VEIL NAMES"
-      title="Get paid by name"
-      description="A Veil name points to your wallet, so anyone can pay you without copying a 56-character address."
-      testID="names-screen"
-    >
-      <View style={styles.field}>
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder="yourname"
-          placeholderTextColor={colors.textFaint}
-          autoCapitalize="none"
-          autoCorrect={false}
-          maxLength={MAX_NAME_LENGTH}
-          style={styles.input}
-          accessibilityLabel="The name you want"
-        />
-        <Text style={styles.suffix}>{SUFFIX}</Text>
+    <SafeAreaView style={styles.screen} edges={['top']}>
+      <View style={styles.header}>
+        <FlowHeader title="Veil name" />
       </View>
 
-      {problem && <Text style={styles.problem}>{VALIDATION_MESSAGES[problem]}</Text>}
-
-      {shapeOk && (
-        <View style={styles.statusRow}>
-          {checking ? (
-            <Text style={styles.statusChecking}>Checking…</Text>
-          ) : (
-            <Text style={styles.statusText(state)}>
-              {state === 'available'
-                ? `${name}${SUFFIX} is free`
-                : state === 'yours'
-                  ? 'You already hold this name'
-                  : state === 'taken'
-                    ? 'Somebody already holds this name'
-                    : state === 'in_recovery'
-                      ? 'Lapsed, but only its previous holder can take it for now'
-                      : 'Could not reach the registry — this does not mean it is free'}
-            </Text>
-          )}
-        </View>
-      )}
-
-      <Text style={styles.sectionLabel}>FOR HOW LONG</Text>
-      <View style={styles.terms}>
-        {Array.from({ length: MAX_TERM_YEARS }, (_, i) => i + MIN_TERM_YEARS).map((y) => (
-          <Pressable
-            key={y}
-            onPress={() => setYears(y)}
-            style={[styles.term, years === y && styles.termActive]}
-            accessibilityRole="button"
-            accessibilityState={{ selected: years === y }}
-          >
-            <Text style={[styles.termText, years === y && styles.termTextActive]}>
-              {y}
-              {y === 1 ? ' yr' : ' yrs'}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
-      <View style={styles.priceBox}>
-        <View style={styles.priceRow}>
-          <Text style={styles.priceLabel}>
-            {shapeOk ? `${pricePerYear(name.length)} USDC a year` : 'Price'}
-          </Text>
-          <Text style={styles.priceValue}>{shapeOk ? `${chargeText} USDC` : '—'}</Text>
-        </View>
-        {/* Names are rented, not sold. Saying so beside the price is the only
-            place somebody is certain to read it. */}
-        <Text style={styles.priceNote}>
-          Names are rented, not bought outright. This covers {years}{' '}
-          {years === 1 ? 'year' : 'years'}; renew any time before it lapses.
-        </Text>
-        {quote === null && shapeOk && !checking && (
-          <Text style={styles.priceNote}>
-            That is the published price — the registry did not answer, so it is an estimate rather
-            than the charge.
-          </Text>
-        )}
-      </View>
-
-      {!registryId && (
-        <Text style={styles.problem}>Veil names are not available on this network.</Text>
-      )}
-      {registryId && !walletAddress && (
-        <Text style={styles.problem}>Open your wallet to buy a name.</Text>
-      )}
-      {short && (
-        <Text style={styles.problem}>
-          Not enough USDC in your wallet — you have {formatUsdc(balance ?? 0n)}.
-        </Text>
-      )}
-
-      {boughtHash ? (
-        <View style={styles.doneBox}>
-          <Text style={styles.doneText}>
-            {name}
-            {SUFFIX} is yours. Anyone on Veil — and Lobstr — can now pay you by name.
-          </Text>
-          <Pressable style={styles.primaryButton} onPress={() => router.push('/veil-ians')}>
-            <Text style={styles.primaryButtonText}>Now get a Veil-ian</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <Pressable
-          style={[styles.primaryButton, !canBuy && styles.buttonDisabled]}
-          disabled={!canBuy}
-          onPress={handleBuy}
-          accessibilityRole="button"
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={16}
+      >
+        <ScrollView
+          style={styles.flex}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.body}
+          keyboardShouldPersistTaps="handled"
         >
-          {busy ? (
-            <ActivityIndicator color={colors.onAccent} />
-          ) : (
-            <Text style={styles.primaryButtonText}>
-              {shapeOk ? `Claim for ${chargeText} USDC` : 'Claim'}
-            </Text>
-          )}
-        </Pressable>
-      )}
+          {!registryId ? (
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>MAINNET ONLY</Text>
+              <Text style={styles.question}>Veil names are not on this network</Text>
+              <Text style={styles.hint}>
+                The registry lives on mainnet. Switch network in Settings, then come back.
+              </Text>
+            </View>
+          ) : null}
 
-      {busy && (
-        <Text style={styles.mutedText}>
-          Use your fingerprint, face or screen lock to sign. Nothing is charged until you do.
-        </Text>
-      )}
-      {buyError && <Text style={styles.errorText}>{buyError}</Text>}
-    </ScreenScaffold>
+          {error ? (
+            <View style={styles.errorCard}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+
+          {boughtHash ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.eyebrow}>YOURS</Text>
+                <Text style={styles.question}>
+                  {name}
+                  {SUFFIX}
+                </Text>
+                <Text style={styles.hint}>
+                  Anyone on Veil — and Lobstr — can now pay you by name instead of a
+                  56-character address.
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => router.push('/veil-ians')}
+                style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+              >
+                <Text style={styles.primaryText}>Now get a Veil-ian</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => router.back()}
+                style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+              >
+                <Text style={styles.secondaryText}>Done</Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <View style={styles.field}>
+                <Text style={styles.label}>YOUR NAME</Text>
+                <View style={styles.nameRow}>
+                  <TextInput
+                    value={query}
+                    onChangeText={setQuery}
+                    placeholder="yourname"
+                    placeholderTextColor={colors.textFaint}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={MAX_NAME_LENGTH}
+                    style={styles.nameInput}
+                    accessibilityLabel="The name you want"
+                  />
+                  <Text style={styles.suffix}>{SUFFIX}</Text>
+                </View>
+                {problem ? (
+                  <Text style={styles.hintWarn}>{VALIDATION_MESSAGES[problem]}</Text>
+                ) : shapeOk ? (
+                  checking ? (
+                    <Text style={styles.hint}>Checking…</Text>
+                  ) : (
+                    <Text style={styles.statusText(state)}>
+                      {state === 'available'
+                        ? `${name}${SUFFIX} is free`
+                        : state === 'yours'
+                          ? 'You already hold this name'
+                          : state === 'taken'
+                            ? 'Somebody already holds this name'
+                            : state === 'in_recovery'
+                              ? 'Lapsed — only its previous holder can take it for now'
+                              : 'Could not reach the registry. This does not mean it is free.'}
+                    </Text>
+                  )
+                ) : null}
+              </View>
+
+              <View style={styles.field}>
+                <Text style={styles.label}>FOR HOW LONG</Text>
+                <View style={styles.termRow}>
+                  {Array.from({ length: MAX_TERM_YEARS }, (_, i) => i + MIN_TERM_YEARS).map((y) => (
+                    <Pressable
+                      key={y}
+                      onPress={() => setYears(y)}
+                      style={({ pressed }) => [
+                        styles.term,
+                        years === y && styles.termActive,
+                        pressed && styles.pressed,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: years === y }}
+                    >
+                      <Text style={[styles.termText, years === y && styles.termTextActive]}>
+                        {y}
+                        {y === 1 ? ' yr' : ' yrs'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.card}>
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>
+                    {shapeOk ? `${pricePerYear(name.length)} USDC a year` : 'Price'}
+                  </Text>
+                  <Text style={styles.money}>
+                    {chargeText ? `${chargeText} USDC` : '—'}
+                  </Text>
+                </View>
+                <Text style={styles.hint}>
+                  Names are rented, not bought outright. This covers {years}{' '}
+                  {years === 1 ? 'year' : 'years'}; renew any time before it lapses.
+                </Text>
+                {shapeOk && !checking && quote === null ? (
+                  <Text style={styles.hint}>
+                    The registry did not answer, so no price can be quoted yet.
+                  </Text>
+                ) : null}
+              </View>
+
+              {!walletAddress && registryId ? (
+                <Text style={styles.hintWarn}>Open your wallet to buy a name.</Text>
+              ) : null}
+              {short ? (
+                <Text style={styles.hintWarn}>
+                  Not enough USDC in your wallet — you have {formatUsdc(balance ?? 0n)}.
+                </Text>
+              ) : null}
+
+              {busy ? (
+                <View style={styles.busyRow}>
+                  <ActivityIndicator color={colors.accent} />
+                  <Text style={styles.centeredHint}>Confirming on Stellar…</Text>
+                </View>
+              ) : (
+                <>
+                  <SlideToConfirm
+                    testID="names-slide-to-claim"
+                    label={chargeText ? `Slide to claim for ${chargeText} USDC` : 'Slide to claim'}
+                    disabled={!canBuy}
+                    onConfirm={() => void handleBuy()}
+                  />
+                  <Text style={styles.centeredHint}>Then confirm with your passkey</Text>
+                </>
+              )}
+            </>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
-const createStyles = (colors: ThemeColors) => {
+function createStyles(colors: ThemeColors) {
   const base = StyleSheet.create({
-    field: {
+    screen: { flex: 1, backgroundColor: colors.background },
+    flex: { flex: 1 },
+    header: { paddingHorizontal: 20, paddingTop: 16 },
+    body: { padding: 20, paddingBottom: 60, gap: 16 },
+
+    card: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      gap: 8,
+    },
+    errorCard: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.danger,
+      borderRadius: 12,
+      padding: 12,
+      backgroundColor: colors.dangerSurface,
+    },
+    errorText: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+
+    eyebrow: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
+    question: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 20 },
+    hint: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+    hintWarn: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+    centeredHint: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      textAlign: 'center',
+    },
+    money: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 28 },
+
+    row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, gap: 12 },
+    rowLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, flexShrink: 1 },
+
+    field: { gap: 6 },
+    label: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
+
+    // The name sits on a single underline with its suffix beside it, matching
+    // how Airtime draws the phone number rather than a boxed field.
+    nameRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      // `border` is a hairline and disappears on a light screen; this is the
-      // thing the screen is asking you to type into.
-      borderWidth: 1,
-      borderColor: colors.borderStrong,
-      backgroundColor: colors.surface,
-      borderRadius: 999,
-      paddingHorizontal: 18,
-      height: 60,
-      marginBottom: 10,
+      gap: 8,
+      paddingTop: 8,
+      paddingBottom: 10,
+      borderBottomWidth: 1.5,
+      borderBottomColor: colors.borderStrong,
     },
-    input: {
+    nameInput: {
       flex: 1,
       color: colors.textStrong,
       fontFamily: fontFamily.address,
-      fontSize: 18,
+      fontSize: 22,
       padding: 0,
     },
     suffix: { color: colors.textMuted, fontFamily: fontFamily.address, fontSize: 15 },
 
-    problem: { color: colors.danger, fontSize: 13, marginBottom: 10, lineHeight: 19 },
-    statusRow: { marginBottom: 14 },
-    statusChecking: { color: colors.textMuted, fontSize: 13 },
-
-    sectionLabel: {
-      fontFamily: fontFamily.accent,
-      fontSize: 11,
-      letterSpacing: 1.4,
-      color: colors.label,
-      marginBottom: 8,
-    },
-    terms: { flexDirection: 'row', gap: 8, marginBottom: 18 },
+    termRow: { flexDirection: 'row', gap: 8 },
     term: {
       flex: 1,
-      height: 44,
+      paddingVertical: 12,
       borderRadius: 999,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
       alignItems: 'center',
-      justifyContent: 'center',
     },
     termActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-    termText: { color: colors.textSecondary, fontSize: 13, fontWeight: '600' },
+    termText: { color: colors.textSecondary, fontFamily: fontFamily.bodySemiBold, fontSize: 13 },
     termTextActive: { color: colors.onAccent },
 
-    priceBox: {
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-      borderRadius: 16,
-      padding: 14,
-      marginBottom: 16,
-      gap: 8,
-    },
-    priceRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-    priceLabel: { color: colors.textMuted, fontSize: 13 },
-    priceValue: {
-      color: colors.textStrong,
-      fontSize: 20,
-      fontWeight: '700',
-      fontVariant: ['tabular-nums'],
-    },
-    priceNote: { color: colors.textFaint, fontSize: 12, lineHeight: 17 },
+    busyRow: { gap: 10, paddingVertical: 12 },
 
-    primaryButton: {
+    primaryBtn: {
       backgroundColor: colors.accent,
       borderRadius: 999,
-      height: 54,
+      paddingVertical: 16,
       alignItems: 'center',
-      justifyContent: 'center',
     },
-    primaryButtonText: { fontSize: 15, fontWeight: '700', color: colors.onAccent },
-    buttonDisabled: { opacity: 0.4 },
+    primaryText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
+    secondaryBtn: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 999,
+      paddingVertical: 16,
+      alignItems: 'center',
+    },
+    secondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
 
-    doneBox: { gap: 12 },
-    doneText: { color: colors.textPrimary, fontSize: 15, lineHeight: 22 },
-    mutedText: { color: colors.textMuted, fontSize: 13, marginTop: 10, lineHeight: 19 },
-    errorText: { color: colors.danger, fontSize: 13, marginTop: 10, lineHeight: 19 },
+    pressed: { opacity: 0.85 },
   });
 
   return {
     ...base,
     /** Status colour follows the answer, so it is a function rather than a key. */
     statusText: (state: NameState | null) => ({
-      fontSize: 14,
-      fontWeight: '600' as const,
-      lineHeight: 20,
       color:
         state === 'available'
           ? colors.positive
@@ -398,6 +447,9 @@ const createStyles = (colors: ThemeColors) => {
             : state === 'unknown' || state === null
               ? colors.textMuted
               : colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
     }),
   };
-};
+}

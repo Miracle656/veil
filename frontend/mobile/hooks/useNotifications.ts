@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 
 import { movementKey, subscribeActivityFeed, type TxRecord } from '../lib/activityFeed';
 import * as Notifications from 'expo-notifications';
@@ -42,6 +43,20 @@ const seenIds = notifiedMovements();
  */
 let initialised = false;
 
+/**
+ * Push notifications are native-only.
+ *
+ * `expo-notifications` throws outright on web rather than degrading —
+ * `getLastNotificationResponseAsync` is "not available on web" — and the throw
+ * is inside an effect, so it takes the whole screen down behind a red overlay
+ * that re-fires on every render. That made `expo start --web` useless, and web
+ * is how a screen gets looked at without spending an EAS build.
+ *
+ * Returning early is the whole fix: there are no notifications to route from
+ * on web, so there is nothing for this hook to do there.
+ */
+const NOTIFICATIONS_SUPPORTED = Platform.OS !== 'web';
+
 export function useNotifications(): void {
   const router = useRouter();
   const segments = useSegments();
@@ -63,6 +78,7 @@ export function useNotifications(): void {
   // Both listeners therefore record the destination and let the effect below
   // travel to it once the app is somewhere it can.
   useEffect(() => {
+    if (!NOTIFICATIONS_SUPPORTED) return;
     let cancelled = false;
 
     void Notifications.getLastNotificationResponseAsync().then((response) => {

@@ -32,7 +32,9 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { ScreenScaffold } from '../components/ScreenScaffold';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlowHeader } from '../components/FlowHeader';
+import { SlideToConfirm } from '../components/SlideToConfirm';
 import { useTheme } from '../hooks/useTheme';
 import { getWalletAddress } from '../lib/walletStore';
 import type { ThemeColors } from '../lib/theme';
@@ -163,19 +165,26 @@ export default function VeilIansScreen() {
   };
 
   return (
-    <ScreenScaffold
-      eyebrow="VEIL-IANS"
-      title="Own a Veil-ian"
-      description={`Twenty veiled figures made for the Veil community. Each is one of one, kept in your wallet. ${price} USDC each, to anyone who holds a Veil name.`}
-      testID="veil-ians-screen"
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor={colors.accent}
-        />
-      }
-    >
+    <SafeAreaView style={styles.screen} edges={['top']} testID="veil-ians-screen">
+      <View style={styles.header}>
+        <FlowHeader title="Veil-ians" />
+      </View>
+
+      <ScrollView
+        style={styles.flex}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.body}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+        }
+      >
+        <View style={styles.field}>
+          <Text style={styles.eyebrow}>TWENTY FIGURES</Text>
+          <Text style={styles.question}>Own a Veil-ian</Text>
+          <Text style={styles.hint}>
+            Each is one of one, kept in your wallet. {price} USDC, to anyone who holds a Veil name.
+          </Text>
+        </View>
       <View style={styles.facts}>
         <Fact styles={styles} value={String(COLLECTION_SIZE)} label="Pieces" />
         <Fact
@@ -230,7 +239,7 @@ export default function VeilIansScreen() {
                   setBuyError(null);
                   setBoughtHash(null);
                 }}
-                style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+                style={({ pressed }) => [styles.tile, pressed && styles.pressed]}
                 accessibilityRole="button"
                 accessibilityLabel={`Veil-ian ${pad(figure.id)}, ${figure.crown} crown`}
               >
@@ -239,12 +248,12 @@ export default function VeilIansScreen() {
                   style={[styles.art, shelf === 'sold' && styles.artSold]}
                   resizeMode="cover"
                 />
-                <View style={styles.cardBody}>
-                  <View style={styles.cardTopRow}>
-                    <Text style={styles.cardTitle}>#{pad(figure.id)}</Text>
+                <View style={styles.tileBody}>
+                  <View style={styles.tileTopRow}>
+                    <Text style={styles.tileTitle}>#{pad(figure.id)}</Text>
                     <Text style={styles.oneOfOne}>1 of 1</Text>
                   </View>
-                  <Text style={styles.cardStatus(shelf)} numberOfLines={1}>
+                  <Text style={styles.tileStatus(shelf)} numberOfLines={1}>
                     {shelf === 'available'
                       ? `${price} USDC`
                       : shelf === 'sold'
@@ -253,7 +262,7 @@ export default function VeilIansScreen() {
                           ? 'In your wallet'
                           : 'Unknown'}
                   </Text>
-                  <Text style={styles.cardTraits} numberOfLines={1}>
+                  <Text style={styles.tileTraits} numberOfLines={1}>
                     {figure.crown} · {figure.palette}
                   </Text>
                 </View>
@@ -273,10 +282,10 @@ export default function VeilIansScreen() {
                   style={styles.sheetArt}
                   resizeMode="cover"
                 />
-                <Text style={styles.sheetEyebrow}>
+                <Text style={styles.eyebrow}>
                   VEIL-IANS · {pad(open.id)} / {COLLECTION_SIZE}
                 </Text>
-                <Text style={styles.sheetTitle}>Veil-ian #{pad(open.id)}</Text>
+                <Text style={styles.question}>Veil-ian #{pad(open.id)}</Text>
 
                 <View style={styles.rows}>
                   <Row styles={styles} label="Price" value={`${price} USDC`} />
@@ -290,65 +299,64 @@ export default function VeilIansScreen() {
                 </View>
 
                 {boughtHash ? (
-                  <View style={styles.doneBox}>
-                    <Text style={styles.doneText}>
+                  <View style={styles.field}>
+                    <Text style={styles.question}>
                       It is now in your Veil wallet, next to your money.
                     </Text>
                     <Pressable
-                      style={styles.primaryButton}
+                      style={styles.primaryBtn}
                       onPress={() => {
                         closeSheet();
                         router.push('/nfts');
                       }}
                     >
-                      <Text style={styles.primaryButtonText}>See it in your wallet</Text>
+                      <Text style={styles.primaryText}>See it in your wallet</Text>
                     </Pressable>
                   </View>
                 ) : (
                   <>
                     {buyer?.short && (
-                      <Text style={styles.shortText}>
+                      <Text style={styles.hintWarn}>
                         Not enough USDC in your wallet — you have{' '}
                         {formatUsdc(buyer.balanceStroops ?? 0n)}.
                       </Text>
                     )}
                     {openShelf === 'sold' && (
-                      <Text style={styles.mutedText}>
+                      <Text style={styles.hint}>
                         This one is already taken. The others are still there.
                       </Text>
                     )}
-                    <Pressable
-                      style={[styles.primaryButton, !canBuy && styles.buttonDisabled]}
-                      disabled={!canBuy}
-                      onPress={handleBuy}
-                      accessibilityRole="button"
-                    >
-                      {busy ? (
-                        <ActivityIndicator color={colors.onAccent} />
-                      ) : (
-                        <Text style={styles.primaryButtonText}>Buy for {price} USDC</Text>
-                      )}
-                    </Pressable>
-                    {busy && (
-                      <Text style={styles.mutedText}>
-                        Use your fingerprint, face or screen lock to sign. Nothing is charged until
-                        you do.
-                      </Text>
+                    {busy ? (
+                      <View style={styles.busyRow}>
+                        <ActivityIndicator color={colors.accent} />
+                        <Text style={styles.centeredHint}>Confirming on Stellar…</Text>
+                      </View>
+                    ) : (
+                      <>
+                        <SlideToConfirm
+                          testID="veil-ians-slide-to-buy"
+                          label={`Slide to buy for ${price} USDC`}
+                          disabled={!canBuy}
+                          onConfirm={() => void handleBuy()}
+                        />
+                        <Text style={styles.centeredHint}>Then confirm with your passkey</Text>
+                      </>
                     )}
                   </>
                 )}
 
                 {buyError && <Text style={styles.errorText}>{buyError}</Text>}
 
-                <Pressable style={styles.secondaryButton} onPress={closeSheet}>
-                  <Text style={styles.secondaryButtonText}>Back to the collection</Text>
+                <Pressable style={styles.secondaryBtn} onPress={closeSheet}>
+                  <Text style={styles.secondaryText}>Back to the collection</Text>
                 </Pressable>
               </ScrollView>
             )}
           </View>
         </View>
       </Modal>
-    </ScreenScaffold>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -396,135 +404,140 @@ function Notice({
   children: React.ReactNode;
 }) {
   return (
-    <View style={[styles.notice, tone === 'warn' && styles.noticeWarn]}>
-      <Text style={styles.noticeText}>{children}</Text>
+    <View style={tone === 'warn' ? styles.errorCard : styles.card}>
+      <Text style={tone === 'warn' ? styles.errorText : styles.hint}>{children}</Text>
     </View>
   );
 }
 
 const createStyles = (colors: ThemeColors) => {
   const base = StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    flex: { flex: 1 },
+    header: { paddingHorizontal: 20, paddingTop: 16 },
+    body: { padding: 20, paddingBottom: 60, gap: 16 },
+
+    card: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 16,
+      padding: 16,
+      gap: 8,
+    },
+    errorCard: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.danger,
+      borderRadius: 12,
+      padding: 12,
+      backgroundColor: colors.dangerSurface,
+    },
+    errorText: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+
+    eyebrow: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
+    question: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 20 },
+    hint: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+    hintWarn: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+    centeredHint: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      textAlign: 'center',
+    },
+
+    field: { gap: 6 },
+    label: { color: colors.textMuted, fontFamily: fontFamily.accent, fontSize: 11, letterSpacing: 0.8 },
+
+    row: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 4,
+      gap: 12,
+    },
+    rowLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, flexShrink: 1 },
+    rowValue: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
+      flexShrink: 1,
+      textAlign: 'right',
+    },
+
     facts: {
       flexDirection: 'row',
       borderTopWidth: StyleSheet.hairlineWidth,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      marginBottom: 16,
     },
     fact: { flex: 1, paddingVertical: 14 },
     factValue: {
-      fontSize: 22,
-      fontWeight: '600',
       color: colors.textStrong,
-      fontVariant: ['tabular-nums'],
+      fontFamily: fontFamily.heading,
+      fontSize: 22,
     },
-    factLabel: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
+    factLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 12, marginTop: 2 },
 
-    notice: {
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      backgroundColor: colors.surface,
-      borderRadius: 12,
-      padding: 12,
-      marginBottom: 10,
-    },
-    noticeWarn: { borderColor: colors.accent, backgroundColor: colors.surfaceMd },
-    noticeText: { fontSize: 13, lineHeight: 19, color: colors.textSecondary },
-
-    loading: { marginTop: 32 },
-
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 4 },
-    card: {
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+    tile: {
       width: '47%',
       borderRadius: 18,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: colors.border,
-      backgroundColor: colors.surface,
       overflow: 'hidden',
     },
-    cardPressed: { opacity: 0.7 },
     art: { width: '100%', aspectRatio: 3 / 4, backgroundColor: colors.surfaceMd },
     artSold: { opacity: 0.4 },
-    cardBody: { padding: 10, gap: 2 },
-    cardTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-    cardTitle: { fontSize: 14, fontWeight: '600', color: colors.textStrong },
-    oneOfOne: { fontSize: 11, color: colors.textMuted },
-    cardTraits: { fontSize: 11, color: colors.textFaint },
+    tileBody: { padding: 10, gap: 2 },
+    tileTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+    tileTitle: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
+    oneOfOne: { color: colors.textMuted, fontFamily: fontFamily.address, fontSize: 11 },
+    tileTraits: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 11 },
 
+    // surfaceRaised, not surface: a sheet floats over a scrim, and `surface`
+    // is translucent — over anything but the page background it tints through.
     scrim: { flex: 1, backgroundColor: 'rgba(0,0,0,0.65)', justifyContent: 'flex-end' },
-    // surfaceRaised, not surface: this floats over a scrim, and `surface` is
-    // translucent — over anything but the page background it tints through.
     sheet: {
       backgroundColor: colors.surfaceRaised,
       borderTopLeftRadius: 28,
       borderTopRightRadius: 28,
       padding: 20,
       maxHeight: '92%',
+      gap: 12,
     },
     sheetArt: {
       width: '100%',
       aspectRatio: 3 / 4,
       borderRadius: 18,
       backgroundColor: colors.surfaceMd,
-      marginBottom: 16,
     },
-    sheetEyebrow: {
-      fontFamily: fontFamily.accent,
-      fontSize: 11,
-      letterSpacing: 1.6,
-      color: colors.accentText,
-    },
-    sheetTitle: {
-      fontSize: 24,
-      fontWeight: '700',
-      color: colors.textStrong,
-      marginTop: 4,
-      marginBottom: 12,
-    },
+    rows: { borderTopWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
 
-    rows: {
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      marginBottom: 16,
-    },
-    row: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingVertical: 9,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderColor: colors.border,
-      gap: 12,
-    },
-    rowLabel: { fontSize: 13, color: colors.textMuted },
-    rowValue: { fontSize: 13, fontWeight: '600', color: colors.textPrimary, flexShrink: 1, textAlign: 'right' },
+    busyRow: { gap: 10, paddingVertical: 12 },
 
-    primaryButton: {
+    primaryBtn: {
       backgroundColor: colors.accent,
       borderRadius: 999,
-      height: 52,
+      paddingVertical: 16,
       alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: 4,
     },
-    primaryButtonText: { fontSize: 15, fontWeight: '700', color: colors.onAccent },
-    buttonDisabled: { opacity: 0.4 },
-    secondaryButton: { height: 48, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-    secondaryButtonText: { fontSize: 14, color: colors.textMuted },
+    primaryText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
+    secondaryBtn: {
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+      borderRadius: 999,
+      paddingVertical: 16,
+      alignItems: 'center',
+    },
+    secondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
 
-    doneBox: { gap: 10, marginBottom: 4 },
-    doneText: { fontSize: 15, color: colors.textPrimary, lineHeight: 21 },
-    shortText: { fontSize: 13, color: colors.danger, marginBottom: 8 },
-    mutedText: { fontSize: 13, color: colors.textMuted, marginTop: 8, lineHeight: 19 },
-    errorText: { fontSize: 13, color: colors.danger, marginTop: 10, lineHeight: 19 },
+    pressed: { opacity: 0.85 },
+    loading: { marginTop: 32 },
   });
 
   return {
     ...base,
-    /** Status line colour follows the shelf, so it is a function rather than a key. */
-    cardStatus: (shelf: Shelf | null) => ({
-      fontSize: 13,
-      fontWeight: '600' as const,
+    /** Status colour follows the shelf, so it is a function rather than a key. */
+    tileStatus: (shelf: Shelf | null) => ({
       color:
         shelf === 'available'
           ? colors.textStrong
@@ -533,6 +546,8 @@ const createStyles = (colors: ThemeColors) => {
             : shelf === 'sold'
               ? colors.textMuted
               : colors.textFaint,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
     }),
   };
 };

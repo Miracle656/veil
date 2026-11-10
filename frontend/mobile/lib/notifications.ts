@@ -50,6 +50,12 @@ export function isAppLocked(): boolean {
  * Returns `true` when notifications are authorised (foreground or alert level).
  */
 export async function requestNotificationPermissions(): Promise<boolean> {
+  // `expo-notifications` throws on web rather than reporting "denied", and a
+  // throw here is indistinguishable from a refusal to anyone reading the
+  // result. There is no permission to grant on web, so the honest answer is
+  // no — see `NOTIFICATIONS_SUPPORTED` in hooks/useNotifications.ts.
+  if (Platform.OS === 'web') return false;
+
   const existing = (await Notifications.getPermissionsAsync()) as { granted?: boolean };
   if (existing.granted) return true;
 
