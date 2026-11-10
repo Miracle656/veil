@@ -8,8 +8,10 @@
  *
  * States are visually distinct: a skeleton while loading, a dashed empty card
  * when the indexer answers with nothing, and a red error card (with a Retry
- * button) when the indexer is missing or unreachable. Image/metadata failures
- * degrade to a placeholder tile, never a crash.
+ * button) when the indexer is missing or unreachable AND the chain read lists
+ * nothing either. When only the indexer fails, the Veil-ians the chain lists
+ * are shown under a line saying the rest could not be loaded. Image/metadata
+ * failures degrade to a placeholder tile, never a crash.
  *
  * Framed like every other destination — `SafeAreaView` + `FlowHeader` — rather
  * than `ScreenScaffold`, which also wrapped this screen's `FlatList` in its own
@@ -37,9 +39,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
 import { errorMessage } from '../lib/errorMessage';
-import { fetchOwnedVeilIans } from '../lib/veilIansOwned';
+import { loadGallery } from '../lib/nftGallery';
 import {
-  fetchWalletNFTs,
   formatTokenId,
   IndexerNotConfiguredError,
   truncateAddress,
@@ -55,7 +56,7 @@ type State =
   | { kind: 'no-wallet' }
   | { kind: 'unconfigured'; message: string }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; items: NFTItem[] };
+  | { kind: 'ready'; items: NFTItem[]; indexerError: string | null };
 
 function NftImage({ item, size }: { item: NFTItem; size: 'grid' | 'detail' }) {
   const [failed, setFailed] = useState(false);
@@ -101,17 +102,10 @@ export default function NFTsScreen() {
         setState({ kind: 'no-wallet' });
         return;
       }
-      // The indexer, and the chain for Veil's own collection. The indexer is
-      // the only thing that can enumerate a collection nobody told us about;
-      // it is NOT the authority on one whose address we ship — see
-      // `lib/veilIansOwned.ts` for the chain of failures that taught us.
-      const [indexed, onChain] = await Promise.all([
-        fetchWalletNFTs(address),
-        fetchOwnedVeilIans(address).catch(() => [] as NFTItem[]),
-      ]);
-      const seen = new Set(indexed.map((i) => `${i.contractId}:${i.tokenId}`));
-      const items = [...indexed, ...onChain.filter((i) => !seen.has(`${i.contractId}:${i.tokenId}`))];
-      setState({ kind: 'ready', items });
+      // The indexer merged with the chain read of Veil's own collection; an
+      // indexer failure no longer hides what the chain lists. See
+      // `lib/nftGallery.ts`.
+      setState({ kind: 'ready', ...(await loadGallery(address)) });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {
         setState({ kind: 'unconfigured', message: err.message });
@@ -133,17 +127,10 @@ export default function NFTsScreen() {
         setState({ kind: 'no-wallet' });
         return;
       }
-      // The indexer, and the chain for Veil's own collection. The indexer is
-      // the only thing that can enumerate a collection nobody told us about;
-      // it is NOT the authority on one whose address we ship — see
-      // `lib/veilIansOwned.ts` for the chain of failures that taught us.
-      const [indexed, onChain] = await Promise.all([
-        fetchWalletNFTs(address),
-        fetchOwnedVeilIans(address).catch(() => [] as NFTItem[]),
-      ]);
-      const seen = new Set(indexed.map((i) => `${i.contractId}:${i.tokenId}`));
-      const items = [...indexed, ...onChain.filter((i) => !seen.has(`${i.contractId}:${i.tokenId}`))];
-      setState({ kind: 'ready', items });
+      // The indexer merged with the chain read of Veil's own collection; an
+      // indexer failure no longer hides what the chain lists. See
+      // `lib/nftGallery.ts`.
+      setState({ kind: 'ready', ...(await loadGallery(address)) });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {
         setState({ kind: 'unconfigured', message: err.message });
@@ -222,6 +209,14 @@ export default function NFTsScreen() {
         columnWrapperStyle={styles.row}
         contentContainerStyle={styles.grid}
         testID="nft-grid"
+        ListHeaderComponent={
+          state.indexerError ? (
+            <Text style={styles.notice} testID="nft-partial-notice">
+              Showing your Veil-ians, read from the network. Other collections could not be
+              loaded right now. Pull down to try again.
+            </Text>
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -330,6 +325,13 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 14,
       lineHeight: 20,
       textAlign: 'center',
+    },
+    notice: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 18,
+      marginBottom: 14,
     },
     pressed: { opacity: 0.7 },
     emptyCard: {
