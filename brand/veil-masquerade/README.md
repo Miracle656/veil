@@ -1,4 +1,11 @@
-# Veil Masquerade — a 20-piece collection
+# Veil-ians — a 20-piece collection
+
+> **The collection is called Veil-ians.** It was drafted here as "Veil Masquerade",
+> and that name survives in the directory and the crate (`brand/veil-masquerade`,
+> `contracts/veil-masquerade`) because renaming those buys nothing. Everything a
+> buyer sees — the on-chain name `Veil-ians`, the symbol `VEILIAN`, the token
+> titles `Veil-ian #01` — is the real one, matching the Veil-ians Collection
+> design and the `/veil-ians` page. Nothing was deployed under the old name.
 
 Twenty cloth figures drawn from the mascot direction in
 [`docs/BRAND_MASCOT.md`](../../docs/BRAND_MASCOT.md). Same form throughout — a

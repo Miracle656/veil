@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish the Veil Masquerade art to the wallet's public directory.
+"""Publish the Veil-ians art to the wallet's public directory.
 
 The originals in `brand/veil-masquerade/art/` are the mint-quality source and
 are never served. This re-encodes them for the web at full resolution — the

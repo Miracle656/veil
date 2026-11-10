@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Build the Veil Masquerade token metadata from `brand/veil-masquerade/traits.json`.
+ * Build the Veil-ians token metadata from `brand/veil-masquerade/traits.json`.
  *
  * One JSON per token in the shape the wallet already parses — `name`,
  * `description`, `image`, `attributes: [{ trait_type, value }]`
@@ -14,7 +14,7 @@
  *
  *   node scripts/build-nft-metadata.mjs            # write the files
  *   node scripts/build-nft-metadata.mjs --check    # fail if they are stale
- *   node scripts/build-nft-metadata.mjs --bind <id> <name>  # permanently bind name #N to Masquerade #N
+ *   node scripts/build-nft-metadata.mjs --bind <id> <name>  # permanently bind name #N to Veil-ian #N
  *   node scripts/build-nft-metadata.mjs --get-figure <order> # view figure for claim order
  *
  * The `image` field is a placeholder until the art is final — see
@@ -80,7 +80,7 @@ export function imageFile(token) {
 
 export class FigureAlreadyBoundError extends Error {
   constructor(figureId, boundName) {
-    super(`Figure #${pad(figureId)} is permanently bound to "${boundName}" and cannot be reassigned.`)
+    super(`Veil-ian #${pad(figureId)} is permanently bound to "${boundName}" and cannot be reassigned.`)
     this.name = 'FigureAlreadyBoundError'
     this.figureId = figureId
     this.boundName = boundName
@@ -89,7 +89,7 @@ export class FigureAlreadyBoundError extends Error {
 
 export class FigureIndexOutOfBoundsError extends Error {
   constructor(claimOrder) {
-    super(`Claimant #${claimOrder} is beyond the 20 figures in Veil Masquerade. No figure available.`)
+    super(`Claimant #${claimOrder} is beyond the 20 Veil-ians. No figure available.`)
     this.name = 'FigureIndexOutOfBoundsError'
     this.claimOrder = claimOrder
   }
@@ -170,9 +170,9 @@ export function buildToken(token, counts, total, rarityTraits) {
   const boundSentence = token.name ? ` Permanently bound to name: ${token.name}.` : ''
 
   return {
-    name: `Veil Masquerade #${pad(token.id)}`,
+    name: `Veil-ian #${pad(token.id)}`,
     description:
-      `A cloth figure for Veil: a crowned mask over layered, patterned cloth falling to an uneven hem. ` +
+      `A veiled figure for Veil: a crowned mask over layered, patterned cloth falling to an uneven hem. ` +
       `${traitSentence} ` +
       `${rarityLine(rarest, total)} ` +
       `No face — where the cloth is open, it is cloth removed rather than features drawn on.${boundSentence}`,
@@ -211,7 +211,7 @@ export function getFigureForClaim(claimOrder, customSource) {
       claimOrder: id,
       hasFigure: false,
       figure: null,
-      message: 'All 20 Veil Masquerade figures have been allocated. You will receive your name, but no Masquerade figure token.',
+      message: 'All 20 Veil-ians have been allocated. You will receive your name, but no Veil-ian.',
     }
   }
 
@@ -226,7 +226,7 @@ export function getFigureForClaim(claimOrder, customSource) {
     hasFigure: true,
     figure: {
       id: token.id,
-      name: `Veil Masquerade #${pad(token.id)}`,
+      name: `Veil-ian #${pad(token.id)}`,
       image: `${IMAGE_BASE}/${imageFile(token)}`,
       crown: token.crown,
       aperture: token.aperture,
@@ -238,7 +238,7 @@ export function getFigureForClaim(claimOrder, customSource) {
       isAvailable: !token.name,
     },
     message: token.id === 9
-      ? 'Veil Masquerade #09 — the only closed mask in the set (aperture: None) — goes to the ninth claimant in sequence.'
+      ? 'Veil-ian #09 — the only closed mask in the set (aperture: None) — goes to the ninth claimant in sequence.'
       : undefined,
   }
 }
@@ -259,7 +259,7 @@ export function bindClaimToFigure(claimOrder, name, options = {}) {
       success: false,
       hasFigure: false,
       figureId: null,
-      message: 'Claimant 21+ receives no figure. Name claimed without Masquerade token.',
+      message: 'Claimant 21+ receives no figure. Name claimed without a Veil-ian.',
     }
   }
 
@@ -421,7 +421,7 @@ function main() {
     }
     try {
       const result = bindClaimToFigure(id, name)
-      console.log(`Successfully bound Figure #${pad(id)} to name: ${name}`)
+      console.log(`Successfully bound Veil-ian #${pad(id)} to name: ${name}`)
       console.log(JSON.stringify(result, null, 2))
     } catch (err) {
       console.error(`Binding failed: ${err.message}`)

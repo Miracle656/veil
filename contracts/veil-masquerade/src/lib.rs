@@ -1,5 +1,5 @@
 #![no_std]
-//! Veil Masquerade — twenty cloth figures.
+//! Veil-ians — twenty veiled figures.
 //!
 //! A fixed collection: twenty tokens, ids 1 to 20, each matching one entry in
 //! `brand/veil-masquerade/traits.json`. There is no minting beyond those
@@ -43,7 +43,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token,
-    vec, Address, BytesN, Env, IntoVal, String, Symbol,
+    vec, Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 use stellar_tokens::non_fungible::{
     burnable::NonFungibleBurnable, Base, NonFungibleToken, MAX_BASE_URI_LEN,
@@ -178,8 +178,8 @@ impl VeilMasquerade {
         Base::set_metadata(
             &e,
             base_uri,
-            String::from_str(&e, "Veil Masquerade"),
-            String::from_str(&e, "VMASQ"),
+            String::from_str(&e, "Veil-ians"),
+            String::from_str(&e, "VEILIAN"),
         );
     }
 
@@ -227,6 +227,22 @@ impl VeilMasquerade {
     pub fn is_sold(e: Env, token_id: u32) -> bool {
         validate_id(&e, token_id);
         e.storage().persistent().has(&DataKey::Sold(token_id))
+    }
+
+    /// Every figure that has been sold, ascending.
+    ///
+    /// A shop showing twenty figures needs all twenty answers at once. Asked
+    /// one `is_sold` at a time that is twenty round trips, and twenty answers
+    /// that arrive separately are twenty answers from twenty different moments
+    /// — long enough for the page to offer something that has just gone.
+    pub fn sold(e: Env) -> Vec<u32> {
+        let mut out = Vec::new(&e);
+        for id in 1..=COLLECTION_SIZE {
+            if e.storage().persistent().has(&DataKey::Sold(id)) {
+                out.push_back(id);
+            }
+        }
+        out
     }
 
     /// Where this figure's metadata lives, sold or not.

@@ -302,8 +302,8 @@ fn repointing_the_base_keeps_the_name_and_symbol() {
     // blanks the collection's name instead of moving its art.
     let f = setup();
     f.client.set_base_uri(&String::from_str(&f.e, "ipfs://moved/"));
-    assert_eq!(f.client.name(), String::from_str(&f.e, "Veil Masquerade"));
-    assert_eq!(f.client.symbol(), String::from_str(&f.e, "VMASQ"));
+    assert_eq!(f.client.name(), String::from_str(&f.e, "Veil-ians"));
+    assert_eq!(f.client.symbol(), String::from_str(&f.e, "VEILIAN"));
 }
 
 // ───────────────────────── metadata uris ─────────────────────────
@@ -419,6 +419,36 @@ fn is_sold_tracks_the_sale() {
     assert!(!f.client.is_sold(&4));
     f.client.buy(&f.alice, &4);
     assert!(f.client.is_sold(&4));
+}
+
+#[test]
+fn sold_lists_every_sold_figure_and_nothing_else() {
+    let f = setup();
+    f.registry.grant(&f.alice);
+
+    assert_eq!(f.client.sold(), soroban_sdk::vec![&f.e]);
+
+    f.client.buy(&f.alice, &7);
+    f.client.buy(&f.alice, &2);
+    f.client.buy(&f.alice, &COLLECTION_SIZE);
+
+    // Ascending, not purchase order: a shop renders by figure number.
+    assert_eq!(
+        f.client.sold(),
+        soroban_sdk::vec![&f.e, 2u32, 7u32, COLLECTION_SIZE]
+    );
+}
+
+#[test]
+fn sold_still_lists_a_burned_figure() {
+    // It is the record of what was sold, not of what is held. A burned figure
+    // is not back on the shelf, so the shop must not offer it.
+    let f = setup();
+    f.registry.grant(&f.alice);
+    f.client.buy(&f.alice, &3);
+    f.client.burn(&f.alice, &3);
+
+    assert_eq!(f.client.sold(), soroban_sdk::vec![&f.e, 3u32]);
 }
 
 #[test]

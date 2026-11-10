@@ -61,7 +61,7 @@ describe('build-nft-metadata', () => {
 
     // Token without name
     const doc1 = buildToken(sampleTokens[0], counts, 3, rarityTraits)
-    assert.equal(doc1.name, 'Veil Masquerade #01')
+    assert.equal(doc1.name, 'Veil-ian #01')
     assert.equal(doc1.image, `${IMAGE_BASE}/01.jpg`)
     assert.equal(doc1.attributes.some((a) => a.trait_type === 'Name'), false)
     assert.equal(doc1.attributes.find((a) => a.trait_type === 'Crown')?.value, 'Plume')
@@ -97,13 +97,13 @@ describe('build-nft-metadata', () => {
     const claim1 = getFigureForClaim(1)
     assert.equal(claim1.hasFigure, true)
     assert.equal(claim1.figure.id, 1)
-    assert.equal(claim1.figure.name, 'Veil Masquerade #01')
+    assert.equal(claim1.figure.name, 'Veil-ian #01')
 
     // Claimant #9 gets the unique closed mask (#09)
     const claim9 = getFigureForClaim(9)
     assert.equal(claim9.hasFigure, true)
     assert.equal(claim9.figure.id, 9)
-    assert.equal(claim9.figure.name, 'Veil Masquerade #09')
+    assert.equal(claim9.figure.name, 'Veil-ian #09')
     assert.equal(claim9.figure.aperture, 'None')
     assert.equal(claim9.figure.isClosedMask, true)
     assert.match(claim9.message, /goes to the ninth claimant in sequence/)
@@ -112,14 +112,14 @@ describe('build-nft-metadata', () => {
     const claim20 = getFigureForClaim(20)
     assert.equal(claim20.hasFigure, true)
     assert.equal(claim20.figure.id, 20)
-    assert.equal(claim20.figure.name, 'Veil Masquerade #20')
+    assert.equal(claim20.figure.name, 'Veil-ian #20')
 
     // Claimant #21 gets told there is no figure before paying
     const claim21 = getFigureForClaim(21)
     assert.equal(claim21.hasFigure, false)
     assert.equal(claim21.figure, null)
-    assert.match(claim21.message, /All 20 Veil Masquerade figures have been allocated/)
-    assert.match(claim21.message, /no Masquerade figure token/)
+    assert.match(claim21.message, /All 20 Veil-ians have been allocated/)
+    assert.match(claim21.message, /no Veil-ian/)
   })
 
   test('bindClaimToFigure permanently binds figure, prevents re-assignment, and updates metadata with Name trait passing --check', () => {
@@ -128,7 +128,7 @@ describe('build-nft-metadata', () => {
     try {
       const mockTraits = {
         collection: {
-          name: 'Veil Masquerade Test',
+          name: 'Veil-ians Test',
           symbol: 'VMASQ',
           size: 2,
           description: 'Test',

@@ -35,6 +35,7 @@ import { namesContractIdFor } from './namesContractId'
 import { invokeAsFeePayer, invokeAsWallet, type AuthEntrySigner } from './walletInvoke'
 import { fetchContractOrigin, isWrongPlatformOrigin } from './platformLimitation'
 import { getNetwork } from './network'
+import { probeAccount, simulateRead } from './sorobanRead'
 
 /** The registry on whichever network the browser is pointed at. */
 function namesContractId(): string | null {
@@ -57,38 +58,6 @@ export function getUsdcSacId(): string | null {
       : process.env.NEXT_PUBLIC_USDC_SAC_TESTNET?.trim()
         || 'CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA'
   return id && id.length > 0 ? id : null
-}
-
-/** A simulation-only source account. Never signs, never needs to exist. */
-function probeAccount(): Account {
-  return new Account(Keypair.random().publicKey(), '0')
-}
-
-/** Read a contract's return value by simulating a call. Null on any failure. */
-async function simulateRead(
-  rpc: SorobanRpc.Server,
-  contractId: string,
-  method: string,
-  args: ReturnType<typeof nativeToScVal>[],
-  networkPassphrase: string,
-): Promise<unknown | null> {
-  try {
-    const tx = new TransactionBuilder(probeAccount(), {
-      fee: inclusionFee(),
-      networkPassphrase,
-    })
-      .addOperation(new Contract(contractId).call(method, ...args))
-      .setTimeout(30)
-      .build()
-
-    const sim = await rpc.simulateTransaction(tx)
-    if (SorobanRpc.Api.isSimulationError(sim)) return null
-    const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result
-    if (!result?.retval) return null
-    return scValToNative(result.retval)
-  } catch {
-    return null
-  }
 }
 
 /**

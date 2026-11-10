@@ -1,10 +1,10 @@
 {
   "$comment": "The source of truth for the collection. scripts/build-nft-metadata.mjs reads this and writes metadata/NN.json from it, so edit here and rebuild rather than editing a token file by hand. `image` names the file in art/, which is the image that mints.",
   "collection": {
-    "name": "Veil Masquerade",
-    "symbol": "VMASQ",
+    "name": "Veil-ians",
+    "symbol": "VEILIAN",
     "size": 20,
-    "description": "Twenty cloth figures for Veil, a Stellar passkey wallet. Each is the same masquerade-inspired form — a crowned mask over layered, patterned cloth falling to an uneven hem — varied across five traits. No faces: where a figure is open, it is cloth removed rather than features drawn on.",
+    "description": "Twenty veiled figures made for the Veil community, a Stellar passkey wallet. Each is the same masquerade-inspired form — a crowned mask over layered, patterned cloth falling to an uneven hem — varied across five traits. No faces: where a figure is open, it is cloth removed rather than features drawn on.",
     "externalUrl": "https://useveilapp.xyz"
   },
   "traitTypes": [
