@@ -153,6 +153,23 @@ jobs:
             echo "- Download it from **Artifacts** below (available for 7 days)."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Fail closed: every call the passkey module makes into the Android
+      # Credential Manager has to exist in this APK. Builds 20 to 27 compiled
+      # react-native-passkeys against one androidx.credentials and shipped
+      # another, and could not create a wallet (NoSuchMethodError), while
+      # signing in kept working. The script was checked against builds 23, 26
+      # and 27 first: all three fail here.
+      - name: Verify the passkey module links against what the APK ships
+        working-directory: .
+        run: |
+          if ! python3 scripts/apk-dangling-refs.py "$APK_PATH" 'Landroidx/credentials/'; then
+            echo "::error::The passkey module calls an androidx.credentials method this APK does not contain. Do not distribute this APK: creating a wallet or signing would crash. See frontend/mobile/plugins/withAndroidCredentialsPin.js."
+            exit 1
+          fi
+          echo "- Passkey module links against the bundled androidx.credentials" >> "$GITHUB_STEP_SUMMARY"
+          # The rest of the APK, for the log only. It does not gate the build.
+          python3 scripts/apk-dangling-refs.py "$APK_PATH" || true
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veil-community-apk-${{ github.run_number }}
