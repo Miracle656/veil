@@ -5,8 +5,33 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { createServer, type IncomingMessage, type Server as HttpServer } from 'http'
 import { timingSafeEqual } from 'crypto'
 import { runAgent, type UserProfile } from './agent.js'
+import {
+  createAgentAuthManager,
+  type AgentAuthManager,
+  type AgentAuthOptions,
+  type AgentSession,
+  type SessionVerifyResult,
+} from './auth.js'
 import { providerFromEnv, type ChatTurn, type LlmProvider } from './llm.js'
 import { NETWORK } from './network.js'
+
+/**
+ * Architectural note on `server.ts` vs `handler.ts` (Issue #1314):
+ *
+ * The wallet frontend on Vercel uses the stateless/serverless HTTP entry point
+ * (`handler.ts` via `/api/agent`), while self-hosted deployments and SDK users
+ * can run this persistent Express + WebSocket server (`@veil/agent/server`).
+ * Rather than removing `server.ts`, it is secured behind the exact same
+ * `AgentAuthManager` challenge/session check:
+ *   1. Client requests a single-use challenge (`type: 'auth_challenge'` over WS
+ *      or `POST /auth/challenge` over HTTP).
+ *   2. Client signs the challenge with the key controlling `walletAddress` and
+ *      submits `type: 'auth_verify'` (or `POST /auth/verify`) to obtain an
+ *      expiring `AgentSession`.
+ *   3. `chat` and `clear_history` require a valid, non-expired session and take
+ *      `walletAddress` exclusively from `session.walletAddress`, never from the
+ *      incoming message body.
+ */
 
 // ── Resource limit constants ──────────────────────────────────────────────────
 // Max incoming WebSocket message size (64 KiB). Rejected at frame level so memory
@@ -29,6 +54,8 @@ export const MAX_CONVERSATIONS = 1000
 export const RATE_WINDOW_MS = 60_000
 export const RATE_MAX_MESSAGES = 30
 export const MAX_RATE_LIMIT_KEYS = 10_000
+
+const STELLAR_ACCOUNT = /^G[A-Z2-7]{55}$/
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 export function timingSafeEqualStr(a: string, b: string): boolean {
@@ -89,6 +116,8 @@ export interface ServerOptions {
   rateMaxMessages?: number
   autoListen?: boolean
   llmProvider?: LlmProvider
+  authManager?: AgentAuthManager
+  authOptions?: AgentAuthOptions
 }
 
 export interface AgentServerInstance {
@@ -98,6 +127,7 @@ export interface AgentServerInstance {
   connectionsByIp: Map<string, Set<WebSocket>>
   rateLimits: Map<string, number[]>
   conversations: Map<string, ChatTurn[]>
+  auth: AgentAuthManager
   close: () => Promise<void>
 }
 
@@ -115,8 +145,9 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
   const rateMaxMessages = options.rateMaxMessages ?? RATE_MAX_MESSAGES
   const llm = options.llmProvider ?? providerFromEnv()
   const port = options.port ?? parseInt(process.env.AGENT_PORT ?? '3001', 10)
+  const auth = options.authManager ?? createAgentAuthManager(options.authOptions)
 
-  // Per-wallet conversation history
+  // Per-wallet conversation history (keyed exclusively by verified session.walletAddress)
   const conversations = new Map<string, ChatTurn[]>()
 
   function rememberConversation(walletAddress: string, history: ChatTurn[]): void {
@@ -180,6 +211,32 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
     res.json({ ok: true, network: NETWORK, model: llm.label })
   })
 
+  app.post('/auth/challenge', (req, res) => {
+    const result = auth.issueChallenge(req.body?.walletAddress)
+    if (!result.ok) {
+      res.status(400).json({ error: result.error })
+      return
+    }
+    res.json({
+      challenge: result.challenge,
+      walletAddress: result.walletAddress,
+      expiresAt: result.expiresAt,
+    })
+  })
+
+  app.post('/auth/verify', async (req, res) => {
+    const result = await auth.verifyChallenge(req.body)
+    if (!result.ok) {
+      res.status(401).json({ error: result.error })
+      return
+    }
+    res.json({
+      sessionToken: result.session.sessionToken,
+      walletAddress: result.session.walletAddress,
+      expiresAt: result.session.expiresAt,
+    })
+  })
+
   const httpServer = createServer(app)
 
   // ── WebSocket server ────────────────────────────────────────────────────────
@@ -218,12 +275,19 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
     const clientIp = getClientIp(req)
     registerConnection(clientIp, ws)
 
-    ws.on('message', async (raw) => {
-      if (!checkAndRecordRateLimit(clientIp)) {
-        ws.send(JSON.stringify({ type: 'error', message: 'Rate limit exceeded. Please slow down.' }))
-        return
-      }
+    let socketSession: AgentSession | null = null
 
+    function resolveSession(msg: Record<string, unknown>): SessionVerifyResult {
+      if (typeof msg.sessionToken === 'string' && msg.sessionToken.trim()) {
+        return auth.verifySession(msg.sessionToken)
+      }
+      if (socketSession) {
+        return auth.verifySession(socketSession.sessionToken)
+      }
+      return { ok: false, error: 'Authentication required' }
+    }
+
+    ws.on('message', async (raw) => {
       let msg: Record<string, unknown>
       try {
         msg = JSON.parse(raw.toString())
@@ -232,14 +296,66 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
         return
       }
 
+      if (msg.type === 'auth_challenge') {
+        const res = auth.issueChallenge(msg.walletAddress)
+        if (!res.ok) {
+          ws.send(JSON.stringify({ type: 'error', message: res.error }))
+          return
+        }
+        ws.send(
+          JSON.stringify({
+            type: 'auth_challenge',
+            challenge: res.challenge,
+            walletAddress: res.walletAddress,
+            expiresAt: res.expiresAt,
+          }),
+        )
+        return
+      }
+
+      if (msg.type === 'auth_verify') {
+        const res = await auth.verifyChallenge(msg)
+        if (!res.ok) {
+          ws.send(JSON.stringify({ type: 'error', message: res.error }))
+          return
+        }
+        socketSession = res.session
+        ws.send(
+          JSON.stringify({
+            type: 'authenticated',
+            sessionToken: res.session.sessionToken,
+            walletAddress: res.session.walletAddress,
+            expiresAt: res.session.expiresAt,
+          }),
+        )
+        return
+      }
+
+      if (!checkAndRecordRateLimit(clientIp)) {
+        ws.send(JSON.stringify({ type: 'error', message: 'Rate limit exceeded. Please slow down.' }))
+        return
+      }
+
       if (msg.type === 'chat') {
-        const walletAddress = msg.walletAddress as string
-        const feePayerAddress = msg.feePayerAddress as string | undefined
-        const userMessage = msg.message as string
+        const verified = resolveSession(msg)
+        if (!verified.ok) {
+          ws.send(JSON.stringify({ type: 'error', message: verified.error }))
+          return
+        }
+
+        // Security invariant: take walletAddress strictly from the verified session,
+        // never from msg.walletAddress in the request payload.
+        const walletAddress = verified.session.walletAddress
+        const userMessage = typeof msg.message === 'string' ? msg.message.trim() : ''
+        const rawFeePayer = typeof msg.feePayerAddress === 'string' ? msg.feePayerAddress.trim() : undefined
+        const feePayerAddress =
+          rawFeePayer && STELLAR_ACCOUNT.test(rawFeePayer)
+            ? rawFeePayer
+            : verified.session.feePayerAddress
         const profile = msg.profile as UserProfile | undefined
 
-        if (!walletAddress || !userMessage) {
-          ws.send(JSON.stringify({ type: 'error', message: 'walletAddress and message required' }))
+        if (!userMessage) {
+          ws.send(JSON.stringify({ type: 'error', message: 'message required' }))
           return
         }
 
@@ -247,12 +363,12 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
         ws.send(JSON.stringify({ type: 'thinking' }))
 
         try {
-          const history = conversations.get(walletAddress) ?? []
+          const history = [...(conversations.get(walletAddress) ?? [])]
 
           const { response, pendingTxXdr, pendingTxSummary } = await runAgent(
             userMessage,
             walletAddress,
-            history,
+            [...history],
             feePayerAddress,
             profile,
             llm,
@@ -276,13 +392,22 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
       }
 
       if (msg.type === 'clear_history') {
-        const walletAddress = msg.walletAddress as string
-        if (walletAddress) conversations.delete(walletAddress)
+        const verified = resolveSession(msg)
+        if (!verified.ok) {
+          ws.send(JSON.stringify({ type: 'error', message: verified.error }))
+          return
+        }
+
+        // Security invariant: only clear the authenticated session's own history;
+        // never read msg.walletAddress from the payload.
+        const walletAddress = verified.session.walletAddress
+        conversations.delete(walletAddress)
         ws.send(JSON.stringify({ type: 'history_cleared' }))
       }
     })
 
     const cleanup = () => {
+      socketSession = null
       unregisterConnection(clientIp, ws)
       console.log('[agent] Client disconnected')
     }
@@ -317,10 +442,11 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
     connectionsByIp,
     rateLimits,
     conversations,
+    auth,
     close,
   }
 }
 
 // ── Default instance for export & direct execution ────────────────────────────
 export const defaultServer = createAgentServer()
-export const { app, httpServer, wss, connectionsByIp, rateLimits, conversations } = defaultServer
+export const { app, httpServer, wss, connectionsByIp, rateLimits, conversations, auth } = defaultServer
