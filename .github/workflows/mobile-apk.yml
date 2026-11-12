@@ -200,11 +200,17 @@ jobs:
           fi
           tag="mobile-v$code"
           cp "$APK_PATH" "veil-$tag.apk"
+          # The same file again under a name that never changes. The website's
+          # download button links to releases/latest/download/veil.apk, which
+          # GitHub redirects to the newest release, so that link cannot go
+          # stale. It used to be read from the API and cached, and served
+          # build 26 for a day after build 28 was out.
+          cp "$APK_PATH" "veil.apk"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release $tag already exists; replacing its APK."
-            gh release upload "$tag" "veil-$tag.apk" --clobber
+            gh release upload "$tag" "veil-$tag.apk" "veil.apk" --clobber
           else
-            gh release create "$tag" "veil-$tag.apk" \
+            gh release create "$tag" "veil-$tag.apk" "veil.apk" \
               --target "$GITHUB_SHA" \
               --title "Veil Android $name (build $code)" \
               --notes "Community build $code, from ${{ github.sha }}. Installs over any earlier Veil build; your wallet and passkey stay as they are."
