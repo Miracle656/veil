@@ -11,6 +11,7 @@ import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
+import { SpendingAccountWarning } from '../components/SpendingAccountWarning';
 import { getWalletAddress } from '../lib/walletStore';
 import { getFeePayerAddress } from '../lib/activity';
 import { buildSep7PayUri } from '../lib/sep7';
@@ -209,6 +210,11 @@ export default function ReceiveScreen() {
     <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="receive-screen">
       <View style={styles.body}>
         <FlowHeader title="Receive" />
+
+        {/* Before the address, not after it: this screen exists to hand that
+            address to someone who will send money to it. One line here, because
+            the screen does not scroll and the QR has to stay on it. */}
+        <SpendingAccountWarning compact />
 
         {/* Spending address */}
         <View style={[styles.card, styles.spendingCard]}>

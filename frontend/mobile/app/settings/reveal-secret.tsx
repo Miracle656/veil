@@ -30,7 +30,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 
 import { FlowHeader } from '../../components/FlowHeader';
@@ -44,9 +44,22 @@ import {
   resolveSecretExport,
   type SecretExportState,
 } from '../../lib/secretExport';
+import {
+  SPENDING_REFUSAL_COPY,
+  resolveSpendingKeyExport,
+  type SpendingKeyExportState,
+} from '../../lib/spendingKeyExport';
 
 /** The states that may be shown but never show a key. */
-type Refusal = Exclude<SecretExportState, { status: 'revealable' }>['status'];
+type Refusal =
+  | Exclude<SecretExportState, { status: 'revealable' }>['status']
+  | Exclude<SpendingKeyExportState, { status: 'revealable' }>['status'];
+
+/** Every refusal's wording. The two modules share `no-wallet` and `no-secret`. */
+const ALL_REFUSAL_COPY: Record<Refusal, { title: string; body: string }> = {
+  ...SPENDING_REFUSAL_COPY,
+  ...REFUSAL_COPY,
+};
 
 /**
  * Where the screen is. `gate` is a keypair wallet waiting for the lock;
@@ -67,6 +80,19 @@ export default function RevealSecretScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
+  // `?subject=spending` shows the key of a smart wallet's random spending
+  // account (lib/spendingKeyExport.ts). Anything else is the keypair wallet
+  // this screen was written for. The two never mix: each has its own resolver
+  // and its own rules for when a key may be shown.
+  const { subject } = useLocalSearchParams<{ subject?: string }>();
+  const spending = subject === 'spending';
+  const resolve = useCallback(
+    (): Promise<SecretExportState | SpendingKeyExportState> =>
+      spending ? resolveSpendingKeyExport() : resolveSecretExport(),
+    [spending],
+  );
+  const subjectTitle = spending ? 'Spending account' : 'Wallet address';
+
   const [phase, setPhase] = useState<Phase>({ name: 'loading' });
   const [acknowledged, setAcknowledged] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -82,7 +108,7 @@ export default function RevealSecretScreen() {
    * component state where a stray render could reach it.
    */
   const inspect = useCallback(async () => {
-    const state = await resolveSecretExport();
+    const state = await resolve();
     if (state.status === 'revealable') {
       setPhase({ name: 'gate', address: state.address });
       return;
@@ -92,7 +118,7 @@ export default function RevealSecretScreen() {
       reason: state.status,
       address: 'address' in state ? state.address : null,
     });
-  }, []);
+  }, [resolve]);
 
   useEffect(() => {
     void inspect().catch((err) => setError(errorMessage(err)));
@@ -139,7 +165,7 @@ export default function RevealSecretScreen() {
 
       // Re-read after the lock, never before it: the wallet that exists when
       // the key is shown is the one that gets shown.
-      const fresh = await resolveSecretExport();
+      const fresh = await resolve();
       if (fresh.status === 'revealable') {
         setPhase({ name: 'revealed', address: fresh.address, secret: fresh.secret });
         return;
@@ -188,7 +214,7 @@ export default function RevealSecretScreen() {
   // A wallet this screen cannot export — a smart wallet above all — is told why
   // in the same shape as any other refusal: an explanation, not a dead end.
   if (phase.name === 'refusal') {
-    const refusal = REFUSAL_COPY[phase.reason];
+    const refusal = ALL_REFUSAL_COPY[phase.reason];
     return (
       <SafeAreaView style={styles.screen} edges={['top']} testID="reveal-secret-screen">
         <View style={styles.header}>
@@ -238,18 +264,23 @@ export default function RevealSecretScreen() {
         >
           {/* Identify the wallet before anything about its key. */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Wallet address</Text>
+            <Text style={styles.cardTitle}>{subjectTitle}</Text>
             <Text
               style={styles.address}
               selectable
               testID="gate-address"
-              accessibilityLabel={`Wallet address ${phase.address}`}
+              accessibilityLabel={`${subjectTitle} ${phase.address}`}
             >
               {phase.address}
             </Text>
             <Text style={styles.cardBody}>
-              This is a classic keypair wallet, so its signing key lives on this device. The
-              address above is the one that key belongs to — take both together.
+              {spending
+                ? 'This is the account you are paid into and spend from. Your passkey could not ' +
+                  'make its key, so the key lives only on this phone. Saving it is how this ' +
+                  'account survives losing the phone. It does not unlock your smart wallet, ' +
+                  'which stays behind your passkey.'
+                : 'This is a classic keypair wallet, so its signing key lives on this device. The ' +
+                  'address above is the one that key belongs to — take both together.'}
             </Text>
           </View>
 
@@ -343,12 +374,12 @@ export default function RevealSecretScreen() {
         </View>
 
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Wallet address</Text>
+          <Text style={styles.cardTitle}>{subjectTitle}</Text>
           <Text
             style={styles.address}
             selectable
             testID="secret-revealed-address"
-            accessibilityLabel={`Wallet address ${phase.address}`}
+            accessibilityLabel={`${subjectTitle} ${phase.address}`}
           >
             {phase.address}
           </Text>

@@ -102,9 +102,9 @@ describe('deriveRecoveryStatus', () => {
       action: 'Repair with passkey',
     });
     // Consequences, not mechanism: what fails, what keeps working, the way out.
-    expect(status.mechanisms[0].detail).toContain('cannot restore it on another device');
-    expect(status.mechanisms[0].detail).toContain('keeps working');
-    expect(status.mechanisms[0].detail).toContain('while the fee payer is still unfunded');
+    expect(status.mechanisms[0].detail).toContain('lives only on this phone');
+    expect(status.mechanisms[0].detail).toContain('would be lost with it');
+    expect(status.mechanisms[0].detail).toContain('moves everything in that account');
   });
 
   it('counts a legacy credential-id wallet as recoverable, with the caution spelled out', () => {
@@ -146,7 +146,7 @@ describe('deriveRecoveryStatus', () => {
       needsCheck: false,
       action: 'Create an encrypted backup',
     });
-    expect(status.mechanisms[0].detail).toContain('cannot be repaired in place');
+    expect(status.mechanisms[0].detail).toContain('nothing was changed');
   });
 
   it('leaves an unrecorded wallet on the one-prompt check', () => {

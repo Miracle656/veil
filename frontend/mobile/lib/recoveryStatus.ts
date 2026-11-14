@@ -87,13 +87,19 @@ function prfDetail(hasWallet: boolean, prf: PrfRecoveryState, exhausted = false)
     case 'failed':
       return 'Could not check this passkey. Try again.';
     case 'random':
-      return 'Your passkey gave no recovery secret when this wallet was set up, so the passkey alone cannot restore it on another device. Everything on this device keeps working. Checking again repairs this in place — but only while the fee payer is still unfunded.';
+      // This used to promise a repair "only while the fee payer is still
+      // unfunded". The repair now moves the balance across, so a funded
+      // account is the case it exists for, not the case it refuses.
+      return 'Your passkey gave no recovery secret when this wallet was set up, so your spending account lives only on this phone and its money would be lost with it. Check again: if your passkey gives a secret now, Veil moves everything in that account to one your passkey can restore.';
     case 'legacy':
       return 'This wallet predates passkey recovery secrets: it can be restored from the passkey, but through a derivation anyone who learns the (non-secret) credential ID can rebuild. Keep only fee money on the fee payer.';
     case 'keypair':
       return 'A keypair-mode testnet wallet has no passkey to recover from. An encrypted backup is its only recovery path.';
     case 'funded':
-      return 'Your passkey cannot restore this wallet, and the fee payer already holds funds, so it cannot be repaired in place without stranding them. Create an encrypted backup — that is the recovery path for this wallet.';
+      // This used to send the user to the encrypted backup. The backup never
+      // holds a private key, so it cannot save a spending account, and saying
+      // it could is how someone ends up believing they are covered.
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. It still lives only on this phone. Save its key from the warning on the home screen, then try this check again later. An encrypted backup does not include that key.';
     case 'unsupported':
       return 'This passkey manager does not support PRF, so the passkey alone can never restore this wallet on another device. Everything on this device keeps working. Create an encrypted backup instead.';
     default:

@@ -16,6 +16,7 @@ import { isOfframpAvailable, lastKnownAvailability } from '../../lib/offramp';
 import { ServicesDrawer } from '../../components/ServicesDrawer';
 import { AssetsList } from '../../components/AssetsList';
 import { WalletAddressChip } from '../../components/WalletAddressChip';
+import { SpendingAccountWarning } from '../../components/SpendingAccountWarning';
 import { fontFamily } from '../../theme/typography';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
@@ -327,6 +328,10 @@ export default function DashboardTab() {
         totalUsd={totalUsd}
         breakdown={breakdown}
       />
+
+      {/* Directly under the balance, because it is about whether that balance
+          survives the phone. Renders nothing for a wallet that is not at risk. */}
+      <SpendingAccountWarning />
 
 
       {/* Cash out is hidden unless the backend answers AND we are on mainnet.
