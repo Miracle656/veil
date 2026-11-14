@@ -32,6 +32,13 @@ export const SecureKey = {
    * write them (see lib/additionalSigners.ts).
    */
   additionalSigners: 'invisible_wallet_additional_signers',
+  /**
+   * Secrets of spending accounts this wallet has moved off, as a JSON array.
+   * Kept because the old account still holds its reserve, and because a key
+   * that has been overwritten cannot be asked for again. See
+   * `retireFeePayerSecret` in lib/walletStore.ts.
+   */
+  retiredFeePayers: 'veil_retired_fee_payers',
 } as const;
 
 export type SecureKey = (typeof SecureKey)[keyof typeof SecureKey];

@@ -1,6 +1,7 @@
 import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { mayHoldCollectibles } from './feePayerHoldings';
 import { recordFeePayerSource } from './feePayerSource';
 import { defaultSweepDeps, migrateFeePayerToPasskey } from './feePayerSweep';
 import { inclusionFee } from './fees';
@@ -14,6 +15,7 @@ import {
   getPasskeyPublicKey,
   getSignerSecret,
   getWalletAddress,
+  retireFeePayerSecret,
   setPasskeyCredential,
   setPasskeyId,
   setSignerSecret,
@@ -238,8 +240,18 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
       // would put it beyond reach of every future install. So move it
       // first and adopt second — and if the move does not happen, change
       // nothing at all, which is the old behaviour and still the safe one.
+      //
+      // A collectible is held by address inside its own contract, so the move
+      // below cannot carry it, and after the switch nothing in the app would
+      // sign as the old account. Stay put if there is one, or if the chain
+      // could not be asked.
+      if (await mayHoldCollectibles(current)) return { bound: false, issue: 'funded' };
+
+      // Everything the account holds, not XLM alone. This call used to move
+      // the XLM and then let the key below be replaced, which left any USDC on
+      // an account whose only key had just been overwritten.
       const moved = await migrateFeePayerToPasskey(
-        { from: current, fromSecret: currentSecret, to: derived.publicKey() },
+        { from: current, fromSecret: currentSecret, to: derived.publicKey(), toSecret: derived.secret() },
         defaultSweepDeps(null, getNetwork(), inclusionFee()),
       );
       // `legacy-empty` is the only safe miss: there was nothing to move, so
@@ -255,6 +267,17 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
       if (!moved.swept && moved.reason !== 'legacy-empty') {
         return { bound: false, issue: 'funded' };
       }
+    }
+  }
+
+  // Keep the key being replaced. The old account still holds its reserve, and
+  // if this write fails the switch must not happen: without it, replacing the
+  // secret destroys the only copy.
+  if (currentSecret && currentSecret !== derived.secret()) {
+    try {
+      await retireFeePayerSecret(currentSecret);
+    } catch {
+      return { bound: false, issue: 'failed' };
     }
   }
 

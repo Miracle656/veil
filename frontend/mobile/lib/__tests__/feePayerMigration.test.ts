@@ -24,9 +24,13 @@ const FROM = 'GC5S3DWEG3E5KJZDEOBKQE5KE4UKOYCZVOH5ZZNR6RTCSJK7QAOSWTLN';
 const FROM_SECRET = 'SBYAGHOUVBAQGNZF2DGXYTRSJZ3GDUDYBXMLEEIGTBMBPWYOOUKDLHMS';
 const TO = 'GA2CDKKI5XY575WCB33XCRCGUZZVA6NODDJWHB7VHXVDRYZ356VI6FNW';
 
-const params = { from: FROM, fromSecret: FROM_SECRET, to: TO };
+const TO_SECRET = 'S_DESTINATION_SECRET';
+const params = { from: FROM, fromSecret: FROM_SECRET, to: TO, toSecret: TO_SECRET };
 
-function deps(snapshot: { xlm: number | null; subentryCount: number } | null, send = jest.fn(async () => 'tx-hash')) {
+function deps(
+  snapshot: { xlm: number | null; subentryCount: number; hasOtherAssets?: boolean } | null,
+  send = jest.fn(async () => 'tx-hash'),
+) {
   return { loadAccount: jest.fn(async () => snapshot), sendXlm: send };
 }
 
@@ -42,7 +46,22 @@ it('moves everything above the reserve to the passkey-derived account', async ()
     from: FROM,
     to: TO,
   });
-  expect(send).toHaveBeenCalledWith(FROM_SECRET, TO, '4.2650850');
+  // The destination's secret goes with it: without that the new account
+  // cannot open a trustline, and USDC would be left behind.
+  expect(send).toHaveBeenCalledWith(FROM_SECRET, TO, '4.2650850', TO_SECRET);
+});
+
+it('moves USDC even when every drop of XLM is reserve', async () => {
+  // This used to answer below-reserve and stop. The caller then kept the random
+  // key, which is safe, but a wallet in this state could never be repaired.
+  const send = jest.fn(async () => 'tx-hash');
+  const outcome = await migrateFeePayerToPasskey(
+    params,
+    deps({ xlm: 2.5, subentryCount: 3, hasOtherAssets: true }, send),
+  );
+
+  expect(outcome).toMatchObject({ swept: true, amount: '0.0000000' });
+  expect(send).toHaveBeenCalledWith(FROM_SECRET, TO, '0.0000000', TO_SECRET);
 });
 
 it('leaves the account able to pay a fee afterwards', async () => {

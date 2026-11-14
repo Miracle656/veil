@@ -4,7 +4,7 @@ import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { deriveFeePayerKeypair } from './deriveFeePayer';
-import { recordFeePayerSource } from './feePayerSource';
+import { getFeePayerInfo, recordFeePayerSource } from './feePayerSource';
 import { defaultSweepDeps, sweepStrandedFeePayer, type SweepOutcome } from './feePayerSweep';
 import { inclusionFee } from './fees';
 import { getNetwork, getNetworkName } from './network';
@@ -87,9 +87,11 @@ function toHex(bytes: Uint8Array): string {
  */
 async function recoverStrandedFeePayer(
   walletAddress: string,
-  prfAddress: string,
+  /** Secret of the fee-payer in use, which receives whatever is brought across. */
+  activeSecret: string,
   walletSigner: Uint8Array | null,
 ): Promise<SweepOutcome> {
+  const prfAddress = Keypair.fromSecret(activeSecret).publicKey();
   try {
     const keyId = await getPasskeyId();
     if (!keyId) return { swept: false, reason: 'no-legacy-candidate' };
@@ -100,6 +102,7 @@ async function recoverStrandedFeePayer(
         prfAddress,
         legacyAddress: legacy.publicKey(),
         legacySecret: legacy.secret(),
+        prfSecret: activeSecret,
       },
       defaultSweepDeps(walletSigner, getNetwork(), inclusionFee()),
     );
@@ -130,10 +133,16 @@ export async function recoverStoredWalletFeePayer(): Promise<SweepOutcome> {
     getSignerSecret().catch(() => null),
   ]);
   if (!storedAddress || !storedSecret) return { swept: false, reason: 'no-stored-wallet' };
+  // Never INTO a random fee-payer. The legacy account can be rebuilt from the
+  // credential id on any install; a random one exists on this phone alone, so
+  // moving a balance into it makes that balance easier to lose, not harder.
+  // The passkey-first paths below already guard this; this one did not.
+  const info = await getFeePayerInfo().catch(() => null);
+  if (info?.source === 'random') return { swept: false, reason: 'fee-payer-not-passkey-bound' };
   const storedSigner = await getPasskeyPublicKey().catch(() => null);
   return recoverStrandedFeePayer(
     storedAddress,
-    Keypair.fromSecret(storedSecret).publicKey(),
+    storedSecret,
     storedSigner ? hexToUint8Array(storedSigner) : null,
   );
 }
@@ -174,7 +183,7 @@ export async function loginWithPasskey(): Promise<LoginResult> {
       ]);
       const pkBytes = sdkPubKey && /^[0-9a-fA-F]{130}$/.test(sdkPubKey) ? new Uint8Array(Buffer.from(sdkPubKey, 'hex')) : null;
       void writeBreadcrumbs(feePayer.secret(), sdkAddress, pkBytes).catch(() => undefined);
-      const sdkSweep = await recoverStrandedFeePayer(sdkAddress, feePayer.publicKey(), pkBytes);
+      const sdkSweep = await recoverStrandedFeePayer(sdkAddress, feePayer.secret(), pkBytes);
       return { address: sdkAddress, source: 'recovered', feePayerSweep: sdkSweep };
     }
     // PRF unavailable / cancelled — fall through to the discoverable flow,
@@ -254,7 +263,7 @@ export async function loginWithPasskey(): Promise<LoginResult> {
   const crumbSweep: SweepOutcome = prfFeePayer
     ? await recoverStrandedFeePayer(
         resolved.address,
-        feePayer.publicKey(),
+        feePayer.secret(),
         resolved.publicKey ?? null,
       )
     : { swept: false, reason: 'fee-payer-not-passkey-bound' };
@@ -354,7 +363,7 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
   // balance into it would strand the money harder than leaving it where it
   // is, since the credential-id account can be re-derived anywhere.
   const feePayerSweep: SweepOutcome = recoverable
-    ? await recoverStrandedFeePayer(address, feePayer.publicKey(), matchedPublicKey)
+    ? await recoverStrandedFeePayer(address, feePayer.secret(), matchedPublicKey)
     : { swept: false, reason: 'fee-payer-not-passkey-bound' };
 
   return { address, recoverable, feePayerSweep };
