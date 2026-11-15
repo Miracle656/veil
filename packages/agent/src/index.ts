@@ -39,3 +39,26 @@ export {
   isRegisteredIssuer,
   type RegisteredAsset,
 } from './assets.js'
+
+export {
+  buildChallengePayload,
+  createAgentAuthManager,
+  createAgentHandler,
+  createRateLimiter,
+  deriveContractWalletAddress,
+  extractBearerToken,
+  handleChat,
+  parseChatRequest,
+  type AgentAuthManager,
+  type AgentAuthOptions,
+  type AgentSession,
+  type ChallengeIssueResult,
+  type ChallengeRecord,
+  type ChatRequest,
+  type HttpDispatchResult,
+  type ParseResult,
+  type SessionVerifyResult,
+  type StatefulAgentHandler,
+  type VerifyChallengeInput,
+  type WebAuthnChallengeProof,
+} from './handler.js'
