@@ -133,6 +133,14 @@ export default function SendPage() {
    * the list arrives. `null` means the request named none (or native XLM).
    */
   const [requestedAsset, setRequestedAsset] = useState<IssuedAsset | null>(null)
+  /**
+   * True when the screen that handed off this payment can only be paid in the
+   * asset it named. Cash out sets it: the order is priced in USDC, and the same
+   * number sent in XLM is a different amount of money. On 2026-11-15 a user
+   * without enough USDC switched the picker to XLM and paid a USDC order with
+   * the same figure in XLM, twice.
+   */
+  const [assetLocked, setAssetLocked]       = useState(false)
   /** Why the last payment request was refused, in words (#791). */
   const [requestError, setRequestError]     = useState<string | null>(null)
   /**
@@ -173,6 +181,7 @@ export default function SendPage() {
       const resolved = resolveRequestedAsset(code, issuer, getNetworkName())
       if (!resolved.ok) { setRequestError(resolved.reason); return }
       setRequestedAsset(resolved.asset)
+      if (q.get('lock') === 'asset') setAssetLocked(true)
     }
     const to = q.get('to')
     const amt = q.get('amount')
@@ -378,8 +387,21 @@ export default function SendPage() {
     if (!validAddress) return false
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return false
     if (!selectedAsset) return false
+    if (lockedAssetMismatch()) return false
     if (memo.trim() && validateMemo(memo, memoType) !== null) return false
     return true
+  }
+
+  /**
+   * A locked handoff may only be paid in the asset it named. Checked at
+   * validation and again at send, so no path builds the transaction in another
+   * asset.
+   */
+  function lockedAssetMismatch(): boolean {
+    if (!assetLocked || !requestedAsset) return false
+    return !selectedAsset
+      || selectedAsset.code !== requestedAsset.code
+      || selectedAsset.issuer !== requestedAsset.issuer
   }
 
   async function handleSend() {
@@ -387,6 +409,11 @@ export default function SendPage() {
     setStep('signing')
     setErrorMsg(null)
     try {
+      if (lockedAssetMismatch()) {
+        setErrorMsg(`This payment can only be made in ${requestedAsset?.code ?? 'the requested asset'}.`)
+        setStep('error')
+        return
+      }
       if (memo.trim()) {
         const memoErr = validateMemo(memo, memoType)
         if (memoErr) {
@@ -633,9 +660,9 @@ export default function SendPage() {
               <button
                 type="button"
                 className="vw-assetcard"
-                onClick={() => assets.length > 1 && setShowAssets((open) => !open)}
-                aria-expanded={assets.length > 1 ? showAssets : undefined}
-                aria-haspopup={assets.length > 1 ? 'listbox' : undefined}
+                onClick={() => !assetLocked && assets.length > 1 && setShowAssets((open) => !open)}
+                aria-expanded={!assetLocked && assets.length > 1 ? showAssets : undefined}
+                aria-haspopup={!assetLocked && assets.length > 1 ? 'listbox' : undefined}
               >
                 <span className="vw-assetcard__left">
                   <span className="vw-send-swap" key={selectedAsset ? assetKey(selectedAsset) : 'none'}>
@@ -652,13 +679,18 @@ export default function SendPage() {
                     </span>
                   </span>
                 </span>
-                {assets.length > 1 && (
+                {!assetLocked && assets.length > 1 && (
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ color: 'rgba(246,247,248,0.4)' }}>
                     <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 )}
               </button>
-              {showAssets && assets.length > 1 && (
+              {assetLocked && requestedAsset && (
+                <p className="vw-meta" style={{ marginTop: 8 }}>
+                  This cash-out is priced in {requestedAsset.code} and can only be paid in {requestedAsset.code}.
+                </p>
+              )}
+              {showAssets && !assetLocked && assets.length > 1 && (
                 <div className="vw-assetlist" role="listbox" aria-label="Select asset">
                   {assets.map((a) => (
                     <button

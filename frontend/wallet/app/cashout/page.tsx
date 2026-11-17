@@ -623,7 +623,7 @@ export default function CashOutPage() {
                 <button
                   onClick={() =>
                     router.push(
-                      `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC&issuer=${getUsdcIssuer()}`,
+                      `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC&issuer=${getUsdcIssuer()}&lock=asset`,
                     )
                   }
                   style={{ ...primary, flex: 1 }}
