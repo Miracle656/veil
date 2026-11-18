@@ -281,6 +281,7 @@ export default function SettingsScreen() {
     ...(!onTestnet && ninState !== 'unknown' ? [ninRow] : []),
     { key: 'fee-payer', title: 'Fee payer', subtitle: 'The account that pays network fees, and its balance', onPress: () => router.push('/settings/fee-payer') },
     { key: 'veil-name', title: 'Veil name', subtitle: 'Get paid by name instead of a 56-character address', onPress: () => router.push('/names') },
+    { key: 'link-discord', title: 'Link Discord', subtitle: 'Prove this wallet is yours and get your roles in the Veil server', onPress: () => router.push('/link-discord') },
     { key: 'veil-ians', title: 'Veil-ians', subtitle: 'Twenty veiled figures, 5 USDC each, for name holders', onPress: () => router.push('/veil-ians') },
     { key: 'trustlines', title: 'Trustlines & reserves', subtitle: `Manage enabled assets and reclaim locked reserves (${TRUSTLINE_RESERVE_COST_XLM} XLM each)`, onPress: () => router.push('/assets') },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },

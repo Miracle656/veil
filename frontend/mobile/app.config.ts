@@ -32,7 +32,7 @@ const BUNDLE_IDENTIFIER = 'xyz.veil.wallet';
  * listed here stops opening in the browser once the app is installed, so the
  * marketing site and docs must keep working as web pages.
  */
-const LINKED_PATHS = ['pay', 'send', 'receive', 'create-wallet'];
+const LINKED_PATHS = ['pay', 'send', 'receive', 'create-wallet', 'link-discord'];
 
 /**
  * Launcher shortcuts. Mirrors `READ_ONLY_ACTIONS` in `lib/voice/actions.ts`,
