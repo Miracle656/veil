@@ -14,6 +14,14 @@ const storage = { getItem: (key: string) => store.get(key) ?? null }
 jest.mock('../walletStorage', () => ({ walletLocal: storage, walletSession: storage }))
 jest.mock('../network', () => ({ getNetworkName: () => 'mainnet' }))
 
+const mockEnsure = jest.fn()
+const mockMode = jest.fn()
+jest.mock('../feePayer', () => ({
+  ensureFeePayer: () => mockEnsure(),
+  getFeePayerMode: () => mockMode(),
+  peekFeePayerSecret: () => store.get('veil_signer_secret') ?? null,
+}))
+
 const mockSign = jest.fn()
 jest.mock('../passkeySigner', () => ({ buildSignAuthEntry: () => mockSign }))
 
@@ -23,6 +31,7 @@ import {
   linkDiscord,
   linkStatement,
   normalizeLinkCode,
+  unlockSpending,
 } from '../discordLink'
 
 const WALLET = 'CA5TXFITGGMG6HG6FJIHWOTXSZ43EIR4F5UCTAAY5FJWB5FWBG5Z3WPN'
@@ -33,6 +42,7 @@ const fetchMock = jest.fn()
 beforeEach(() => {
   store.clear()
   jest.clearAllMocks()
+  mockMode.mockReturnValue('prf-raw')
   process.env.NEXT_PUBLIC_WRAITH_URL = 'https://wraith.test/'
   ;(globalThis as { fetch: unknown }).fetch = fetchMock
   fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ linked: true, roles: ['Veil Wallet'] }) })
@@ -63,20 +73,64 @@ describe('what this browser can link', () => {
   it('offers the wallet only when its passkey is here', () => {
     store.set('invisible_wallet_address', WALLET)
     store.set('veil_signer_secret', spendingKey.secret())
-    expect(getLinkableAccounts()).toEqual({ wallet: null, spending: spendingKey.publicKey() })
+    expect(getLinkableAccounts()).toEqual({ wallet: null, spending: spendingKey.publicKey(), spendingLocked: false })
 
     store.set('invisible_wallet_key_id', 'abc')
     store.set('invisible_wallet_public_key', '04')
-    expect(getLinkableAccounts()).toEqual({ wallet: WALLET, spending: spendingKey.publicKey() })
+    expect(getLinkableAccounts()).toEqual({ wallet: WALLET, spending: spendingKey.publicKey(), spendingLocked: false })
   })
 
   it('offers nothing in a browser with no wallet', () => {
-    expect(getLinkableAccounts()).toEqual({ wallet: null, spending: null })
+    expect(getLinkableAccounts()).toEqual({ wallet: null, spending: null, spendingLocked: false })
+  })
+
+  // The case that cost a real member their Name Holder and Veil-ian roles: a
+  // tab opened from Discord does not have the spending key, because it is kept
+  // per tab and rebuilt from the passkey.
+  it('says the spending account is locked when its key is not in this tab', () => {
+    store.set('invisible_wallet_address', WALLET)
+    store.set('invisible_wallet_key_id', 'abc')
+    store.set('invisible_wallet_public_key', '04')
+    expect(getLinkableAccounts()).toEqual({ wallet: WALLET, spending: null, spendingLocked: true })
+  })
+
+  it('does not offer to unlock a spending account the wallet never had', () => {
+    store.set('invisible_wallet_address', WALLET)
+    store.set('invisible_wallet_key_id', 'abc')
+    store.set('invisible_wallet_public_key', '04')
+    mockMode.mockReturnValue(null)
+    expect(getLinkableAccounts().spendingLocked).toBe(false)
+  })
+})
+
+describe('unlocking the spending account', () => {
+  const locked = { wallet: WALLET, spending: null, spendingLocked: true }
+
+  it('rebuilds the key from the passkey and adds the account', async () => {
+    mockEnsure.mockResolvedValue(spendingKey)
+    expect(await unlockSpending(locked)).toEqual({
+      wallet: WALLET,
+      spending: spendingKey.publicKey(),
+      spendingLocked: false,
+    })
+  })
+
+  it('leaves the wallet linkable on its own when the key cannot be rebuilt', async () => {
+    mockEnsure.mockRejectedValue(new Error('prompt dismissed'))
+    expect(await unlockSpending(locked)).toEqual(locked)
+    mockEnsure.mockResolvedValue(null)
+    expect(await unlockSpending(locked)).toEqual(locked)
+  })
+
+  it('does not prompt when there is nothing to unlock', async () => {
+    const open = { wallet: WALLET, spending: spendingKey.publicKey(), spendingLocked: false }
+    expect(await unlockSpending(open)).toBe(open)
+    expect(mockEnsure).not.toHaveBeenCalled()
   })
 })
 
 describe('linking', () => {
-  const accounts = { wallet: WALLET, spending: spendingKey.publicKey() }
+  const accounts = { wallet: WALLET, spending: spendingKey.publicKey(), spendingLocked: false }
   beforeEach(() => store.set('veil_signer_secret', spendingKey.secret()))
 
   it('asks the passkey to sign the statement hash and nothing else', async () => {
