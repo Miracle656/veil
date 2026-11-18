@@ -27,6 +27,7 @@ import {
   linkDiscord,
   lookUpLinkCode,
   normalizeLinkCode,
+  unlockSpending,
   type LinkableAccounts,
   type LinkCodeInfo,
   type LinkResult,
@@ -87,7 +88,10 @@ function LinkDiscord() {
     setBusy(true)
     setError(null)
     try {
-      const linked = await linkDiscord(info, accounts)
+      // First prompt, when needed: rebuild the spending key. Second: sign.
+      const ready = await unlockSpending(accounts)
+      setAccounts(ready)
+      const linked = await linkDiscord(info, ready)
       if (linked) setResult(linked)
       else setError('Cancelled. Nothing was linked.')
     } catch (caught) {
@@ -210,6 +214,12 @@ function LinkDiscord() {
             </div>
           ) : null}
         </div>
+        {accounts.spendingLocked ? (
+          <p className="mt-3 text-sm leading-relaxed text-off-white/50">
+            Your spending account will be linked too. It holds any name or Veil-ian you bought here. You will be
+            asked for your passkey twice: once to unlock it, once to approve.
+          </p>
+        ) : null}
         {!accounts.wallet ? (
           <p className="mt-3 text-sm leading-relaxed text-off-white/50">
             This browser cannot sign for your wallet itself. To link it too, use the Veil app:{' '}

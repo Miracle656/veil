@@ -18,6 +18,7 @@
 
 import { hash, Keypair } from '@stellar/stellar-sdk'
 
+import { ensureFeePayer, getFeePayerMode, peekFeePayerSecret } from './feePayer'
 import { getNetworkName } from './network'
 import { buildSignAuthEntry } from './passkeySigner'
 import { walletLocal, walletSession } from './walletStorage'
@@ -134,6 +135,12 @@ export interface LinkableAccounts {
   wallet: string | null
   /** The fee-payer account, when its key is in this browser. */
   spending: string | null
+  /**
+   * True when the wallet has a spending account whose key is not in this tab
+   * yet. Most wallets keep that key out of permanent storage and rebuild it
+   * from the passkey, so a tab opened from Discord starts without it.
+   */
+  spendingLocked: boolean
 }
 
 /**
@@ -147,16 +154,39 @@ export function getLinkableAccounts(): LinkableAccounts {
   const hasPasskey = Boolean(
     walletLocal.getItem('invisible_wallet_key_id') && walletLocal.getItem('invisible_wallet_public_key'),
   )
-  const secret = walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
+  const secret = peekFeePayerSecret()
   let spending: string | null = null
   try {
     spending = secret ? Keypair.fromSecret(secret).publicKey() : null
   } catch {
     spending = null
   }
+  const wallet = address && address.startsWith('C') && hasPasskey ? address : null
   return {
-    wallet: address && address.startsWith('C') && hasPasskey ? address : null,
+    wallet,
     spending,
+    // Only a wallet that already has a spending account. This page must never
+    // be the thing that creates one.
+    spendingLocked: spending === null && wallet !== null && getFeePayerMode() !== null,
+  }
+}
+
+/**
+ * Rebuild the spending key from the passkey, so the spending account can be
+ * linked too. That is where names and Veil-ians bought on the web are held, so
+ * leaving it out costs the member those roles.
+ *
+ * One passkey prompt. Returns the accounts unchanged when the key cannot be
+ * rebuilt: the wallet can still be linked on its own.
+ */
+export async function unlockSpending(accounts: LinkableAccounts): Promise<LinkableAccounts> {
+  if (!accounts.spendingLocked) return accounts
+  try {
+    const keypair = await ensureFeePayer()
+    if (!keypair) return accounts
+    return { ...accounts, spending: keypair.publicKey(), spendingLocked: false }
+  } catch {
+    return accounts
   }
 }
 
@@ -184,7 +214,7 @@ export async function linkDiscord(info: LinkCodeInfo, accounts: LinkableAccounts
 
   let spendingSignature: string | undefined
   if (accounts.spending) {
-    const secret = walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
+    const secret = peekFeePayerSecret()
     const keypair = secret ? Keypair.fromSecret(secret) : null
     if (!keypair || keypair.publicKey() !== accounts.spending) {
       throw new DiscordLinkError('The spending key in this browser could not be read.', 'no_spending_key')
