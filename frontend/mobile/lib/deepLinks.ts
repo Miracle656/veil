@@ -47,6 +47,9 @@ const LINKABLE_ROUTES: Record<string, readonly string[]> = {
   '/send': ['to', 'amount', 'asset', 'issuer', 'memo', 'memo_type'],
   '/receive': ['amount', 'asset', 'issuer'],
   '/create-wallet': [],
+  // The link the Veil Discord bot gives. The code only fills in a field: the
+  // screen looks it up and the user still reads a name and approves.
+  '/link-discord': ['code'],
   // Read-only destinations for launcher shortcuts (`lib/voice/actions.ts`).
   // Exact paths with no parameters: a link can open these screens but cannot
   // choose what they show.
