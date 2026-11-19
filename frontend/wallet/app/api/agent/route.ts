@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createRateLimiter, handleChat, parseChatRequest } from '@veil/agent-core'
 import { providerFromEnv, type LlmProvider } from '@veil/agent-llm'
+import { getRecurringTopupRunner } from '@/lib/recurringTopupServer'
 
 /**
  * The Veil agent, as one serverless function.
@@ -76,7 +77,9 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 })
 
   try {
-    const result = await handleChat(parsed.value, llm())
+    const result = await handleChat(parsed.value, llm(), {
+      listRecurringPlans: (walletAddress) => getRecurringTopupRunner().listPlans(walletAddress),
+    })
     return NextResponse.json(result)
   } catch (err) {
     // Log the detail; return something a person can act on. Provider errors can

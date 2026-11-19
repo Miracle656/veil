@@ -6,7 +6,9 @@ import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { getNetwork } from '@/lib/network'
+import { getNativeAssetContractId, getNetwork } from '@/lib/network'
+import { KNOWN_SAC_CONTRACT_IDS } from '@/lib/assets'
+import { getCustomerRef } from '@/lib/ngn'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
@@ -15,6 +17,7 @@ import {
   reviewProposedTransaction,
   type ProposalReview,
 } from '@veil/agent-review'
+import type { CancelTopupIntent, RecurringTopupIntent } from '@veil/agent-recurring'
 
 const network = getNetwork()
 
@@ -29,6 +32,10 @@ interface Message {
   /** A swap the agent handed to the Swap screen, which quotes and confirms it. */
   swapIntent?: { from: string; to: string; amount?: string }
   investIntent?: { code?: string; asset?: string; issuer: string; amount?: string; quoteCurrency?: string }
+  recurringTopupIntent?: RecurringTopupIntent
+  cancelTopupIntent?: CancelTopupIntent
+  planActionState?: 'idle' | 'submitting' | 'done' | 'error'
+  planActionNote?: string
 }
 
 /** Link into the Swap screen, pre-filled. The Swap page validates it again. */
@@ -320,6 +327,14 @@ export default function AgentPage() {
           msg.investIntent = data.investIntent
         }
       }
+      if (data.recurringTopupIntent) {
+        msg.recurringTopupIntent = data.recurringTopupIntent
+        msg.planActionState = 'idle'
+      }
+      if (data.cancelTopupIntent && typeof data.cancelTopupIntent.planId === 'string') {
+        msg.cancelTopupIntent = data.cancelTopupIntent
+        msg.planActionState = 'idle'
+      }
       if (data.pendingTxXdr) {
         msg.pendingTxXdr = data.pendingTxXdr
         msg.pendingTxSummary = data.pendingTxSummary
@@ -337,6 +352,105 @@ export default function AgentPage() {
       setIsThinking(false)
     }
   }, [input, isThinking, messages, walletAddress, feePayerAddress])
+
+  const confirmRecurringPlan = async (index: number, intent: RecurringTopupIntent) => {
+    const spenderAddress =
+      process.env.NEXT_PUBLIC_ASSISTANT_SPENDER_ADDRESS?.trim() || feePayerAddress
+    const tokenContractId =
+      intent.coin === 'usdc'
+        ? KNOWN_SAC_CONTRACT_IDS[network.name === 'mainnet' ? 'mainnet' : 'testnet']?.USDC ?? ''
+        : getNativeAssetContractId()
+    const customerRef = getCustomerRef()
+    if (!customerRef || !tokenContractId || !spenderAddress) {
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? {
+                ...m,
+                planActionState: 'error',
+                planActionNote: 'Wallet details or assistant spender address are not configured.',
+              }
+            : m,
+        ),
+      )
+      return
+    }
+
+    setMessages((prev) =>
+      prev.map((m, idx) => (idx === index ? { ...m, planActionState: 'submitting', planActionNote: undefined } : m)),
+    )
+    try {
+      const res = await fetch('/api/recurring-topups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          walletAddress,
+          refundAddress: feePayerAddress,
+          spenderAddress,
+          tokenContractId,
+          customerRef,
+          category: intent.category,
+          provider: intent.provider,
+          phoneNumber: intent.phoneNumber,
+          amountNgn: intent.amountNgn,
+          coin: intent.coin,
+          frequency: intent.frequency,
+          totalPeriods: intent.totalPeriods,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Could not confirm plan (${res.status})`)
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? {
+                ...m,
+                planActionState: 'done',
+                planActionNote: `Confirmed (${data.plan?.id ?? 'active'}). Manage or cancel anytime on Spending permissions.`,
+              }
+            : m,
+        ),
+      )
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? { ...m, planActionState: 'error', planActionNote: (err as Error).message }
+            : m,
+        ),
+      )
+    }
+  }
+
+  const confirmCancelPlan = async (index: number, planId: string) => {
+    setMessages((prev) =>
+      prev.map((m, idx) => (idx === index ? { ...m, planActionState: 'submitting', planActionNote: undefined } : m)),
+    )
+    try {
+      const res = await fetch(`/api/recurring-topups/${encodeURIComponent(planId)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Could not cancel plan (${res.status})`)
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? { ...m, planActionState: 'done', planActionNote: `Plan ${planId} has been cancelled.` }
+            : m,
+        ),
+      )
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? { ...m, planActionState: 'error', planActionNote: (err as Error).message }
+            : m,
+        ),
+      )
+    }
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -720,6 +834,60 @@ export default function AgentPage() {
                   >
                     Open Earn Section
                   </button>
+                </div>
+              )}
+
+              {/* Recurring top-up plan confirmation card — confirm once */}
+              {msg.recurringTopupIntent && (
+                <div className="agent-tx-card">
+                  <div className="agent-tx-card__header">
+                    <span className="agent-tx-card__label">Repeating top-up plan</span>
+                  </div>
+                  <div className="agent-tx-card__summary">
+                    {msg.recurringTopupIntent.provider} {msg.recurringTopupIntent.category} · ₦
+                    {msg.recurringTopupIntent.amountNgn.toLocaleString('en-NG')} ({msg.recurringTopupIntent.frequency} ×{' '}
+                    {msg.recurringTopupIntent.totalPeriods}) for {msg.recurringTopupIntent.maskedPhone}
+                  </div>
+                  {msg.planActionNote && (
+                    <div className="agent-tx-card__summary" style={{ opacity: 0.85 }}>
+                      {msg.planActionNote}
+                    </div>
+                  )}
+                  {msg.planActionState !== 'done' && (
+                    <button
+                      onClick={() => confirmRecurringPlan(i, msg.recurringTopupIntent!)}
+                      disabled={msg.planActionState === 'submitting'}
+                      className="agent-tx-card__btn"
+                    >
+                      {msg.planActionState === 'submitting' ? 'Confirming…' : 'Confirm plan'}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Cancel recurring top-up plan card */}
+              {msg.cancelTopupIntent && (
+                <div className="agent-tx-card">
+                  <div className="agent-tx-card__header">
+                    <span className="agent-tx-card__label">Cancel repeating top-up</span>
+                  </div>
+                  <div className="agent-tx-card__summary">
+                    Plan ID: {msg.cancelTopupIntent.planId}
+                  </div>
+                  {msg.planActionNote && (
+                    <div className="agent-tx-card__summary" style={{ opacity: 0.85 }}>
+                      {msg.planActionNote}
+                    </div>
+                  )}
+                  {msg.planActionState !== 'done' && (
+                    <button
+                      onClick={() => confirmCancelPlan(i, msg.cancelTopupIntent!.planId)}
+                      disabled={msg.planActionState === 'submitting'}
+                      className="agent-tx-card__btn"
+                    >
+                      {msg.planActionState === 'submitting' ? 'Cancelling…' : 'Cancel plan'}
+                    </button>
+                  )}
                 </div>
               )}
 

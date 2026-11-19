@@ -12,6 +12,21 @@ import { buildPayment, getBalances } from './txBuilder.js'
 import { getTrendingActivity } from './trending.js'
 import { StrKey } from '@stellar/stellar-sdk'
 import { redactSensitive, toModelTools, type VeilTool } from './boundary.js'
+import {
+  assertNoNin,
+  maskPhoneNumber,
+  MAX_AMOUNT_NGN,
+  MAX_TOTAL_PERIODS,
+  MIN_AMOUNT_NGN,
+  normalizeNigerianPhone,
+  type CancelTopupIntent,
+  type NairaCoin,
+  type PublicRecurringTopupPlan,
+  type RecurringTopupIntent,
+  type TopupCategory,
+  type TopupFrequency,
+  type TopupProvider,
+} from './recurring/index.js'
 
 // ── Agent configuration ──────────────────────────────────────────────────────
 
@@ -254,6 +269,58 @@ export const TOOL_REGISTRY: VeilTool[] = [
     },
   },
   {
+    name: 'prepare_recurring_topup',
+    screen: 'Spending permissions screen',
+    kind: 'prepare',
+    approval: 'screen',
+    description:
+      'Prepare a repeating airtime or data top-up plan paid automatically from the user\'s allowance. ' +
+      'Requires category ("airtime" or "data"), provider (MTN, AIRTEL, GLO, 9MOBILE), phone_number, amount_ngn, ' +
+      'frequency ("daily", "weekly", "biweekly", or "monthly"), and total_periods (number of top-ups). ' +
+      'Shows the plan so the user confirms it once. Never pass or request a NIN.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        category: { type: 'string', enum: ['airtime', 'data'] },
+        provider: { type: 'string', enum: ['MTN', 'AIRTEL', 'GLO', '9MOBILE'] },
+        phone_number: { type: 'string', description: 'Nigerian mobile number to top up' },
+        amount_ngn: { type: 'number', description: 'Amount per top-up in naira (NGN)' },
+        frequency: { type: 'string', enum: ['daily', 'weekly', 'biweekly', 'monthly'] },
+        total_periods: { type: 'number', description: 'How many top-ups to run in total (1-52)' },
+        coin: { type: 'string', enum: ['usdc', 'xlm'], description: 'Token used from allowance (default: usdc)' },
+      },
+      required: ['category', 'provider', 'phone_number', 'amount_ngn', 'frequency', 'total_periods'],
+    },
+  },
+  {
+    name: 'list_recurring_topups',
+    screen: 'Spending permissions screen',
+    kind: 'read',
+    description:
+      'List this wallet\'s repeating airtime and data top-up plans, including active, completed, stopped, and cancelled plans, ' +
+      'with masked phone numbers, full transaction hashes for every payment, and why any stopped plan stopped.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'cancel_recurring_topup',
+    screen: 'Spending permissions screen',
+    kind: 'prepare',
+    approval: 'screen',
+    description:
+      'Prepare cancellation of an existing repeating airtime or data top-up plan by its plan_id. ' +
+      'The user confirms cancellation in chat or from the Spending permissions screen.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        plan_id: { type: 'string', description: 'The plan ID to cancel (e.g. plan_...)' },
+      },
+      required: ['plan_id'],
+    },
+  },
+  {
     name: 'request_user_approval',
     screen: 'wallet approval screen',
     kind: 'prepare',
@@ -352,7 +419,8 @@ RULES:
 12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.
 13. CAPABILITY BOUNDARY: Only claim actions or data available through the registered capabilities above. If a request is outside them, plainly say what you cannot do from this chat and direct the user to the most relevant screen named above. Do not claim that screen supports an action unless its registered capability says so; if no screen applies, say so instead of inventing one.
 14. DATA BOUNDARY: Never estimate or infer a requested number. get_wallet_balance and get_transfer_history provide Stellar data only; get_price provides current Stellar market data only. If the requested chain or figure has no available data source, say "I cannot see that data here" and do not give a guessed or approximate number. If a registered tool reports that data is unavailable, treat that as unavailable — do not fill the gap from memory.
-15. For a cash-out, use get_offramp_rate first. If unavailable, say it is unavailable; do not blame the user or estimate a rate. If available, call prepare_cash_out with only the requested naira amount. Never select or verify a bank account, request or repeat an account number in chat, create a payout order, or send a deposit. Tell the user the Cash Out screen will collect and verify their bank account before order creation. An unverified account must be verified on that screen, not by you.`
+15. For a cash-out, use get_offramp_rate first. If unavailable, say it is unavailable; do not blame the user or estimate a rate. If available, call prepare_cash_out with only the requested naira amount. Never select or verify a bank account, request or repeat an account number in chat, create a payout order, or send a deposit. Tell the user the Cash Out screen will collect and verify their bank account before order creation. An unverified account must be verified on that screen, not by you.
+16. For repeating airtime or data top-ups paid from an allowance, gather amount in naira, category (airtime or data), network provider, phone number, frequency, and how many periods, then call prepare_recurring_topup so the user can review and confirm the plan once. Use list_recurring_topups to list plans and cancel_recurring_topup to prepare cancelling a plan. NEVER ask for, accept, repeat, or pass a NIN in any tool argument or message. Never shorten any Stellar address, contract ID, or transaction hash — write it in full.`
 }
 
 /**
@@ -402,6 +470,10 @@ export interface AgentResult {
   investIntent?: InvestIntent
   /** A read-rate cash-out hand-off; the Cash Out screen owns all payout steps. */
   cashOutIntent?: CashOutIntent
+  /** A repeating airtime/data top-up plan awaiting one-time user confirmation. */
+  recurringTopupIntent?: RecurringTopupIntent
+  /** A request to cancel an existing repeating top-up plan. */
+  cancelTopupIntent?: CancelTopupIntent
 }
 
 export interface SwapIntent {
@@ -437,13 +509,20 @@ export async function runAgent(
   profile: UserProfile | undefined,
   /** The model provider (see llm.ts). Reuse one per process. */
   llm: LlmProvider,
-  /** Service URLs — if not provided, falls back to process.env. */
-  urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string },
+  /** Service URLs and optional server hooks — if not provided, falls back to process.env. */
+  urls?: {
+    wraithUrl?: string
+    horizonUrl?: string
+    lensUrl?: string
+    listRecurringPlans?: (walletAddress: string) => Promise<PublicRecurringTopupPlan[]>
+  },
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
+  let recurringTopupIntent: RecurringTopupIntent | undefined
+  let cancelTopupIntent: CancelTopupIntent | undefined
   let unavailablePrice: { assetA: string; assetB: string } | undefined
   const unavailablePriceResponse = () =>
     unavailablePrice
@@ -718,6 +797,81 @@ export async function runAgent(
         return JSON.stringify({ transaction_xdr: xdr, status: 'built' })
       }
 
+      case 'prepare_recurring_topup': {
+        assertNoNin(input)
+        const category = String(input.category ?? '').trim().toLowerCase() as TopupCategory
+        if (category !== 'airtime' && category !== 'data') {
+          return JSON.stringify({ error: 'category must be "airtime" or "data".' })
+        }
+        const provider = String(input.provider ?? '').trim().toUpperCase() as TopupProvider
+        if (!['MTN', 'AIRTEL', 'GLO', '9MOBILE'].includes(provider)) {
+          return JSON.stringify({ error: 'provider must be MTN, AIRTEL, GLO, or 9MOBILE.' })
+        }
+        const normalizedPhone = normalizeNigerianPhone(String(input.phone_number ?? ''))
+        if (!normalizedPhone) {
+          return JSON.stringify({ error: 'phone_number must be a valid Nigerian mobile number.' })
+        }
+        const amountNgn = Number(input.amount_ngn)
+        if (!Number.isFinite(amountNgn) || amountNgn < MIN_AMOUNT_NGN || amountNgn > MAX_AMOUNT_NGN) {
+          return JSON.stringify({
+            error: `amount_ngn must be between ₦${MIN_AMOUNT_NGN} and ₦${MAX_AMOUNT_NGN.toLocaleString('en-NG')}.`,
+          })
+        }
+        const frequency = String(input.frequency ?? '').trim().toLowerCase() as TopupFrequency
+        if (!['daily', 'weekly', 'biweekly', 'monthly'].includes(frequency)) {
+          return JSON.stringify({ error: 'frequency must be daily, weekly, biweekly, or monthly.' })
+        }
+        const totalPeriods = Number(input.total_periods)
+        if (!Number.isInteger(totalPeriods) || totalPeriods < 1 || totalPeriods > MAX_TOTAL_PERIODS) {
+          return JSON.stringify({ error: `total_periods must be an integer between 1 and ${MAX_TOTAL_PERIODS}.` })
+        }
+        const coin = (String(input.coin ?? 'usdc').trim().toLowerCase() || 'usdc') as NairaCoin
+        if (coin !== 'usdc' && coin !== 'xlm') {
+          return JSON.stringify({ error: 'coin must be "usdc" or "xlm".' })
+        }
+
+        const maskedPhone = maskPhoneNumber(normalizedPhone)
+        recurringTopupIntent = {
+          category,
+          provider,
+          maskedPhone,
+          phoneNumber: normalizedPhone,
+          amountNgn: Math.round(amountNgn),
+          coin,
+          frequency,
+          totalPeriods,
+        }
+        return JSON.stringify({
+          status: 'plan_awaiting_confirmation',
+          category,
+          provider,
+          maskedPhone,
+          amountNgn: Math.round(amountNgn),
+          coin,
+          frequency,
+          totalPeriods,
+        })
+      }
+
+      case 'list_recurring_topups': {
+        assertNoNin(input)
+        if (!urls?.listRecurringPlans) {
+          return JSON.stringify({ plans: [] })
+        }
+        const plans = await urls.listRecurringPlans(walletAddress)
+        return JSON.stringify({ plans })
+      }
+
+      case 'cancel_recurring_topup': {
+        assertNoNin(input)
+        const planId = String(input.plan_id ?? '').trim()
+        if (!planId || !/^plan_[a-zA-Z0-9_-]+$/.test(planId)) {
+          return JSON.stringify({ error: 'plan_id must be a valid recurring top-up plan ID.' })
+        }
+        cancelTopupIntent = { planId }
+        return JSON.stringify({ status: 'cancel_awaiting_confirmation', planId })
+      }
+
       case 'request_user_approval': {
         if (cashOutToolUsed) {
           cashOutPaymentBlocked = true
@@ -757,6 +911,8 @@ export async function runAgent(
         swapIntent,
         investIntent,
         cashOutIntent,
+        recurringTopupIntent,
+        cancelTopupIntent,
       }
     }
 
@@ -781,23 +937,38 @@ export async function runAgent(
       // report, and so does a price lookup that failed. Either beats re-throwing.
       const settled = cashOutResponse() ?? unavailablePriceResponse()
       if (settled) {
-        return { response: settled, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent }
+        return {
+          response: settled,
+          pendingTxXdr,
+          pendingTxSummary,
+          swapIntent,
+          investIntent,
+          cashOutIntent,
+          recurringTopupIntent,
+          cancelTopupIntent,
+        }
       }
       // The work is done — a swap or invest to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
-      if (swapIntent || investIntent || pendingTxXdr) {
+      if (swapIntent || investIntent || pendingTxXdr || recurringTopupIntent || cancelTopupIntent) {
         return {
           response: swapIntent
             ? 'Your swap is ready in the Swap screen.'
             : investIntent
             ? 'Routing to the Invest section (destination screen under construction).'
+            : recurringTopupIntent
+            ? 'Your repeating top-up plan is ready to review and confirm.'
+            : cancelTopupIntent
+            ? `Ready to cancel recurring top-up plan ${cancelTopupIntent.planId}.`
             : 'Your transaction is ready to review.',
           pendingTxXdr,
           pendingTxSummary,
           swapIntent,
           investIntent,
           cashOutIntent,
+          recurringTopupIntent,
+          cancelTopupIntent,
         }
       }
       throw err
@@ -806,7 +977,16 @@ export async function runAgent(
 
   const response =
     cashOutResponse() ?? unavailablePriceResponse() ?? redactBankAccountNumbers(turn.text)
-  return { response, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent }
+  return {
+    response,
+    pendingTxXdr,
+    pendingTxSummary,
+    swapIntent,
+    investIntent,
+    cashOutIntent,
+    recurringTopupIntent,
+    cancelTopupIntent,
+  }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────
