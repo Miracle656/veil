@@ -63,6 +63,9 @@
       "@veil/dapps": [
         "../mobile/lib/dappAllowlist"
       ],
+      "@veil/backstop-disclosure": [
+        "../mobile/components/BackstopDisclosure"
+      ],
       "react": [
         "./node_modules/@types/react"
       ],

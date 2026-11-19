@@ -81,6 +81,11 @@ const nextConfig = {
       ...(config.resolve.extensionAlias || {}),
       ".js": [".ts", ".tsx", ".js"],
     };
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      '@veil/backstop-disclosure': path.resolve(__dirname, '../mobile/components/BackstopDisclosure'),
+      'react-native$': false,
+    };
     return config;
   },
 };

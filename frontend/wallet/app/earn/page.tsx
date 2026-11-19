@@ -335,6 +335,42 @@ export default function EarnPage() {
           </div>
         )}
 
+        {/* ── Backstop entry point (distinct from lending pools list; no rate rendered) ── */}
+        <div
+          className="card"
+          style={{
+            marginBottom: '1.75rem',
+            padding: '1.25rem',
+            border: '1px solid var(--border-dim)',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+            <span style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--off-white)' }}>Backstop</span>
+            <span
+              style={{
+                fontSize: '0.6875rem',
+                border: '1px solid var(--gold)',
+                color: 'var(--gold)',
+                padding: '0.15rem 0.4rem',
+                borderRadius: '4px',
+              }}
+            >
+              Higher risk
+            </span>
+          </div>
+          <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', lineHeight: 1.4, marginBottom: '1rem' }}>
+            Back a pool&apos;s safety net for BLND emissions and a share of its interest. Unlike lending, the
+            value can fall and withdrawals are queued.
+          </p>
+          <button
+            className="btn-ghost"
+            style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem' }}
+            onClick={() => router.push('/backstop')}
+          >
+            Open backstop
+          </button>
+        </div>
+
         {/* ── Pool list ── */}
         {step === 'pools' && (
           <>

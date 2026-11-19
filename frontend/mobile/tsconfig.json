@@ -20,7 +20,8 @@
       "@veil/utils": ["../../sdk/src/utils"],
       "@veil/recovery": ["../../sdk/src/recovery/sep30"],
       "@veil/backup": ["../../sdk/src/backup"],
-      "@veil/sep7": ["../../sdk/src/sep7"]
+      "@veil/sep7": ["../../sdk/src/sep7"],
+      "@veil/backstop-disclosure": ["./components/BackstopDisclosure"]
     }
   },
   "include": [
