@@ -7,8 +7,9 @@
  * active, the notification body never reveals the amount.
  *
  * The Veil drape mark is configured as the notification icon in app.config.ts
- * (expo-notifications plugin). Push (remote) notifications are explicitly out
- * of scope — local-only keeps the wallet self-contained.
+ * (expo-notifications plugin). Remote push is layered on top in
+ * `lib/pushToken.ts` (#1273) and never replaces these: a user who refuses push
+ * keeps every local notification.
  *
  * Requires a new dev build — notification permissions and the icon cannot be
  * added over the air.
