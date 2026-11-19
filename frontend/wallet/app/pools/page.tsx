@@ -18,6 +18,19 @@ import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { fetchPrices } from '@/lib/fetchPrice'
+import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
+import {
+  collectLpPriceTargets,
+  fetchHorizonLiquidityPool,
+  formatPoolSharePct,
+  formatUnderlyingValue,
+  parseLpShares,
+  resolveLpPositions,
+  shortPoolId,
+  type HorizonBalanceEntry,
+  type HorizonLiquidityPoolRecord,
+} from '@/lib/lpPositions'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -111,10 +124,6 @@ function shortHash(hash: string): string {
   return hash.length > 18 ? `${hash.slice(0, 8)}...${hash.slice(-8)}` : hash
 }
 
-function canonicalAssetKey(meta: StellarAssetInfo): string {
-  return meta.code === 'XLM' ? 'XLM' : `${meta.code}:${meta.issuer}`
-}
-
 function isNativeAsset(meta: StellarAssetInfo): boolean {
   return meta.code === 'XLM'
 }
@@ -176,9 +185,10 @@ export default function PoolsPage() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [signerAddress, setSignerAddress] = useState<string | null>(null)
   const [pools, setPools] = useState<PoolView[]>([])
+  const [poolRecordsById, setPoolRecordsById] = useState<Record<string, HorizonLiquidityPoolRecord | null>>({})
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null)
   const [accountBalances, setAccountBalances] = useState<WalletBalance[]>([])
-  const [positions, setPositions] = useState<Position[]>([])
+  const [prices, setPrices] = useState<Record<string, number | null>>({})
   const [loadingPools, setLoadingPools] = useState(true)
   const [loadingAccount, setLoadingAccount] = useState(true)
   const [txState, setTxState] = useState<TxState>('idle')
@@ -186,10 +196,23 @@ export default function PoolsPage() {
   const [txHash, setTxHash] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('deposit')
-  const [depositAmountA, setDepositAmountA] = useState('1')
-  const [withdrawShares, setWithdrawShares] = useState('0')
+  const [depositAmountA, setDepositAmountA] = useState('')
+  const [withdrawShares, setWithdrawShares] = useState('')
+
+  const { code: currencyCode, rate: fxRate } = useCurrency()
+  useEffect(() => { hydrateCurrency() }, [])
 
   const server = useMemo(() => new Server(network.horizonUrl), [])
+
+  const lpPositions = useMemo(
+    () => resolveLpPositions(accountBalances as HorizonBalanceEntry[], poolRecordsById, prices),
+    [accountBalances, poolRecordsById, prices],
+  )
+
+  const positions = useMemo<Position[]>(
+    () => lpPositions.map((p) => ({ poolId: p.poolId, shares: p.shares })),
+    [lpPositions],
+  )
 
   useEffect(() => {
     const storedWallet = walletSession.getItem('invisible_wallet_address')
@@ -228,10 +251,18 @@ export default function PoolsPage() {
         throw new Error(`Failed to load pools (${res.status})`)
       }
       const data = await res.json() as { _embedded?: { records?: HorizonPoolRecord[] } }
-      const mapped = (data._embedded?.records ?? [])
+      const records = data._embedded?.records ?? []
+      const mapped = records
         .map(createPoolView)
         .filter((pool): pool is PoolView => pool !== null)
       setPools(mapped)
+      setPoolRecordsById((prev) => {
+        const next: Record<string, HorizonLiquidityPoolRecord | null> = { ...prev }
+        for (const rec of records) {
+          next[rec.id] = rec
+        }
+        return next
+      })
       setSelectedPoolId((current) => {
         if (current && mapped.some((pool) => pool.id === current)) return current
         return mapped[0]?.id ?? null
@@ -250,7 +281,6 @@ export default function PoolsPage() {
       const signer = getSignerPublicKey()
       if (!signer) {
         setAccountBalances([])
-        setPositions([])
         return
       }
 
@@ -258,20 +288,44 @@ export default function PoolsPage() {
       const balances = account.balances as WalletBalance[]
       setAccountBalances(balances)
 
-      const poolShares = balances
-        .filter((balance) => balance.asset_type === 'liquidity_pool_shares' && balance.liquidity_pool_id)
-        .map((balance) => ({
-          poolId: balance.liquidity_pool_id as string,
-          shares: balance.balance,
-        }))
-      setPositions(poolShares)
+      const heldShares = parseLpShares(balances as HorizonBalanceEntry[])
+      if (heldShares.length > 0) {
+        const fetched = await Promise.all(
+          heldShares.map(async (share) => [
+            share.poolId,
+            await fetchHorizonLiquidityPool(network.horizonUrl, share.poolId),
+          ] as const),
+        )
+        setPoolRecordsById((prev) => {
+          const next: Record<string, HorizonLiquidityPoolRecord | null> = { ...prev }
+          for (const [id, record] of fetched) {
+            if (record || !(id in next)) {
+              next[id] = record
+            }
+          }
+          return next
+        })
+      }
     } catch {
       setAccountBalances([])
-      setPositions([])
     } finally {
       setLoadingAccount(false)
     }
   }, [server])
+
+  const lpPriceTargets = useMemo(
+    () => collectLpPriceTargets(resolveLpPositions(accountBalances as HorizonBalanceEntry[], poolRecordsById)),
+    [accountBalances, poolRecordsById],
+  )
+
+  useEffect(() => {
+    if (lpPriceTargets.length === 0) return
+    let cancelled = false
+    fetchPrices(lpPriceTargets).then((result) => {
+      if (!cancelled) setPrices(result)
+    }).catch(() => { /* pricing is best-effort */ })
+    return () => { cancelled = true }
+  }, [lpPriceTargets])
 
   const refreshAll = useCallback(async () => {
     await Promise.all([loadPools(), loadAccount()])
@@ -333,10 +387,6 @@ export default function PoolsPage() {
       minAmountB: receivedB * WITHDRAW_BUFFER,
     }
   }, [selectedPool, withdrawShares])
-
-  const poolSharesLabel = selectedPool
-    ? `${canonicalAssetKey(selectedPool.reserves[0].meta)} / ${canonicalAssetKey(selectedPool.reserves[1].meta)}`
-    : 'Select a pool'
 
   const assetTrustlineMissing = useMemo(() => {
     if (!selectedPool || mode !== 'deposit') return false
@@ -563,6 +613,7 @@ export default function PoolsPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {pools.map((pool) => {
                 const isSelected = pool.id === selectedPool?.id
+                const heldInPool = lpPositions.find((pos) => pos.poolId === pool.id)
                 return (
                   <button
                     key={pool.id}
@@ -578,8 +629,24 @@ export default function PoolsPage() {
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', marginBottom: '0.65rem' }}>
                       <div>
-                        <p style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.1rem', marginBottom: '0.3rem' }}>
-                          {pool.reserves[0].meta.code} / {pool.reserves[1].meta.code}
+                        <p style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.1rem', marginBottom: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span>{pool.reserves[0].meta.code} / {pool.reserves[1].meta.code}</span>
+                          {heldInPool && (
+                            <span style={{
+                              fontFamily: 'Inter, sans-serif',
+                              fontStyle: 'normal',
+                              fontSize: '0.65rem',
+                              fontWeight: 700,
+                              letterSpacing: '0.08em',
+                              textTransform: 'uppercase',
+                              color: 'var(--teal, #00A7B5)',
+                              border: '1px solid rgba(0,167,181,0.35)',
+                              borderRadius: '4px',
+                              padding: '1px 6px',
+                            }}>
+                              LP Position · {formatPoolSharePct(heldInPool.shareOfPool)}
+                            </span>
+                          )}
                         </p>
                         <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.42)' }}>
                           Fee {pool.feeBp / 100}% / {pool.totalTrustlines} trustlines
@@ -765,22 +832,87 @@ export default function PoolsPage() {
           </section>
         )}
 
-        <section>
+        <section aria-label="Your LP positions">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.75rem' }}>
             <h2 style={{ fontSize: '0.75rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--warm-grey)', letterSpacing: '0.08em' }}>
-              YOUR POSITION
+              YOUR LP POSITIONS
             </h2>
             <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)' }}>
               {loadingAccount ? 'Loading...' : signerAddress ? shortHash(signerAddress) : 'No signer'}
             </p>
           </div>
 
-          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <Row label="Wallet address" value={walletAddress ? shortHash(walletAddress) : '-'} />
-            <Row label="Signer account" value={signerAddress ? shortHash(signerAddress) : '-'} />
-            <Row label="Pool selected" value={selectedPool ? poolSharesLabel : '-'} />
-            <Row label="LP balance" value={selectedPosition ? formatAmount(selectedPosition.shares) : '0'} />
-          </div>
+          {loadingAccount ? (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <div className="skeleton" style={{ width: '45%', height: '0.875rem' }} />
+              <div className="skeleton" style={{ width: '75%', height: '1rem' }} />
+            </div>
+          ) : lpPositions.length === 0 ? (
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.45)' }}>
+                No active LP positions on this wallet.
+              </p>
+              <Row label="Wallet address" value={walletAddress ? shortHash(walletAddress) : '-'} />
+              <Row label="Signer account" value={signerAddress ? shortHash(signerAddress) : '-'} />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {lpPositions.map((pos) => (
+                <div
+                  key={pos.poolId}
+                  className="card"
+                  style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.1rem' }}>
+                        {pos.pair}
+                      </span>
+                      <span style={{
+                        fontSize: '0.65rem',
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        color: 'var(--teal, #00A7B5)',
+                        border: '1px solid rgba(0,167,181,0.35)',
+                        borderRadius: '4px',
+                        padding: '1px 6px',
+                      }}>
+                        LP Position
+                      </span>
+                    </div>
+                    <span style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.95rem', fontWeight: 600 }}>
+                      {pos.valueUsd !== null ? formatFiat(pos.valueUsd, currencyCode, fxRate) : '—'}
+                    </span>
+                  </div>
+                  <Row label="Underlying value" value={formatUnderlyingValue(pos)} />
+                  <Row label="Share of pool" value={formatPoolSharePct(pos.shareOfPool)} />
+                  <Row label="LP shares" value={formatAmount(pos.shares)} />
+                  <Row label="Pool ID" value={shortPoolId(pos.poolId)} />
+                  {pools.some((p) => p.id === pos.poolId) && (
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedPoolId(pos.poolId); setMode('withdraw') }}
+                      style={{
+                        alignSelf: 'flex-start',
+                        marginTop: '0.25rem',
+                        background: 'none',
+                        border: '1px solid var(--border-dim)',
+                        borderRadius: '999px',
+                        padding: '0.35rem 0.85rem',
+                        color: 'var(--gold)',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Manage position
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </main>
     </div>

@@ -29,6 +29,7 @@
 
 import type { WalletAsset } from '@/lib/walletTypes'
 import type { BlendPosition } from '@/lib/blend'
+import type { LpPosition } from './lpPositions'
 import { getAssetIssuer, KNOWN_SAC_CONTRACT_IDS, verifiedAsset } from './assets'
 import { getNetworkName } from './network'
 
@@ -131,7 +132,12 @@ export interface PortfolioLine {
 export interface PortfolioSummary {
   /** All lines, sorted by valueUsd descending (nulls last). */
   lines: PortfolioLine[]
-  /** Sum of all priced lines in USD. Null when no asset has a price. */
+  /**
+   * Held AMM liquidity pool positions, kept separate from plain asset balances
+   * so LP tokens are never summed into any plain asset balance.
+   */
+  lpPositions: LpPosition[]
+  /** Sum of all priced lines and priced LP positions in USD. Null when nothing has a price. */
   totalUsd: number | null
   /** USD total for the cash bucket. Null if no cash asset was priced. */
   cashUsd: number | null
@@ -139,6 +145,8 @@ export interface PortfolioSummary {
   lendingUsd: number | null
   /** USD total for the invest bucket. Null if no invest asset was priced. */
   investUsd: number | null
+  /** USD total for priced LP positions. Null if no LP position was priced. */
+  lpUsd: number | null
   /** Epoch ms when the caller collected the prices. */
   pricedAt: number
 }
@@ -149,7 +157,7 @@ function assetKey(code: string, issuer: string | null): string {
   return issuer ? `${code}:${issuer}` : code
 }
 
-/** Shape of the optional fourth argument to `buildPortfolio`. */
+/** Shape of the optional fifth argument to `buildPortfolio`. */
 export interface PortfolioOptions {
   /** Network the registry is judged against. Defaults to the wallet's active network. */
   network?: 'mainnet' | 'testnet'
@@ -160,6 +168,11 @@ export interface PortfolioOptions {
    * (`KNOWN_SAC_CONTRACT_IDS`).
    */
   contractKeys?: Record<string, string>
+  /**
+   * Resolved AMM LP positions held by the wallet. Reported separately from
+   * plain asset balances — never summed into any plain asset balance.
+   */
+  lpPositions?: LpPosition[]
 }
 
 /**
@@ -225,6 +238,7 @@ export function buildPortfolio(
 ): PortfolioSummary {
   const network = opts.network ?? getNetworkName()
   const contractKeys = opts.contractKeys ?? {}
+  const lpPositions = opts.lpPositions ?? []
   const lines: PortfolioLine[] = []
 
   function pushLine(line: Omit<PortfolioLine, 'share' | 'priceAvailable'>) {
@@ -237,6 +251,7 @@ export function buildPortfolio(
 
   // ── Cash + invest assets from the wallet ──────────────────────────────────
   for (const asset of walletAssets) {
+    if (!asset.code || typeof asset.code !== 'string') continue
     const amount = parseFloat(asset.balance)
     if (!isFinite(amount) || amount <= 0) continue
 
@@ -298,8 +313,13 @@ export function buildPortfolio(
 
   // ── Compute totals ────────────────────────────────────────────────────────
   const pricedLines = lines.filter((l) => l.valueUsd !== null)
-  const totalUsd    = pricedLines.length > 0
-    ? pricedLines.reduce((sum, l) => sum + (l.valueUsd as number), 0)
+  const pricedLp    = lpPositions.filter((p) => p.valueUsd !== null)
+  const lpUsd       = pricedLp.length > 0
+    ? pricedLp.reduce((sum, p) => sum + (p.valueUsd as number), 0)
+    : null
+  const linesTotal  = pricedLines.reduce((sum, l) => sum + (l.valueUsd as number), 0)
+  const totalUsd    = pricedLines.length > 0 || pricedLp.length > 0
+    ? linesTotal + (lpUsd ?? 0)
     : null
 
   // Fill in share for each line, only when we have a valid total
@@ -328,10 +348,12 @@ export function buildPortfolio(
 
   return {
     lines,
+    lpPositions,
     totalUsd,
     cashUsd:    bucketTotal('cash'),
     lendingUsd: bucketTotal('lending'),
     investUsd:  bucketTotal('invest'),
+    lpUsd,
     pricedAt,
   }
 }

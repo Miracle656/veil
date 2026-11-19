@@ -1,4 +1,5 @@
 'use client'
+import { filterPlainAssetBalances, type HorizonBalanceEntry } from '@/lib/lpPositions'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 /**
@@ -102,7 +103,9 @@ export default function WithdrawPage() {
 
     const server = new Server(network.horizonUrl)
     server.loadAccount(publicKey).then(account => {
-      const list: WalletAsset[] = account.balances
+      const list: WalletAsset[] = filterPlainAssetBalances(
+        account.balances as unknown as HorizonBalanceEntry[],
+      )
         .map(b => {
           if (b.asset_type === 'native') {
             return { code: 'XLM', issuer: null, balance: b.balance }
