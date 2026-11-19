@@ -18,6 +18,10 @@ export interface IssuerCurrency {
   name?: string
   desc?: string
   image?: string
+  /** What the token is anchored to, e.g. "US Treasury Notes". */
+  anchor_asset?: string
+  /** The kind of anchor, e.g. "bond". */
+  anchor_asset_type?: string
 }
 
 export interface IssuerTomlMetadata {
@@ -28,6 +32,9 @@ export interface IssuerTomlMetadata {
   name: string
   description: string | null
   imageUrl: string | null
+  /** The issuer's own anchor metadata, or null when the TOML omits it. */
+  anchorAsset: string | null
+  anchorAssetType: string | null
   letter: string
   fetchedAt: number | null
   fromCache: boolean
@@ -44,7 +51,14 @@ interface CachedIssuerMeta {
   name: string
   description: string | null
   imageUrl: string | null
+  anchorAsset: string | null
+  anchorAssetType: string | null
   fetchedAt: number
+}
+
+/** Trims a fetched string to a non-empty value, or null. */
+function trimmedOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
 }
 
 type TomlDoc = { CURRENCIES?: IssuerCurrency[] }
@@ -132,6 +146,8 @@ function readCache(store: CacheStore, code: string, issuer: string): CachedIssue
       name: typeof parsed.name === 'string' ? parsed.name : '',
       description: typeof parsed.description === 'string' ? parsed.description : null,
       imageUrl,
+      anchorAsset: trimmedOrNull(parsed.anchorAsset),
+      anchorAssetType: trimmedOrNull(parsed.anchorAssetType),
       fetchedAt: parsed.fetchedAt,
     }
   } catch {
@@ -150,6 +166,8 @@ function present(
     name?: string
     description?: string | null
     imageUrl?: string | null
+    anchorAsset?: string | null
+    anchorAssetType?: string | null
     fetchedAt?: number | null
     fromCache: boolean
   },
@@ -161,6 +179,8 @@ function present(
     name: fields.name?.trim() || asset.name,
     description: fields.description?.trim() ? fields.description.trim() : null,
     imageUrl: isCachedImage(fields.imageUrl) ? fields.imageUrl : null,
+    anchorAsset: trimmedOrNull(fields.anchorAsset),
+    anchorAssetType: trimmedOrNull(fields.anchorAssetType),
     letter: letterAvatar(asset.code),
     fetchedAt: fields.fetchedAt ?? null,
     fromCache: fields.fromCache,
@@ -341,6 +361,8 @@ export async function loadRegisteredIssuerMetadata(
       name: cached.name,
       description: cached.description,
       imageUrl: cached.imageUrl,
+      anchorAsset: cached.anchorAsset,
+      anchorAssetType: cached.anchorAssetType,
       fetchedAt: cached.fetchedAt,
       fromCache: true,
     })
@@ -369,6 +391,8 @@ export async function loadRegisteredIssuerMetadata(
       name: typeof currency?.name === 'string' ? currency.name.trim() || asset.name : asset.name,
       description: typeof currency?.desc === 'string' ? currency.desc.trim() || null : null,
       imageUrl,
+      anchorAsset: trimmedOrNull(currency?.anchor_asset),
+      anchorAssetType: trimmedOrNull(currency?.anchor_asset_type),
       fetchedAt: now,
     }
     writeCache(store, entry)
@@ -379,6 +403,8 @@ export async function loadRegisteredIssuerMetadata(
         name: cached.name,
         description: cached.description,
         imageUrl: cached.imageUrl,
+        anchorAsset: cached.anchorAsset,
+        anchorAssetType: cached.anchorAssetType,
         fetchedAt: cached.fetchedAt,
         fromCache: true,
       })
