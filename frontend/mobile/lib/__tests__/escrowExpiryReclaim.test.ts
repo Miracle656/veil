@@ -552,4 +552,71 @@ describe('wallet tied-up links and reserve accounting (#1286)', () => {
       cb_reclaimed_old: 'expired_and_reclaimed',
     });
   });
+
+  it('derives balanceId locally when Horizon omits balance_id and restores missing trustlines on reclaim', async () => {
+    jest.spyOn(Horizon.Server.prototype, 'loadAccount').mockResolvedValueOnce(
+      new Account(SENDER.publicKey(), '900') as unknown as Horizon.AccountResponse,
+    );
+    let derivedId = '';
+    jest.spyOn(Horizon.Server.prototype, 'submitTransaction').mockImplementationOnce(async (tx) => {
+      if ('getClaimableBalanceId' in tx && typeof tx.getClaimableBalanceId === 'function') {
+        derivedId = tx.getClaimableBalanceId(0);
+      }
+      return { hash: 'tx_no_balance_id' } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;
+    });
+
+    const created = await createEscrow({
+      senderKeypair: SENDER,
+      recipientAddress: DEVICE_A.publicKey(),
+      amount: '10',
+      asset: new Asset('USDC', USDC_ISSUER),
+      expiryPreset: '1h',
+      nowUnix: NOW_UNIX,
+      config: CONFIG,
+    });
+    expect(created.balanceId).toBe(derivedId);
+
+    // Reclaim when sender's classic account lacks the USDC trustline: prepends changeTrust.
+    jest.spyOn(Horizon.Server.prototype, 'claimableBalances').mockReturnValueOnce({
+      claimableBalance: () => ({
+        call: async () => ({
+          id: derivedId,
+          asset: `USDC:${USDC_ISSUER}`,
+          amount: '10.0000000',
+          claimants: [
+            {
+              destination: SENDER.publicKey(),
+              predicate: { not: { abs_before_epoch: String(NOW_UNIX - 60) } },
+            },
+          ],
+        }),
+      }),
+    } as unknown as ReturnType<Horizon.Server['claimableBalances']>);
+
+    const senderAcct = new Account(SENDER.publicKey(), '901') as unknown as Horizon.AccountResponse;
+    (senderAcct as unknown as { balances: unknown[] }).balances = [
+      { asset_type: 'native', balance: '20.0000000' },
+    ];
+    jest.spyOn(Horizon.Server.prototype, 'loadAccount').mockResolvedValueOnce(senderAcct);
+
+    let reclaimXdr = '';
+    jest.spyOn(Horizon.Server.prototype, 'submitTransaction').mockImplementationOnce(async (tx) => {
+      reclaimXdr = tx.toXDR();
+      return { hash: 'tx_reclaim_usdc' } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;
+    });
+
+    const outcome = await reclaimEscrowSafely({
+      senderKeypair: SENDER,
+      balanceId: derivedId,
+      nowUnix: NOW_UNIX,
+      config: CONFIG,
+    });
+    expect(outcome).toMatchObject({ status: 'reclaimed', txHash: 'tx_reclaim_usdc' });
+
+    const parsed = TransactionBuilder.fromXDR(reclaimXdr, Networks.TESTNET);
+    expect('operations' in parsed && parsed.operations.map((o) => o.type)).toEqual([
+      'changeTrust',
+      'claimClaimableBalance',
+    ]);
+  });
 });

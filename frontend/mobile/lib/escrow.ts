@@ -110,6 +110,9 @@ export type ReclaimOptions = {
   balanceId: string;
   /** Known expiry unix timestamp (seconds) recorded when the link was created. */
   expiresAt?: number;
+  /** Optional asset metadata so reclaim can restore a removed trustline before claiming. */
+  assetCode?: string;
+  assetIssuer?: string | null;
   /**
    * Optional ephemeral link keypair whose on-chain account/trustlines/dust
    * should be swept and merged back into the sender in the same reclaim tx.
@@ -172,6 +175,7 @@ export type KnownSenderClaimLink = {
   expiresAt: number;
   createdAt?: number;
   ephemeralAddress?: string;
+  reclaimedBySender?: boolean;
 };
 
 export type SenderClaimLinkItem = {
@@ -497,7 +501,9 @@ export async function createEscrow(options: CreateEscrowOptions): Promise<Escrow
   tx.sign(senderKeypair);
 
   const result = await server.submitTransaction(tx);
-  const balanceId = (result as unknown as { balance_id?: string }).balance_id;
+  const balanceId =
+    (result as unknown as { balance_id?: string }).balance_id ??
+    (typeof tx.getClaimableBalanceId === 'function' ? tx.getClaimableBalanceId(0) : undefined);
   if (!balanceId) {
     throw new Error('create_claimable_balance: missing balance_id in Horizon response');
   }
@@ -688,9 +694,16 @@ export async function reclaimEscrowSafely(options: ReclaimOptions): Promise<Recl
   const cbLookup = cbApi?.claimableBalance?.(balanceId);
 
   let onChainDeadline = options.expiresAt ?? null;
+  let resolvedAssetCode = options.assetCode ?? null;
+  let resolvedAssetIssuer = options.assetIssuer ?? null;
   if (cbLookup) {
     try {
       const record = await cbLookup.call();
+      if (typeof record.asset === 'string') {
+        const parsed = parseHorizonAsset(record.asset);
+        resolvedAssetCode = parsed.code;
+        resolvedAssetIssuer = parsed.issuer;
+      }
       const extracted = extractReclaimDeadlineUnix(record.claimants);
       if (extracted !== null) {
         onChainDeadline = extracted;
@@ -719,7 +732,29 @@ export async function reclaimEscrowSafely(options: ReclaimOptions): Promise<Recl
   const builder = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: config.networkPassphrase,
-  }).addOperation(Operation.claimClaimableBalance({ balanceId }));
+  });
+
+  if (
+    resolvedAssetCode &&
+    resolvedAssetCode !== 'XLM' &&
+    resolvedAssetIssuer &&
+    Array.isArray(account.balances)
+  ) {
+    const senderBalances = account.balances as {
+      asset_code?: string;
+      asset_issuer?: string;
+    }[];
+    const hasTrust = senderBalances.some(
+      (b) => b.asset_code === resolvedAssetCode && b.asset_issuer === resolvedAssetIssuer,
+    );
+    if (!hasTrust) {
+      builder.addOperation(
+        Operation.changeTrust({ asset: new Asset(resolvedAssetCode, resolvedAssetIssuer) }),
+      );
+    }
+  }
+
+  builder.addOperation(Operation.claimClaimableBalance({ balanceId }));
 
   let sweptReserveStroops = CLAIMABLE_BALANCE_RESERVE_STROOPS;
   let sweptEphemeralAccount = false;
@@ -967,7 +1002,9 @@ export async function fetchWalletTiedUpSummary(
 
     const claimant = await resolveConsumedBalanceClaimant(server, known.balanceId);
     const state: ClaimLinkTerminalState =
-      claimant === walletAddress ? 'expired_and_reclaimed' : 'claimed_by_other';
+      claimant === walletAddress || (claimant === null && known.reclaimedBySender)
+        ? 'expired_and_reclaimed'
+        : 'claimed_by_other';
 
     items.push({
       balanceId: known.balanceId,

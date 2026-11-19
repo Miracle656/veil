@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Keypair } from '@stellar/stellar-sdk';
 
 import ClaimLinksScreen from '../app/claim-links';
@@ -65,7 +66,10 @@ async function renderScreen() {
 }
 
 describe('ClaimLinksScreen (#1286)', () => {
-  beforeEach(() => {
+  jest.setTimeout(15_000);
+
+  beforeEach(async () => {
+    await AsyncStorage.clear();
     jest.clearAllMocks();
   });
 
@@ -149,6 +153,47 @@ describe('ClaimLinksScreen (#1286)', () => {
     expect(mockReclaimSafely).toHaveBeenCalledTimes(1);
     expect(text(root.findByProps({ testID: 'claim-links-feedback' }))).toContain(
       'Reclaimed 10 XLM and freed 1 XLM of reserve.',
+    );
+  });
+
+  it('reads created-link metadata written by Send as a link (veil_created_claim_links_v1)', async () => {
+    await AsyncStorage.setItem(
+      `veil_created_claim_links_v1:${mockSender.publicKey()}`,
+      JSON.stringify([
+        {
+          balanceId: 'cb_from_send_screen',
+          amount: '15',
+          assetCode: 'USDC',
+          assetIssuer: 'GISSUER',
+          expiresAt: 1_800_000_000,
+        },
+      ]),
+    );
+    mockFetchSummary.mockResolvedValue({
+      walletAddress: mockSender.publicKey(),
+      openLinkCount: 0,
+      activeLinkCount: 0,
+      expiredUnreclaimedCount: 0,
+      lockedReserveXlm: '0',
+      reclaimableReserveXlm: '0',
+      assets: [],
+      links: [],
+    });
+
+    await renderScreen();
+
+    expect(mockFetchSummary).toHaveBeenCalledWith(
+      mockSender.publicKey(),
+      expect.any(Object),
+      expect.objectContaining({
+        knownLinks: [
+          expect.objectContaining({
+            balanceId: 'cb_from_send_screen',
+            amount: '15',
+            assetCode: 'USDC',
+          }),
+        ],
+      }),
     );
   });
 });

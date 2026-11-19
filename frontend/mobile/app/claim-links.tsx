@@ -24,16 +24,56 @@ import type { ThemeColors } from '../lib/theme';
 import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 import { fontFamily } from '../theme/typography';
 
-const KNOWN_CLAIM_LINKS_STORAGE_KEY = 'veil_sender_claim_links_v1';
+const CREATED_CLAIM_LINKS_STORAGE_PREFIX = 'veil_created_claim_links_v1:';
+const LEGACY_CLAIM_LINKS_STORAGE_PREFIX = 'veil_sender_claim_links_v1:';
 
 async function readKnownLinks(walletAddress: string): Promise<KnownSenderClaimLink[]> {
   try {
-    const raw = await AsyncStorage.getItem(`${KNOWN_CLAIM_LINKS_STORAGE_KEY}:${walletAddress}`);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as KnownSenderClaimLink[]) : [];
+    const [primaryRaw, legacyRaw] = await Promise.all([
+      AsyncStorage.getItem(`${CREATED_CLAIM_LINKS_STORAGE_PREFIX}${walletAddress}`).catch(() => null),
+      AsyncStorage.getItem(`${LEGACY_CLAIM_LINKS_STORAGE_PREFIX}${walletAddress}`).catch(() => null),
+    ]);
+    const combined: KnownSenderClaimLink[] = [];
+    const seen = new Set<string>();
+    for (const raw of [primaryRaw, legacyRaw]) {
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) continue;
+        for (const item of parsed as KnownSenderClaimLink[]) {
+          if (item && typeof item.balanceId === 'string' && item.balanceId && !seen.has(item.balanceId)) {
+            seen.add(item.balanceId);
+            combined.push(item);
+          }
+        }
+      } catch {
+        // Ignore malformed local metadata entry.
+      }
+    }
+    return combined;
   } catch {
     return [];
+  }
+}
+
+async function markKnownLinkReclaimedBySender(
+  walletAddress: string,
+  balanceId: string,
+): Promise<void> {
+  for (const prefix of [CREATED_CLAIM_LINKS_STORAGE_PREFIX, LEGACY_CLAIM_LINKS_STORAGE_PREFIX]) {
+    try {
+      const key = `${prefix}${walletAddress}`;
+      const raw = await AsyncStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) continue;
+      const updated = (parsed as Record<string, unknown>[]).map((entry) =>
+        entry && entry.balanceId === balanceId ? { ...entry, reclaimedBySender: true } : entry,
+      );
+      await AsyncStorage.setItem(key, JSON.stringify(updated));
+    } catch {
+      // Non-fatal local hint update.
+    }
   }
 }
 
@@ -109,6 +149,8 @@ export default function ClaimLinksScreen() {
           senderKeypair,
           balanceId: item.balanceId,
           expiresAt: item.expiresAt,
+          assetCode: item.assetCode,
+          assetIssuer: item.assetIssuer,
           config: {
             horizonUrl: network.horizonUrl,
             networkPassphrase: network.networkPassphrase,
@@ -116,6 +158,7 @@ export default function ClaimLinksScreen() {
         });
 
         if (outcome.status === 'reclaimed') {
+          await markKnownLinkReclaimedBySender(senderKeypair.publicKey(), item.balanceId);
           setFeedback(
             `Reclaimed ${item.amount} ${item.assetCode} and freed ${outcome.sweptReserveXlm} XLM of reserve.`,
           );
