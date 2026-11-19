@@ -377,6 +377,18 @@ export default function EarnRoute() {
                 </View>
               ) : null}
 
+              <Card style={styles.card}>
+                <View style={styles.rowBetween}>
+                  <Text style={[typography.heading, styles.cardTitle]}>Backstop</Text>
+                  <Text style={[typography.accent, styles.badge]}>Higher risk</Text>
+                </View>
+                <Text style={styles.muted}>
+                  Back a pool&apos;s safety net for BLND emissions and a share of its interest. Unlike lending, the
+                  value can fall and withdrawals are queued.
+                </Text>
+                <Button label="Open backstop" variant="ghost" onPress={() => router.push('/backstop')} />
+              </Card>
+
               <View style={styles.section}>
                 <Text style={[typography.accent, styles.sectionLabel]}>Pools</Text>
 
