@@ -50,8 +50,8 @@ export class PrimaryBindingWriteError extends Error {
 
     constructor(key: string) {
         super(
-            `Refusing to modify "${key}": it belongs to this device's primary wallet binding, ` +
-                'and adding a signer must never change which wallet the device controls.',
+            `Refusing to modify "${key}": it is part of this device's primary binding, ` +
+                'and adding a signer must not change the wallet.',
         );
         this.name = 'PrimaryBindingWriteError';
         this.key = key;
@@ -140,14 +140,14 @@ export function parseAdditionalSigners(raw: string): AdditionalSigner[] {
     try {
         parsed = JSON.parse(raw);
     } catch {
-        throw new AdditionalSignerStoreError('The saved list of additional passkeys is unreadable.');
+        throw new AdditionalSignerStoreError('Saved additional passkeys are unreadable.');
     }
     const record = parsed as Partial<AdditionalSignerRecord> | null;
     if (!record || record.version !== 1 || !Array.isArray(record.signers)) {
-        throw new AdditionalSignerStoreError('The saved list of additional passkeys has an unknown format.');
+        throw new AdditionalSignerStoreError('Saved additional passkeys have an unknown format.');
     }
     if (!record.signers.every(isValidSigner)) {
-        throw new AdditionalSignerStoreError('The saved list of additional passkeys contains an invalid entry.');
+        throw new AdditionalSignerStoreError('Saved additional passkeys hold an invalid entry.');
     }
     return record.signers;
 }
@@ -182,19 +182,19 @@ export async function saveAdditionalSigner(
     primary: { credentialId: string | null; publicKey: string | null },
 ): Promise<void> {
     if (!isValidSigner(signer)) {
-        throw new AdditionalSignerStoreError('Refusing to save an invalid additional passkey.');
+        throw new AdditionalSignerStoreError('Refusing to save an invalid passkey.');
     }
     if (primary.credentialId && signer.credentialId === primary.credentialId) {
-        throw new AdditionalSignerStoreError('This passkey is the wallet’s primary passkey, not an additional one.');
+        throw new AdditionalSignerStoreError('This is the primary passkey, not an additional one.');
     }
     if (primary.publicKey && signer.publicKey === primary.publicKey.toLowerCase()) {
-        throw new AdditionalSignerStoreError('This passkey is the wallet’s primary passkey, not an additional one.');
+        throw new AdditionalSignerStoreError('This is the primary passkey, not an additional one.');
     }
 
     const existing = await readAdditionalSigners(storage);
     const clash = existing.find((s) => s.publicKey === signer.publicKey && s.credentialId !== signer.credentialId);
     if (clash) {
-        throw new AdditionalSignerStoreError('Another saved passkey already has this public key.');
+        throw new AdditionalSignerStoreError('Another passkey already has this public key.');
     }
     const next = existing.some((s) => s.credentialId === signer.credentialId)
         ? existing.map((s) => (s.credentialId === signer.credentialId ? signer : s))

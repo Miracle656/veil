@@ -309,7 +309,7 @@ export async function createLocalCipher(config: PrfCipherConfig): Promise<LocalC
     } else {
         if (!storage) {
             throw new Error(
-                'WebAuthn PRF is unavailable and no storage adapter was provided for a fallback key.'
+                'WebAuthn PRF is unavailable; no storage adapter for a fallback key.'
             );
         }
         key = await importRawAesKey(await loadOrCreateFallbackKey(storage));

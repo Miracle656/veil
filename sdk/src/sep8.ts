@@ -384,7 +384,7 @@ export function isRegulatedAsset(authFlags: number): boolean {
 function parseSep8Response(data: unknown, httpStatus: number): Sep8Response {
   if (typeof data !== 'object' || data === null) {
     throw new Sep8Error(
-      `Approval server response is not a JSON object`,
+      `Approval response is not a JSON object`,
       httpStatus,
       JSON.stringify(data),
     );
@@ -396,7 +396,7 @@ function parseSep8Response(data: unknown, httpStatus: number): Sep8Response {
   // Validate status field
   if (typeof status !== 'string') {
     throw new Sep8Error(
-      `Approval server response missing "status" field`,
+      `Approval response missing "status"`,
       httpStatus,
       JSON.stringify(response),
     );
@@ -428,7 +428,7 @@ function parseSep8Response(data: unknown, httpStatus: number): Sep8Response {
       }
       if (typeof response.message !== 'string') {
         throw new Sep8Error(
-          'Revised response missing "message" field',
+          'Revised response missing "message"',
           httpStatus,
           JSON.stringify(response),
         );
@@ -452,14 +452,14 @@ function parseSep8Response(data: unknown, httpStatus: number): Sep8Response {
     case 'action_required': {
       if (typeof response.message !== 'string') {
         throw new Sep8Error(
-          'Action required response missing "message" field',
+          'Action required response missing "message"',
           httpStatus,
           JSON.stringify(response),
         );
       }
       if (typeof response.action_url !== 'string') {
         throw new Sep8Error(
-          'Action required response missing "action_url" field',
+          'Action required response missing "action_url"',
           httpStatus,
           JSON.stringify(response),
         );

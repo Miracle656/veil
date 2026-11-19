@@ -38,9 +38,15 @@ jest.mock('@/lib/soroswap', () => ({
   getSoroswapNetwork: jest.fn(() => 'testnet'),
 }))
 
-const TOKEN_A = 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC' // XLM SAC
-const TOKEN_B = 'CBBHRKEP5M3NUDRISGLJKGHDHX3DA2CN2AZBQY6WLVUJ7VNLGSKBDUCM' // testnet USDC SAC
-const POOL_ADDRESS = 'CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP'
+// Placeholders built from a short prefix plus repeated filler. They are not
+// valid StrKeys, so a secret scanner cannot read them as live contract IDs.
+function fakeAddress(prefix: string): string {
+  return `C${prefix}${'X'.repeat(56)}`.slice(0, 56)
+}
+
+const TOKEN_A = fakeAddress('TOKENA') // stands in for the XLM SAC
+const TOKEN_B = fakeAddress('TOKENB') // stands in for a testnet USDC SAC
+const POOL_ADDRESS = fakeAddress('POOL')
 
 const client = {
   getPoolByTokens: jest.fn(),

@@ -1,4 +1,4 @@
-import { computeWalletAddress } from './utils';
+import { bufferToHex, computeWalletAddress } from './utils';
 
 export type CounterfactualConfig = {
     /** The factory contract's Stellar strkey (e.g. "CABC..."). */
@@ -45,13 +45,9 @@ export function deriveCounterfactualAddress(
         config.networkPassphrase
     );
 
-    const hex = Array.from(publicKeyBytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-
     return {
         address,
-        publicKeyHex: hex,
+        publicKeyHex: bufferToHex(publicKeyBytes),
         derivedAt: Date.now(),
     };
 }

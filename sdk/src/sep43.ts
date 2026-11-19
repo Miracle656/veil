@@ -192,7 +192,7 @@ export async function signSorobanAuthEntry(
   const credentials = entry.credentials();
 
   if (credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
-    throw new Error('Only address credentials (SorobanCredentialsAddress) can be signed.');
+    throw new Error('Only address credentials can be signed.');
   }
 
   const addressCredentials = credentials.address();
@@ -320,7 +320,7 @@ export function createSep43Wallet(adapter: Sep43WalletAdapter): Sep43Wallet {
           return {
             error: createSep43Error(
               SEP43_ERROR_CLIENT,
-              `Requested network passphrase does not match wallet network passphrase.`
+              `Requested network passphrase does not match.`
             ),
           };
         }
@@ -332,7 +332,7 @@ export function createSep43Wallet(adapter: Sep43WalletAdapter): Sep43Wallet {
             return {
               error: createSep43Error(
                 SEP43_ERROR_CLIENT,
-                'Transaction submission is not supported by this wallet instance.'
+                'This wallet does not submit transactions.'
               ),
             };
           }
@@ -355,7 +355,7 @@ export function createSep43Wallet(adapter: Sep43WalletAdapter): Sep43Wallet {
       try {
         if (!authEntry || typeof authEntry !== 'string') {
           return {
-            error: createSep43Error(SEP43_ERROR_CLIENT, 'Missing or invalid authEntry XDR string.'),
+            error: createSep43Error(SEP43_ERROR_CLIENT, 'Missing or invalid authEntry XDR.'),
           };
         }
 
@@ -380,7 +380,7 @@ export function createSep43Wallet(adapter: Sep43WalletAdapter): Sep43Wallet {
           return {
             error: createSep43Error(
               SEP43_ERROR_CLIENT,
-              `Requested network passphrase does not match wallet network passphrase.`
+              `Requested network passphrase does not match.`
             ),
           };
         }
@@ -403,7 +403,7 @@ export function createSep43Wallet(adapter: Sep43WalletAdapter): Sep43Wallet {
           return {
             error: createSep43Error(
               SEP43_ERROR_CLIENT,
-              'signAuthEntry is not supported by this wallet adapter.'
+              'signAuthEntry is not supported by this adapter.'
             ),
           };
         }
@@ -448,7 +448,7 @@ export function createSep43Wallet(adapter: Sep43WalletAdapter): Sep43Wallet {
           return {
             error: createSep43Error(
               SEP43_ERROR_CLIENT,
-              'signMessage is not supported by this wallet adapter.'
+              'signMessage is not supported by this adapter.'
             ),
           };
         }

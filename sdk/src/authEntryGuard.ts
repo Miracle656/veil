@@ -99,29 +99,27 @@ export function assertEntryAuthorized(
     const addressType = xdr.SorobanCredentialsType.sorobanCredentialsAddress();
     if (credentials.switch().value !== addressType.value) {
         throw new AuthEntryRejected(
-            'Refusing to sign: the simulation returned an authorisation that is not an address credential.',
+            'Refusing to sign: the credential is not an address credential.',
         );
     }
 
     const credentialAddress = Address.fromScAddress(credentials.address().address()).toString();
     if (credentialAddress !== options.walletAddress) {
         throw new AuthEntryRejected(
-            `Refusing to sign: the simulation asked this wallet to authorise ${credentialAddress}, ` +
-                'which is a different address.',
+            `Refusing to sign: the simulation asked wallet ${credentialAddress}, a different address.`,
         );
     }
 
     const call = rootContractCall(entry);
     if (!call) {
         throw new AuthEntryRejected(
-            'Refusing to sign: the simulation returned an authorisation that is not a contract call.',
+            'Refusing to sign: the simulation returned a non-contract call.',
         );
     }
 
     if (!options.allowed.some((candidate) => sameCall(candidate, call))) {
         throw new AuthEntryRejected(
-            `Refusing to sign: the simulation asked for ${describe(call)}, ` +
-                'which is not a call this transaction makes.',
+            `Refusing to sign: ${describe(call)} is not a call this transaction makes.`,
         );
     }
 }

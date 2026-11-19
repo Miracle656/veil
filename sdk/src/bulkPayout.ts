@@ -45,7 +45,7 @@ export function parseCSV(csvText: string): ParseResult {
     const assetIdx = header.indexOf('asset');
 
     if (recipientIdx === -1 || amountIdx === -1 || assetIdx === -1) {
-        errors.push({ row: 0, field: 'header', error: 'Missing required columns: recipient, amount, asset' });
+        errors.push({ row: 0, field: 'header', error: 'Missing columns: recipient, amount, asset' });
         return { rows, errors };
     }
 
