@@ -96,6 +96,8 @@ describe('session keys through the SDK, on the deployed wallet code', () => {
         expect(result.status).toBe('FAILED');
         expect(result.simulationError).toMatch(/Error\(Auth, InvalidAction\)/);
         expect(sessionKeyRetryableError({ events: result.simulationEvents }, wallet)).toBeInstanceOf(SessionKeyNonceMismatch);
+        // The transaction on the ledger was refused for the same reason, not for something the harness left out.
+        expect(sessionKeyRetryableError({ events: result.ledgerEvents }, wallet)).toBeInstanceOf(SessionKeyNonceMismatch);
         expect((await readSessionKey(net.server, wallet, keyId))?.spent).toBe(500_000n);
     });
 

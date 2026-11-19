@@ -29,7 +29,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 import { assertEntryAuthorized, hostFunctionCalls } from '../../src/authEntryGuard';
-import { signAuthEntryWithSessionKey } from '../../src/sessionKey';
+import { sessionKeyLedgerKey, signAuthEntryWithSessionKey } from '../../src/sessionKey';
 import { buildWebAuthnSignatureVector } from '../../src/signatureVector';
 
 /** SHA-256 of the wallet WASM every Veil wallet on mainnet runs (source: commit ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2). */
@@ -200,6 +200,8 @@ export type Submitted = {
     simulationError?: string;
     /** Diagnostic events from that simulation. A contract's error inside `__check_auth` is only visible here. */
     simulationEvents?: xdr.DiagnosticEvent[];
+    /** Diagnostic events of the transaction as the ledger ran it, when the RPC returns them. */
+    ledgerEvents?: xdr.DiagnosticEvent[];
     returnValue?: xdr.ScVal;
 };
 
@@ -329,6 +331,7 @@ export async function submitWithEntries(
             hash: res.hash,
             status: res.status === rpc.Api.GetTransactionStatus.SUCCESS ? 'SUCCESS' : 'FAILED',
             returnValue: res.status === rpc.Api.GetTransactionStatus.SUCCESS ? res.returnValue : undefined,
+            ledgerEvents: 'diagnosticEventsXdr' in res ? res.diagnosticEventsXdr : undefined,
             signedEntries: entries,
         };
     }
@@ -347,7 +350,7 @@ export async function submitWithEntries(
     const data = recorded.transactionData.build();
     const resources = data.resources();
     const footprint = resources.footprint();
-    const readWrite = [...footprint.readWrite(), ...walletFootprint(walletId), ...extraFootprint];
+    const readWrite = [...footprint.readWrite(), ...walletFootprint(walletId, entries), ...extraFootprint];
     const seen = new Set<string>();
     const rw = readWrite.filter((k) => {
         const id = k.toXDR('base64');
@@ -381,13 +384,30 @@ export async function submitWithEntries(
         status: res.status === rpc.Api.GetTransactionStatus.SUCCESS ? 'SUCCESS' : 'FAILED',
         simulationError: enforced.error,
         simulationEvents: enforced.events,
+        ledgerEvents: 'diagnosticEventsXdr' in res ? res.diagnosticEventsXdr : undefined,
         signedEntries: entries,
     };
 }
 
-/** Wallet storage `__check_auth` may read or write, whichever branch runs. */
-function walletFootprint(walletId: string): xdr.LedgerKey[] {
+/**
+ * Wallet storage `__check_auth` may read or write, whichever branch runs.
+ *
+ * Recording-mode simulation does not run `__check_auth`, so none of this is in
+ * its footprint. Without it the forced transaction fails on an undeclared
+ * storage read before the wallet reaches the check being tested. That includes
+ * the session key's record, which the wallet loads before anything else.
+ */
+function walletFootprint(walletId: string, entries: xdr.SorobanAuthorizationEntry[]): xdr.LedgerKey[] {
+    const sessionKeyRecords = entries.flatMap((entry) => {
+        if (entry.credentials().switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) return [];
+        const credential = entry.credentials().address();
+        if (Address.fromScAddress(credential.address()).toString() !== walletId) return [];
+        const items = credential.signature().switch().value === xdr.ScValType.scvVec().value ? credential.signature().vec() ?? [] : [];
+        if (items.length !== 3 || items[0].switch().value !== xdr.ScValType.scvBytes().value) return [];
+        return [sessionKeyLedgerKey(walletId, items[0].bytes())];
+    });
     return [
+        ...sessionKeyRecords,
         xdr.LedgerKey.contractData(
             new xdr.LedgerKeyContractData({
                 contract: new Address(walletId).toScAddress(),
