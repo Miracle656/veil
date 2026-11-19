@@ -14,6 +14,7 @@ type ButtonProps = {
   /** Fill the container width, like the web buttons (`width: 100%`). */
   fullWidth?: boolean;
   style?: ViewStyle;
+  testID?: string;
 };
 
 /**
@@ -28,12 +29,14 @@ export function Button({
   disabled = false,
   fullWidth = true,
   style,
+  testID,
 }: ButtonProps) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const isGold = variant === "gold";
   return (
     <Pressable
+      testID={testID}
       accessibilityRole="button"
       accessibilityState={{ disabled }}
       disabled={disabled}

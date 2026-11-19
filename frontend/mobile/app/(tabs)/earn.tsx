@@ -30,6 +30,25 @@ import {
   type BlendPosition,
   type BlendReserve,
 } from '../../lib/blend';
+import {
+  BACKSTOP_QUEUED_FACTS,
+  buildBackstopCancelWithdrawalXdr,
+  buildBackstopDepositXdr,
+  buildBackstopQueueWithdrawalXdr,
+  buildBackstopWithdrawXdr,
+  computeMaturityTimestamp,
+  formatAvailableDate,
+  loadBackstopPools,
+  loadBackstopPositions,
+  type BackstopPoolSummary,
+  type BackstopPosition,
+  type BackstopQueuedWithdrawal,
+} from '../../lib/blendBackstop';
+import { BackstopExitTerms, BackstopWithdrawalCard } from '../../components/BackstopQueue';
+import {
+  cancelBackstopMaturityNotification,
+  scheduleBackstopMaturityNotification,
+} from '../../lib/notifications';
 import { fundDeposit, loadEarnBalances, type EarnBalances } from '../../lib/earnFunding';
 import { useNetwork } from '../../hooks/useNetwork';
 import { useWallet } from '../../components/WalletProvider';
@@ -66,6 +85,9 @@ type EarnStep =
   | 'withdraw-form'
   | 'withdrawing'
   | 'withdraw-done'
+  | 'backstop-deposit-form'
+  | 'backstop-queue-form'
+  | 'backstop-done'
   | 'error';
 
 function toUnits(stroops: string): number {
@@ -110,6 +132,8 @@ export default function EarnRoute() {
 
   const [pools, setPools] = useState<BlendPool[]>([]);
   const [positions, setPositions] = useState<BlendPosition[]>([]);
+  const [backstopPools, setBackstopPools] = useState<BackstopPoolSummary[]>([]);
+  const [backstopPositions, setBackstopPositions] = useState<BackstopPosition[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -117,6 +141,11 @@ export default function EarnRoute() {
   const [balances, setBalances] = useState<EarnBalances | null>(null);
   const [depositAmount, setDepositAmount] = useState('');
   const [selectedPosition, setSelectedPosition] = useState<BlendPosition | null>(null);
+  const [selectedBackstop, setSelectedBackstop] = useState<BackstopPoolSummary | null>(null);
+  const [selectedBackstopPosition, setSelectedBackstopPosition] = useState<BackstopPosition | null>(null);
+  const [backstopDepositAmount, setBackstopDepositAmount] = useState('');
+  const [backstopDoneTitle, setBackstopDoneTitle] = useState('');
+  const [backstopDoneBody, setBackstopDoneBody] = useState('');
 
   const [progress, setProgress] = useState('Waiting for passkey…');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -124,12 +153,25 @@ export default function EarnRoute() {
 
   const loadData = useCallback(async (address: string) => {
     setLoadingPools(true);
-    const [nextPools, nextPositions] = await Promise.all([
+    const [nextPools, nextPositions, nextBackstopPools, nextBackstopPositions] = await Promise.all([
       loadBlendPools(),
       loadBlendPositions(address),
+      loadBackstopPools(),
+      loadBackstopPositions(address),
     ]);
     setPools(nextPools.filter((pool) => pool.reserves.length > 0));
     setPositions(nextPositions);
+    setBackstopPools(nextBackstopPools);
+    setBackstopPositions(nextBackstopPositions);
+    for (const pos of nextBackstopPositions) {
+      for (const queued of pos.queuedWithdrawals) {
+        void scheduleBackstopMaturityNotification({
+          poolId: queued.poolId,
+          poolName: queued.poolName,
+          availableAt: queued.availableAt,
+        });
+      }
+    }
     setLoadingPools(false);
   }, []);
 
@@ -298,6 +340,202 @@ export default function EarnRoute() {
     }
   }
 
+  // ── Backstop ──
+  const parsedBackstopAmount = parseFloat(backstopDepositAmount);
+  const backstopDepositIsValid = Number.isFinite(parsedBackstopAmount) && parsedBackstopAmount > 0;
+
+  function openBackstopDeposit(pool: BackstopPoolSummary) {
+    setSelectedBackstop(pool);
+    setBackstopDepositAmount('');
+    setStep('backstop-deposit-form');
+  }
+
+  async function handleBackstopDeposit() {
+    if (!selectedBackstop || !accountAddress || !backstopDepositIsValid) return;
+    setProgress('Waiting for passkey…');
+    setStep('depositing');
+    setErrorMsg(null);
+    try {
+      await requirePasskey();
+      const signerSecret = await getSignerSecret();
+      if (!signerSecret) throw new Error('Signing key not found. Please unlock the wallet again.');
+
+      setProgress('Depositing to backstop…');
+      const xdr = await buildBackstopDepositXdr({
+        backstopId: selectedBackstop.backstopId,
+        poolId: selectedBackstop.poolId,
+        userAddress: accountAddress,
+        amount: BigInt(Math.round(parsedBackstopAmount * STROOPS)),
+      });
+
+      const hash = await signAndSubmitSorobanXdr({
+        xdr,
+        signerSecret,
+        rpcUrl: network.rpcUrl,
+        networkPassphrase: network.networkPassphrase,
+        horizonUrl: network.horizonUrl,
+      });
+
+      setTxHash(hash);
+      setBackstopDoneTitle('Deposited to backstop');
+      setBackstopDoneBody(
+        `Your deposit is active in the ${selectedBackstop.poolName} backstop. Withdrawals run through the 17-day protocol queue.`,
+      );
+      setStep('backstop-done');
+      setBackstopDepositAmount('');
+      await loadData(accountAddress);
+    } catch (error: unknown) {
+      if (isPasskeyCancellation(error)) {
+        setErrorMsg(null);
+        setStep('backstop-deposit-form');
+        return;
+      }
+      setErrorMsg(describeFailure(error));
+      setStep('error');
+    }
+  }
+
+  async function handleQueueBackstopWithdrawal() {
+    if (!selectedBackstopPosition || !accountAddress) return;
+    setProgress('Waiting for passkey…');
+    setStep('withdrawing');
+    setErrorMsg(null);
+    try {
+      await requirePasskey();
+      const signerSecret = await getSignerSecret();
+      if (!signerSecret) throw new Error('Signing key not found. Please unlock the wallet again.');
+
+      setProgress('Queuing withdrawal…');
+      const xdr = await buildBackstopQueueWithdrawalXdr({
+        backstopId: selectedBackstopPosition.backstopId,
+        poolId: selectedBackstopPosition.poolId,
+        userAddress: accountAddress,
+        amount: BigInt(selectedBackstopPosition.shares),
+      });
+
+      const hash = await signAndSubmitSorobanXdr({
+        xdr,
+        signerSecret,
+        rpcUrl: network.rpcUrl,
+        networkPassphrase: network.networkPassphrase,
+        horizonUrl: network.horizonUrl,
+      });
+
+      const availableAt = computeMaturityTimestamp();
+      void scheduleBackstopMaturityNotification({
+        poolId: selectedBackstopPosition.poolId,
+        poolName: selectedBackstopPosition.poolName,
+        availableAt,
+      });
+
+      setTxHash(hash);
+      setBackstopDoneTitle('Withdrawal queued');
+      setBackstopDoneBody(
+        `${formatAvailableDate(availableAt)}. We will notify you when it is ready to claim.`,
+      );
+      setStep('backstop-done');
+      await loadData(accountAddress);
+    } catch (error: unknown) {
+      if (isPasskeyCancellation(error)) {
+        setErrorMsg(null);
+        setStep('backstop-queue-form');
+        return;
+      }
+      setErrorMsg(describeFailure(error));
+      setStep('error');
+    }
+  }
+
+  async function handleCancelBackstopWithdrawal(withdrawal: BackstopQueuedWithdrawal) {
+    if (!accountAddress) return;
+    setProgress('Waiting for passkey…');
+    setStep('withdrawing');
+    setErrorMsg(null);
+    try {
+      await requirePasskey();
+      const signerSecret = await getSignerSecret();
+      if (!signerSecret) throw new Error('Signing key not found. Please unlock the wallet again.');
+
+      setProgress('Returning deposit to backstop…');
+      const xdr = await buildBackstopCancelWithdrawalXdr({
+        backstopId: withdrawal.backstopId,
+        poolId: withdrawal.poolId,
+        userAddress: accountAddress,
+        amount: BigInt(withdrawal.shares),
+      });
+
+      const hash = await signAndSubmitSorobanXdr({
+        xdr,
+        signerSecret,
+        rpcUrl: network.rpcUrl,
+        networkPassphrase: network.networkPassphrase,
+        horizonUrl: network.horizonUrl,
+      });
+
+      void cancelBackstopMaturityNotification(withdrawal.poolId, withdrawal.availableAt);
+
+      setTxHash(hash);
+      setBackstopDoneTitle('Withdrawal cancelled');
+      setBackstopDoneBody('Your deposit is back in the backstop and emissions have resumed.');
+      setStep('backstop-done');
+      await loadData(accountAddress);
+    } catch (error: unknown) {
+      if (isPasskeyCancellation(error)) {
+        setErrorMsg(null);
+        setStep('pools');
+        return;
+      }
+      setErrorMsg(describeFailure(error));
+      setStep('error');
+    }
+  }
+
+  async function handleClaimBackstopWithdrawal(withdrawal: BackstopQueuedWithdrawal) {
+    if (!accountAddress) return;
+    setProgress('Waiting for passkey…');
+    setStep('withdrawing');
+    setErrorMsg(null);
+    try {
+      await requirePasskey();
+      const signerSecret = await getSignerSecret();
+      if (!signerSecret) throw new Error('Signing key not found. Please unlock the wallet again.');
+
+      setProgress('Withdrawing from backstop…');
+      const xdr = await buildBackstopWithdrawXdr({
+        backstopId: withdrawal.backstopId,
+        poolId: withdrawal.poolId,
+        userAddress: accountAddress,
+        amount: BigInt(withdrawal.shares),
+      });
+
+      const hash = await signAndSubmitSorobanXdr({
+        xdr,
+        signerSecret,
+        rpcUrl: network.rpcUrl,
+        networkPassphrase: network.networkPassphrase,
+        horizonUrl: network.horizonUrl,
+      });
+
+      void cancelBackstopMaturityNotification(withdrawal.poolId, withdrawal.availableAt);
+
+      setTxHash(hash);
+      setBackstopDoneTitle('Backstop withdrawn');
+      setBackstopDoneBody('Your matured backstop tokens have been returned to your spending account.');
+      setStep('backstop-done');
+      await loadData(accountAddress);
+    } catch (error: unknown) {
+      if (isPasskeyCancellation(error)) {
+        setErrorMsg(null);
+        setStep('pools');
+        return;
+      }
+      setErrorMsg(describeFailure(error));
+      setStep('error');
+    }
+  }
+
+  const allQueuedBackstopWithdrawals = backstopPositions.flatMap((pos) => pos.queuedWithdrawals);
+
   const poolName = (poolId: string) =>
     pools.find((p) => p.id === poolId)?.name ?? `${poolId.slice(0, 6)}…`;
   const bestApy = pools.flatMap((p) => p.reserves).reduce((m, r) => Math.max(m, r.supplyApy), 0);
@@ -416,6 +654,67 @@ export default function EarnRoute() {
                   ))
                 )}
               </View>
+
+              {backstopPositions.length > 0 || backstopPools.length > 0 ? (
+                <View style={styles.section}>
+                  <Text style={[typography.accent, styles.sectionLabel]}>Pool Backstop</Text>
+
+                  {allQueuedBackstopWithdrawals.map((withdrawal) => (
+                    <BackstopWithdrawalCard
+                      key={withdrawal.id}
+                      withdrawal={withdrawal}
+                      mask={mask}
+                      onCancel={(entry) => void handleCancelBackstopWithdrawal(entry)}
+                      onWithdraw={(entry) => void handleClaimBackstopWithdrawal(entry)}
+                    />
+                  ))}
+
+                  {backstopPositions
+                    .filter((pos) => BigInt(pos.shares) > 0n)
+                    .map((pos) => (
+                      <Card key={`backstop-${pos.poolId}`} style={styles.card}>
+                        <View style={styles.rowBetween}>
+                          <View>
+                            <Text style={styles.assetCode}>{pos.poolName} backstop</Text>
+                            <Text style={styles.muted}>17-day protocol withdrawal queue</Text>
+                          </View>
+                          <Text style={styles.value}>
+                            {mask(formatAmount(toUnits(pos.tokens)))} LP
+                          </Text>
+                        </View>
+                        <Button
+                          testID={`backstop-queue-start-${pos.poolId}`}
+                          label="Queue withdrawal"
+                          variant="ghost"
+                          onPress={() => {
+                            setSelectedBackstopPosition(pos);
+                            setStep('backstop-queue-form');
+                          }}
+                        />
+                      </Card>
+                    ))}
+
+                  {backstopPools.map((pool) => (
+                    <Card key={`backstop-pool-${pool.poolId}`} style={styles.card}>
+                      <View style={styles.rowBetween}>
+                        <View style={styles.reserveText}>
+                          <Text style={styles.assetCode}>{pool.poolName} backstop</Text>
+                          <Text style={styles.muted}>
+                            Covers pool bad debt · 17-day protocol withdrawal queue
+                          </Text>
+                        </View>
+                        <Button
+                          testID={`backstop-deposit-open-${pool.poolId}`}
+                          label="Deposit"
+                          fullWidth={false}
+                          style={styles.smallButton}
+                          onPress={() => openBackstopDeposit(pool)}
+                        />
+                      </View>
+                    </Card>
+                  ))}
+                </View>
+              ) : null}
             </>
           ) : null}
 
@@ -492,6 +791,87 @@ export default function EarnRoute() {
               <Button label="Withdraw all" onPress={handleWithdraw} />
               <Button label="Cancel" variant="ghost" onPress={() => setStep('pools')} />
             </View>
+          ) : null}
+
+          {step === 'backstop-deposit-form' && selectedBackstop ? (
+            <View style={styles.section}>
+              <Card style={styles.card}>
+                <Text style={[typography.accent, styles.sectionLabel]}>
+                  Deposit to {selectedBackstop.poolName} backstop
+                </Text>
+                <View style={styles.amountRow}>
+                  <TextInput
+                    testID="backstop-deposit-amount"
+                    style={styles.amountInput}
+                    value={backstopDepositAmount}
+                    onChangeText={setBackstopDepositAmount}
+                    placeholder="0"
+                    placeholderTextColor={colors.textFaint}
+                    keyboardType="decimal-pad"
+                    accessibilityLabel="Backstop deposit amount"
+                    autoFocus
+                  />
+                  <Text style={styles.amountUnit}>LP</Text>
+                </View>
+                <Text style={styles.muted}>
+                  BLND-USDC backstop LP tokens from your spending account.
+                </Text>
+              </Card>
+
+              <BackstopExitTerms />
+
+              <Button
+                testID="backstop-deposit-confirm"
+                label="Deposit to backstop"
+                disabled={!backstopDepositIsValid}
+                onPress={handleBackstopDeposit}
+              />
+              <Button label="Cancel" variant="ghost" onPress={() => setStep('pools')} />
+            </View>
+          ) : null}
+
+          {step === 'backstop-queue-form' && selectedBackstopPosition ? (
+            <View style={styles.section}>
+              <Card style={styles.card}>
+                <Text style={[typography.accent, styles.sectionLabel]}>
+                  Queue withdrawal · {selectedBackstopPosition.poolName} backstop
+                </Text>
+                <Text style={styles.heroRate}>
+                  {mask(formatAmount(toUnits(selectedBackstopPosition.tokens)))} LP
+                </Text>
+                <Text testID="backstop-queue-preview-date" style={styles.assetCode}>
+                  {formatAvailableDate(computeMaturityTimestamp())}
+                </Text>
+                <Text style={styles.muted}>{BACKSTOP_QUEUED_FACTS.emissionsStopped}</Text>
+                <Text style={styles.muted}>{BACKSTOP_QUEUED_FACTS.interestContinues}</Text>
+              </Card>
+              <Button
+                testID="backstop-queue-confirm"
+                label="Queue withdrawal"
+                onPress={handleQueueBackstopWithdrawal}
+              />
+              <Button label="Cancel" variant="ghost" onPress={() => setStep('pools')} />
+            </View>
+          ) : null}
+
+          {step === 'backstop-done' ? (
+            <Card variant="md" style={styles.cardCentered}>
+              <Text style={styles.successMark}>✓</Text>
+              <Text style={[typography.heading, styles.cardTitle]}>{backstopDoneTitle}</Text>
+              {backstopDoneBody ? <Text style={[styles.muted, styles.center]}>{backstopDoneBody}</Text> : null}
+              {txHash ? (
+                <Text style={styles.hash} numberOfLines={1} ellipsizeMode="middle">
+                  {txHash}
+                </Text>
+              ) : null}
+              <Button
+                label="Back to Earn"
+                onPress={() => {
+                  setStep('pools');
+                  setTxHash(null);
+                }}
+              />
+            </Card>
           ) : null}
 
           {step === 'depositing' || step === 'withdrawing' ? (

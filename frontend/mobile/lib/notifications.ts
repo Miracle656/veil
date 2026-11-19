@@ -14,6 +14,7 @@
  * added over the air.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
@@ -88,6 +89,16 @@ export async function configureNotificationChannel(): Promise<void> {
   await Notifications.setNotificationChannelAsync('transfers', {
     name: 'Transfers',
     description: 'Payments arriving in and leaving your wallet',
+    importance: Notifications.AndroidImportance.HIGH,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
+    sound: null,
+    vibrationPattern: [0, 200],
+    enableVibrate: true,
+  });
+
+  await Notifications.setNotificationChannelAsync('backstop', {
+    name: 'Backstop withdrawals',
+    description: 'Alerts when a 17-day Blend backstop withdrawal matures',
     importance: Notifications.AndroidImportance.HIGH,
     lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
     sound: null,
@@ -240,6 +251,83 @@ export async function fireTransferNotification(params: {
 
 /** Where a tapped transfer notification should land. */
 export const NOTIFICATION_ROUTE = '/transactions';
+
+/** Where a tapped backstop maturity notification should land. */
+export const BACKSTOP_NOTIFICATION_ROUTE = '/(tabs)/earn';
+
+function backstopNotificationStorageKey(poolId: string, availableAt: number): string {
+  return `veil_backstop_notif:${poolId}:${availableAt}`;
+}
+
+/**
+ * Schedule a local notification for the moment a 17-day Blend backstop
+ * withdrawal queue matures.
+ *
+ * Leaving a matured withdrawal unclaimed costs the user real missed emissions,
+ * so this schedules a one-shot alert at `availableAt` (unix seconds) that opens
+ * Earn on tap. The body intentionally omits balances so it is safe on a locked
+ * screen. Returns the scheduled notification id, or `null` on web or if the
+ * maturity timestamp has already passed.
+ */
+export async function scheduleBackstopMaturityNotification(params: {
+  poolId: string;
+  poolName: string;
+  availableAt: number;
+  nowSeconds?: number;
+}): Promise<string | null> {
+  if (Platform.OS === 'web') return null;
+
+  const now = params.nowSeconds ?? Math.floor(Date.now() / 1_000);
+  if (params.availableAt <= now) return null;
+
+  const key = backstopNotificationStorageKey(params.poolId, params.availableAt);
+  const existing = await AsyncStorage.getItem(key).catch(() => null);
+  if (existing) return existing;
+
+  const id = await Notifications.scheduleNotificationAsync({
+    content: {
+      title: 'Backstop withdrawal ready',
+      body: `Your ${params.poolName} backstop withdrawal is available. Withdraw it or put it back so you stop missing emissions.`,
+      sound: false,
+      data: {
+        route: BACKSTOP_NOTIFICATION_ROUTE,
+        type: 'backstop-matured',
+        poolId: params.poolId,
+        availableAt: params.availableAt,
+      },
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: new Date(params.availableAt * 1_000),
+      ...(Platform.OS === 'android' ? { channelId: 'backstop' } : {}),
+    },
+  });
+
+  await AsyncStorage.setItem(key, id).catch(() => {});
+  return id;
+}
+
+/**
+ * Cancel a previously scheduled backstop maturity notification — called when
+ * the user cancels their queued withdrawal (`cancel_withdrawal()`) or claims it.
+ */
+export async function cancelBackstopMaturityNotification(
+  poolId: string,
+  availableAt: number,
+): Promise<void> {
+  if (Platform.OS === 'web') return;
+
+  const key = backstopNotificationStorageKey(poolId, availableAt);
+  const id = await AsyncStorage.getItem(key).catch(() => null);
+  if (!id) return;
+
+  try {
+    await Notifications.cancelScheduledNotificationAsync(id);
+  } catch {
+    // Best-effort cancellation; clear the stored id either way.
+  }
+  await AsyncStorage.removeItem(key).catch(() => {});
+}
 
 /**
  * The route a notification response should open, or null when it carries none.
