@@ -916,7 +916,7 @@ export class InvisibleWalletCore {
     /** The wallet address, or an explanatory throw when there is none yet. */
     private requireAddress(): string {
         const { address } = this.state;
-        if (!address) throw new Error('No wallet address. Call register() or login() first.');
+        if (!address) throw new Error('No wallet address. Call register() or login().');
         return address;
     }
 
@@ -976,7 +976,7 @@ export class InvisibleWalletCore {
                     });
                 } else if (this.config.requireAttestation) {
                     throw new AttestationError(
-                        'Attestation required but the platform did not expose an attestationObject.'
+                        'Attestation required, but no attestationObject exposed.'
                     );
                 }
             }
@@ -1053,7 +1053,7 @@ export class InvisibleWalletCore {
             if (!pubKeyBytes) {
                 const hex = await store.getItem('invisible_wallet_public_key');
                 if (!hex) throw new Error(
-                    'No public key found. Call register() first, or pass publicKeyBytes explicitly.'
+                    'No public key. Call register() or pass publicKeyBytes.'
                 );
                 pubKeyBytes = hexToUint8Array(hex);
             }
@@ -1112,9 +1112,8 @@ export class InvisibleWalletCore {
                     TransactionBuilder.fromXDR(encoded, networkPassphrase);
                 } catch (cause) {
                     throw new Error(
-                        `Deploy: this device produced a transaction it cannot read back ` +
-                        `(${encoded.length} characters). The XDR encoding is broken in this ` +
-                        `build, so the network would reject it too. Cause: ` +
+                        `Deploy: this device built an unreadable transaction ` +
+                        `(${encoded.length} characters). Cause: ` +
                         `${cause instanceof Error ? cause.message : String(cause)}`
                     );
                 }
@@ -1233,8 +1232,7 @@ export class InvisibleWalletCore {
             // ── Verify on-chain ──────────────────────────────────────────────
             if (!addressesToCheck.length) {
                 this.setError(
-                    'No wallet found. Please register first, or pass a ' +
-                    'credentialId / walletAddress to login().'
+                    'No wallet found. Register first, or pass a credentialId / walletAddress.'
                 );
                 return null;
             }
@@ -1264,7 +1262,7 @@ export class InvisibleWalletCore {
                 }
             }
 
-            this.setError('Wallet not yet deployed. Call deploy() to create it on-chain.');
+            this.setError('Wallet not yet deployed. Deploy it first.');
             this.setAddress(null);
             this.setIsDeployed(false);
             return null;
@@ -1290,10 +1288,10 @@ export class InvisibleWalletCore {
             const keyId        = await store.getItem('invisible_wallet_key_id');
             const publicKeyHex = await store.getItem('invisible_wallet_public_key');
             if (!keyId)        throw new Error('No key ID found. Please register first.');
-            if (!publicKeyHex) throw new Error('No public key found. Please register first.');
+            if (!publicKeyHex) throw new Error('No public key. Register first.');
 
             if (signaturePayload.length !== 32) {
-                throw new Error('signaturePayload must be exactly 32 bytes');
+                throw new Error('signaturePayload must be 32 bytes');
             }
 
             const challenge = signaturePayload.buffer.slice(
@@ -1477,7 +1475,7 @@ export class InvisibleWalletCore {
         const success = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
         const authEntries = success.result?.auth ?? [];
         if (authEntries.length === 0) {
-            throw new Error('The wallet contract did not ask for authorisation; refusing to submit an unsigned change.');
+            throw new Error('The wallet contract did not ask for authorisation; refusing.');
         }
         await this.authorizeEntries(success, server, recording);
 
@@ -1633,7 +1631,7 @@ export class InvisibleWalletCore {
             const primaryBefore = await this.readPrimaryBinding();
             if (!primaryBefore.credentialId || !primaryBefore.publicKey) {
                 throw new Error(
-                    'This device has no primary passkey for the wallet, so it cannot authorise a new signer.'
+                    'This device has no primary passkey for a new signer.'
                 );
             }
 
@@ -1670,7 +1668,7 @@ export class InvisibleWalletCore {
                     });
                 } else if (this.config.requireAttestation) {
                     throw new AttestationError(
-                        'Attestation required but the platform did not expose an attestationObject.'
+                        'Attestation required, but no attestationObject exposed.'
                     );
                 }
             }
@@ -1745,7 +1743,7 @@ export class InvisibleWalletCore {
     private async assertPrimaryUnchanged(before: { credentialId: string | null; publicKey: string | null; address: string | null }): Promise<void> {
         const after = await this.readPrimaryBinding();
         if (after.credentialId !== before.credentialId || after.publicKey !== before.publicKey || after.address !== before.address) {
-            throw new Error('The primary wallet binding changed while adding a signer. Stop and check this wallet before spending.');
+            throw new Error('The wallet binding changed while adding a signer. Check this wallet.');
         }
     }
 
@@ -1914,7 +1912,7 @@ export class InvisibleWalletCore {
             // The key currently registered on-chain — read before we touch storage.
             const oldPublicKeyHex = await store.getItem('invisible_wallet_public_key');
             if (!oldPublicKeyHex) {
-                throw new Error('No existing public key found. Call register() or login() first.');
+                throw new Error('No existing public key. Call register() or login().');
             }
             const oldPublicKeyBytes = hexToUint8Array(oldPublicKeyHex);
 
@@ -1944,7 +1942,7 @@ export class InvisibleWalletCore {
             });
 
             if (newPublicKeyBytes.length !== 65) {
-                throw new Error('New credential did not yield a 65-byte uncompressed P-256 key');
+                throw new Error('New credential gave no 65-byte P-256 key');
             }
 
             // Optional attestation verification for the new credential — mirrors register().
@@ -1957,7 +1955,7 @@ export class InvisibleWalletCore {
                     });
                 } else if (this.config.requireAttestation) {
                     throw new AttestationError(
-                        'Attestation required but the platform did not expose an attestationObject.'
+                        'Attestation required, but no attestationObject exposed.'
                     );
                 }
             }
@@ -2442,7 +2440,7 @@ export class InvisibleWalletCore {
     private async getCipher(): Promise<LocalCipher> {
         if (this.cipher) return this.cipher;
         const credentialId = await this.store.getItem('invisible_wallet_key_id');
-        if (!credentialId) throw new Error('No passkey credential found. Please register first.');
+        if (!credentialId) throw new Error('No passkey credential. Register first.');
         this.cipher = await createLocalCipher({ credentialId, rpId: this.config.rpId, storage: this.store });
         return this.cipher;
     }

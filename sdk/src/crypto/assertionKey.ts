@@ -261,7 +261,7 @@ export function recoverAssertionPublicKeys(assertion: AssertionMaterial): Uint8A
     if (signature.length !== 64) {
         throw new Error(
             `recoverAssertionPublicKeys: expected a raw 64-byte (r ‖ s) P-256 signature, got ${signature.length} bytes. ` +
-            'Providers normalise DER to raw via derToRawSignature().'
+            'Providers normalise DER via derToRawSignature().'
         );
     }
     if (authData.length < 37) {

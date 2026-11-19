@@ -4,9 +4,9 @@ import { StrKey, xdr, hash as stellarHash } from '@stellar/stellar-sdk';
 
 export function bufferToHex(input: Uint8Array | ArrayBuffer): string {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-    return Array.from(bytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
+    let hex = '';
+    for (const b of bytes) hex += b.toString(16).padStart(2, '0');
+    return hex;
 }
 
 export function hexToUint8Array(hex: string): Uint8Array {
@@ -111,8 +111,7 @@ export async function extractP256PublicKey(
     const spkiBuffer = response.getPublicKey();
     if (!spkiBuffer) {
         throw new Error(
-            'getPublicKey() returned null — authenticator may not support SPKI export, ' +
-            'or the browser is too old (requires Chrome 95+ / Firefox 93+)'
+            'getPublicKey() returned null: no SPKI export, or the browser predates Chrome 95.'
         );
     }
 
@@ -164,7 +163,7 @@ export function parseAuthData(authData: ArrayBuffer): {
 } {
     const view = new DataView(authData);
     const bytes = new Uint8Array(authData);
-    if (bytes.length < 37) throw new Error('authData too short (expected ≥ 37 bytes)');
+    if (bytes.length < 37) throw new Error('authData too short (need ≥ 37 bytes)');
 
     const flagByte = view.getUint8(32);
     return {

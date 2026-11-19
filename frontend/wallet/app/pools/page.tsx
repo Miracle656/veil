@@ -518,6 +518,12 @@ export default function PoolsPage() {
           <p style={{ color: 'rgba(246,247,248,0.52)', fontSize: '0.875rem', lineHeight: 1.6, maxWidth: 460 }}>
             Browse active Horizon pools, review the current reserve ratio, and deposit or withdraw with the share estimate shown before you submit.
           </p>
+          <button
+            onClick={() => router.push('/pools/soroswap')}
+            style={{ marginTop: '0.75rem', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--gold)', fontSize: '0.875rem', fontWeight: 600 }}
+          >
+            Soroswap liquidity →
+          </button>
         </div>
 
         {error && (

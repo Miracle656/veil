@@ -223,7 +223,7 @@ function parseAuthData(authData: Uint8Array): ParsedAuthData {
         const credIdLen = view.getUint16(53, false);
         const credIdStart = 55;
         const credIdEnd = credIdStart + credIdLen;
-        if (authData.length < credIdEnd) throw new AttestationError('authData credentialId length out of range');
+        if (authData.length < credIdEnd) throw new AttestationError('authData credentialId length invalid');
         credentialId = authData.slice(credIdStart, credIdEnd);
 
         // The COSE public key is CBOR immediately following the credential ID.
@@ -306,7 +306,7 @@ function extractSpkiFromCert(cert: Uint8Array): Uint8Array {
     // Skip serialNumber, signature, issuer, validity, subject (5 elements).
     for (let i = 0; i < 5; i++) cursor = readTLV(cert, cursor).end;
     const spki = readTLV(cert, cursor);
-    if (spki.tag !== 0x30) throw new AttestationError('x5c: could not locate SubjectPublicKeyInfo');
+    if (spki.tag !== 0x30) throw new AttestationError('x5c: no SubjectPublicKeyInfo found');
     return cert.slice(cursor, spki.end);
 }
 
@@ -407,7 +407,7 @@ export async function verifyAttestation(opts: VerifyAttestationOptions): Promise
             info.attestationType = 'self';
             info.verified = await verifyPackedSignature(parsed.publicKey, 'raw', authDataRaw, clientDataHash, sig);
         } else {
-            throw new AttestationError('packed attestation has neither x5c nor a usable credential key');
+            throw new AttestationError('packed attestation has no x5c or usable credential key');
         }
 
         if (!info.verified && requireValidSignature) {

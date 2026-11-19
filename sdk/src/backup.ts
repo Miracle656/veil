@@ -117,7 +117,7 @@ export class BackupError extends Error {
  * was supplied, or the envelope was tampered with in transit/at rest.
  */
 export class BackupTamperError extends BackupError {
-    constructor(message = 'Backup failed authentication — wrong secret or tampered ciphertext') {
+    constructor(message = 'Backup authentication failed: wrong secret or tampered data') {
         super(message);
         this.name = 'BackupTamperError';
     }
@@ -167,8 +167,7 @@ function getCrypto(): Crypto {
     const c = (globalThis as { crypto?: Crypto }).crypto;
     if (!c || !c.subtle) {
         throw new BackupError(
-            'Web Crypto (crypto.subtle) is unavailable. A secure context (HTTPS) or a ' +
-            'crypto polyfill is required for encrypted backups.'
+            'Web Crypto (crypto.subtle) needs a secure context (HTTPS) or a polyfill.'
         );
     }
     return c;
@@ -203,7 +202,7 @@ async function deriveAesKey(
     if (typeof secret !== 'string') {
         // Raw key path (e.g. passkey PRF output). Must be exactly 32 bytes.
         if (secret.length !== 32) {
-            throw new BackupError('A raw backup key must be exactly 32 bytes');
+            throw new BackupError('A raw backup key must be 32 bytes');
         }
         return subtle.importKey('raw', toArrayBuffer(secret), { name: 'AES-GCM' }, false, [
             'encrypt',
@@ -211,7 +210,7 @@ async function deriveAesKey(
         ]);
     }
 
-    if (!salt) throw new BackupError('A salt is required to derive a key from a passphrase');
+    if (!salt) throw new BackupError('A salt is required to derive a key');
     const baseKey = await subtle.importKey(
         'raw',
         toArrayBuffer(new TextEncoder().encode(secret)),
@@ -320,7 +319,7 @@ export async function decryptBackup(
         throw new BackupTamperError('Decrypted backup is not valid JSON');
     }
     if (!metadata || typeof metadata.address !== 'string' || !Array.isArray(metadata.signers)) {
-        throw new BackupTamperError('Decrypted backup is missing required fields');
+        throw new BackupTamperError('Decrypted backup is missing fields');
     }
     return metadata;
 }

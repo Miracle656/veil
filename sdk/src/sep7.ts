@@ -98,7 +98,7 @@ function normalizeAmount(raw: string): string {
     // Range-check by converting to stroops without floating point.
     const stroops = BigInt(intPart || '0') * 10_000_000n + BigInt((fracPart + '0000000').slice(0, 7));
     if (stroops <= 0n) throw new Sep7Error('Amount must be greater than zero');
-    if (stroops > MAX_STROOPS) throw new Sep7Error('Amount exceeds the maximum supported value');
+    if (stroops > MAX_STROOPS) throw new Sep7Error('Amount exceeds the maximum');
     return amount;
 }
 
@@ -111,7 +111,7 @@ function validateMemo(memo: string, memoType: Sep7MemoType): void {
             return;
         case 'id':
             if (!/^\d+$/.test(memo) || BigInt(memo) > MAX_MEMO_ID) {
-                throw new Sep7Error('Id memo must be an unsigned 64-bit integer');
+                throw new Sep7Error('Id memo must be an unsigned 64-bit int');
             }
             return;
         case 'hash':
@@ -216,7 +216,7 @@ export function parseSep7PayUri(input: string): Sep7PayRequest {
             result.assetIssuer = assetIssuer;
         }
     } else if (assetIssuer !== undefined) {
-        throw new Sep7Error('asset_issuer provided without asset_code');
+        throw new Sep7Error('asset_issuer without asset_code');
     }
 
     const memo = get('memo');
@@ -316,13 +316,13 @@ export function buildSep7PayUri(params: Sep7PayParams): string {
         const isNative = params.assetCode.toUpperCase() === 'XLM' && !params.assetIssuer;
         if (!isNative) {
             if (!params.assetIssuer || !StrKey.isValidEd25519PublicKey(params.assetIssuer)) {
-                throw new Sep7Error('A valid asset_issuer is required for a non-native asset');
+                throw new Sep7Error('asset_issuer is required for a non-native asset');
             }
             pairs.push(['asset_code', params.assetCode]);
             pairs.push(['asset_issuer', params.assetIssuer]);
         }
     } else if (params.assetIssuer !== undefined) {
-        throw new Sep7Error('asset_issuer provided without asset_code');
+        throw new Sep7Error('asset_issuer without asset_code');
     }
 
     if (params.memo !== undefined) {

@@ -56,9 +56,8 @@ function warnLegacy(kind: 'secret string' | 'Keypair'): void {
     warned.add(kind);
     // eslint-disable-next-line no-console
     console.warn(
-        `[invisible-wallet-sdk] Passing a ${kind} as a signer is deprecated and will be removed in the next major ` +
-        'version: it requires a live Stellar secret in your client bundle. Pass a TransactionSigner ' +
-        '({ publicKey, signTransaction(xdr, { networkPassphrase }) }) that signs where the key lives.',
+        `[invisible-wallet-sdk] Passing a ${kind} as a signer is deprecated: it needs a live secret in the client bundle. ` +
+        'Pass a TransactionSigner that signs where the key lives.',
     );
 }
 
@@ -114,17 +113,17 @@ export async function signWith<T extends Transaction | FeeBumpTransaction>(
 
     const signedXdr = await resolved.signer.signTransaction(tx.toXDR(), { networkPassphrase });
     if (typeof signedXdr !== 'string' || signedXdr.length === 0) {
-        throw new Error('The signer did not return a signed transaction envelope.');
+        throw new Error('The signer returned no signed envelope.');
     }
 
     let signed: Transaction | FeeBumpTransaction;
     try {
         signed = TransactionBuilder.fromXDR(signedXdr, networkPassphrase);
     } catch {
-        throw new Error('The signer returned something that is not a transaction envelope for this network.');
+        throw new Error('The signer returned something that is not a transaction envelope.');
     }
     if (signed.hash().toString('hex') !== tx.hash().toString('hex')) {
-        throw new Error('The signer returned a different transaction than the one it was asked to sign.');
+        throw new Error('The signer returned a different transaction.');
     }
     if (signed.signatures.length <= tx.signatures.length) {
         throw new Error('The signer returned the transaction without adding a signature.');
