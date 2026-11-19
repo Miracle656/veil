@@ -26,6 +26,10 @@ jest.mock('@stellar/stellar-sdk', () => ({
   },
   Account: class {},
   BASE_FEE: '100',
+  StrKey: {
+    isValidContract: (value: string) => value.startsWith('C'),
+    isValidEd25519PublicKey: (value: string) => value.startsWith('G'),
+  },
   TransactionBuilder: class {},
   xdr: { Operation: { fromXDR: () => ({}) } },
   rpc: {

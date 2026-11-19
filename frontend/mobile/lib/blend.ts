@@ -6,9 +6,18 @@ import {
   RequestType,
   type Network,
 } from '@blend-capital/blend-sdk';
-import { Account, Asset, BASE_FEE, rpc as SorobanRpc, TransactionBuilder, xdr } from '@stellar/stellar-sdk';
+import {
+  Account,
+  Asset,
+  BASE_FEE,
+  rpc as SorobanRpc,
+  StrKey,
+  TransactionBuilder,
+  xdr,
+} from '@stellar/stellar-sdk';
 
-import { getNetwork } from './network';
+import { isRegisteredIssuer, USDT0_MAINNET_ISSUER } from './assets';
+import { getNetwork, type VeilNetworkName } from './network';
 import { usdcIssuerFor } from './receiveReadiness';
 
 /**
@@ -35,12 +44,26 @@ function blendNet(): Network {
 }
 
 /**
- * Blend's public Fixed pool on mainnet (XLM, USDC, EURC). A pool id is public
- * and permanent, so shipping it as the default means Earn works in any build
- * rather than only in one whose environment was set up right.
+ * Blend's public Fixed V2 pool on mainnet. A pool id is public and permanent,
+ * so shipping it as the default means Earn works in any build rather than only
+ * in one whose environment was set up right.
+ *
+ * Mainnet reserve check (verified on-chain against https://mainnet.sorobanrpc.com
+ * on 2026-11-19 for pool CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD,
+ * pool name "Fixed"):
+ *   - XLM  (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA)
+ *   - USDC (CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75)
+ *   - EURC (CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV)
+ *
+ * Tether's USDT0 (issuer GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q)
+ * has NO reserve in Blend Fixed V2. Rather than silently swapping USDT0 into USDC,
+ * Earn keeps USDT0 out of `EarnAsset` and reports it as unavailable on mainnet.
  */
+export const DEFAULT_BLEND_MAINNET_POOL_ID =
+  'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD';
+
 const DEFAULT_POOL_IDS: Record<'mainnet' | 'testnet', string> = {
-  mainnet: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
+  mainnet: DEFAULT_BLEND_MAINNET_POOL_ID,
   testnet: '',
 };
 
@@ -69,7 +92,7 @@ function configuredPoolIds(): string[] {
   const ids = configured
     .split(',')
     .map((value) => value.trim())
-    .filter(Boolean);
+    .filter((value) => value.length > 0 && StrKey.isValidContract(value));
 
   if (ids.length === 0) {
     console.warn(`[blend] no pools configured for ${name}`);
@@ -92,9 +115,151 @@ export type EarnAsset = 'XLM' | 'USDC';
 export function earnAssetFor(assetId: string): EarnAsset | null {
   const net = getNetwork();
   if (assetId === Asset.native().contractId(net.networkPassphrase)) return 'XLM';
-  const usdc = new Asset('USDC', usdcIssuerFor(net.name));
+  const usdcIssuer = usdcIssuerFor(net.name);
+  if (!StrKey.isValidEd25519PublicKey(usdcIssuer)) return null;
+  const usdc = new Asset('USDC', usdcIssuer);
   if (assetId === usdc.contractId(net.networkPassphrase)) return 'USDC';
   return null;
+}
+
+function shortIssuer(issuer: string): string {
+  return `${issuer.slice(0, 4)}…${issuer.slice(-4)}`;
+}
+
+/**
+ * Derive Tether's pinned USDT0 Soroban SAC contract id from its code and issuer
+ * on mainnet (never pasted as a literal). Returns null on testnet, where Tether's
+ * USDT0 does not exist.
+ */
+export function usdt0SacContractId(
+  networkName: VeilNetworkName,
+  networkPassphrase: string
+): string | null {
+  if (networkName !== 'mainnet') return null;
+  if (!StrKey.isValidEd25519PublicKey(USDT0_MAINNET_ISSUER)) return null;
+  const derived = new Asset('USDT0', USDT0_MAINNET_ISSUER).contractId(networkPassphrase);
+  return StrKey.isValidContract(derived) ? derived : null;
+}
+
+/**
+ * Whether `code` + `issuer` identifies Tether's real USDT0 on `networkName`.
+ * Mainnet has multiple impostor assets called USDT0, so a code match is never
+ * enough — the issuer must be a valid Ed25519 key matching the pinned registry
+ * issuer.
+ */
+export function isPinnedUsdt0(
+  code: string,
+  issuer: string | null | undefined,
+  networkName: VeilNetworkName
+): boolean {
+  if (networkName !== 'mainnet') return false;
+  if (code !== 'USDT0') return false;
+  if (!issuer || !StrKey.isValidEd25519PublicKey(issuer)) return false;
+  return isRegisteredIssuer('USDT0', issuer, 'mainnet');
+}
+
+export interface UnavailableEarnAsset {
+  code: 'USDT0';
+  issuer: string;
+  issuerName: string;
+  /** Display label that pins the issuer so impostor tokens cannot be confused with it. */
+  label: string;
+  /** Derived Soroban SAC contract id for the pinned code:issuer pair. */
+  assetId: string;
+  /** Plain availability headline shown on the Earn screen. */
+  status: string;
+  /** One-line reason why earning is unavailable. */
+  reason: string;
+  /** Plain statement of what the user will actually be holding. */
+  holdingStatement: string;
+}
+
+/**
+ * Held-wallet stablecoins that users expect to save in Earn but cannot earn on
+ * yet because no loaded Blend pool carries a reserve for their pinned issuer.
+ *
+ * Checked against the derived SAC id of Tether's pinned USDT0 issuer (never by
+ * code alone), so an impostor USDT0 reserve can never hide the unavailability
+ * notice.
+ */
+export function unavailableEarnAssets(
+  networkName: VeilNetworkName,
+  networkPassphrase: string,
+  pools: BlendPool[]
+): UnavailableEarnAsset[] {
+  const usdt0AssetId = usdt0SacContractId(networkName, networkPassphrase);
+  if (!usdt0AssetId) return [];
+
+  const hasPinnedUsdt0Reserve = pools.some((pool) =>
+    pool.reserves.some((reserve) => reserve.assetId === usdt0AssetId)
+  );
+  if (hasPinnedUsdt0Reserve) return [];
+
+  return [
+    {
+      code: 'USDT0',
+      issuer: USDT0_MAINNET_ISSUER,
+      issuerName: 'Tether',
+      label: `USDT0 · Tether (${shortIssuer(USDT0_MAINNET_ISSUER)})`,
+      assetId: usdt0AssetId,
+      status: 'Earning not available for this asset yet',
+      reason: 'Blend Fixed V2 does not have a USDT0 reserve on Stellar mainnet yet.',
+      holdingStatement:
+        'Your USDT0 stays in your wallet as USDT0 — Veil does not convert it to USDC.',
+    },
+  ];
+}
+
+export type EarnAssetParamCheck =
+  | { kind: 'ok' }
+  | { kind: 'unavailable'; message: string }
+  | { kind: 'unregistered-issuer'; message: string }
+  | { kind: 'invalid-issuer'; message: string };
+
+/**
+ * Validate a deep-link `/earn?asset=...&issuer=...` pair before matching reserves.
+ * Pins USDT0 by issuer so an impostor USDT0 is called out explicitly instead of
+ * being treated as Tether's USDT0.
+ */
+export function checkEarnAssetParam(
+  code: string,
+  issuer: string,
+  networkName: VeilNetworkName
+): EarnAssetParamCheck {
+  const normalizedCode = code.trim().toUpperCase();
+  if (normalizedCode !== 'USDT0') return { kind: 'ok' };
+
+  const trimmedIssuer = issuer.trim();
+  if (!trimmedIssuer || !StrKey.isValidEd25519PublicKey(trimmedIssuer)) {
+    return {
+      kind: 'invalid-issuer',
+      message: 'USDT0 must specify a valid Stellar issuer address.',
+    };
+  }
+
+  if (networkName !== 'mainnet') {
+    return {
+      kind: 'unavailable',
+      message: 'USDT0 is not available on testnet.',
+    };
+  }
+
+  if (isPinnedUsdt0(normalizedCode, trimmedIssuer, networkName)) {
+    return {
+      kind: 'unavailable',
+      message:
+        `Earning not available for USDT0 · Tether (${shortIssuer(USDT0_MAINNET_ISSUER)}) yet. ` +
+        'Blend Fixed V2 does not have a USDT0 reserve on Stellar mainnet yet. ' +
+        'Your USDT0 stays in your wallet as USDT0.',
+    };
+  }
+
+  return {
+    kind: 'unregistered-issuer',
+    message:
+      `Unregistered issuer (${shortIssuer(trimmedIssuer)}) for USDT0. ` +
+      `This is not Tether's USDT0 (${shortIssuer(USDT0_MAINNET_ISSUER)}), so it cannot be used in Earn.`,
+  };
 }
 
 export interface BlendReserve {
