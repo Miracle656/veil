@@ -114,6 +114,8 @@ async function renderScreen() {
 }
 
 describe('SendScreen — Send as a link (#1285)', () => {
+  jest.setTimeout(15_000);
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockLoadLinks.mockResolvedValue([

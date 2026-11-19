@@ -71,6 +71,8 @@ export type StoredSenderLinkMeta = {
   expiresAt: number;
   createdAt: number;
   note: string | null;
+  ephemeralAddress?: string;
+  reclaimedBySender?: boolean;
 };
 
 export type SenderLinkChainStatus = 'unclaimed' | 'claimed' | 'expired' | 'reclaimed';
@@ -121,12 +123,14 @@ function formatStroops(stroops: bigint): string {
   return `${whole.toString()}.${frac.toString().padStart(7, '0').replace(/0+$/, '')}`;
 }
 
-// URL schemes, www prefixes, bare domains/IPs, HTML/XML tags, entities, and Markdown link syntax.
-const URL_SCHEME_RE = /\b(?:https?|ftp|mailto|tel|javascript|data|vbscript|file|veil|web\+stellar)\s*:/i;
+// URL schemes, protocol-relative URLs, www prefixes, any bare hostname/TLD,
+// Unicode dot confusables, IP literals, emails, HTML/XML tags, entities, and Markdown links.
+const URL_SCHEME_RE =
+  /\b(?:https?|ftp|mailto|tel|javascript|data|vbscript|file|veil|web\+stellar)\s*:|\/\/\S+/i;
 const WWW_HOST_RE = /\bwww\.[a-z0-9-]+/i;
 const BARE_DOMAIN_RE =
-  /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|io|xyz|app|co|me|gg|ng|africa|uk|us|dev|ai|ly|to|link|money|cash|pay|finance|crypto|eth|sol|xlm|stellar|info|biz|ru|cn|tk|ml|ga|cf|gq)(?:\/|\b)/i;
-const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/;
+  /(?:^|[\s(@])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,24}|xn--[a-z0-9-]{2,})(?=$|[\s/:?#),.!])|[a-z0-9-][\u3002\uFF0E\uFF61][a-z]{2,}/i;
+const IP_LITERAL_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b|\[[0-9a-f:]+\]/i;
 const MARKUP_OR_ENTITY_RE = /[<>&`]|\[[^\]]*\]\([^)]*\)|!\[[^\]]*\]/;
 const CONTROL_CHARS_RE = /[\u0000-\u001F\u007F]/;
 
@@ -148,7 +152,12 @@ export function validateClaimLinkNote(rawNote: string | undefined | null): strin
   if (trimmed.length > MAX_CLAIM_LINK_NOTE_LENGTH) {
     return `Keep the note to ${MAX_CLAIM_LINK_NOTE_LENGTH} characters or fewer.`;
   }
-  if (URL_SCHEME_RE.test(trimmed) || WWW_HOST_RE.test(trimmed) || BARE_DOMAIN_RE.test(trimmed) || IPV4_RE.test(trimmed)) {
+  if (
+    URL_SCHEME_RE.test(trimmed) ||
+    WWW_HOST_RE.test(trimmed) ||
+    BARE_DOMAIN_RE.test(trimmed) ||
+    IP_LITERAL_RE.test(trimmed)
+  ) {
     return 'Notes cannot include links or web addresses.';
   }
   if (MARKUP_OR_ENTITY_RE.test(trimmed)) {
@@ -353,9 +362,11 @@ async function executeCreateSenderClaimLink(
     throw new Error(readable || (err instanceof Error ? err.message : 'Could not create claim link.'));
   }
 
-  let balanceId = extractBalanceIdFromSubmit(submitRes);
+  let balanceId =
+    extractBalanceIdFromSubmit(submitRes) ??
+    (typeof tx.getClaimableBalanceId === 'function' ? tx.getClaimableBalanceId(0) : null);
   if (!balanceId) {
-    // Query Horizon for the newly created claimable balance targeting `ephemeral.publicKey()`.
+    // Fallback when neither the submit response nor local op-id derivation yielded an id.
     const cbPage = await (
       server as unknown as {
         claimableBalances: () => {
@@ -400,6 +411,7 @@ async function executeCreateSenderClaimLink(
     expiresAt,
     createdAt: nowUnix,
     note: cleanNote,
+    ephemeralAddress: ephemeral.publicKey(),
   };
 
   await saveStoredLink(input.signer.publicKey, meta);
@@ -553,7 +565,10 @@ export async function loadSenderClaimLinksOnChain(
     processed.add(local.balanceId);
 
     const claimant = await lookupWhoClaimedBalance(server, local.balanceId);
-    const status: SenderLinkChainStatus = claimant === senderAddress ? 'reclaimed' : 'claimed';
+    const status: SenderLinkChainStatus =
+      claimant === senderAddress || (claimant === null && local.reclaimedBySender)
+        ? 'reclaimed'
+        : 'claimed';
 
     views.push({
       ...local,
@@ -567,12 +582,45 @@ export async function loadSenderClaimLinksOnChain(
 }
 
 /**
+ * Ensure the classic signer holds a trustline for `asset` before pulling an
+ * issued asset out of a `C...` smart wallet to fund a claim link.
+ */
+export async function ensureClassicTrustlineForClaimLink(
+  signer: WalletSigner,
+  asset: { code: string; issuer: string },
+): Promise<void> {
+  const net = getNetwork();
+  const server = new Horizon.Server(net.horizonUrl);
+  const account = await server.loadAccount(signer.publicKey);
+  const balances = (account.balances ?? []) as {
+    asset_type: string;
+    asset_code?: string;
+    asset_issuer?: string;
+  }[];
+  const hasTrust = balances.some(
+    (b) => b.asset_code === asset.code && b.asset_issuer === asset.issuer,
+  );
+  if (hasTrust) return;
+
+  const tx = new TransactionBuilder(account, {
+    fee: inclusionFee(),
+    networkPassphrase: net.networkPassphrase,
+  })
+    .addOperation(Operation.changeTrust({ asset: new Asset(asset.code, asset.issuer) }))
+    .setTimeout(60)
+    .build();
+  signer.sign(tx);
+  await server.submitTransaction(tx);
+}
+
+/**
  * Reclaim an expired claimable balance from the sender's links list.
  */
 export async function reclaimSenderClaimLink(params: {
   signer: WalletSigner;
   balanceId: string;
   expiresAt: number;
+  asset?: { code: string; issuer: string | null };
   nowUnix?: number;
 }): Promise<{ txHash: string }> {
   const nowUnix = params.nowUnix ?? Math.floor(Date.now() / 1000);
@@ -583,15 +631,43 @@ export async function reclaimSenderClaimLink(params: {
   const net = getNetwork();
   const server = new Horizon.Server(net.horizonUrl);
   const account = await server.loadAccount(params.signer.publicKey);
-  const tx = new TransactionBuilder(account, {
+  const builder = new TransactionBuilder(account, {
     fee: inclusionFee(),
     networkPassphrase: net.networkPassphrase,
-  })
+  });
+
+  if (params.asset && params.asset.code !== 'XLM' && params.asset.issuer) {
+    const balances = (account.balances ?? []) as {
+      asset_code?: string;
+      asset_issuer?: string;
+    }[];
+    const hasTrust = balances.some(
+      (b) => b.asset_code === params.asset!.code && b.asset_issuer === params.asset!.issuer,
+    );
+    if (!hasTrust) {
+      builder.addOperation(
+        Operation.changeTrust({ asset: new Asset(params.asset.code, params.asset.issuer) }),
+      );
+    }
+  }
+
+  const tx = builder
     .addOperation(Operation.claimClaimableBalance({ balanceId: params.balanceId }))
     .setTimeout(60)
     .build();
 
   params.signer.sign(tx);
   const res = await server.submitTransaction(tx);
+
+  try {
+    const stored = await readStoredLinks(params.signer.publicKey);
+    const hit = stored.find((s) => s.balanceId === params.balanceId);
+    if (hit) {
+      await saveStoredLink(params.signer.publicKey, { ...hit, reclaimedBySender: true });
+    }
+  } catch {
+    // Non-fatal local hint update.
+  }
+
   return { txHash: res.hash };
 }

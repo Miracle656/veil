@@ -51,6 +51,10 @@ describe('validateClaimLinkNote — phishing and markup lockdown (#1285)', () =>
     ['http URL', 'Visit http://phish.org now'],
     ['www host', 'Verify at www.veil-support.com'],
     ['bare domain', 'Tap app.veil.xyz to double'],
+    ['unlisted TLD (.page)', 'Claim bonus at veil-airdrop.page/login'],
+    ['unlisted TLD (.support)', 'Reset PIN at veil.support/kyc'],
+    ['Unicode dot confusable', 'Visit evil。com now'],
+    ['protocol-relative URL', 'Open //evil.org/claim'],
     ['shortener domain', 'Open bit.ly/claim-now'],
     ['custom scheme', 'Open veil://send?to=GABC'],
     ['javascript URI', 'javascript:alert(1)'],
@@ -142,6 +146,36 @@ describe('createSenderClaimLink — idempotency and end-to-end claimability (#12
     expect(first.claimUrl.startsWith(`https://${ASSOCIATED_DOMAINS[0]}/claim/${BALANCE_ID}?`)).toBe(
       true,
     );
+  });
+
+  it('derives balanceId deterministically from the signed tx when Horizon omits top-level balance_id', async () => {
+    jest.spyOn(Horizon.Server.prototype, 'loadAccount').mockResolvedValueOnce(
+      new Account(SENDER.publicKey(), '350') as unknown as Horizon.AccountResponse,
+    );
+    let expectedBalanceId = '';
+    jest.spyOn(Horizon.Server.prototype, 'submitTransaction').mockImplementationOnce(async (tx) => {
+      if ('getClaimableBalanceId' in tx && typeof tx.getClaimableBalanceId === 'function') {
+        expectedBalanceId = tx.getClaimableBalanceId(0);
+      }
+      // Real Horizon SubmitTransactionResponse has no top-level `balance_id`.
+      return {
+        hash: 'tx_no_top_level_balance_id',
+      } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;
+    });
+    const cbLookupSpy = jest.spyOn(Horizon.Server.prototype, 'claimableBalances');
+
+    const created = await createSenderClaimLink({
+      confirmationId: 'confirm_local_id_derivation',
+      signer: makeSigner(SENDER),
+      amount: '7.25',
+      note: 'Lunch $7.25, thanks!',
+      nowUnix: NOW_UNIX,
+    });
+
+    expect(expectedBalanceId).toMatch(/^00000000[0-9a-f]{64}$/);
+    expect(created.balanceId).toBe(expectedBalanceId);
+    expect(created.ephemeralAddress).toMatch(/^G[A-Z2-7]{55}$/);
+    expect(cbLookupSpy).not.toHaveBeenCalled();
   });
 
   it('creates, shares, and claims end-to-end using the ephemeral secret in the URL fragment', async () => {

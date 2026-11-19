@@ -1,5 +1,6 @@
 import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as ExpoRouter from 'expo-router';
 import { useLocalSearchParams } from 'expo-router';
 import {
   ActivityIndicator,
@@ -61,6 +62,7 @@ import {
   LINK_EXPIRY_OPTIONS,
   MAX_CLAIM_LINK_NOTE_LENGTH,
   createSenderClaimLink,
+  ensureClassicTrustlineForClaimLink,
   estimateClaimLinkCost,
   loadSenderClaimLinksOnChain,
   reclaimSenderClaimLink,
@@ -403,7 +405,10 @@ export default function SendScreen() {
           nonNative && selected?.issuer
             ? { code: selected.code, issuer: selected.issuer }
             : undefined;
-        const liveContractBalance = await fetchContractAssetBalance(stored, spendAsset);
+        const [liveContractBalance, fpSpendable] = await Promise.all([
+          fetchContractAssetBalance(stored, spendAsset),
+          getFeePayerSpendableXlm(),
+        ]);
         const shouldPullFromContract =
           contractSource ||
           ((classicHeld ?? 0) < amtNum && amtNum <= liveContractBalance && liveContractBalance > 0);
@@ -413,6 +418,15 @@ export default function SendScreen() {
             throw new Error(
               `The smart wallet holds ${liveContractBalance.toFixed(2)} ${assetCode} — not enough for this amount.`,
             );
+          }
+          const requiredClassicXlm = Number(CLAIM_LINK_RESERVE_XLM) + (spendAsset ? 0.5 : 0);
+          if (fpSpendable < Number(CLAIM_LINK_RESERVE_XLM)) {
+            throw new Error(
+              `Your Spending account needs at least ${requiredClassicXlm} XLM above its reserve to hold this claim link while unclaimed.`,
+            );
+          }
+          if (spendAsset) {
+            await ensureClassicTrustlineForClaimLink(signer, spendAsset);
           }
           await deployWalletIfNeeded(wallet.deploy, stored);
           setStep('submitting');
@@ -561,6 +575,7 @@ export default function SendScreen() {
         signer,
         balanceId: item.balanceId,
         expiresAt: item.expiresAt,
+        asset: { code: item.assetCode, issuer: item.assetIssuer },
       });
       await refreshCreatedLinks();
     } catch (err) {
@@ -1083,7 +1098,16 @@ export default function SendScreen() {
           {/* Sender's created claim links verified live on-chain (#1285) */}
           {mode === 'link' && createdLinks.length > 0 && (
             <View style={styles.createdListSection} testID="send-created-links-list">
-              <Text style={styles.section}>Your created links (on-chain)</Text>
+              <View style={styles.rowBetween}>
+                <Text style={styles.section}>Your created links (on-chain)</Text>
+                <Pressable
+                  testID="send-open-claim-links"
+                  accessibilityRole="button"
+                  onPress={() => ExpoRouter.router?.push?.('/claim-links' as never)}
+                >
+                  <Text style={styles.reclaimInlineText}>Tied-up reserves</Text>
+                </Pressable>
+              </View>
               {createdLinks.map((item) => (
                 <View
                   key={item.balanceId}
