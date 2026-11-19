@@ -38,6 +38,15 @@ import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
 import { PortfolioSummary } from '@/components/PortfolioSummary'
+import {
+  collectLpPriceTargets,
+  fetchHorizonLiquidityPool,
+  filterPlainAssetBalances,
+  parseLpShares,
+  resolveLpPositions,
+  type HorizonBalanceEntry,
+  type HorizonLiquidityPoolRecord,
+} from '@/lib/lpPositions'
 
 const network = getNetwork()
 
@@ -135,6 +144,8 @@ function DashboardPageContent() {
   // the moment the cached prices were collected.
   const [pricesTimestamp, setPricesTimestamp] = useState<number>(() => cachedPricesTimestamp ?? 0)
   const [blendPositions, setBlendPositions]   = useState<BlendPosition[]>([])
+  const [lpBalances, setLpBalances]           = useState<HorizonBalanceEntry[]>([])
+  const [lpPoolsById, setLpPoolsById]         = useState<Record<string, HorizonLiquidityPoolRecord | null>>({})
   const [isFunding, setIsFunding]         = useState(false)
   const [fundingError, setFundingError]   = useState<string | null>(null)
   const [copied, setCopied]               = useState(false)
@@ -237,11 +248,16 @@ function DashboardPageContent() {
     return merged
   }, [prices])
 
-  // The portfolio is built once per (assets, positions, prices, contractKeys)
+  const lpPositions = useMemo(
+    () => resolveLpPositions(lpBalances, lpPoolsById, prices),
+    [lpBalances, lpPoolsById, prices],
+  )
+
+  // The portfolio is built once per (assets, positions, lpPositions, prices, contractKeys)
   // change, not inline in JSX — building it there re-sorted on every render.
   const portfolio = useMemo(
-    () => buildPortfolio(assets, blendPositions, prices, pricesTimestamp, { contractKeys }),
-    [assets, blendPositions, prices, pricesTimestamp, contractKeys],
+    () => buildPortfolio(assets, blendPositions, prices, pricesTimestamp, { contractKeys, lpPositions }),
+    [assets, blendPositions, prices, pricesTimestamp, contractKeys, lpPositions],
   )
 
   const recent = transactions.slice(0, 4)
@@ -324,19 +340,37 @@ function DashboardPageContent() {
     let feePayerXlm = 0
     let otherAssets: WalletAsset[] = []
     let txRecords: TxRecord[] = []
+    let rawBalances: HorizonBalanceEntry[] = []
 
     if (signerPublicKey) {
       try {
         const account = await horizonServer.loadAccount(signerPublicKey)
-        const native  = account.balances.find((b: any) => b.asset_type === 'native')
+        rawBalances   = account.balances as unknown as HorizonBalanceEntry[]
+        const native  = rawBalances.find((b) => b.asset_type === 'native')
         feePayerXlm   = native ? parseFloat(native.balance) : 0
         const rInfo   = calculateAccountReserve(account as any)
         setReserveInfo(rInfo)
 
-        // All non-XLM balances (e.g. USDC from swaps)
-        otherAssets = (account.balances as any[])
+        // Plain non-XLM asset balances only — LP shares are strictly excluded
+        // so an LP position is never summed into a plain asset balance.
+        otherAssets = filterPlainAssetBalances(rawBalances)
           .filter(b => b.asset_type !== 'native' && parseFloat(b.balance) > 0)
-          .map(b => ({ code: b.asset_code, issuer: b.asset_issuer, balance: b.balance }))
+          .map(b => ({ code: b.asset_code as string, issuer: b.asset_issuer ?? null, balance: b.balance }))
+
+        // Resolve held AMM LP positions against Horizon pool records in parallel.
+        const heldShares = parseLpShares(rawBalances)
+        setLpBalances(rawBalances)
+        if (heldShares.length > 0) {
+          const poolEntries = await Promise.all(
+            heldShares.map(async (share) => [
+              share.poolId,
+              await fetchHorizonLiquidityPool(network.horizonUrl, share.poolId),
+            ] as const),
+          )
+          setLpPoolsById(Object.fromEntries(poolEntries))
+        } else {
+          setLpPoolsById({})
+        }
 
         // Transaction history (fee-payer account)
         const paymentsPage = await horizonServer
@@ -530,13 +564,21 @@ function DashboardPageContent() {
     }
   }, [walletAddress, wraithInCursor, wraithOutCursor])
 
-  // Fetch live USDC prices from Lens after balances load.
+  // Fetch live USDC prices from Lens after balances and LP positions load.
   // Runs in the background — does not block balance rendering and does not
   // interact with the inactivity lock (no user-activity signals are emitted).
+  const lpPriceTargets = useMemo(
+    () => collectLpPriceTargets(resolveLpPositions(lpBalances, lpPoolsById)),
+    [lpBalances, lpPoolsById],
+  )
   useEffect(() => {
-    if (assets.length === 0) return
+    const targets = [
+      ...assets.map(a => ({ code: a.code, issuer: a.issuer })),
+      ...lpPriceTargets,
+    ]
+    if (targets.length === 0) return
     let cancelled = false
-    fetchPrices(assets.map(a => ({ code: a.code, issuer: a.issuer }))).then(result => {
+    fetchPrices(targets).then(result => {
       if (!cancelled) {
         // The timestamp travels with the price map into the module cache, so a
         // remount shows the moment these quotes were collected, not "now".
@@ -548,7 +590,7 @@ function DashboardPageContent() {
       }
     })
     return () => { cancelled = true }
-  }, [assets])
+  }, [assets, lpPriceTargets])
 
   // Load Blend lending positions whenever the wallet address is known.
   // Best-effort: an empty array is a valid portfolio state (no positions).
@@ -913,8 +955,8 @@ function DashboardPageContent() {
           recoveryWarning={privacyRecoveryUnsupported}
         />
 
-        {/* ── Portfolio summary: total value split by cash, lending, invest ── */}
-        {(assets.length > 0 || blendPositions.length > 0) && (
+        {/* ── Portfolio summary: total value split by cash, lending, invest, and LP positions ── */}
+        {(assets.length > 0 || blendPositions.length > 0 || lpPositions.length > 0) && (
           <PortfolioSummary
             portfolio={portfolio}
             currencyCode={currencyCode}

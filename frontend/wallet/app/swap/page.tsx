@@ -1,5 +1,6 @@
 'use client'
 
+import { filterPlainAssetBalances, type HorizonBalanceEntry } from '@/lib/lpPositions'
 import { spendableNativeXlm } from '@/lib/reserves'
 import { getUsdcIssuer } from '@/lib/network'
 import { inclusionFee } from '@/lib/fees'
@@ -154,8 +155,10 @@ export default function SwapPage() {
       const res = await fetch(`${network.horizonUrl}/accounts/${accountAddr}`)
       if (res.ok) {
         const data = await res.json()
-        const assets: StellarAsset[] = data.balances.map((b: any) => ({
-          code: b.asset_code || 'XLM',
+        const assets: StellarAsset[] = filterPlainAssetBalances(
+          (data.balances ?? []) as HorizonBalanceEntry[],
+        ).map((b) => ({
+          code: b.asset_type === 'native' ? 'XLM' : (b.asset_code as string),
           issuer: b.asset_issuer,
           balance: b.balance,
         }))
