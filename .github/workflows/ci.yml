@@ -58,6 +58,14 @@ jobs:
         run: npm run verify:lockfiles
       - name: Run lockfile verification tests
         run: npm run test:scripts
+      - name: Verify USDY explainer copy and disclosures
+        run: npm run test:usdy
+      - name: Verify privacy guide documentation and links
+        run: npm run test:privacy:guide
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+      - name: Run factory deploy bats tests
+        run: bats scripts/tests/deploy_factory.bats
 
   security-audit:
     name: Security Audit — cargo audit
@@ -137,6 +145,8 @@ jobs:
       # loads from both a CommonJS and an ESM consumer (#1216).
       - name: Published layout (ESM + CommonJS consumers)
         run: npm run verify:exports
+      - name: Verify TypeScript type definitions (tsd)
+        run: npm run test-d
 
   # SDK Browser Matrix — Playwright tests across browsers
   sdk-browser-matrix:
