@@ -22,7 +22,6 @@ const TIMEOUT_MS = 20_000
 /** Remembers whether the offramp answered last time, to avoid a layout jump. */
 const AVAILABILITY_KEY = 'veil_offramp_available'
 const ACTIVE_ORDER_KEY = 'veil_offramp_active_order'
-const DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses'
 
 export class OfframpUnavailable extends Error {}
 
@@ -359,37 +358,12 @@ export function forgetActiveOrder(): void {
   store()?.removeItem(ACTIVE_ORDER_KEY)
 }
 
-/**
- * Deposit addresses this browser has paid, so activity can label those payments
- * "Cashed out" rather than "Sent" — otherwise a cash-out reads as if the user
- * paid a stranger.
- *
- * Addresses only, capped at 50. No amounts, no order ids, nothing that says who
- * the user is.
- */
-export function rememberDepositAddress(address: string): void {
-  const s = store()
-  if (!s || !address) return
-  const known = knownDepositAddresses()
-  if (known.includes(address)) return
-  const next = [address, ...known].slice(0, 50)
-  try {
-    s.setItem(DEPOSIT_ADDRESSES_KEY, JSON.stringify(next))
-  } catch {
-    /* quota or privacy mode: the label is a nicety, not the feature */
-  }
-}
-
-export function knownDepositAddresses(): string[] {
-  const raw = store()?.getItem(DEPOSIT_ADDRESSES_KEY)
-  if (!raw) return []
-  try {
-    const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.filter((a): a is string => typeof a === 'string') : []
-  } catch {
-    return []
-  }
-}
+export {
+  rememberDepositAddress,
+  knownDepositAddresses,
+  isDepositAddress,
+  clearRememberedDepositAddresses,
+} from './cashOutAddresses'
 
 /** Statuses from which nothing further will happen. */
 export function isTerminal(status: string): boolean {

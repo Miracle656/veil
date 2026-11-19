@@ -27,6 +27,7 @@ Object.assign(globalThis, { TextEncoder, TextDecoder })
 
 import { namespaceKey, WALLET_KEYS } from '../network'
 import { walletLocal, walletSession, clearActiveNetworkWallet } from '../walletStorage'
+import { rememberDepositAddress, knownDepositAddresses } from '../cashOutAddresses'
 
 const ADDRESS = 'invisible_wallet_address'
 const SECRET = 'veil_signer_secret'
@@ -99,6 +100,21 @@ describe('clearActiveNetworkWallet', () => {
       expect(localStorage.getItem(MAINNET(key))).toBe(`${key}:mainnet`)
       expect(sessionStorage.getItem(MAINNET(key))).toBe(`${key}:mainnet`)
     }
+  })
+
+  it('clears remembered cash-out deposit addresses on the active network only', () => {
+    localStorage.setItem(ADDRESS, 'CTESTNET_WALLET')
+    localStorage.setItem(MAINNET(ADDRESS), 'CMAINNET_WALLET')
+    rememberDepositAddress('GDEP_TESTNET', 'CTESTNET_WALLET', 'testnet')
+    rememberDepositAddress('GDEP_MAINNET', 'CMAINNET_WALLET', 'mainnet')
+
+    expect(knownDepositAddresses('CTESTNET_WALLET', 'testnet')).toEqual(['GDEP_TESTNET'])
+    expect(knownDepositAddresses('CMAINNET_WALLET', 'mainnet')).toEqual(['GDEP_MAINNET'])
+
+    clearActiveNetworkWallet() // active = testnet
+
+    expect(knownDepositAddresses('CTESTNET_WALLET', 'testnet')).toEqual([])
+    expect(knownDepositAddresses('CMAINNET_WALLET', 'mainnet')).toEqual(['GDEP_MAINNET'])
   })
 })
 

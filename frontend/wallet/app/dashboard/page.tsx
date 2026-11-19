@@ -37,6 +37,7 @@ import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityF
 import { mapOperations, HISTORY_PAGE_SIZE, type HorizonOperation } from '@/lib/walletHistory'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
+import { knownDepositAddresses, txLabel } from '@/lib/cashOutAddresses'
 import { buildPortfolio } from '@/lib/portfolio'
 import { PortfolioSummary } from '@/components/PortfolioSummary'
 
@@ -80,6 +81,11 @@ function DashboardPageContent() {
   const [reserveInfo, setReserveInfo]     = useState<AccountReserveBreakdown | null>(null)
   const transactions                      = useActivityFeed()
   const [selectedTx, setSelectedTx]       = useState<TxRecord | null>(null)
+  const [depositAddresses, setDepositAddresses] = useState<string[]>([])
+
+  useEffect(() => {
+    setDepositAddresses(knownDepositAddresses(walletAddress ?? undefined))
+  }, [walletAddress])
   const [txFilter, setTxFilter]           = useState<'all' | 'transfers' | 'swaps'>('all')
   const [loading, setLoading]             = useState(cachedAssets === null)
   const [prices, setPrices]               = useState<Record<string, number | null>>(() => cachedPrices)
@@ -905,7 +911,7 @@ function DashboardPageContent() {
               <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
                   <span style={{ fontSize: '14px', fontWeight: 500 }}>
-                    {tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'}
+                    {txLabel(tx, depositAddresses)}
                   </span>
                   <span className="vw-meta">
                     {tx.counterparty.length > 12
@@ -1009,7 +1015,11 @@ function DashboardPageContent() {
       </main>
 
       {selectedTx && (
-        <TxDetailSheet tx={selectedTx} onClose={() => setSelectedTx(null)} />
+        <TxDetailSheet
+          tx={selectedTx}
+          knownDepositAddresses={depositAddresses}
+          onClose={() => setSelectedTx(null)}
+        />
       )}
 
       <ConnectDAppModal

@@ -1,4 +1,5 @@
 import { WALLET_KEYS, getNetworkName, namespaceKey, namespacedStorageAdapter } from './network'
+import { clearRememberedDepositAddresses } from './cashOutAddresses'
 
 /**
  * Per-network wallet storage.
@@ -85,6 +86,11 @@ export const walletSession = createNamespacedStorage('session')
  * touch the other's state.
  */
 export function clearActiveNetworkWallet(): void {
+  const activeNetwork = getNetworkName()
+  const walletAddress =
+    walletSession.getItem('invisible_wallet_address') ||
+    walletLocal.getItem('invisible_wallet_address')
+  clearRememberedDepositAddresses(walletAddress ?? undefined, activeNetwork)
   for (const key of WALLET_KEYS) {
     walletLocal.removeItem(key)
     walletSession.removeItem(key)
