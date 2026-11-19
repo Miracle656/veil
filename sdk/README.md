@@ -287,6 +287,8 @@ What the deployed contract does, and what the helpers assume:
 - **Longest expiry.** The contract extends the record's storage lifetime to `(expiry - now) / 5 + 10` ledgers. Measured on testnet against the deployed WASM: a request for `maxEntryTtl - 1` ledgers is accepted, and a request for `maxEntryTtl` fails the whole registration with `Error(Storage, InvalidAction)`. With `maxEntryTtl` at 3,110,400 ledgers (mainnet and testnet), that is about 180 days. `buildRegisterSessionKeyCall` refuses any expiry past `maxSessionKeyExpiry(limits)`, which keeps one hour below that edge.
 - The record also lives for at least the network's minimum temporary-entry lifetime (17,280 ledgers, about a day, on mainnet; 720 on testnet), so a key with a short expiry stays readable after it stops working. The contract refuses it from 60 seconds after `expiry`.
 
+What a session key can and cannot do, with transaction hashes from testnet, is in [`docs/SESSION_KEYS.md`](../docs/SESSION_KEYS.md).
+
 `npm run test:network` runs these against the deployed wallet code on testnet. It deploys a fresh wallet from the WASM read from mainnet by hash, checks that hash, and drives it with a software passkey.
 
 ## Subpath Exports
