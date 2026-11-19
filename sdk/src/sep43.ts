@@ -18,6 +18,7 @@ import {
   xdr,
 } from '@stellar/stellar-sdk';
 import type { WebAuthnSignature } from './core';
+import { WEBAUTHN_SIGNATURE_VECTOR_LENGTH } from './signatureVector';
 
 // ── Standard SEP-43 Types & Error Codes ──────────────────────────────────────
 
@@ -172,6 +173,11 @@ export function classifySep43Error(error: unknown): Sep43Error {
  *  3. Hashes with SHA-256 and calls the passkey signer
  *  4. Builds the 5-element signature vector [publicKey, authData, clientDataJSON, signature, nonce]
  *  5. Replaces the credentials signature and re-serializes
+ *
+ * `getNonce` is required, and a nonce it cannot produce is an error — never a
+ * shorter vector. `__check_auth` rejects anything but five elements with
+ * `InvalidSignatureFormat` (#2), so a four-element vector can only ever be a
+ * transaction that fails on-chain after the user has already approved it.
  */
 export async function signSorobanAuthEntry(
   authEntryBase64: string,
@@ -180,9 +186,15 @@ export async function signSorobanAuthEntry(
     networkPassphrase: string;
     signPayload: (hash: Uint8Array) => Promise<WebAuthnSignature | null>;
     validUntilLedger?: number;
-    getNonce?: (contractAddress: string) => Promise<bigint | null>;
+    getNonce: (contractAddress: string) => Promise<bigint | null | undefined>;
   }
 ): Promise<string> {
+  if (typeof options.getNonce !== 'function') {
+    throw new Error(
+      'signSorobanAuthEntry requires a getNonce callback: the wallet nonce is element [4] of the signature vector.'
+    );
+  }
+
   let entry: xdr.SorobanAuthorizationEntry;
   try {
     entry = xdr.SorobanAuthorizationEntry.fromXDR(authEntryBase64, 'base64');
@@ -223,24 +235,35 @@ export async function signSorobanAuthEntry(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const payloadHash = new Uint8Array((stellarHash as any)(Buffer.from(preimage.toXDR())));
 
+  // Resolve the nonce before asking for the passkey: a missing nonce is a
+  // failure that does not need the user to touch their authenticator first.
+  const currentNonce = await options.getNonce(contractAddress);
+  if (currentNonce === null || currentNonce === undefined) {
+    throw new Error(
+      `Could not read the wallet nonce for ${contractAddress}; refusing to build an incomplete signature vector.`
+    );
+  }
+  if (currentNonce < 0n) {
+    throw new Error('Wallet nonce cannot be negative.');
+  }
+
   const webAuthnSig = await options.signPayload(payloadHash);
   if (!webAuthnSig) {
     throw new Error('USER_REJECTED');
   }
-
-  const currentNonce = options.getNonce
-    ? await options.getNonce(contractAddress)
-    : null;
 
   const sigElements = [
     nativeToScVal(Buffer.from(webAuthnSig.publicKey), { type: 'bytes' }),
     nativeToScVal(Buffer.from(webAuthnSig.authData), { type: 'bytes' }),
     nativeToScVal(Buffer.from(webAuthnSig.clientDataJSON), { type: 'bytes' }),
     nativeToScVal(Buffer.from(webAuthnSig.signature), { type: 'bytes' }),
+    nativeToScVal(currentNonce, { type: 'u64' }),
   ];
 
-  if (currentNonce !== null && currentNonce !== undefined) {
-    sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
+  if (sigElements.length !== WEBAUTHN_SIGNATURE_VECTOR_LENGTH) {
+    throw new Error(
+      `Signature vector must have ${WEBAUTHN_SIGNATURE_VECTOR_LENGTH} elements, built ${sigElements.length}.`
+    );
   }
 
   entry.credentials(
@@ -389,6 +412,14 @@ export function createSep43Wallet(adapter: Sep43WalletAdapter): Sep43Wallet {
         if (adapter.signAuthEntry) {
           signedAuthEntry = await adapter.signAuthEntry(authEntry, opts);
         } else if (adapter.signAuthPayload) {
+          if (!adapter.getWalletNonce) {
+            return {
+              error: createSep43Error(
+                SEP43_ERROR_CLIENT,
+                'signAuthEntry requires getWalletNonce on this wallet adapter: the wallet nonce is part of the signature.'
+              ),
+            };
+          }
           const latestLedger = adapter.getLatestLedger
             ? await adapter.getLatestLedger()
             : undefined;

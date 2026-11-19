@@ -17,11 +17,14 @@ import {
   Address,
   Networks,
   Operation,
+  scValToNative,
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk';
+import { WEBAUTHN_SIGNATURE_VECTOR_LENGTH } from '../signatureVector';
 import {
   createSep43Wallet,
+  signSorobanAuthEntry,
   SEP43_ERROR_INTERNAL,
   SEP43_ERROR_EXTERNAL,
   SEP43_ERROR_CLIENT,
@@ -300,6 +303,93 @@ describe('SEP-43 Conformance: Request & Response Shapes', () => {
     it('rejects invalid entry string with error code -3', async () => {
       const res = await wallet.signAuthEntry('invalid_base64_entry');
       expect(res.error?.code).toBe(SEP43_ERROR_CLIENT);
+    });
+
+    it('rejects an adapter that can sign but cannot supply the nonce, without prompting the passkey', async () => {
+      delete mockAdapter.getWalletNonce;
+      const res = await createSep43Wallet(mockAdapter).signAuthEntry(createSampleAuthEntryXdr());
+
+      expect(res.signedAuthEntry).toBeUndefined();
+      expect(res.error?.code).toBe(SEP43_ERROR_CLIENT);
+      expect(res.error?.message).toContain('getWalletNonce');
+      expect(mockAdapter.signAuthPayload).not.toHaveBeenCalled();
+    });
+
+    it('fails, rather than emitting a short vector, when the nonce cannot be read', async () => {
+      (mockAdapter.getWalletNonce as jest.Mock).mockResolvedValueOnce(null);
+      const res = await wallet.signAuthEntry(createSampleAuthEntryXdr());
+
+      expect(res.signedAuthEntry).toBeUndefined();
+      expect(res.error?.message).toContain('wallet nonce');
+      expect(mockAdapter.signAuthPayload).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('4b. signSorobanAuthEntry() signature vector', () => {
+    const baseOptions = () => ({
+      signerAddress: TEST_WALLET_ADDRESS,
+      networkPassphrase: TEST_NET_PASSPHRASE,
+      signPayload: jest.fn().mockResolvedValue(createMockWebAuthnSig()),
+    });
+
+    function signatureOf(signedEntryXdr: string) {
+      return xdr.SorobanAuthorizationEntry.fromXDR(signedEntryXdr, 'base64')
+        .credentials()
+        .address()
+        .signature();
+    }
+
+    it('always emits five elements, with the nonce as element [4]', async () => {
+      const signed = await signSorobanAuthEntry(createSampleAuthEntryXdr(), {
+        ...baseOptions(),
+        getNonce: async () => 7n,
+      });
+
+      const elements = signatureOf(signed).vec()!;
+      expect(elements).toHaveLength(WEBAUTHN_SIGNATURE_VECTOR_LENGTH);
+      expect(scValToNative(elements[4])).toBe(7n);
+    });
+
+    it('accepts a nonce of zero — a brand-new wallet', async () => {
+      const signed = await signSorobanAuthEntry(createSampleAuthEntryXdr(), {
+        ...baseOptions(),
+        getNonce: async () => 0n,
+      });
+
+      const elements = signatureOf(signed).vec()!;
+      expect(elements).toHaveLength(WEBAUTHN_SIGNATURE_VECTOR_LENGTH);
+      expect(scValToNative(elements[4])).toBe(0n);
+    });
+
+    it.each([
+      ['null', null],
+      ['undefined', undefined],
+    ])('throws when getNonce resolves %s instead of building four elements', async (_label, value) => {
+      const options = { ...baseOptions(), getNonce: async () => value };
+
+      await expect(signSorobanAuthEntry(createSampleAuthEntryXdr(), options)).rejects.toThrow(
+        /wallet nonce/
+      );
+      expect(options.signPayload).not.toHaveBeenCalled();
+    });
+
+    it('throws when a JavaScript caller omits getNonce altogether', async () => {
+      const options = baseOptions();
+
+      await expect(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        signSorobanAuthEntry(createSampleAuthEntryXdr(), options as any)
+      ).rejects.toThrow(/requires a getNonce/);
+      expect(options.signPayload).not.toHaveBeenCalled();
+    });
+
+    it('rejects a negative nonce', async () => {
+      await expect(
+        signSorobanAuthEntry(createSampleAuthEntryXdr(), {
+          ...baseOptions(),
+          getNonce: async () => -1n,
+        })
+      ).rejects.toThrow(/negative/);
     });
   });
 
