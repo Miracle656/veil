@@ -437,7 +437,7 @@ Three URL families open the app, and all three resolve to the same in-app routes
 | Incoming URL | Resolves to |
 | --- | --- |
 | `veil://pay?to=G…&amount=10` | `/pay` → `/send`, prefilled |
-| `https://app.veil.xyz/receive` | `/receive` |
+| `https://app.useveilapp.xyz/receive` | `/receive` |
 | `web+stellar:pay?destination=G…&amount=10` | `/pay`, raw URI preserved as `uri` |
 | anything else | `/` |
 
@@ -466,11 +466,11 @@ do not reach the app through Expo Go.
 adb shell am start -W -a android.intent.action.VIEW \
   -d "veil://pay?to=GABC&amount=10" xyz.veil.wallet
 adb shell am start -W -a android.intent.action.VIEW \
-  -d "https://app.veil.xyz/receive" xyz.veil.wallet
+  -d "https://app.useveilapp.xyz/receive" xyz.veil.wallet
 
 # iOS simulator
 xcrun simctl openurl booted "veil://pay?to=GABC&amount=10"
-xcrun simctl openurl booted "https://app.veil.xyz/receive"
+xcrun simctl openurl booted "https://app.useveilapp.xyz/receive"
 ```
 
 Run each command twice: once with the app force-quit (cold start) and once with
@@ -493,7 +493,7 @@ opening links in the browser:
 
 `frontend/wallet/next.config.js` pins the `Content-Type` on both files. After
 deploying, verify with Apple's CDN
-(`https://app-site-association.cdn-apple.com/a/v1/app.veil.xyz`) and Google's
+(`https://app-site-association.cdn-apple.com/a/v1/app.useveilapp.xyz`) and Google's
 [Digital Asset Links API](https://developers.google.com/digital-asset-links/tools/generator).
 ## Multisig
 

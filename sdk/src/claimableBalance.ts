@@ -7,6 +7,7 @@ import {
     Claimant,
     Horizon,
 } from '@stellar/stellar-sdk';
+import { APP_HOST } from './appHost';
 import { resolveSigner, signWith, type SignerInput, type TransactionSigner } from './signer';
 
 export type EscrowConfig = {
@@ -60,7 +61,7 @@ function pickSigner(callback: TransactionSigner | undefined, legacy: Keypair | u
 }
 
 export function buildClaimLink(balanceId: string): string {
-    return `https://app.veil.xyz/claim/${balanceId}`;
+    return `https://${APP_HOST}/claim/${balanceId}`;
 }
 
 /**

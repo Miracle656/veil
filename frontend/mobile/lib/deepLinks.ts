@@ -6,7 +6,7 @@
  * running in the background (warm resume):
  *
  *   1. `veil://pay?...`                  custom scheme (app.config.ts `scheme`)
- *   2. `https://app.veil.xyz/pay?...`    iOS universal link / Android app link
+ *   2. `https://app.useveilapp.xyz/pay?...`    iOS universal link / Android app link
  *   3. `web+stellar:pay?destination=...` SEP-7 payment request
  *
  * Everything here is pure string handling with no React Native or Expo imports,
@@ -23,7 +23,8 @@
 export const DEEP_LINK_SCHEME = 'veil';
 
 /** Hosts whose `https://` links are claimed as universal / app links. */
-export const ASSOCIATED_DOMAINS = ['app.useveilapp.xyz'] as const;
+export const APP_HOST = 'app.useveilapp.xyz';
+export const ASSOCIATED_DOMAINS = [APP_HOST] as const;
 
 /** SEP-7 URI scheme, without the trailing colon. */
 export const SEP7_SCHEME = 'web+stellar';
@@ -47,6 +48,9 @@ const LINKABLE_ROUTES: Record<string, readonly string[]> = {
   '/send': ['to', 'amount', 'asset', 'issuer', 'memo', 'memo_type'],
   '/receive': ['amount', 'asset', 'issuer'],
   '/create-wallet': [],
+  // Claim links carry the balance id in the path (`/claim/<id>`); it is folded
+  // into the `id` parameter by `resolveInAppPath`.
+  '/claim': ['id'],
   // Read-only destinations for launcher shortcuts (`lib/voice/actions.ts`).
   // Exact paths with no parameters: a link can open these screens but cannot
   // choose what they show.
@@ -180,7 +184,7 @@ function buildTarget(route: string, query: string, rename?: Record<string, strin
  *
  * @example
  * resolveDeepLink('veil://pay?to=GABC&amount=10')          // '/pay?to=GABC&amount=10'
- * resolveDeepLink('https://app.veil.xyz/receive')          // '/receive'
+ * resolveDeepLink('https://app.useveilapp.xyz/receive')          // '/receive'
  * resolveDeepLink('web+stellar:pay?destination=GABC')      // '/pay?to=GABC&uri=…'
  * resolveDeepLink('https://evil.example/pay')              // '/'
  */
@@ -223,6 +227,9 @@ export function resolveDeepLink(url: string, _context: DeepLinkContext = {}): st
 function resolveInAppPath(pathAndQuery: string): string {
   const { path, query } = splitPathAndQuery(pathAndQuery);
   const normalized = normalizePath(path);
+  // `/claim/<balanceId>`: the id is case-sensitive, so take it from the raw path.
+  const claimMatch = /^\/claim\/([^/]+)$/i.exec(`/${decodeURIComponent(path.trim()).replace(/^\/+/, '').replace(/\/+$/, '')}`);
+  if (claimMatch?.[1]) return buildTarget('/claim', `id=${encodeURIComponent(claimMatch[1])}`);
   const route = PATH_ALIASES[normalized] ?? normalized;
   if (!(route in LINKABLE_ROUTES)) return FALLBACK_ROUTE;
   return buildTarget(route, query);
@@ -233,7 +240,7 @@ function resolveWebLink(rest: string): string {
   const authorityAndPath = rest.replace(/^\/\//, '');
   const slashIndex = authorityAndPath.search(/[/?#]/);
   const authority = slashIndex === -1 ? authorityAndPath : authorityAndPath.slice(0, slashIndex);
-  // Drop any userinfo (`user@host`) and port so `evil.com@app.veil.xyz` cannot
+  // Drop any userinfo (`user@host`) and port so `evil.com@app.useveilapp.xyz` cannot
   // masquerade as an associated domain.
   const host = authority.split('@').pop()?.split(':')[0] ?? '';
   if (!isAssociatedDomain(host)) return FALLBACK_ROUTE;
