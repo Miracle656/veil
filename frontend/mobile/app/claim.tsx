@@ -1,3 +1,4 @@
+import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -12,6 +13,7 @@ import {
   CLAIM_STILL_WAITING_MESSAGE,
   MAX_SPONSORED_CLAIM_XLM_PER_WALLET,
   executeOneTapClaim,
+  formatClaimExpiryForRecipient,
   inspectClaimBeforePrompt,
   type ClaimPreviewState,
   type ExecuteClaimResult,
@@ -19,6 +21,7 @@ import {
 import { errorMessage } from '../lib/errorMessage';
 import { WALLET_CREATION_LIMITATION_MESSAGE } from '../lib/platformLimitation';
 import type { ThemeColors } from '../lib/theme';
+import { getSignerSecret, getWalletAddress } from '../lib/walletStore';
 import { fontFamily } from '../theme/typography';
 
 function firstParam(val: string | string[] | undefined): string {
@@ -44,8 +47,27 @@ function readWebHashSecret(): string | null {
 export default function ClaimScreen() {
   const router = useRouter();
   const { colors } = useTheme();
-  const { wallet } = useWallet();
+  const { wallet, setSession } = useWallet();
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  const syncWalletSessionIfAvailable = useCallback(
+    async (fallbackAddress?: string) => {
+      if (typeof setSession !== 'function') return;
+      try {
+        const [storedAddr, storedSecret] = await Promise.all([
+          getWalletAddress(),
+          getSignerSecret(),
+        ]);
+        const addr = storedAddr ?? fallbackAddress ?? null;
+        if (addr && storedSecret && StrKey.isValidEd25519SecretSeed(storedSecret)) {
+          setSession({ address: addr, signerKeypair: Keypair.fromSecret(storedSecret) });
+        }
+      } catch {
+        // Non-fatal: dashboard reads walletStore directly as well.
+      }
+    },
+    [setSession],
+  );
 
   const params = useLocalSearchParams<{
     id?: string;
@@ -133,6 +155,7 @@ export default function ClaimScreen() {
       });
 
       if (outcome.status === 'claimed') {
+        await syncWalletSessionIfAvailable(outcome.walletAddress);
         setSettled(outcome);
         return;
       }
@@ -210,7 +233,10 @@ export default function ClaimScreen() {
             <Pressable
               testID="claim-open-wallet-button"
               accessibilityRole="button"
-              onPress={() => router.replace('/dashboard')}
+              onPress={() => {
+                void syncWalletSessionIfAvailable(preview.walletAddress);
+                router.replace('/dashboard');
+              }}
               style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
             >
               <Text style={styles.ctaText}>Open wallet</Text>
@@ -236,6 +262,11 @@ export default function ClaimScreen() {
               {preview.note ? (
                 <Text style={styles.noteLine} testID="claim-preview-note">
                   {preview.note}
+                </Text>
+              ) : null}
+              {preview.expiresAt ? (
+                <Text style={styles.expiryLine} testID="claim-preview-expiry">
+                  {formatClaimExpiryForRecipient(preview.expiresAt)}
                 </Text>
               ) : null}
             </View>
@@ -354,6 +385,13 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 14,
       textAlign: 'center',
       lineHeight: 20,
+    },
+    expiryLine: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.address,
+      fontSize: 12,
+      textAlign: 'center',
+      marginTop: 2,
     },
     terminalTitle: {
       color: colors.textStrong,

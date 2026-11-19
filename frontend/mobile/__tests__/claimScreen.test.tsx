@@ -2,6 +2,7 @@ import ClaimScreen from '../app/claim';
 import { CLAIM_ALREADY_CLAIMED_MESSAGE, CLAIM_PRF_UNSUPPORTED_MESSAGE } from '../lib/claimFlow';
 
 const mockRegister = jest.fn();
+const mockSetSession = jest.fn();
 const mockReplace = jest.fn();
 const mockInspect = jest.fn();
 const mockExecuteClaim = jest.fn();
@@ -32,7 +33,7 @@ jest.mock('../components/FlowHeader', () => ({ FlowHeader: () => null }));
 jest.mock('../components/TokenIcon', () => ({ TokenIcon: () => null }));
 jest.mock('../components/SuccessAnimation', () => ({ SuccessAnimation: () => null }));
 jest.mock('../components/WalletProvider', () => ({
-  useWallet: () => ({ wallet: { register: mockRegister } }),
+  useWallet: () => ({ wallet: { register: mockRegister }, setSession: mockSetSession }),
 }));
 
 jest.mock('../lib/claimFlow', () => {
@@ -108,6 +109,7 @@ describe('ClaimScreen (#1284)', () => {
     expect(text(root.findByProps({ testID: 'claim-preview-amount' }))).toBe('25 USDC');
     expect(text(root.findByProps({ testID: 'claim-preview-sender' }))).toBe('From Tunde');
     expect(text(root.findByProps({ testID: 'claim-preview-note' }))).toBe('Dinner in Yaba');
+    expect(text(root.findByProps({ testID: 'claim-preview-expiry' }))).toMatch(/Claim within|Expired/i);
     expect(root.findAllByProps({ testID: 'claim-origin-binding-notice' }).length).toBeGreaterThan(0);
 
     // Single tap runs the entire ceremony and lands on funded wallet confirmation.

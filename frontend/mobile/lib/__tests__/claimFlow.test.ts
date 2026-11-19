@@ -13,8 +13,10 @@ import {
   getPendingClaimResumeRoute,
   inspectClaimBeforePrompt,
   loadPendingClaimCheckpoint,
+  sanitizeDisplayField,
 } from '../claimFlow';
 import { FEE_PAYER_SOURCE_KEY } from '../feePayerSource';
+import { setNetwork } from '../network';
 import { getSignerSecret, getWalletAddress, hasUsableWallet } from '../walletStore';
 
 const mockSecureStore = new Map<string, string>();
@@ -97,15 +99,36 @@ function mockHorizonAccountsAndSubmit(txHash = 'tx_claim_1284') {
     return acct;
   });
 
-  let submittedXdr = '';
+  const submittedXdrs: string[] = [];
   const submitSpy = jest
     .spyOn(Horizon.Server.prototype, 'submitTransaction')
     .mockImplementation(async (tx) => {
-      submittedXdr = tx.toXDR();
-      return { hash: txHash } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;
+      const xdrStr = tx.toXDR();
+      // Enforce Stellar Core's `ACCOUNT_MERGE_SEQNUM_TOO_FAR` (`op_seq_num_too_far`)
+      // protocol rule: creating an account and merging it in the same ledger/tx fails!
+      const parsed = TransactionBuilder.fromXDR(xdrStr, Networks.TESTNET);
+      const ops = 'operations' in parsed ? parsed.operations : [];
+      const created = new Set(
+        ops
+          .filter((o) => o.type === 'createAccount')
+          .map((o) => (o as { destination?: string }).destination),
+      );
+      for (const op of ops) {
+        if (op.type === 'accountMerge' && created.has(op.source)) {
+          throw new Error('Stellar Core protocol error: op_seq_num_too_far');
+        }
+      }
+      submittedXdrs.push(xdrStr);
+      return {
+        hash: submittedXdrs.length === 1 ? txHash : `${txHash}_merge`,
+      } as unknown as Horizon.HorizonApi.SubmitTransactionResponse;
     });
 
-  return { submitSpy, getSubmittedXdr: () => submittedXdr };
+  return {
+    submitSpy,
+    getSubmittedXdr: () => submittedXdrs[0] ?? '',
+    getSubmittedXdrs: () => submittedXdrs,
+  };
 }
 
 describe('one-tap claim onboarding on a fresh install (#1284)', () => {
@@ -125,7 +148,7 @@ describe('one-tap claim onboarding on a fresh install (#1284)', () => {
     expect(await hasUsableWallet()).toBe(false);
 
     mockOpenClaimableBalance(`USDC:${USDC_ISSUER}`, '40.0000000');
-    const { submitSpy, getSubmittedXdr } = mockHorizonAccountsAndSubmit('tx_usdc_claimed');
+    const { submitSpy, getSubmittedXdrs } = mockHorizonAccountsAndSubmit('tx_usdc_claimed');
 
     // 1. Preview before any prompt: shows amount, asset, sender, and saves deferred resume route.
     const preview = await inspectClaimBeforePrompt({
@@ -183,10 +206,11 @@ describe('one-tap claim onboarding on a fresh install (#1284)', () => {
       source: 'prf',
     });
     expect(await loadPendingClaimCheckpoint()).toBeNull();
-    expect(submitSpy).toHaveBeenCalledTimes(1);
+    expect(submitSpy).toHaveBeenCalledTimes(2);
 
-    const parsedTx = TransactionBuilder.fromXDR(getSubmittedXdr(), Networks.TESTNET);
-    expect(parsedTx.operations.map((o) => o.type)).toEqual([
+    const [claimXdr, mergeXdr] = getSubmittedXdrs();
+    const parsedClaimTx = TransactionBuilder.fromXDR(claimXdr, Networks.TESTNET);
+    expect('operations' in parsedClaimTx && parsedClaimTx.operations.map((o) => o.type)).toEqual([
       'changeTrust',
       'beginSponsoringFutureReserves',
       'createAccount',
@@ -195,9 +219,81 @@ describe('one-tap claim onboarding on a fresh install (#1284)', () => {
       'claimClaimableBalance',
       'payment',
       'changeTrust',
+    ]);
+    expect(parsedClaimTx.signatures).toHaveLength(2);
+
+    const parsedMergeTx = TransactionBuilder.fromXDR(mergeXdr, Networks.TESTNET);
+    expect('operations' in parsedMergeTx && parsedMergeTx.operations.map((o) => o.type)).toEqual([
       'accountMerge',
     ]);
-    expect(parsedTx.signatures).toHaveLength(2);
+    expect(parsedMergeTx.signatures).toHaveLength(2);
+  });
+
+  it('scopes SDK passkey keys on mainnet (_mainnet) and strips phishing bare domains from notes', async () => {
+    await setNetwork('mainnet');
+    try {
+      expect(sanitizeDisplayField('Finish KYC at veil-verify.com/login', 80)).toBeNull();
+      expect(sanitizeDisplayField('Claim bonus at evil.page', 80)).toBeNull();
+      expect(sanitizeDisplayField('Visit evil。com now', 80)).toBeNull();
+      expect(sanitizeDisplayField('Contact support@evil.org', 80)).toBeNull();
+      expect(sanitizeDisplayField('Lunch $12.50, thanks!', 80)).toBe('Lunch $12.50, thanks!');
+
+      mockOpenClaimableBalance('native', '8.0000000');
+      const sponsorFetch = jest.fn(async () => ({ ok: true, status: 200 }) as Response);
+      configureClaimFlowForTests({
+        fetchImpl: sponsorFetch,
+        sponsorEndpointUrl: 'https://app.useveilapp.xyz/api/sponsor-claim',
+      });
+
+      let seq = 500;
+      jest.spyOn(Horizon.Server.prototype, 'loadAccount').mockImplementation(async (pubKey: string) => {
+        seq += 1;
+        const acct = new Account(pubKey, String(seq)) as unknown as Horizon.AccountResponse;
+        (acct as unknown as { balances: unknown[] }).balances = [
+          { asset_type: 'native', balance: '5.0000000' },
+        ];
+        return acct;
+      });
+      jest.spyOn(Horizon.Server.prototype, 'submitTransaction').mockResolvedValue({
+        hash: 'tx_mainnet_claim',
+      } as unknown as Horizon.HorizonApi.SubmitTransactionResponse);
+
+      // 1. Non-PRF passkey on mainnet clears `_mainnet` SDK keys so retry does not hit excludeCredentials.
+      const nonPrfRegister = jest.fn(async () => {
+        await AsyncStorage.setItem('invisible_wallet_key_id_mainnet', 'cred_mainnet_bad');
+        await AsyncStorage.setItem('invisible_wallet_address_mainnet', CONTRACT_ADDR);
+        return { walletAddress: CONTRACT_ADDR, publicKeyBytes: PUBKEY_BYTES };
+      });
+      mockEvaluatePrf.mockResolvedValueOnce({ outcome: 'unsupported' });
+
+      const refused = await executeOneTapClaim(
+        { register: nonPrfRegister },
+        { balanceId: BALANCE_ID, amount: '8', assetCode: 'XLM', ephemeralSecret: EPHEMERAL.secret() },
+      );
+      expect(refused.status).toBe('prf_unsupported');
+      expect(await AsyncStorage.getItem('invisible_wallet_key_id_mainnet')).toBeNull();
+      expect(await AsyncStorage.getItem('invisible_wallet_address_mainnet')).toBeNull();
+
+      // 2. Retrying with a PRF-capable passkey on mainnet reads `invisible_wallet_key_id_mainnet` and succeeds.
+      const prfRegister = jest.fn(async () => {
+        await AsyncStorage.setItem('invisible_wallet_key_id_mainnet', 'cred_mainnet_ok');
+        return { walletAddress: CONTRACT_ADDR, publicKeyBytes: PUBKEY_BYTES };
+      });
+      mockEvaluatePrf.mockResolvedValueOnce({ outcome: 'ok', output: PRF_SEED });
+
+      const claimed = await executeOneTapClaim(
+        { register: prfRegister },
+        { balanceId: BALANCE_ID, amount: '8', assetCode: 'XLM', ephemeralSecret: EPHEMERAL.secret() },
+      );
+      expect(claimed).toMatchObject({
+        status: 'claimed',
+        walletAddress: CONTRACT_ADDR,
+        amount: '8',
+        assetCode: 'XLM',
+      });
+    } finally {
+      await setNetwork('testnet');
+    }
   });
 
   it('refuses explicitly when the authenticator has no PRF support instead of stranding a random fee payer', async () => {

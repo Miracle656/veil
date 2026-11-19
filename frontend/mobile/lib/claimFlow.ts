@@ -15,8 +15,10 @@
  *   - `MAX_SPONSORED_CLAIM_XLM_PER_WALLET = '2'` (2.0 XLM ceiling: 1.0 XLM base
  *     reserve for the fee-payer G-account + 0.5 XLM for one issued-asset
  *     trustline such as USDC + 0.5 XLM fee and transient ephemeral-claimant
- *     sponsorship headroom; the ephemeral account is `accountMerge`d back in
- *     the same atomic transaction so its reserve is never permanently consumed).
+ *     sponsorship headroom; Tx 1 settles 100% of the claimed funds into the
+ *     fee-payer immediately, and Tx 2 `accountMerge`s the zero-balance ephemeral
+ *     account in the next ledger so Stellar Core's `op_seq_num_too_far` same-ledger
+ *     merge rule is respected and the sponsorship reserve is released).
  *   - `MAX_SPONSORED_CLAIMS_PER_INSTALL = 1` (at most one sponsored onboarding
  *     per install, and only after verifying on Horizon that `balanceId` is a
  *     real, currently unclaimed `ClaimableBalance` and the fee payer holds less
@@ -39,12 +41,13 @@ import { fundWithFriendbot } from './classicWallet';
 import { recordFeePayerSource } from './feePayerSource';
 import { inclusionFee } from './fees';
 import { horizonErrorMessage } from './horizonError';
-import { getNetwork, getNetworkName } from './network';
+import { getNetwork, getNetworkName, hydrateNetwork } from './network';
 import { evaluatePrf, requirePasskey } from './passkey';
 import { isPasskeyCancellation } from './passkeyOutcome';
 import { FEE_PAYER_PRF_SALT } from './passkeyWallet';
 import { writeBreadcrumbs } from './walletBreadcrumbs';
 import {
+  SDK_KEYS,
   getPasskeyId,
   getPasskeyPublicKey,
   getSignerSecret,
@@ -177,16 +180,65 @@ export function configureClaimFlowForTests(overrides: ClaimFlowTestOverrides): v
   testOverrides = overrides;
 }
 
-// Disallow links or HTML/Markdown markup in any sender-supplied note/name rendered on the claim screen.
-const UNSAFE_TEXT_RE =
-  /\b(?:https?|ftp|mailto|javascript|data|veil|web\+stellar)\s*:|\bwww\.[a-z0-9-]+|[<>&`]|\[[^\]]*\]\([^)]*\)/i;
+// Disallow schemes, protocol-relative URLs, bare hostnames/TLDs, Unicode dot
+// confusables, IP literals, emails, HTML/entities, and Markdown links in any
+// sender-supplied note/name rendered on the claim screen.
+const UNSAFE_SCHEME_OR_MARKUP_RE =
+  /\b(?:https?|ftp|mailto|tel|javascript|data|vbscript|file|veil|web\+stellar)\s*:|\/\/\S+|\bwww\.[a-z0-9-]+|[<>&`]|\[[^\]]*\]\([^)]*\)|!\[[^\]]*\]/i;
+const UNSAFE_BARE_DOMAIN_OR_IP_RE =
+  /(?:^|[\s(@])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,24}|xn--[a-z0-9-]{2,})(?=$|[\s/:?#),.!])|\b(?:\d{1,3}\.){3}\d{1,3}\b|\[[0-9a-f:]+\]|[a-z0-9-][\u3002\uFF0E\uFF61][a-z]{2,}/i;
 
 export function sanitizeDisplayField(raw: string | null | undefined, maxLen: number): string | null {
   if (!raw) return null;
   const trimmed = raw.trim().replace(/[\u0000-\u001F\u007F]/g, '');
   if (!trimmed) return null;
-  if (UNSAFE_TEXT_RE.test(trimmed)) return null;
+  if (UNSAFE_SCHEME_OR_MARKUP_RE.test(trimmed) || UNSAFE_BARE_DOMAIN_OR_IP_RE.test(trimmed)) {
+    return null;
+  }
   return trimmed.length > maxLen ? trimmed.slice(0, maxLen) : trimmed;
+}
+
+/** Format an on-chain unix expiry timestamp for the recipient preview screen. */
+export function formatClaimExpiryForRecipient(
+  expiresAtUnix: number,
+  nowUnix = Math.floor(Date.now() / 1000),
+): string {
+  const diff = expiresAtUnix - nowUnix;
+  const abs = Math.max(0, Math.floor(Math.abs(diff)));
+  const unit =
+    abs < 60
+      ? 'less than a minute'
+      : abs < 3_600
+        ? `${Math.floor(abs / 60)}m`
+        : abs < 86_400
+          ? `${Math.floor(abs / 3_600)}h`
+          : `${Math.floor(abs / 86_400)}d`;
+  if (diff <= 0) {
+    return `Expired ${unit} ago — the sender can now reclaim this link`;
+  }
+  return `Claim within ${unit}`;
+}
+
+async function scopedSdkStorageKey(baseKey: string): Promise<string> {
+  await hydrateNetwork();
+  return getNetworkName() === 'mainnet' ? `${baseKey}_mainnet` : baseKey;
+}
+
+async function readScopedSdkKeyId(): Promise<string | null> {
+  const scoped = await scopedSdkStorageKey(SDK_KEY_ID);
+  const val = await AsyncStorage.getItem(scoped);
+  if (val) return val;
+  if (scoped !== SDK_KEY_ID) {
+    return AsyncStorage.getItem(SDK_KEY_ID);
+  }
+  return null;
+}
+
+async function clearScopedSdkRegistrationKeys(): Promise<void> {
+  await hydrateNetwork();
+  const isMainnet = getNetworkName() === 'mainnet';
+  const keysToClear = SDK_KEYS.map((k) => (isMainnet ? `${k}_mainnet` : k));
+  await Promise.all(keysToClear.map((k) => AsyncStorage.removeItem(k).catch(() => undefined)));
 }
 
 function toHex(bytes: Uint8Array): string {
@@ -662,7 +714,7 @@ async function resolveOrCreatePrfWallet(
       : undefined;
   let keyId =
     checkpoint?.link.balanceId === link.balanceId
-      ? (checkpoint.keyId ?? (await AsyncStorage.getItem(SDK_KEY_ID)))
+      ? (checkpoint.keyId ?? (await readScopedSdkKeyId()))
       : null;
 
   if (!walletAddress || !keyId) {
@@ -670,7 +722,7 @@ async function resolveOrCreatePrfWallet(
     const registered = await wallet.register('Veil wallet');
     walletAddress = registered.walletAddress;
     publicKeyBytes = registered.publicKeyBytes;
-    keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+    keyId = await readScopedSdkKeyId();
     if (!keyId) {
       throw new Error('Passkey registration completed without storing a credential ID.');
     }
@@ -696,9 +748,10 @@ async function resolveOrCreatePrfWallet(
 
   if (!prfFeePayer) {
     if (prfIssue === 'unsupported') {
-      // Clear SDK_KEY_ID and passkey checkpoint so the user can choose a different,
-      // PRF-capable passkey provider on retry without `excludeCredentials` blocking them.
-      await AsyncStorage.removeItem(SDK_KEY_ID).catch(() => undefined);
+      // Clear network-scoped SDK registration keys and passkey checkpoint so the
+      // user can choose a different, PRF-capable passkey provider on retry
+      // without `excludeCredentials` blocking them.
+      await clearScopedSdkRegistrationKeys();
       await savePendingClaimCheckpoint('before_passkey', link, {
         walletAddress: null,
         publicKeyHex: null,
@@ -824,8 +877,17 @@ export async function executeOneTapClaim(
         feePayer.publicKey(),
         link.ephemeralSecret,
       );
-      await clearPendingClaimCheckpoint();
       if (settledToUs) {
+        if (link.ephemeralSecret && StrKey.isValidEd25519SecretSeed(link.ephemeralSecret)) {
+          const residualEphem = Keypair.fromSecret(link.ephemeralSecret);
+          await mergeZeroBalanceEphemeralBestEffort(
+            server,
+            net.networkPassphrase,
+            feePayer,
+            residualEphem,
+          );
+        }
+        await clearPendingClaimCheckpoint();
         return {
           status: 'claimed',
           txHash: 'settled',
@@ -836,6 +898,7 @@ export async function executeOneTapClaim(
           createdNewWallet,
         };
       }
+      await clearPendingClaimCheckpoint();
       return { status: 'already_claimed', message: CLAIM_ALREADY_CLAIMED_MESSAGE };
     }
     throw err;
@@ -867,8 +930,17 @@ export async function executeOneTapClaim(
     );
   }
 
-  if (ephemeralKeypair && ephemeralKeypair.publicKey() !== feePayer.publicKey()) {
+  const usesEphemeral =
+    Boolean(ephemeralKeypair) && ephemeralKeypair!.publicKey() !== feePayer.publicKey();
+
+  if (usesEphemeral && ephemeralKeypair) {
     const ephemPub = ephemeralKeypair.publicKey();
+    // Stellar Core forbids `createAccount(X)` + `accountMerge(X)` in the same
+    // ledger (`ACCOUNT_MERGE_SEQNUM_TOO_FAR` / `op_seq_num_too_far`). Instead,
+    // Tx 1 sponsors `ephemPub` with `startingBalance: '0'`, claims the balance,
+    // and immediately pays 100% of `claimAmount` (for both native XLM and issued
+    // assets) to `feePayer` in one atomic ledger; Tx 2 then `accountMerge`s the
+    // zero-balance `ephemPub` in the very next ledger to free the sponsorship.
     builder
       .addOperation(
         Operation.beginSponsoringFutureReserves({
@@ -898,43 +970,44 @@ export async function executeOneTapClaim(
           balanceId: link.balanceId,
           source: ephemPub,
         }),
+      )
+      .addOperation(
+        Operation.payment({
+          destination: feePayer.publicKey(),
+          asset: stellarAsset,
+          amount: claimAmount,
+          source: ephemPub,
+        }),
       );
     if (isIssued) {
-      builder
-        .addOperation(
-          Operation.payment({
-            destination: feePayer.publicKey(),
-            asset: stellarAsset,
-            amount: claimAmount,
-            source: ephemPub,
-          }),
-        )
-        .addOperation(
-          Operation.changeTrust({
-            asset: stellarAsset,
-            limit: '0',
-            source: ephemPub,
-          }),
-        );
+      builder.addOperation(
+        Operation.changeTrust({
+          asset: stellarAsset,
+          limit: '0',
+          source: ephemPub,
+        }),
+      );
     }
-    builder.addOperation(
-      Operation.accountMerge({
-        destination: feePayer.publicKey(),
-        source: ephemPub,
-      }),
-    );
   } else {
     builder.addOperation(Operation.claimClaimableBalance({ balanceId: link.balanceId }));
   }
 
   const tx = builder.setTimeout(90).build();
   tx.sign(feePayer);
-  if (ephemeralKeypair && ephemeralKeypair.publicKey() !== feePayer.publicKey()) {
+  if (usesEphemeral && ephemeralKeypair) {
     tx.sign(ephemeralKeypair);
   }
 
   try {
     const result = await server.submitTransaction(tx);
+    if (usesEphemeral && ephemeralKeypair) {
+      await mergeZeroBalanceEphemeralBestEffort(
+        server,
+        net.networkPassphrase,
+        feePayer,
+        ephemeralKeypair,
+      );
+    }
     await clearPendingClaimCheckpoint();
     return {
       status: 'claimed',
@@ -957,5 +1030,35 @@ export async function executeOneTapClaim(
         ? `${readable} Reopen this link to resume — your money is still waiting.`
         : `${err instanceof Error ? err.message : 'Network error during claim.'} Reopen this link to resume — your money is still waiting.`,
     );
+  }
+}
+
+async function mergeZeroBalanceEphemeralBestEffort(
+  server: Horizon.Server,
+  networkPassphrase: string,
+  feePayer: Keypair,
+  ephemeralKeypair: Keypair,
+): Promise<void> {
+  if (ephemeralKeypair.publicKey() === feePayer.publicKey()) return;
+  try {
+    const feePayerNext = await server.loadAccount(feePayer.publicKey());
+    const mergeTx = new TransactionBuilder(feePayerNext, {
+      fee: inclusionFee(),
+      networkPassphrase,
+    })
+      .addOperation(
+        Operation.accountMerge({
+          destination: feePayer.publicKey(),
+          source: ephemeralKeypair.publicKey(),
+        }),
+      )
+      .setTimeout(60)
+      .build();
+    mergeTx.sign(feePayer);
+    mergeTx.sign(ephemeralKeypair);
+    await server.submitTransaction(mergeTx);
+  } catch {
+    // Best-effort post-settlement sponsorship cleanup: 100% of the claimed
+    // funds are already in `feePayer` from Tx 1.
   }
 }
