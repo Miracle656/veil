@@ -46,6 +46,7 @@ import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { errorMessage } from '../lib/errorMessage';
 import { getAssetIssuer } from '../lib/assets';
+import { useBillFunding } from '../hooks/useBillFunding';
 import { getFeePayerAddress } from '../lib/activity';
 import { NotEnoughToSend, previewSpendFee, spendAsset } from '../lib/spendAsset';
 import type { PlatformFee } from '../lib/platformFee';
@@ -275,6 +276,14 @@ export default function ElectricityScreen() {
   const ngn = Number(amountNGN.replace(/[^\d]/g, '')) || 0;
   const code = coin.toUpperCase();
   const cost = rate && ngn > 0 ? ngn / rate : 0;
+
+  // Which asset pays, and why. Decided from both balances (XLM reserve-aware)
+  // and both rates, shown before the passkey prompt.
+  const { decision: funding, choose: chooseFunding } = useBillFunding(ngn, true);
+  useEffect(() => {
+    if (funding.coin && funding.coin !== coin) setCoin(funding.coin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [funding.coin]);
 
   // Preview platform fee on confirm step before passkey prompt
   useEffect(() => {
@@ -702,7 +711,10 @@ export default function ElectricityScreen() {
                 {(['usdc', 'xlm'] as NairaCoin[]).map((c) => (
                   <Pressable
                     key={c}
-                    onPress={() => setCoin(c)}
+                    onPress={() => {
+                      if (funding.canChoose) chooseFunding(c);
+                      else if (funding.status === 'unknown') setCoin(c);
+                    }}
                     style={[styles.segmentItem, coin === c && styles.segmentActive]}
                   >
                     <Text
@@ -713,6 +725,7 @@ export default function ElectricityScreen() {
                   </Pressable>
                 ))}
               </View>
+              {funding.reason ? <Text style={styles.hint}>{funding.reason}</Text> : null}
 
               {/* Live Cost Card */}
               <View style={styles.card}>
