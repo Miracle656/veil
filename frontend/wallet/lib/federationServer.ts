@@ -184,12 +184,11 @@ export function getNamesContractId(): string | null {
 export type NameResolver = (name: string) => Promise<string | null>
 
 /**
- * Read `resolve(name)` off the registry contract.
+ * Read any nullary-argument view off the registry contract.
  *
- * A simulation, not a submission: `resolve` is a read and costs nothing, so
- * there is no source account to fund. The dummy account below is never
- * charged and never signs — `simulateTransaction` only needs a well-formed
- * envelope to execute against.
+ * A simulation, not a submission: a read costs nothing, so there is no source
+ * account to fund. The dummy account below is never charged and never signs —
+ * `simulateTransaction` only needs a well-formed envelope to execute against.
  *
  * Any failure resolves to null rather than throwing. A federation server that
  * 500s on an RPC hiccup teaches callers that the name does not resolve *and*
@@ -197,7 +196,7 @@ export type NameResolver = (name: string) => Promise<string | null>
  * part. `federation.ts` on the client draws exactly this distinction, and
  * `reverseResolution.ts` already degrades to null on an outage.
  */
-export async function resolveOnChain(name: string): Promise<string | null> {
+async function readRegistry(method: string, args: ReturnType<typeof nativeToScVal>[]): Promise<unknown> {
   const contractId = getNamesContractId()
   if (!contractId) return null
 
@@ -228,7 +227,7 @@ export async function resolveOnChain(name: string): Promise<string | null> {
         fee: BASE_FEE,
         networkPassphrase: network.networkPassphrase,
       })
-        .addOperation(contract.call('resolve', nativeToScVal(name, { type: 'string' })))
+        .addOperation(contract.call(method, ...args))
         .setTimeout(30)
         .build()
 
@@ -239,9 +238,7 @@ export async function resolveOnChain(name: string): Promise<string | null> {
         return null
       }
 
-      // `resolve` returns `Option<Address>`; a `None` natives to null/undefined.
-      const value = scValToNative(sim.result.retval)
-      return typeof value === 'string' && value.length > 0 ? value : null
+      return scValToNative(sim.result.retval)
     } catch {
       sawTransportFailure = true
     }
@@ -249,9 +246,84 @@ export async function resolveOnChain(name: string): Promise<string | null> {
 
   if (sawTransportFailure) {
     // eslint-disable-next-line no-console
-    console.warn(`[federation] every RPC upstream failed resolving ${name}`)
+    console.warn(`[federation] every RPC upstream failed reading ${method}`)
   }
   return null
+}
+
+/**
+ * Read `resolve(name)` off the registry contract.
+ *
+ * `resolve` returns `Option<Address>`; a `None` natives to null/undefined.
+ */
+export async function resolveOnChain(name: string): Promise<string | null> {
+  const value = await readRegistry('resolve', [nativeToScVal(name, { type: 'string' })])
+  return typeof value === 'string' && value.length > 0 ? value : null
+}
+
+/**
+ * What the registry holds for a name's stealth meta-address, hex encoded.
+ *
+ * `meta_address(name)` returns `Option<MetaAddress>`, and the registry itself
+ * returns `None` for a name that is not active — so an expired name has no
+ * meta-address here either, and a sender cannot derive an address for a name
+ * nobody holds. Hex rather than `Uint8Array` because this crosses a JSON
+ * boundary and a byte array in JSON is a shape every caller reimplements.
+ */
+export interface NameMetaAddressRecord {
+  stellar_address: string
+  spend_key: string
+  view_key: string
+}
+
+export type MetaAddressReader = (name: string) => Promise<{ spend_key: string; view_key: string } | null>
+
+/** `Uint8Array` (or a numeric array) to lowercase hex, refusing anything else. */
+function toHex(value: unknown): string | null {
+  if (!(value instanceof Uint8Array)) return null
+  let out = ''
+  for (const byte of value) out += byte.toString(16).padStart(2, '0')
+  return out
+}
+
+/** Read `meta_address(name)` off the registry contract. */
+export async function resolveMetaAddressOnChain(
+  name: string,
+): Promise<{ spend_key: string; view_key: string } | null> {
+  const value = await readRegistry('meta_address', [nativeToScVal(name, { type: 'string' })])
+  if (!value || typeof value !== 'object') return null
+
+  // `scValToNative` on a struct returns an object keyed by its field names.
+  const fields = value as { spend_key?: unknown; view_key?: unknown }
+  const spend = toHex(fields.spend_key)
+  const view = toHex(fields.view_key)
+  if (!spend || !view) return null
+  return { spend_key: spend, view_key: view }
+}
+
+/**
+ * Resolve a federated address to its published meta-address, or null.
+ *
+ * Null covers "no such name" and "the name published nothing" alike, which is
+ * deliberate: a sender has no private path either way, and the route turns
+ * that into one explicit refusal rather than two that mean the same thing to
+ * it. A name that never opted in must not fall back to a public payment.
+ */
+export async function lookupNameMetaAddress(
+  q: string,
+  reader: MetaAddressReader = resolveMetaAddressOnChain,
+): Promise<NameMetaAddressRecord | null> {
+  const parsed = parseFederationName(q)
+  if (!parsed) return null
+
+  const meta = await reader(parsed.name)
+  if (!meta) return null
+
+  return {
+    stellar_address: `${parsed.name}*${parsed.domain}`,
+    spend_key: meta.spend_key,
+    view_key: meta.view_key,
+  }
 }
 
 /** A SEP-2 `type=name` answer. */
