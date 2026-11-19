@@ -109,6 +109,43 @@ export async function setSignerSecret(secret: string): Promise<void> {
   return setSecureItem(await key(SecureKey.signerSecret), secret);
 }
 
+/** How many retired secrets are kept. Far more than a wallet should ever need. */
+const MAX_RETIRED_FEE_PAYERS = 12;
+
+/** Secrets of spending accounts this wallet has moved off, oldest first. */
+export async function getRetiredFeePayerSecrets(): Promise<string[]> {
+  const raw = await getSecureItem(await key(SecureKey.retiredFeePayers));
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((s): s is string => typeof s === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Keep the secret of a spending account that is about to be replaced.
+ *
+ * Replacing the stored secret used to destroy the old one. For a random key
+ * that was the only copy in existence, so anything left on that account, or
+ * sent to it afterwards, could never be reached again. The old account always
+ * keeps at least its reserve, so there is always something to lose.
+ *
+ * Call this BEFORE `setSignerSecret` with the new key, and do not switch if it
+ * throws: the write is the safety net, so a switch without it is the old bug.
+ */
+export async function retireFeePayerSecret(secret: string): Promise<void> {
+  const existing = await getRetiredFeePayerSecrets();
+  if (existing.includes(secret)) return;
+  const next = [...existing, secret].slice(-MAX_RETIRED_FEE_PAYERS);
+  await setSecureItem(await key(SecureKey.retiredFeePayers), JSON.stringify(next));
+  // Read it back. A secure-store write that silently did nothing would let the
+  // caller overwrite the only other copy.
+  const stored = await getRetiredFeePayerSecrets();
+  if (!stored.includes(secret)) throw new Error('Could not keep the previous spending key.');
+}
+
 /**
  * The SDK's own AsyncStorage keys, namespaced the same way by the adapter in
  * components/WalletProvider.tsx. They have to be cleared alongside the secure
@@ -212,6 +249,7 @@ export async function clearWalletStore(): Promise<void> {
     key(SecureKey.passkeyPublicKey).then(deleteSecureItem),
     key(SecureKey.signerSecret).then(deleteSecureItem),
     key(SecureKey.additionalSigners).then(deleteSecureItem),
+    key(SecureKey.retiredFeePayers).then(deleteSecureItem),
     ...SDK_KEYS.map((k) => AsyncStorage.removeItem(`${k}${suffix}`)),
     // Clear SPP state when the wallet is removed.
     walletAddress ? clearSppDatabase(walletAddress) : Promise.resolve(),

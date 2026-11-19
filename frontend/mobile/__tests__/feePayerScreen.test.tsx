@@ -59,9 +59,16 @@ async function render() {
   return tree.root;
 }
 
+/** The mocked comparison, reached the way the screen reaches it. */
+function verifyMock(): jest.Mock {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('../lib/feePayerSource').verifyFeePayerWithPasskey as jest.Mock;
+}
+
 beforeEach(() => {
   mockQrValues.length = 0;
   mockGetFeePayerInfo.mockReset();
+  verifyMock().mockReset();
 });
 
 // This is the app's first component test, so the first render in this file
@@ -93,4 +100,60 @@ it('identifies a random-fallback fee-payer as such', async () => {
   expect(text(root.findByProps({ testID: 'fee-payer-source' }))).toBe('Random fallback');
   expect(root.findAllByProps({ testID: 'fee-payer-random-warning' }).length).toBeGreaterThan(0);
   for (const value of mockQrValues) expect(value).toBe(FEE_PAYER);
+});
+
+/**
+ * The label is a stored record, not a measurement: "Passkey (PRF)" means some
+ * code path asserted it. Only `verifyFeePayerWithPasskey` compares the key the
+ * passkey derives against the key in use, so the button that runs it has to be
+ * reachable from a wallet that already carries a label — which is precisely
+ * the one worth questioning. It used to render only for `unknown`.
+ */
+it('offers the passkey check even when a derivation is already recorded', async () => {
+  mockGetFeePayerInfo.mockResolvedValue({ address: FEE_PAYER, source: 'prf' });
+  const root = await render();
+
+  expect(text(root.findByProps({ testID: 'fee-payer-verify' }))).toBe('Re-check with passkey');
+});
+
+it('still offers it, worded as a first check, when nothing is recorded', async () => {
+  mockGetFeePayerInfo.mockResolvedValue({ address: FEE_PAYER, source: 'unknown' });
+  const root = await render();
+
+  expect(text(root.findByProps({ testID: 'fee-payer-verify' }))).toBe('Check with passkey');
+});
+
+it('withholds it from a keypair wallet, which has no passkey to check against', async () => {
+  mockGetFeePayerInfo.mockResolvedValue({ address: FEE_PAYER, source: 'keypair' });
+  const root = await render();
+
+  expect(root.findAllByProps({ testID: 'fee-payer-verify' })).toHaveLength(0);
+});
+
+it('says the check confirmed the label, since confirming changes nothing on screen', async () => {
+  mockGetFeePayerInfo.mockResolvedValue({ address: FEE_PAYER, source: 'prf' });
+  verifyMock().mockResolvedValue({ ok: true, source: 'prf' });
+  const root = await render();
+
+  await renderer.act(async () => {
+    (root.findByProps({ testID: 'fee-payer-verify' }).props['onPress'] as () => void)();
+  });
+
+  expect(text(root.findByProps({ testID: 'fee-payer-verify-note' }))).toContain(
+    'your passkey derives this exact address',
+  );
+});
+
+it('contradicts a PRF label when the passkey derives some other key', async () => {
+  mockGetFeePayerInfo.mockResolvedValue({ address: FEE_PAYER, source: 'prf' });
+  verifyMock().mockResolvedValue({ ok: true, source: 'random' });
+  const root = await render();
+
+  await renderer.act(async () => {
+    (root.findByProps({ testID: 'fee-payer-verify' }).props['onPress'] as () => void)();
+  });
+
+  expect(text(root.findByProps({ testID: 'fee-payer-verify-note' }))).toContain(
+    'derives a different address',
+  );
 });

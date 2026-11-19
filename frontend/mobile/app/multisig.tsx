@@ -25,9 +25,12 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
 import {
   approvalBlocker,
   approveProposal,
@@ -206,8 +209,8 @@ export default function MultisigScreen() {
   // ── No wallet connected yet ──────────────────────────────────────────────────
   if (!contractId) {
     return (
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="multisig-screen">
       <ScrollView showsVerticalScrollIndicator={false}
-        style={styles.screen}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
@@ -236,6 +239,7 @@ export default function MultisigScreen() {
           <Text style={styles.primaryButtonLabel}>Connect wallet</Text>
         </Pressable>
       </ScrollView>
+      </SafeAreaView>
     );
   }
 
@@ -247,8 +251,8 @@ export default function MultisigScreen() {
     (details === null || details.owners.includes(signerAddress));
 
   return (
+    <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="multisig-screen">
     <ScrollView showsVerticalScrollIndicator={false}
-      style={styles.screen}
       contentContainerStyle={styles.content}
       keyboardShouldPersistTaps="handled"
       refreshControl={
@@ -457,6 +461,7 @@ export default function MultisigScreen() {
         <Text style={styles.ghostButtonLabel}>Use a different multisig wallet</Text>
       </Pressable>
     </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -472,7 +477,8 @@ const createStyles = (colors: ThemeColors) =>
     },
     content: {
       gap: 10,
-      padding: 24,
+      paddingHorizontal: 24,
+      paddingTop: 16,
       paddingBottom: 64,
     },
     subtitle: {
@@ -488,13 +494,13 @@ const createStyles = (colors: ThemeColors) =>
     sectionTitle: {
       color: colors.textStrong,
       fontSize: 17,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
       marginTop: 20,
     },
     label: {
       color: colors.textMuted,
       fontSize: 13,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
       marginTop: 8,
     },
     card: {
@@ -526,7 +532,7 @@ const createStyles = (colors: ThemeColors) =>
     statValue: {
       color: colors.textPrimary,
       fontSize: 17,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     owner: {
       color: colors.textMuted,
@@ -540,12 +546,12 @@ const createStyles = (colors: ThemeColors) =>
     proposalId: {
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     status: {
       color: colors.textMuted,
       fontSize: 12,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     statusReady: {
       color: colors.accentText,
@@ -599,7 +605,7 @@ const createStyles = (colors: ThemeColors) =>
     primaryButtonLabel: {
       color: colors.onAccent,
       fontSize: 15,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     ghostButton: {
       alignItems: 'center',

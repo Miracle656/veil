@@ -6,6 +6,9 @@
  * the one action that spends money. Mobile could already *send* to a name
  * (`lib/federation.ts`); this is where one is bought.
  *
+ * A name the user already holds is shown first, with the address it resolves
+ * to. Opening on a bare claim form told the holder of a name they had none.
+ *
  * The lookup is debounced and sequence-guarded: a slow answer for an earlier
  * keystroke must never overwrite the answer for what is on screen now, or the
  * field ends up saying "available" about a name the user has edited away from.
@@ -44,7 +47,13 @@ import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { errorMessage } from '../lib/errorMessage';
 import { isPasskeyCancellation } from '../lib/passkeyOutcome';
-import { getWalletAddress } from '../lib/walletStore';
+import { type OwnAddresses, getOwnAddresses } from '../lib/ownAddresses';
+import {
+  type OwnedName,
+  formatNameDate,
+  loadOwnedNames,
+  rememberOwnName,
+} from '../lib/ownedNames';
 import { namesContractId } from '../lib/veilIans';
 import {
   MAX_NAME_LENGTH,
@@ -71,6 +80,9 @@ export default function NamesScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  // The spending account (`G…`). A name bought on the web for a phone-made
+  // wallet is held there, and it is still this user's name.
+  const [spendingAddress, setSpendingAddress] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [years, setYears] = useState(MIN_TERM_YEARS);
   const [state, setState] = useState<NameState | null>(null);
@@ -82,14 +94,30 @@ export default function NamesScreen() {
   const [error, setError] = useState<string | null>(null);
   const [boughtHash, setBoughtHash] = useState<string | null>(null);
 
+  // Names already held by either account, each proved against the registry.
+  const [owned, setOwned] = useState<OwnedName[]>([]);
+  // True when that could not be fully read: an empty list then means "could
+  // not check", not "you hold no name".
+  const [ownedUnchecked, setOwnedUnchecked] = useState(false);
+  const ownedRef = useRef<OwnedName[]>([]);
+
   const seq = useRef(0);
   const registryId = useMemo(() => namesContractId(), []);
 
-  useEffect(() => {
-    void getWalletAddress()
-      .then(setWalletAddress)
-      .catch(() => setWalletAddress(null));
+  const refreshOwned = useCallback(async (own: OwnAddresses) => {
+    const result = await loadOwnedNames(own);
+    ownedRef.current = result.names;
+    setOwned(result.names);
+    setOwnedUnchecked(!result.complete);
   }, []);
+
+  useEffect(() => {
+    void getOwnAddresses().then((own) => {
+      setWalletAddress(own.wallet);
+      setSpendingAddress(own.spending);
+      void refreshOwned(own);
+    });
+  }, [refreshOwned]);
 
   const refreshBalance = useCallback(async () => {
     if (!walletAddress) return;
@@ -117,7 +145,8 @@ export default function NamesScreen() {
     const mine = ++seq.current;
     const timer = setTimeout(() => {
       void Promise.all([
-        nameState(name, walletAddress ?? undefined),
+        // Both accounts: a name bought on the web is on the spending account.
+        nameState(name, [walletAddress ?? '', spendingAddress ?? '']),
         quoteFromChain(name, years),
       ]).then(([s, q]) => {
         // A slow answer for an earlier keystroke must not overwrite what is on
@@ -126,11 +155,19 @@ export default function NamesScreen() {
         setState(s);
         setQuote(q);
         setChecking(false);
+        // The registry just said this name is theirs. If the list above did
+        // not have it (registered somewhere its history does not reach),
+        // it does from now on.
+        if (s === 'yours' && !ownedRef.current.some((o) => o.name === name)) {
+          void rememberOwnName(name).then(() =>
+            refreshOwned({ wallet: walletAddress, spending: spendingAddress })
+          );
+        }
       });
     }, 350);
 
     return () => clearTimeout(timer);
-  }, [name, years, shapeOk, registryId, walletAddress]);
+  }, [name, years, shapeOk, registryId, walletAddress, spendingAddress, refreshOwned]);
 
   const chargeText = quote !== null ? formatUsdc(quote) : null;
   const short = balance !== null && quote !== null && balance < quote;
@@ -152,6 +189,8 @@ export default function NamesScreen() {
       const hash = await registerName(walletAddress, name, years);
       setBoughtHash(hash);
       setState('yours');
+      await rememberOwnName(name);
+      void refreshOwned({ wallet: walletAddress, spending: spendingAddress });
       await refreshBalance();
     } catch (err: unknown) {
       if (isPasskeyCancellation(err)) {
@@ -159,11 +198,14 @@ export default function NamesScreen() {
       } else {
         setError(nameErrorMessage(err, registryId) ?? errorMessage(err));
       }
-      if (shapeOk) setState(await nameState(name, walletAddress));
+      if (shapeOk) setState(await nameState(name, [walletAddress, spendingAddress ?? '']));
     } finally {
       setBusy(false);
     }
   };
+
+  // The name just bought has its own card below; do not show it twice.
+  const held = boughtHash ? owned.filter((o) => o.name !== name) : owned;
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -198,6 +240,32 @@ export default function NamesScreen() {
             </View>
           ) : null}
 
+          {held.map((o) => (
+            <View key={o.name} style={styles.card} testID={`names-owned-${o.name}`}>
+              <Text style={styles.eyebrow}>YOU HOLD</Text>
+              <Text style={styles.question} selectable>
+                {o.name}
+                {SUFFIX}
+              </Text>
+              <Text style={styles.hint}>
+                {o.expiresAt !== null ? `Yours until ${formatNameDate(o.expiresAt)}. ` : ''}
+                Money sent to this name arrives in your{' '}
+                {o.account === 'spending' ? 'spending account' : 'smart wallet'}.
+              </Text>
+              <View style={styles.pointsAt}>
+                <Text style={styles.pointsAtLabel}>Resolves to</Text>
+                <Text style={styles.pointsAtAddress} selectable>
+                  {o.pointsAt}
+                </Text>
+              </View>
+            </View>
+          ))}
+          {registryId && owned.length === 0 && ownedUnchecked ? (
+            <Text style={styles.hint} testID="names-owned-unchecked">
+              Could not check which names you already hold. Type a name to look it up.
+            </Text>
+          ) : null}
+
           {boughtHash ? (
             <>
               <View style={styles.card}>
@@ -227,7 +295,7 @@ export default function NamesScreen() {
           ) : (
             <>
               <View style={styles.field}>
-                <Text style={styles.label}>YOUR NAME</Text>
+                <Text style={styles.label}>{held.length > 0 ? 'GET ANOTHER NAME' : 'YOUR NAME'}</Text>
                 <View style={styles.nameRow}>
                   <TextInput
                     value={query}
@@ -374,6 +442,18 @@ function createStyles(colors: ThemeColors) {
       textAlign: 'center',
     },
     money: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 28 },
+
+    // Where a held name points, drawn like the "Resolves to" line under the
+    // recipient on Send so the two read as the same fact.
+    pointsAt: {
+      marginTop: 4,
+      paddingTop: 10,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      gap: 2,
+    },
+    pointsAtLabel: { color: colors.positive, fontFamily: fontFamily.bodyMedium, fontSize: 13, lineHeight: 18 },
+    pointsAtAddress: { color: colors.textSecondary, fontFamily: fontFamily.address, fontSize: 12, lineHeight: 17 },
 
     row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, gap: 12 },
     rowLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, flexShrink: 1 },

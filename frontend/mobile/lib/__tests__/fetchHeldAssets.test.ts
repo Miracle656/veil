@@ -66,10 +66,17 @@ describe('fetchHeldAssets Horizon URL', () => {
     mockGetNetwork.mockReset();
   });
 
+  // A real, checksum-valid account id. 'GABCDEFTESTWALLET' is not one, and
+  // `fetchHeldAssets` now refuses anything that is not a Stellar address rather
+  // than asking Horizon about it — which is the bug these tests sat beside
+  // without catching, because a stub that cannot exist on the network cannot
+  // exercise what the code does with a real one.
+  const ACCOUNT = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
   it('queries the active mainnet Horizon, not the testnet one', async () => {
     mockGetNetwork.mockReturnValue(MAINNET);
 
-    await fetchHeldAssets('GABCDEFTESTWALLET');
+    await fetchHeldAssets(ACCOUNT);
 
     // Before the fix this was always 'https://horizon-testnet.stellar.org'.
     expect(ServerMock).toHaveBeenCalledWith('https://horizon.stellar.org');
@@ -78,7 +85,7 @@ describe('fetchHeldAssets Horizon URL', () => {
   it('still uses testnet Horizon when testnet is the active network', async () => {
     mockGetNetwork.mockReturnValue(TESTNET);
 
-    await fetchHeldAssets('GABCDEFTESTWALLET');
+    await fetchHeldAssets(ACCOUNT);
 
     expect(ServerMock).toHaveBeenCalledWith('https://horizon-testnet.stellar.org');
   });

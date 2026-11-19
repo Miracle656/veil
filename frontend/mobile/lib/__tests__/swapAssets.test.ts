@@ -6,6 +6,7 @@
 
 import { Asset, Networks } from '@stellar/stellar-sdk';
 
+import { getAssetIssuer } from '../assets';
 import {
   checkSwapAsset,
   noRouteMessage,
@@ -36,6 +37,37 @@ it('derives the USDT0 SAC Horizon reports', () => {
 });
 
 describe('picker and routing input', () => {
+  // A merge cut EURC and AQUA out of SWAP_DEST_CODES between build 16 and
+  // build 20, and nothing failed: the list is one line, so the file did not
+  // shrink and no test named the pairs it offers. Two assets users already
+  // traded simply stopped appearing in the picker. Name them, so removing one
+  // has to be deliberate.
+  it('offers every mainnet pair the picker is meant to show', () => {
+    expect(swapDestinations('mainnet').map((a) => a.code)).toEqual([
+      'XLM',
+      'USDC',
+      'USDT0',
+      'USDY',
+      'EURC',
+      'AQUA',
+    ]);
+  });
+
+  it('gives each destination its registered issuer, and XLM none', () => {
+    for (const asset of swapDestinations('mainnet')) {
+      if (asset.code === 'XLM') expect(asset.issuer).toBeNull();
+      else expect(asset.issuer).toBe(getAssetIssuer(asset.code, 'mainnet'));
+    }
+  });
+
+  it('drops the mainnet-only codes on testnet rather than offering a dead issuer', () => {
+    const testnet = swapDestinations('testnet').map((a) => a.code);
+    expect(testnet).toContain('XLM');
+    for (const code of ['USDT0', 'USDY', 'EURC', 'AQUA']) {
+      expect(testnet).not.toContain(code);
+    }
+  });
+
   it('offers USDT0 on mainnet only, with its genuine issuer', () => {
     expect(swapDestinations('mainnet')).toContainEqual(USDT0);
     expect(swapDestinations('testnet').map((a) => a.code)).not.toContain('USDT0');

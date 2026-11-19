@@ -1,31 +1,34 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Horizon, Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { mayHoldCollectibles } from './feePayerHoldings';
 import { recordFeePayerSource } from './feePayerSource';
+import { defaultSweepDeps, migrateFeePayerToPasskey } from './feePayerSweep';
+import { inclusionFee } from './fees';
 import { getNetwork } from './network';
+import { SDK_KEY_ID, getCredentialId, getSdkItem } from './sdkStorage';
 import { evaluatePrf } from './passkey';
+import type { MoveRefusal } from './feePayerMove';
 import type { PrfOutcome } from './prfOutcome';
-import { fundWithFriendbot, type CreatedWallet } from './classicWallet';
+import { fundWithFriendbot } from './testnetWallet';
 import { writeBreadcrumbs } from './walletBreadcrumbs';
 import {
   getPasskeyPublicKey,
   getSignerSecret,
   getWalletAddress,
+  retireFeePayerSecret,
   setPasskeyCredential,
   setPasskeyId,
   setSignerSecret,
   setWalletAddress,
 } from './walletStore';
+import type { CreatedWallet } from './testnetWallet';
 
 /**
  * Domain-separated PRF salt for the fee-payer key. Matches the SDK's
  * `FEE_PAYER_PRF_SALT` so the passkey → fee-payer mapping is stable.
  */
 export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
-
-/** SDK storage key holding the WebAuthn credential id (see useInvisibleWallet). */
-const SDK_KEY_ID = 'invisible_wallet_key_id';
 
 /** Minimal shape of the SDK's register(); avoids importing the whole hook type. */
 type Registerable = {
@@ -87,7 +90,7 @@ export async function createPasskeyWallet(
 ): Promise<PasskeyWalletResult> {
   const { walletAddress, publicKeyBytes } = await wallet.register('Veil wallet');
 
-  const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+  const keyId = await getSdkItem(SDK_KEY_ID);
   let feePayer: Keypair | null = null;
   let issue: Exclude<PrfOutcome, 'ok'> = 'failed';
   if (keyId) {
@@ -111,13 +114,8 @@ export async function createPasskeyWallet(
     const finalFeePayer = fp ?? feePayer ?? fallbackFeePayer;
     const recoverable = finalFeePayer !== fallbackFeePayer;
 
-    // Friendbot funding is a testnet-only step. On mainnet, fee-payers have no
-    // faucet and must be funded with real XLM.
-    const network = getNetwork();
-    const funded =
-      network.name === 'testnet' && network.friendbotUrl
-        ? await fundWithFriendbot(finalFeePayer.publicKey())
-        : false;
+    // Friendbot only exists on testnet; on mainnet this returns false at once.
+    const funded = await fundWithFriendbot(finalFeePayer.publicKey());
 
     void writeBreadcrumbs(finalFeePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
 
@@ -169,7 +167,11 @@ async function accountExists(address: string): Promise<boolean> {
 
 export type RecoveryRetry =
   | { bound: true }
-  | { bound: false; issue: Exclude<PrfOutcome, 'ok'> | 'funded' };
+  | {
+      bound: false;
+      issue: Exclude<PrfOutcome, 'ok'> | 'funded' | MoveRefusal;
+      shortfallXlm?: number;
+    };
 
 export type Recreation = { ok: true; result: PasskeyWalletResult } | { ok: false; reason: 'funded' };
 
@@ -217,7 +219,13 @@ export async function recreatePasskeyWallet(
  * changes, because it comes from the passkey's public key, not this key.
  */
 export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
-  const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+  // Read through `getCredentialId`, not the SDK's copy alone. A wallet whose
+  // id lives only in `walletStore` — any install predating the per-network
+  // namespacing — returned `failed` here before `evaluatePrf` was ever
+  // called, so the screen said "Could not check this passkey. Try again."
+  // and no passkey prompt appeared. There was nothing to try again: the
+  // check had not asked the authenticator anything.
+  const keyId = await getCredentialId();
   const walletAddress = await getWalletAddress();
   if (!keyId || !walletAddress) return { bound: false, issue: 'failed' };
 
@@ -229,8 +237,65 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
 
   const currentSecret = await getSignerSecret();
   if (currentSecret && currentSecret !== derived.secret()) {
-    if (await accountExists(Keypair.fromSecret(currentSecret).publicKey())) {
-      return { bound: false, issue: 'funded' };
+    const current = Keypair.fromSecret(currentSecret).publicKey();
+    if (await accountExists(current)) {
+      // This used to refuse, and the refusal was the bug. The account
+      // holding the money is the one that cannot be rebuilt from the
+      // passkey; adopting the derived key while leaving the balance behind
+      // would put it beyond reach of every future install. So move it
+      // first and adopt second — and if the move does not happen, change
+      // nothing at all, which is the old behaviour and still the safe one.
+      //
+      // A collectible is held by address inside its own contract, so the move
+      // below cannot carry it, and after the switch nothing in the app would
+      // sign as the old account. Stay put if there is one, or if the chain
+      // could not be asked.
+      if (await mayHoldCollectibles(current)) return { bound: false, issue: 'funded' };
+
+      // Everything the account holds, not XLM alone. This call used to move
+      // the XLM and then let the key below be replaced, which left any USDC on
+      // an account whose only key had just been overwritten.
+      const moved = await migrateFeePayerToPasskey(
+        { from: current, fromSecret: currentSecret, to: derived.publicKey(), toSecret: derived.secret() },
+        defaultSweepDeps(null, getNetwork(), inclusionFee()),
+      );
+      // `legacy-empty` is the only safe miss: there was nothing to move, so
+      // adopting the derived key abandons nothing.
+      //
+      // `below-reserve` is NOT safe, though it reads like it. It means the
+      // account holds XLM that a payment cannot reach because every drop is
+      // reserve — and adopting here overwrites the only copy of the secret
+      // that could ever reach it, which is the exact loss this function was
+      // written to prevent. One real wallet is in that state with 2.5 XLM
+      // locked behind three subentries. Refuse until the reserve can be
+      // freed by closing the account rather than sweeping it.
+      if (!moved.swept && moved.reason !== 'legacy-empty') {
+        const isMoveRefusal = (r: string): r is MoveRefusal =>
+          [
+            'destination-reserve',
+            'pool-shares',
+            'open-offers',
+            'frozen-asset',
+            'sponsorship',
+            'too-many-assets',
+            'no-destination-key',
+          ].includes(r);
+        if (typeof moved.reason === 'string' && isMoveRefusal(moved.reason)) {
+          return { bound: false, issue: moved.reason, shortfallXlm: moved.shortfallXlm };
+        }
+        return { bound: false, issue: 'funded' };
+      }
+    }
+  }
+
+  // Keep the key being replaced. The old account still holds its reserve, and
+  // if this write fails the switch must not happen: without it, replacing the
+  // secret destroys the only copy.
+  if (currentSecret && currentSecret !== derived.secret()) {
+    try {
+      await retireFeePayerSecret(currentSecret);
+    } catch {
+      return { bound: false, issue: 'failed' };
     }
   }
 
