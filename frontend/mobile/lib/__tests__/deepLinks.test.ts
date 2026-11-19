@@ -1,3 +1,5 @@
+import { Keypair } from '@stellar/stellar-sdk';
+
 import { FALLBACK_ROUTE, MAX_DEEP_LINK_LENGTH, resolveDeepLink } from '../deepLinks';
 import { resolveRequestedAsset } from '../requestedAsset';
 
@@ -6,6 +8,8 @@ const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
 // A well-formed account that holds no registered asset: the resolver must say
 // so rather than guess from the code (#704).
 const UNKNOWN_ISSUER = 'GB6KGMCJWSWVNWAJI63R2766NDHYQF2KPW3KA7CM4GVXVICLBADECCFN';
+const CLAIM_ID = `00000000${'c'.repeat(64)}`;
+const EPHEMERAL_SECRET = Keypair.random().secret();
 
 describe('resolveDeepLink — veil:// custom scheme', () => {
   it('routes a bare screen link', () => {
@@ -85,6 +89,32 @@ describe('resolveDeepLink — universal / app links', () => {
 
   it('rejects userinfo smuggling', () => {
     expect(resolveDeepLink('https://app.useveilapp.xyz@evil.example/pay')).toBe(FALLBACK_ROUTE);
+  });
+});
+
+describe('resolveDeepLink — claim links (#1284)', () => {
+  it('routes bare /claim and /claim/<balanceId> on the associated domain', () => {
+    expect(resolveDeepLink('https://app.useveilapp.xyz/claim')).toBe('/claim');
+    expect(
+      resolveDeepLink(
+        `https://app.useveilapp.xyz/claim/${CLAIM_ID}?amount=25&asset=USDC&issuer=${ISSUER}&sender=Ada#s=${EPHEMERAL_SECRET}`,
+      ),
+    ).toBe(
+      `/claim?id=${CLAIM_ID}&amount=25&asset=USDC&issuer=${ISSUER}&sender=Ada&s=${EPHEMERAL_SECRET}`,
+    );
+  });
+
+  it('refuses malformed /claim/<id>/extra paths and drops non-Stellar fragments', () => {
+    expect(resolveDeepLink(`https://app.useveilapp.xyz/claim/${CLAIM_ID}/extra`)).toBe(
+      FALLBACK_ROUTE,
+    );
+    expect(
+      resolveDeepLink(`https://app.useveilapp.xyz/claim/${CLAIM_ID}?amount=10#s=not_a_secret`),
+    ).toBe(`/claim?id=${CLAIM_ID}&amount=10`);
+  });
+
+  it('refuses /claim links from foreign domains', () => {
+    expect(resolveDeepLink(`https://app.veil.xyz/claim/${CLAIM_ID}`)).toBe(FALLBACK_ROUTE);
   });
 });
 
@@ -192,6 +222,7 @@ describe('resolveDeepLink — cold start vs warm resume', () => {
   const links = [
     'veil://pay?to=' + DESTINATION,
     'https://app.useveilapp.xyz/receive',
+    `https://app.useveilapp.xyz/claim/${CLAIM_ID}?amount=10#s=${EPHEMERAL_SECRET}`,
     'web+stellar:pay?destination=' + DESTINATION,
     'veil://create-wallet',
   ];
@@ -204,8 +235,6 @@ describe('resolveDeepLink — cold start vs warm resume', () => {
 });
 
 describe('resolveDeepLink — asset issuer and memo carrying (#704)', () => {
-  // Asset resolution requires code + issuer (`lib/requestedAsset.ts`): these
-  // tests prove the issuer survives the link so the resolver has both halves.
   it('carries asset and issuer through veil://pay', () => {
     const link = `veil://pay?to=${DESTINATION}&amount=50&asset=USDC&issuer=${ISSUER}&memo=inv-99`;
     expect(resolveDeepLink(link)).toBe(
@@ -242,9 +271,6 @@ describe('resolveDeepLink — asset issuer and memo carrying (#704)', () => {
   });
 
   it('a link naming an asset with an unknown issuer is refused by requestedAsset — not guessed (#704)', () => {
-    // The deep link delivers code + issuer; `lib/requestedAsset.ts` refuses an
-    // unknown issuer with the reason in words rather than picking a holding.
-    // See `__tests__/requestedAsset.test.ts` for the full refusal matrix.
     const refused = resolveRequestedAsset('USDC', UNKNOWN_ISSUER, 'testnet', [
       { code: 'USDC', issuer: ISSUER },
     ]);
@@ -264,8 +290,6 @@ describe('resolveDeepLink — asset issuer and memo carrying (#704)', () => {
 });
 
 describe('resolveDeepLink — memo-carrying SEP-7 URIs (#704)', () => {
-  // A URI carrying a memo must deliver it to the pay route: exchange deposits
-  // sent without their memo are typically lost.
   it('maps a memo from a SEP-7 URI onto /pay', () => {
     const uri = `web+stellar:pay?destination=${DESTINATION}&amount=25&memo=deposit-ref-42`;
     const target = resolveDeepLink(uri);
@@ -287,4 +311,3 @@ describe('resolveDeepLink — memo-carrying SEP-7 URIs (#704)', () => {
     ).toBe(`/send?to=${DESTINATION}&amount=9&memo=invoice-9`);
   });
 });
-

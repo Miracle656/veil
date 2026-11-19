@@ -5,9 +5,9 @@
  * in-app routes whether the app was cold-started by the link or was already
  * running in the background (warm resume):
  *
- *   1. `veil://pay?...`                  custom scheme (app.config.ts `scheme`)
- *   2. `https://app.veil.xyz/pay?...`    iOS universal link / Android app link
- *   3. `web+stellar:pay?destination=...` SEP-7 payment request
+ *   1. `veil://pay?...`                     custom scheme (app.config.ts `scheme`)
+ *   2. `https://app.useveilapp.xyz/pay?...` iOS universal link / Android app link
+ *   3. `web+stellar:pay?destination=...`    SEP-7 payment request
  *
  * Everything here is pure string handling with no React Native or Expo imports,
  * so it can be unit-tested directly and reused by the SEP-7 handler in
@@ -47,6 +47,9 @@ const LINKABLE_ROUTES: Record<string, readonly string[]> = {
   '/send': ['to', 'amount', 'asset', 'issuer', 'memo', 'memo_type'],
   '/receive': ['amount', 'asset', 'issuer'],
   '/create-wallet': [],
+  // Claim links (#1284): `/claim` or `/claim/<balanceId>`, plus an optional
+  // `#s=<ephemeralSecret>` bearer fragment carried into `s` only when valid.
+  '/claim': ['id', 'amount', 'asset', 'issuer', 'sender', 'note', 'expires', 's'],
   // Read-only destinations for launcher shortcuts (`lib/voice/actions.ts`).
   // Exact paths with no parameters: a link can open these screens but cannot
   // choose what they show.
@@ -84,6 +87,11 @@ const SEP7_PARAM_MAP: Record<string, string> = {
   msg: 'msg',
 };
 
+/** Stellar Ed25519 secret seed shape (`S` + 55 base32 chars) carried in `#s=...`. */
+const STELLAR_SECRET_SEED_RE = /^S[A-Z2-7]{55}$/;
+/** Safe claimable-balance identifier characters in `/claim/<balanceId>`. */
+const CLAIM_ID_SEGMENT_RE = /^[0-9a-zA-Z_-]{1,128}$/;
+
 /** Context supplied by expo-router when it hands the app an inbound link. */
 export type DeepLinkContext = {
   /**
@@ -99,18 +107,21 @@ function isAssociatedDomain(host: string): boolean {
 }
 
 /**
- * Split a URL into its path and query without using the `URL` constructor,
- * which rejects non-special schemes like `web+stellar:` inconsistently across
- * Hermes, Node, and browsers.
+ * Split a URL into its path, query, and raw fragment without using the `URL`
+ * constructor, which rejects non-special schemes like `web+stellar:`
+ * inconsistently across Hermes, Node, and browsers.
  */
-function splitPathAndQuery(rest: string): { path: string; query: string } {
-  const withoutFragment = rest.split('#')[0] ?? '';
+function splitPathQueryFragment(rest: string): { path: string; query: string; fragment: string } {
+  const hashIndex = rest.indexOf('#');
+  const withoutFragment = hashIndex === -1 ? rest : rest.slice(0, hashIndex);
+  const fragment = hashIndex === -1 ? '' : rest.slice(hashIndex + 1);
   const queryIndex = withoutFragment.indexOf('?');
   return queryIndex === -1
-    ? { path: withoutFragment, query: '' }
+    ? { path: withoutFragment, query: '', fragment }
     : {
         path: withoutFragment.slice(0, queryIndex),
         query: withoutFragment.slice(queryIndex + 1),
+        fragment,
       };
 }
 
@@ -135,8 +146,8 @@ function decodeComponent(value: string): string {
   }
 }
 
-function parseQuery(query: string): Array<[string, string]> {
-  const pairs: Array<[string, string]> = [];
+function parseQuery(query: string): [string, string][] {
+  const pairs: [string, string][] = [];
   for (const part of query.split('&')) {
     if (!part) continue;
     const equalsIndex = part.indexOf('=');
@@ -147,17 +158,52 @@ function parseQuery(query: string): Array<[string, string]> {
   return pairs;
 }
 
-function buildTarget(route: string, query: string, rename?: Record<string, string>): string {
+function extractClaimSecretFromFragment(fragment: string): string | null {
+  if (!fragment) return null;
+  for (const [key, value] of parseQuery(fragment)) {
+    if (key === 's' || key === 'secret') {
+      const candidate = value.trim();
+      if (STELLAR_SECRET_SEED_RE.test(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return null;
+}
+
+function buildTarget(
+  route: string,
+  query: string,
+  rename?: Record<string, string>,
+  injectedFirst: [string, string][] = [],
+  injectedLast: [string, string][] = [],
+): string {
   const allowed = LINKABLE_ROUTES[route];
   if (!allowed) return FALLBACK_ROUTE;
 
-  const forwarded: Array<[string, string]> = [];
+  const forwarded: [string, string][] = [];
   const seen = new Set<string>();
+
+  for (const [key, value] of injectedFirst) {
+    if (!allowed.includes(key) || seen.has(key)) continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    seen.add(key);
+    forwarded.push([key, trimmed]);
+  }
 
   for (const [rawKey, value] of parseQuery(query)) {
     const key = rename ? rename[rawKey] : rawKey;
     // First occurrence wins; a repeated key must not overwrite it.
     if (!key || !allowed.includes(key) || seen.has(key)) continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    seen.add(key);
+    forwarded.push([key, trimmed]);
+  }
+
+  for (const [key, value] of injectedLast) {
+    if (!allowed.includes(key) || seen.has(key)) continue;
     const trimmed = value.trim();
     if (!trimmed) continue;
     seen.add(key);
@@ -171,19 +217,6 @@ function buildTarget(route: string, query: string, rename?: Record<string, strin
   return `${route}?${serialized}`;
 }
 
-/**
- * Resolve an inbound URL to an in-app route.
- *
- * Always returns a path the router can navigate to; unrecognised, malformed, or
- * foreign links resolve to {@link FALLBACK_ROUTE} rather than throwing, because
- * a throw here happens during launch and would take the app down with it.
- *
- * @example
- * resolveDeepLink('veil://pay?to=GABC&amount=10')          // '/pay?to=GABC&amount=10'
- * resolveDeepLink('https://app.veil.xyz/receive')          // '/receive'
- * resolveDeepLink('web+stellar:pay?destination=GABC')      // '/pay?to=GABC&uri=…'
- * resolveDeepLink('https://evil.example/pay')              // '/'
- */
 export function resolveDeepLink(url: string, _context: DeepLinkContext = {}): string {
   if (typeof url !== 'string') return FALLBACK_ROUTE;
   const raw = url.trim();
@@ -221,7 +254,24 @@ export function resolveDeepLink(url: string, _context: DeepLinkContext = {}): st
 }
 
 function resolveInAppPath(pathAndQuery: string): string {
-  const { path, query } = splitPathAndQuery(pathAndQuery);
+  const { path, query, fragment } = splitPathQueryFragment(pathAndQuery);
+  const decodedRaw = decodeURIComponent(path.trim()).replace(/^\/+/, '').replace(/\/+$/, '');
+
+  // Support `/claim/<balanceId>` while preserving exact case of `balanceId` and
+  // forwarding `#s=<ephemeralSecret>` only on `/claim`.
+  if (/^claim(?:\/|$)/i.test(decodedRaw)) {
+    const segments = decodedRaw.split('/');
+    if (segments.length > 2) return FALLBACK_ROUTE;
+    const pathBalanceId = segments.length === 2 ? segments[1] : '';
+    if (pathBalanceId && !CLAIM_ID_SEGMENT_RE.test(pathBalanceId)) {
+      return FALLBACK_ROUTE;
+    }
+    const injectedFirst: [string, string][] = pathBalanceId ? [['id', pathBalanceId]] : [];
+    const secretFromHash = extractClaimSecretFromFragment(fragment);
+    const injectedLast: [string, string][] = secretFromHash ? [['s', secretFromHash]] : [];
+    return buildTarget('/claim', query, undefined, injectedFirst, injectedLast);
+  }
+
   const normalized = normalizePath(path);
   const route = PATH_ALIASES[normalized] ?? normalized;
   if (!(route in LINKABLE_ROUTES)) return FALLBACK_ROUTE;
@@ -233,7 +283,7 @@ function resolveWebLink(rest: string): string {
   const authorityAndPath = rest.replace(/^\/\//, '');
   const slashIndex = authorityAndPath.search(/[/?#]/);
   const authority = slashIndex === -1 ? authorityAndPath : authorityAndPath.slice(0, slashIndex);
-  // Drop any userinfo (`user@host`) and port so `evil.com@app.veil.xyz` cannot
+  // Drop any userinfo (`user@host`) and port so `evil.com@app.useveilapp.xyz` cannot
   // masquerade as an associated domain.
   const host = authority.split('@').pop()?.split(':')[0] ?? '';
   if (!isAssociatedDomain(host)) return FALLBACK_ROUTE;
@@ -243,7 +293,7 @@ function resolveWebLink(rest: string): string {
 }
 
 function resolveSep7Uri(rest: string, originalUri: string): string {
-  const { path, query } = splitPathAndQuery(rest);
+  const { path, query } = splitPathQueryFragment(rest);
   // SEP-7 puts the operation where a path would go: `web+stellar:pay?…`.
   if (path.replace(/^\/+/, '').toLowerCase() !== 'pay') return FALLBACK_ROUTE;
 

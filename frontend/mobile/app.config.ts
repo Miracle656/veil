@@ -32,7 +32,7 @@ const BUNDLE_IDENTIFIER = 'xyz.veil.wallet';
  * listed here stops opening in the browser once the app is installed, so the
  * marketing site and docs must keep working as web pages.
  */
-const LINKED_PATHS = ['pay', 'send', 'receive', 'create-wallet'];
+const LINKED_PATHS = ['pay', 'send', 'receive', 'create-wallet', 'claim'];
 
 /**
  * Launcher shortcuts. Mirrors `READ_ONLY_ACTIONS` in `lib/voice/actions.ts`,
@@ -93,7 +93,7 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: false,
     intentFilters: [
       // Verified app links. `autoVerify` makes Android fetch
-      // https://app.veil.xyz/.well-known/assetlinks.json at install time; if the
+      // https://app.useveilapp.xyz/.well-known/assetlinks.json at install time; if the
       // fingerprint there does not match the installed build, links keep opening
       // in the browser rather than failing outright.
       {
@@ -171,26 +171,10 @@ const config: ExpoConfig = {
     [
       'expo-notifications',
       {
-        // Use the Veil drape mark as the Android notification small icon.
-        // The icon must be a white-on-transparent single-colour image — it is,
-        // and Android tints it with `color` below.
-        //
-        // A dedicated crop rather than the adaptive-icon monochrome asset:
-        // that one centres a 404px mark in a 1024px canvas, so only 39.5% of
-        // each dimension is artwork. Android scales the whole canvas into a
-        // 24dp frame, which left the drape rendering at roughly 9dp inside the
-        // tinted circle — a speck. This asset is the identical glyph cropped
-        // to 89% of its canvas, so it fills the frame.
         icon: './assets/images/notification-icon.png',
         color: '#FDDA24',
       },
     ],
-    // The SPP native prover (Rust/uniffi, Android-first) needs no `plugins`
-    // entry: expo-modules-autolinking scans the app's `modules/` directory and
-    // wires the Gradle project itself (local Expo modules ship an
-    // `expo-module.config.json`, not a config plugin). Listing a local module
-    // path here makes `expo prebuild` evaluate the package root as a plugin,
-    // which cannot work for a module whose JS entry re-exports TypeScript.
   ],
   experiments: {
     typedRoutes: true,
