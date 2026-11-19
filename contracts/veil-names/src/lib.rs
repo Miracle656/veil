@@ -130,6 +130,30 @@ pub enum DataKey {
     Name(String),
     /// name -> () for names nobody may register
     Reserved(String),
+    /// name -> MetaAddress, present only once the holder has opted in.
+    ///
+    /// A separate key rather than a field on `Record` on purpose: `Record` is
+    /// already stored in the deployed registry, and widening it would make
+    /// every existing entry read as garbage after an upgrade.
+    Meta(String),
+}
+
+/// What a sender needs to derive a one-time address for a name.
+///
+/// Two Ed25519 public keys: a **view** key the sender uses to agree on a
+/// shared secret with an ephemeral key it invents, and a **spend** key the
+/// one-time address is offset from. Publishing one is opt-in and is a public
+/// act — it says "this name accepts stealth payments" to anybody who resolves
+/// it.
+///
+/// The registry stores it but never interprets it. A malformed pair is not a
+/// security failure of the registry: the owner is publishing their own keys,
+/// and a sender derives an address it can verify before paying.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MetaAddress {
+    pub spend_key: BytesN<32>,
+    pub view_key: BytesN<32>,
 }
 
 #[contracttype]
@@ -266,6 +290,34 @@ fn save(e: &Env, name: &String, rec: &Record) {
         .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
+/// Read a published meta-address, refreshing its TTL the same way a name does.
+///
+/// The record is stored separately from `Record` so that adding it did not
+/// change the layout of names already on the ledger, and so that removing it
+/// is a single delete rather than a rewrite of the registration.
+fn load_meta(e: &Env, name: &String) -> Option<MetaAddress> {
+    let key = DataKey::Meta(name.clone());
+    let meta: Option<MetaAddress> = e.storage().persistent().get(&key);
+    if meta.is_some() {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
+    meta
+}
+
+fn save_meta(e: &Env, name: &String, meta: &MetaAddress) {
+    let key = DataKey::Meta(name.clone());
+    e.storage().persistent().set(&key, meta);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+fn remove_meta(e: &Env, name: &String) {
+    e.storage().persistent().remove(&DataKey::Meta(name.clone()));
+}
+
 fn state_of(rec: &Record, now: u64) -> NameState {
     if now < rec.expires_at {
         NameState::Active
@@ -382,6 +434,68 @@ impl VeilNames {
         }
     }
 
+    /// Publish the stealth meta-address a sender derives a one-time payment
+    /// address from.
+    ///
+    /// Holder only, and only while the name is active. Publishing is opt-in:
+    /// a name that never calls this stays a plain public payment destination,
+    /// which is the whole reason the getter returns an `Option` rather than a
+    /// default.
+    ///
+    /// The record is **not** carried over when a lapsed name is registered
+    /// again, even by the same holder. Otherwise a name that changed hands
+    /// would quietly keep pointing senders at the previous holder's keys, and
+    /// a name that lapsed would keep advertising a privacy record nobody had
+    /// re-published.
+    pub fn set_meta_address(e: Env, name: String, spend_key: BytesN<32>, view_key: BytesN<32>) {
+        let rec = load(&e, &name).unwrap_or_else(|| panic_with_error!(&e, Error::NameNotFound));
+        if state_of(&rec, e.ledger().timestamp()) != NameState::Active {
+            panic_with_error!(&e, Error::NameNotFound);
+        }
+        rec.owner.require_auth();
+
+        let meta = MetaAddress {
+            spend_key: spend_key.clone(),
+            view_key: view_key.clone(),
+        };
+        save_meta(&e, &name, &meta);
+        e.events().publish(
+            (Symbol::new(&e, "meta_set"), name),
+            (rec.owner, spend_key, view_key),
+        );
+    }
+
+    /// Remove the meta-address, returning the name to a plain public payment
+    /// destination. Holder only, and only while the name is active.
+    ///
+    /// Idempotent: removing a record that is not there leaves the name as it
+    /// was. A holder who wants to stop advertising stealth payments should not
+    /// have to find out first whether they ever started.
+    pub fn remove_meta_address(e: Env, name: String) {
+        let rec = load(&e, &name).unwrap_or_else(|| panic_with_error!(&e, Error::NameNotFound));
+        if state_of(&rec, e.ledger().timestamp()) != NameState::Active {
+            panic_with_error!(&e, Error::NameNotFound);
+        }
+        rec.owner.require_auth();
+
+        remove_meta(&e, &name);
+        e.events()
+            .publish((Symbol::new(&e, "meta_clear"), name), rec.owner);
+    }
+
+    /// The name's published meta-address, or `None`.
+    ///
+    /// An expired name returns `None` from the instant it lapses, exactly as
+    /// `resolve` does: a meta-address that outlived its registration would let
+    /// a sender derive a one-time address for a name nobody holds any more.
+    pub fn meta_address(e: Env, name: String) -> Option<MetaAddress> {
+        let rec = load(&e, &name)?;
+        if state_of(&rec, e.ledger().timestamp()) != NameState::Active {
+            return None;
+        }
+        load_meta(&e, &name)
+    }
+
     /// When a name runs out, whether or not it already has.
     pub fn expires_at(e: Env, name: String) -> Option<u64> {
         load(&e, &name).map(|r| r.expires_at)
@@ -423,6 +537,11 @@ impl VeilNames {
                     // has not been owned since `expires_at` as far as every
                     // read is concerned; this is where the ledger catches up.
                     Base::burn(&e, &prev.owner, prev.token_id);
+                    // A new registration starts with no privacy record. The
+                    // keys belong to whoever published them; carrying them to
+                    // a new term would advertise the old holder's view key for
+                    // a name they no longer hold.
+                    remove_meta(&e, &name);
                 }
             }
         }

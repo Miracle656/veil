@@ -484,6 +484,148 @@ fn an_expired_name_cannot_be_re_targeted() {
     );
 }
 
+// ───────────────────────── stealth meta-address ─────────────────────────
+//
+// A meta-address is opt-in and holder-only. The tests that matter are the
+// refusals: a stranger cannot publish one on somebody else's name, and an
+// expired or re-registered name does not keep advertising the previous
+// holder's keys.
+
+fn key(e: &Env, byte: u8) -> soroban_sdk::BytesN<32> {
+    soroban_sdk::BytesN::from_array(e, &[byte; 32])
+}
+
+#[test]
+fn the_holder_can_publish_a_meta_address() {
+    let f = setup();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+
+    f.client.set_meta_address(&n, &key(&f.e, 7), &key(&f.e, 9));
+
+    let meta = f.client.meta_address(&n).expect("a published record resolves");
+    assert_eq!(meta.spend_key, key(&f.e, 7));
+    assert_eq!(meta.view_key, key(&f.e, 9));
+}
+
+#[test]
+fn a_name_without_a_meta_address_answers_none() {
+    // Opt-in: registering a name does not silently make it advertise a
+    // privacy record.
+    let f = setup();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+
+    assert_eq!(f.client.meta_address(&n), None);
+}
+
+#[test]
+fn a_stranger_cannot_publish_a_meta_address() {
+    let f = setup();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+
+    // `setup` mocks every auth, which would make this vacuous.
+    f.e.set_auths(&[]);
+    assert!(f
+        .client
+        .try_set_meta_address(&n, &key(&f.e, 1), &key(&f.e, 2))
+        .is_err());
+
+    f.e.mock_all_auths();
+    assert_eq!(f.client.meta_address(&n), None);
+}
+
+#[test]
+fn a_stranger_cannot_remove_a_meta_address() {
+    let f = setup();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+    f.client.set_meta_address(&n, &key(&f.e, 7), &key(&f.e, 9));
+
+    f.e.set_auths(&[]);
+    assert!(f.client.try_remove_meta_address(&n).is_err());
+
+    f.e.mock_all_auths();
+    assert!(f.client.meta_address(&n).is_some());
+}
+
+#[test]
+fn the_holder_can_remove_the_meta_address() {
+    let f = setup();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+    f.client.set_meta_address(&n, &key(&f.e, 7), &key(&f.e, 9));
+
+    f.client.remove_meta_address(&n);
+
+    assert_eq!(f.client.meta_address(&n), None);
+    // Removing the privacy record does not disturb the name itself.
+    assert_eq!(f.client.resolve(&n), Some(f.alice.clone()));
+}
+
+#[test]
+fn removing_a_meta_address_never_published_is_a_no_op() {
+    let f = setup();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+
+    f.client.remove_meta_address(&n);
+
+    assert_eq!(f.client.meta_address(&n), None);
+    assert_eq!(f.client.resolve(&n), Some(f.alice.clone()));
+}
+
+#[test]
+fn an_unregistered_name_has_no_meta_address_and_cannot_publish_one() {
+    let f = setup();
+    let n = name(&f.e, "nobodyhasthis");
+
+    assert_eq!(f.client.meta_address(&n), None);
+    assert_eq!(
+        f.client
+            .try_set_meta_address(&n, &key(&f.e, 1), &key(&f.e, 2)),
+        Err(Ok(err(Error::NameNotFound)))
+    );
+}
+
+#[test]
+fn an_expired_name_has_no_meta_address() {
+    // Resolution stops at expiry, and so does the privacy record: a sender
+    // must not derive a one-time address for a name nobody holds.
+    let f = setup();
+    let start = f.e.ledger().timestamp();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+    f.client.set_meta_address(&n, &key(&f.e, 7), &key(&f.e, 9));
+
+    warp(&f, start + YEAR_SECONDS);
+
+    assert_eq!(f.client.meta_address(&n), None);
+    assert_eq!(
+        f.client
+            .try_set_meta_address(&n, &key(&f.e, 1), &key(&f.e, 2)),
+        Err(Ok(err(Error::NameNotFound)))
+    );
+}
+
+#[test]
+fn a_lapsed_name_loses_its_meta_address_when_somebody_else_registers_it() {
+    // The record belongs to the keys its holder published. A name that changes
+    // hands must not keep advertising the previous holder's view key.
+    let f = setup();
+    let start = f.e.ledger().timestamp();
+    let n = name(&f.e, "adebayo");
+    f.client.register(&f.alice, &n, &1);
+    f.client.set_meta_address(&n, &key(&f.e, 7), &key(&f.e, 9));
+
+    warp(&f, start + YEAR_SECONDS + RECOVERY_SECONDS);
+    f.client.register(&f.bob, &n, &1);
+
+    assert_eq!(f.client.resolve(&n), Some(f.bob.clone()));
+    assert_eq!(f.client.meta_address(&n), None);
+}
+
 // ───────────────────────── setup ─────────────────────────
 
 #[test]
