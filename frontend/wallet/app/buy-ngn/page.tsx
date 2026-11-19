@@ -103,7 +103,7 @@ export default function BuyWithNairaPage() {
     // The classic G-account Linq can actually pay. `ensureFeePayer` is
     // idempotent and already runs on the dashboard, so this is usually a
     // cache read rather than a fresh ceremony.
-    void ensureFeePayer()
+    void ensureFeePayer(undefined, { passive: true })
       .then((kp) => setDeliveryAddress(kp?.publicKey() ?? null))
       .catch(() => setDeliveryAddress(null))
   }, [])

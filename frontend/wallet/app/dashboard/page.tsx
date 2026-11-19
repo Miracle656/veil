@@ -264,7 +264,7 @@ function DashboardPageContent() {
     // Establish the fee-payer for this session (idempotent, fire-and-forget).
     // PRF wallets keep the seed in sessionStorage only — never copied to
     // localStorage — so the lock protects it at rest (ADR 0003, C3).
-    void ensureFeePayer().then(() => {
+    void ensureFeePayer(undefined, { passive: true }).then(() => {
       // After the fee-payer is established, check whether a silent PRF→legacy
       // downgrade occurred (issue #629). Show a banner if so.
       setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
