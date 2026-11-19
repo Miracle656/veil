@@ -3,7 +3,11 @@ const config = {
   preset: 'ts-jest',
   testEnvironment: 'jsdom',
   roots: ['<rootDir>'],
-  testMatch: ['**/__tests__/**/*.test.ts', '**/tests/**/*.test.ts'],
+  // `tests/` belongs to Vitest (`npm run test:vitest`). Listing it here too
+  // made both runners collect the same files, and the suites call `jest.mock`,
+  // which only Jest hoists — under Vitest they silently ran against the real
+  // modules instead of the mocks.
+  testMatch: ['**/__tests__/**/*.test.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
