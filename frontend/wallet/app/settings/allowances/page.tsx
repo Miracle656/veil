@@ -23,6 +23,7 @@ import {
   trackPairs,
 } from '@/lib/allowances'
 import { knownCandidatePairs, knownSpenders, knownTokens } from '@/lib/allowanceCandidates'
+import type { PublicRecurringTopupPlan } from '@veil/agent-recurring'
 
 const mono: React.CSSProperties = {
   fontFamily: 'Inconsolata, monospace',
@@ -62,6 +63,8 @@ export default function AllowancesPage() {
 
   const [walletAddress, setWalletAddress] = useState<string | null>(null)
   const [allowances, setAllowances] = useState<Allowance[]>([])
+  const [plans, setPlans] = useState<PublicRecurringTopupPlan[]>([])
+  const [cancellingPlanId, setCancellingPlanId] = useState<string | null>(null)
   const [loadState, setLoadState] = useState<'loading' | 'ready' | string>('loading')
   const [busyId, setBusyId] = useState<string | null>(null)
   const [status, setStatus] = useState<{ text: string; ok: boolean } | null>(null)
@@ -73,16 +76,52 @@ export default function AllowancesPage() {
   )
   const tokenInfo = useMemo(() => new Map(tokens.map((t) => [t.contractId, t])), [tokens])
 
+  const loadPlans = useCallback(async (address: string) => {
+    try {
+      const res = await fetch(`/api/recurring-topups?walletAddress=${encodeURIComponent(address)}`)
+      if (!res.ok) return
+      const data = (await res.json()) as { plans?: PublicRecurringTopupPlan[] }
+      setPlans(Array.isArray(data.plans) ? data.plans : [])
+    } catch {
+      // Plans are best-effort if the server route is unreachable.
+    }
+  }, [])
+
   const load = useCallback(async (address: string) => {
     setLoadState('loading')
     try {
       const pairs = [...loadTrackedPairs(walletLocal, address), ...knownCandidatePairs()]
-      setAllowances(await fetchAllowances(getNetwork().rpcUrl, address, pairs))
+      const [fetched] = await Promise.all([
+        fetchAllowances(getNetwork().rpcUrl, address, pairs),
+        loadPlans(address),
+      ])
+      setAllowances(fetched)
       setLoadState('ready')
     } catch (e) {
       setLoadState(e instanceof Error ? e.message : 'Could not read spending permissions.')
     }
-  }, [])
+  }, [loadPlans])
+
+  async function cancelRecurringPlan(planId: string) {
+    if (!walletAddress) return
+    setCancellingPlanId(planId)
+    setStatus(null)
+    try {
+      const res = await fetch(`/api/recurring-topups/${encodeURIComponent(planId)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress }),
+      })
+      const data = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(data.error ?? 'Could not cancel plan.')
+      setStatus({ text: `Cancelled recurring top-up plan ${planId}.`, ok: true })
+      await loadPlans(walletAddress)
+    } catch (e) {
+      setStatus({ text: e instanceof Error ? e.message : String(e), ok: false })
+    } finally {
+      setCancellingPlanId(null)
+    }
+  }
 
   useEffect(() => {
     const addr = walletSession.getItem('invisible_wallet_address')
@@ -184,7 +223,113 @@ export default function AllowancesPage() {
         )}
 
         <CheckSpender tokens={tokens} onCheck={checkSpender} />
+
+        <RecurringPlansSection
+          plans={plans}
+          cancellingPlanId={cancellingPlanId}
+          onCancel={cancelRecurringPlan}
+        />
       </div>
+    </div>
+  )
+}
+
+function RecurringPlansSection(props: {
+  plans: PublicRecurringTopupPlan[]
+  cancellingPlanId: string | null
+  onCancel: (planId: string) => void
+}) {
+  const net = getNetwork().name === 'mainnet' ? 'public' : 'testnet'
+  return (
+    <div style={{ marginTop: '2rem' }}>
+      <h2
+        style={{
+          fontFamily: 'Lora, Georgia, serif',
+          fontWeight: 600,
+          fontStyle: 'italic',
+          fontSize: '1.125rem',
+          color: 'var(--off-white)',
+          marginBottom: '0.5rem',
+        }}
+      >
+        Recurring top-up plans
+      </h2>
+      <p style={{ ...muted, marginBottom: '1rem' }}>
+        Repeating airtime and data top-ups paid from your allowance. Cancelling stops all future periods.
+      </p>
+
+      {props.plans.length === 0 ? (
+        <div className="card">
+          <p style={muted}>No recurring top-up plans.</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          {props.plans.map((plan) => (
+            <div key={plan.id} className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>
+                  {plan.provider} {plan.category} · ₦{plan.amountNgn.toLocaleString('en-NG')} ({plan.frequency})
+                </p>
+                <span
+                  style={{
+                    fontFamily: 'Anton, Impact, sans-serif',
+                    letterSpacing: '0.06em',
+                    fontSize: '0.6875rem',
+                    color: plan.status === 'active' ? 'var(--gold)' : 'rgba(246,247,248,0.5)',
+                  }}
+                >
+                  {plan.status.toUpperCase()}
+                </span>
+              </div>
+
+              <p style={muted}>
+                Line {plan.maskedPhone} · {plan.paidCount} of {plan.totalPeriods} paid
+                {plan.nextDueAt ? ` · Next due ${new Date(plan.nextDueAt).toLocaleString()}` : ''}
+              </p>
+
+              {plan.stopMessage && (
+                <p style={{ ...muted, color: 'rgba(252,165,165,0.9)', marginTop: '0.5rem' }}>
+                  {plan.stopMessage}
+                </p>
+              )}
+
+              {plan.periods
+                .filter((p) => p.txHash)
+                .map((p) => (
+                  <div key={p.idempotencyKey} style={{ marginTop: '0.5rem' }}>
+                    <p style={fieldLabel}>
+                      PERIOD {p.periodIndex + 1} · {p.status.toUpperCase()}
+                    </p>
+                    <a
+                      href={`https://stellar.expert/explorer/${net}/tx/${p.txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ ...mono, display: 'block', color: 'var(--gold)' }}
+                    >
+                      {p.txHash}
+                    </a>
+                    {p.errorMessage && (
+                      <p style={{ ...muted, color: 'rgba(252,165,165,0.9)' }}>{p.errorMessage}</p>
+                    )}
+                  </div>
+                ))}
+
+              {plan.status === 'active' && (
+                <div style={{ marginTop: '0.75rem' }}>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    disabled={props.cancellingPlanId === plan.id}
+                    onClick={() => props.onCancel(plan.id)}
+                  >
+                    {props.cancellingPlanId === plan.id ? 'Cancelling…' : 'Cancel plan'}
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

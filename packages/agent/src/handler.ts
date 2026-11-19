@@ -1,5 +1,6 @@
 import { runAgent, type AgentResult, type UserProfile } from './agent.js'
 import type { ChatTurn, LlmProvider } from './llm.js'
+import type { PublicRecurringTopupPlan } from './recurring/index.js'
 
 /**
  * One chat request, over plain HTTP.
@@ -94,7 +95,15 @@ export function parseChatRequest(body: unknown): ParseResult {
   return { ok: true, value: { message, walletAddress, feePayerAddress, profile, history } }
 }
 
-export async function handleChat(request: ChatRequest, llm: LlmProvider): Promise<AgentResult> {
+export interface HandleChatOptions {
+  listRecurringPlans?: (walletAddress: string) => Promise<PublicRecurringTopupPlan[]>
+}
+
+export async function handleChat(
+  request: ChatRequest,
+  llm: LlmProvider,
+  options?: HandleChatOptions,
+): Promise<AgentResult> {
   return runAgent(
     request.message,
     request.walletAddress,
@@ -102,6 +111,7 @@ export async function handleChat(request: ChatRequest, llm: LlmProvider): Promis
     request.feePayerAddress,
     request.profile,
     llm,
+    options?.listRecurringPlans ? { listRecurringPlans: options.listRecurringPlans } : undefined,
   )
 }
 

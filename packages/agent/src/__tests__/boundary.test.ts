@@ -124,6 +124,9 @@ describe('tool registry declares the boundary', () => {
       open_invest: 'prepare',
       open_swap: 'prepare',
       build_payment: 'prepare',
+      prepare_recurring_topup: 'prepare',
+      list_recurring_topups: 'read',
+      cancel_recurring_topup: 'prepare',
       request_user_approval: 'prepare',
     })
   })
@@ -237,6 +240,17 @@ const hostileInputs: Record<string, Record<string, unknown>> = {
   open_invest: { code: HOSTILE, asset_code: 'USDY', asset_issuer: SECRET, amount: RPC_URL },
   open_swap: { from_asset: HOSTILE, to_asset: SECRET, amount: RPC_URL },
   build_payment: { to_address: HOSTILE, asset: 'XLM', amount: 1, wallet_address: FEE_PAYER, memo: HOSTILE },
+  prepare_recurring_topup: {
+    category: 'airtime',
+    provider: 'MTN',
+    phone_number: '08031234567',
+    amount_ngn: 500,
+    frequency: 'weekly',
+    total_periods: 4,
+    nin: '12345678901',
+  },
+  list_recurring_topups: {},
+  cancel_recurring_topup: { plan_id: HOSTILE },
   request_user_approval: { transaction_xdr: 'AAAA', summary: HOSTILE },
 }
 

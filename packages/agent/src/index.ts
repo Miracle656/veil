@@ -39,3 +39,5 @@ export {
   isRegisteredIssuer,
   type RegisteredAsset,
 } from './assets.js'
+
+export * from './recurring/index.js'

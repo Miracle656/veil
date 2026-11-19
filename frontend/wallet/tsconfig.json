@@ -39,6 +39,9 @@
       "@veil/agent-llm": [
         "../../packages/agent/src/llm"
       ],
+      "@veil/agent-recurring": [
+        "../../packages/agent/src/recurring/index"
+      ],
       "@veil/agent-review": [
         "../mobile/lib/agentMessages"
       ],

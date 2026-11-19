@@ -6,7 +6,17 @@ import { createServer, type IncomingMessage, type Server as HttpServer } from 'h
 import { timingSafeEqual } from 'crypto'
 import { runAgent, type UserProfile } from './agent.js'
 import { providerFromEnv, type ChatTurn, type LlmProvider } from './llm.js'
-import { NETWORK } from './network.js'
+import { NETWORK, SOROBAN_RPC_URL } from './network.js'
+import {
+  assertNoNin,
+  checkOnChainAllowance,
+  createWraithBillClient,
+  FilePlanStore,
+  InMemoryPlanStore,
+  RecurringTopupRunner,
+  type AllowancePayer,
+  type CreateRecurringTopupInput,
+} from './recurring/index.js'
 
 // ── Resource limit constants ──────────────────────────────────────────────────
 // Max incoming WebSocket message size (64 KiB). Rejected at frame level so memory
@@ -89,6 +99,7 @@ export interface ServerOptions {
   rateMaxMessages?: number
   autoListen?: boolean
   llmProvider?: LlmProvider
+  recurringRunner?: RecurringTopupRunner
 }
 
 export interface AgentServerInstance {
@@ -98,6 +109,7 @@ export interface AgentServerInstance {
   connectionsByIp: Map<string, Set<WebSocket>>
   rateLimits: Map<string, number[]>
   conversations: Map<string, ChatTurn[]>
+  recurringRunner: RecurringTopupRunner
   close: () => Promise<void>
 }
 
@@ -115,6 +127,24 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
   const rateMaxMessages = options.rateMaxMessages ?? RATE_MAX_MESSAGES
   const llm = options.llmProvider ?? providerFromEnv()
   const port = options.port ?? parseInt(process.env.AGENT_PORT ?? '3001', 10)
+
+  const defaultAllowancePayer: AllowancePayer = {
+    checkAllowance: (params) => checkOnChainAllowance(SOROBAN_RPC_URL, params),
+    payFromAllowance: async () => {
+      throw new Error('No allowance payer is configured on this server.')
+    },
+  }
+  const recurringRunner =
+    options.recurringRunner ??
+    new RecurringTopupRunner({
+      store: process.env.RECURRING_PLANS_FILE
+        ? new FilePlanStore(process.env.RECURRING_PLANS_FILE)
+        : new InMemoryPlanStore(),
+      wraith: createWraithBillClient(
+        (process.env.WRAITH_URL || process.env.NEXT_PUBLIC_WRAITH_URL || '').trim(),
+      ),
+      payer: defaultAllowancePayer,
+    })
 
   // Per-wallet conversation history
   const conversations = new Map<string, ChatTurn[]>()
@@ -178,6 +208,61 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
 
   app.get('/health', (_req, res) => {
     res.json({ ok: true, network: NETWORK, model: llm.label })
+  })
+
+  // ── Recurring top-up plan endpoints ─────────────────────────────────────────
+  app.get('/recurring-topups', async (req, res) => {
+    const walletAddress = typeof req.query.walletAddress === 'string' ? req.query.walletAddress.trim() : ''
+    if (!walletAddress) {
+      res.status(400).json({ error: 'walletAddress query parameter is required.' })
+      return
+    }
+    const plans = await recurringRunner.listPlans(walletAddress)
+    res.json({ plans })
+  })
+
+  app.get('/recurring-topups/activity', async (req, res) => {
+    const walletAddress = typeof req.query.walletAddress === 'string' ? req.query.walletAddress.trim() : ''
+    if (!walletAddress) {
+      res.status(400).json({ error: 'walletAddress query parameter is required.' })
+      return
+    }
+    const activity = await recurringRunner.getActivityForWallet(walletAddress)
+    res.json({ activity })
+  })
+
+  app.post('/recurring-topups', async (req, res) => {
+    try {
+      assertNoNin(req.body)
+      const plan = await recurringRunner.createPlan(req.body as CreateRecurringTopupInput)
+      res.status(201).json({ plan })
+    } catch (err) {
+      res.status(400).json({ error: (err as Error).message })
+    }
+  })
+
+  app.post('/recurring-topups/:id/cancel', async (req, res) => {
+    const walletAddress =
+      typeof req.body?.walletAddress === 'string' ? req.body.walletAddress.trim() : ''
+    if (!walletAddress) {
+      res.status(400).json({ error: 'walletAddress is required to cancel a plan.' })
+      return
+    }
+    try {
+      const plan = await recurringRunner.cancelPlan(walletAddress, req.params.id)
+      res.json({ plan })
+    } catch (err) {
+      res.status(404).json({ error: (err as Error).message })
+    }
+  })
+
+  app.post('/recurring-topups/tick', async (req, res) => {
+    if (accessToken && !timingSafeEqualStr(tokenFromRequest(req), accessToken)) {
+      res.status(403).json({ error: 'Forbidden' })
+      return
+    }
+    const outcomes = await recurringRunner.runDuePlans()
+    res.json({ outcomes })
   })
 
   const httpServer = createServer(app)
@@ -249,13 +334,20 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
         try {
           const history = conversations.get(walletAddress) ?? []
 
-          const { response, pendingTxXdr, pendingTxSummary } = await runAgent(
+          const {
+            response,
+            pendingTxXdr,
+            pendingTxSummary,
+            recurringTopupIntent,
+            cancelTopupIntent,
+          } = await runAgent(
             userMessage,
             walletAddress,
             history,
             feePayerAddress,
             profile,
             llm,
+            { listRecurringPlans: (addr) => recurringRunner.listPlans(addr) },
           )
 
           // Update conversation history (keep last 20 turns, bounded wallet count)
@@ -267,6 +359,8 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
             type: 'response',
             message: response,
             ...(pendingTxXdr ? { pendingTxXdr, pendingTxSummary } : {}),
+            ...(recurringTopupIntent ? { recurringTopupIntent } : {}),
+            ...(cancelTopupIntent ? { cancelTopupIntent } : {}),
           }))
         } catch (err) {
           console.error('[agent] runAgent error:', (err as Error).message)
@@ -317,6 +411,7 @@ export function createAgentServer(options: ServerOptions = {}): AgentServerInsta
     connectionsByIp,
     rateLimits,
     conversations,
+    recurringRunner,
     close,
   }
 }
