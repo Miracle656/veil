@@ -396,6 +396,13 @@ export default function DashboardTab() {
         fallbackUsd={usd}
       />
 
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Savings</Text>
+        <Pressable onPress={() => router.push('/savings' as never)} hitSlop={8} accessibilityRole="button">
+          <Text style={styles.sectionLink}>Save money →</Text>
+        </Pressable>
+      </View>
+
       {/* Activity feed — 3 most recent, full history on the transactions page */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Collectibles</Text>
