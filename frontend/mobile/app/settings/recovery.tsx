@@ -24,7 +24,7 @@
  * not overruled by a check that passed before.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -32,12 +32,15 @@ import { useRouter } from 'expo-router';
 import { FlowHeader } from '../../components/FlowHeader';
 import { useTheme } from '../../hooks/useTheme';
 import { getLastBackupExportedAt } from '../../lib/backupFile';
+import * as Clipboard from 'expo-clipboard';
+import { Keypair } from '@stellar/stellar-sdk';
 import {
   deriveRecoveryStatus,
+  isFailedMove,
   type PrfRecoveryState,
   type RecoveryStatus,
 } from '../../lib/recoveryStatus';
-import { checkPasskeyRecovery } from '../../lib/recoveryStatusActions';
+import { checkPasskeyRecoveryDetails } from '../../lib/recoveryStatusActions';
 import { getFeePayerInfo } from '../../lib/feePayerSource';
 import { listRecoveryServerUrls } from '../../lib/recovery';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
@@ -50,6 +53,9 @@ export default function RecoverySettingsScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [status, setStatus] = useState<RecoveryStatus | null>(null);
   const [prf, setPrf] = useState<PrfRecoveryState>('unverified');
+  const [shortfallXlm, setShortfallXlm] = useState<number | undefined>(undefined);
+  const [spendingAddress, setSpendingAddress] = useState<string | null>(null);
+  const [copiedAddress, setCopiedAddress] = useState(false);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -58,6 +64,21 @@ export default function RecoverySettingsScreen() {
    * the difference between a hint and a loop.
    */
   const [failedChecks, setFailedChecks] = useState(0);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
+
+  const handleCopySpendingAddress = async () => {
+    if (!spendingAddress) return;
+    await Clipboard.setStringAsync(spendingAddress);
+    setCopiedAddress(true);
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => setCopiedAddress(false), 2000);
+  };
 
   const refresh = useCallback(async () => {
     const [walletAddress, signerSecret, backupLastExportedAt, servers, feePayer] = await Promise.all([
@@ -67,6 +88,15 @@ export default function RecoverySettingsScreen() {
       listRecoveryServerUrls(),
       getFeePayerInfo().catch(() => null),
     ]);
+    let addr: string | null = feePayer?.address ?? null;
+    if (!addr && signerSecret) {
+      try {
+        addr = Keypair.fromSecret(signerSecret).publicKey();
+      } catch {
+        addr = null;
+      }
+    }
+    setSpendingAddress(addr);
     setStatus(
       deriveRecoveryStatus({
         walletAddress,
@@ -75,9 +105,10 @@ export default function RecoverySettingsScreen() {
         backupLastExportedAt,
         recoveryServerCount: servers.length,
         prfFailedChecks: failedChecks,
+        moveShortfallXlm: shortfallXlm,
       })
     );
-  }, [prf, failedChecks]);
+  }, [prf, failedChecks, shortfallXlm]);
 
   useEffect(() => {
     void refresh();
@@ -87,9 +118,20 @@ export default function RecoverySettingsScreen() {
     setChecking(true);
     setError(null);
     try {
-      const outcome = await checkPasskeyRecovery();
-      setPrf(outcome);
-      setFailedChecks((n) => (outcome === 'ready' ? 0 : n + 1));
+      const outcome = await checkPasskeyRecoveryDetails();
+      setPrf(outcome.state);
+      setShortfallXlm(outcome.shortfallXlm);
+      setFailedChecks((n) => (outcome.state === 'ready' ? 0 : n + 1));
+      if (outcome.state === 'destination-reserve') {
+        const secret = await getSignerSecret();
+        if (secret) {
+          try {
+            setSpendingAddress(Keypair.fromSecret(secret).publicKey());
+          } catch {
+            // Keep existing address
+          }
+        }
+      }
     } catch (cause) {
       setFailedChecks((n) => n + 1);
       setError(cause instanceof Error ? cause.message : 'Could not check this passkey.');
@@ -123,6 +165,7 @@ export default function RecoverySettingsScreen() {
                 onPress={() => void checkPrf()}
                 disabled={checking}
                 accessibilityRole="button"
+                testID="recovery-prf-check"
                 style={({ pressed }) => [styles.button, pressed && styles.pressed]}
               >
                 {checking ? (
@@ -133,10 +176,15 @@ export default function RecoverySettingsScreen() {
               </Pressable>
             ) : !mechanism.ready ? (
               <Pressable
-                onPress={() =>
-                  router.push(mechanism.key === 'servers' ? '/recover' : '/settings/backup')
-                }
+                onPress={() => {
+                  if (mechanism.key === 'prf' && isFailedMove(prf)) {
+                    router.push('/settings/reveal-secret?subject=spending');
+                    return;
+                  }
+                  router.push(mechanism.key === 'servers' ? '/recover' : '/settings/backup');
+                }}
                 accessibilityRole="button"
+                testID={`recovery-${mechanism.key}-action`}
                 style={({ pressed }) => [styles.button, pressed && styles.pressed]}
               >
                 <Text style={styles.buttonText}>{mechanism.action}</Text>
@@ -146,6 +194,48 @@ export default function RecoverySettingsScreen() {
             )}
           </View>
         ))}
+
+        {prf === 'destination-reserve' && !!spendingAddress && (
+          <View style={styles.topUpCard} testID="recovery-topup-card">
+            <Text style={styles.topUpTitle}>Top up spending account</Text>
+            <Text style={styles.topUpBody}>
+              Send about {shortfallXlm ?? 1} more XLM to this spending address, then check again:
+            </Text>
+            <Text
+              style={styles.addressText}
+              selectable
+              testID="recovery-spending-address"
+            >
+              {spendingAddress}
+            </Text>
+            <View style={styles.topUpActions}>
+              <Pressable
+                onPress={() => void handleCopySpendingAddress()}
+                accessibilityRole="button"
+                accessibilityLabel="Copy spending address"
+                testID="recovery-copy-address"
+                style={({ pressed }) => [styles.secondary, pressed && styles.pressed, styles.copyButton]}
+              >
+                <Text style={styles.secondaryText}>
+                  {copiedAddress ? 'Copied' : 'Copy address'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void checkPrf()}
+                disabled={checking}
+                accessibilityRole="button"
+                testID="recovery-check-again"
+                style={({ pressed }) => [styles.button, pressed && styles.pressed]}
+              >
+                {checking ? (
+                  <ActivityIndicator color={colors.onAccent} />
+                ) : (
+                  <Text style={styles.buttonText}>Check passkey again</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        )}
 
         {failedChecks >= 2 && (
           <View style={styles.noticeCard}>
@@ -232,4 +322,39 @@ const createStyles = (colors: ThemeColors) =>
     secondaryText: { fontFamily: fontFamily.bodyMedium, fontSize: 14, color: colors.textPrimary },
     pressed: { opacity: 0.7 },
     error: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.danger },
+    topUpCard: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      gap: 10,
+      padding: 18,
+    },
+    topUpTitle: { fontFamily: fontFamily.bodySemiBold, fontSize: 16, color: colors.textStrong },
+    topUpBody: {
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 21,
+      color: colors.textSecondary,
+    },
+    addressText: {
+      fontFamily: fontFamily.address ?? fontFamily.body,
+      fontSize: 12,
+      lineHeight: 18,
+      color: colors.textStrong,
+      backgroundColor: colors.background,
+      borderColor: colors.border,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderRadius: 8,
+      padding: 10,
+    },
+    topUpActions: {
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'center',
+      marginTop: 4,
+    },
+    copyButton: {
+      flex: 1,
+    },
   });

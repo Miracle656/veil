@@ -115,6 +115,18 @@ it('does not switch when the move did not happen', async () => {
   expect(mockSetSignerSecret).not.toHaveBeenCalled();
 });
 
+it('propagates destination-reserve move refusal and shortfall amount', async () => {
+  mockMigrate.mockResolvedValue({ swept: false, reason: 'destination-reserve', shortfallXlm: 2 });
+
+  await expect(retryRecoveryBinding()).resolves.toEqual({
+    bound: false,
+    issue: 'destination-reserve',
+    shortfallXlm: 2,
+  });
+  expect(mockRetire).not.toHaveBeenCalled();
+  expect(mockSetSignerSecret).not.toHaveBeenCalled();
+});
+
 it('does not switch when the old key could not be kept', async () => {
   // Without the retired copy, replacing the secret destroys the only key to
   // an account that still holds its reserve.

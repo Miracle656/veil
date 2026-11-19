@@ -134,7 +134,7 @@ describe('deriveRecoveryStatus', () => {
     expect(status.mechanisms[0].detail).toContain('no passkey to recover from');
   });
 
-  it('explains a funded, unrepairable fee payer in consequences', () => {
+  it('explains a funded, unrepairable fee payer in consequences and offers saving key', () => {
     const status = deriveRecoveryStatus({
       ...wallet,
       prf: 'funded',
@@ -144,9 +144,80 @@ describe('deriveRecoveryStatus', () => {
     expect(status.mechanisms[0]).toMatchObject({
       ready: false,
       needsCheck: false,
-      action: 'Create an encrypted backup',
+      action: 'Save spending key',
     });
     expect(status.mechanisms[0].detail).toContain('nothing was changed');
+    expect(status.mechanisms[0].detail).not.toMatch(/try again later/i);
+    expect(status.mechanisms[0].detail).not.toMatch(/try this check again later/i);
+  });
+
+  it.each([
+    [
+      'destination-reserve',
+      'Your spending account needs about 1 more XLM before it can be moved. Send it to your spending address, then press the check again.',
+    ],
+    [
+      'pool-shares',
+      'It holds liquidity pool shares, which cannot be moved automatically. Withdraw your pool shares, then press the check again.',
+    ],
+    [
+      'open-offers',
+      'It has open trading offers that lock its balance. Cancel your open offers, then press the check again.',
+    ],
+    [
+      'frozen-asset',
+      'An asset issuer has frozen one of its trustlines, so it cannot be transferred. Contact the asset issuer or save your spending key.',
+    ],
+    [
+      'sponsorship',
+      'It is involved in account or entry sponsorship. Remove any active sponsorships, then press the check again.',
+    ],
+    [
+      'too-many-assets',
+      'It holds more assets than can be moved in a single transaction. Consolidate or send some assets to another account, then press the check again.',
+    ],
+    [
+      'no-destination-key',
+      'The destination account key was not available to establish required trustlines. Save your spending key to protect your funds.',
+    ],
+    [
+      'funded',
+      'Save its key from the warning on the home screen or settings. An encrypted backup does not include that key.',
+    ],
+  ])(
+    'gives %s its own tested sentence and offers saving the key',
+    (reason, expectedFragment) => {
+      const status = deriveRecoveryStatus({
+        ...wallet,
+        prf: reason as any,
+        backupLastExportedAt: null,
+        recoveryServerCount: 0,
+      });
+      expect(status.mechanisms[0]).toMatchObject({
+        ready: false,
+        needsCheck: false,
+        action: 'Save spending key',
+      });
+      expect(status.mechanisms[0].detail).toContain(
+        'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was.'
+      );
+      expect(status.mechanisms[0].detail).toContain(expectedFragment);
+      expect(status.mechanisms[0].detail).not.toMatch(/try again later/i);
+      expect(status.mechanisms[0].detail).not.toMatch(/try this check again later/i);
+    }
+  );
+
+  it('formats destination-reserve with custom shortfall XLM', () => {
+    const status = deriveRecoveryStatus({
+      ...wallet,
+      prf: 'destination-reserve',
+      backupLastExportedAt: null,
+      recoveryServerCount: 0,
+      moveShortfallXlm: 3,
+    });
+    expect(status.mechanisms[0].detail).toContain(
+      'Your spending account needs about 3 more XLM before it can be moved. Send it to your spending address, then press the check again.'
+    );
   });
 
   it('leaves an unrecorded wallet on the one-prompt check', () => {

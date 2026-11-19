@@ -8,6 +8,7 @@ import { inclusionFee } from './fees';
 import { getNetwork } from './network';
 import { SDK_KEY_ID, getCredentialId, getSdkItem } from './sdkStorage';
 import { evaluatePrf } from './passkey';
+import type { MoveRefusal } from './feePayerMove';
 import type { PrfOutcome } from './prfOutcome';
 import { fundWithFriendbot } from './testnetWallet';
 import { writeBreadcrumbs } from './walletBreadcrumbs';
@@ -166,7 +167,11 @@ async function accountExists(address: string): Promise<boolean> {
 
 export type RecoveryRetry =
   | { bound: true }
-  | { bound: false; issue: Exclude<PrfOutcome, 'ok'> | 'funded' };
+  | {
+      bound: false;
+      issue: Exclude<PrfOutcome, 'ok'> | 'funded' | MoveRefusal;
+      shortfallXlm?: number;
+    };
 
 export type Recreation = { ok: true; result: PasskeyWalletResult } | { ok: false; reason: 'funded' };
 
@@ -265,6 +270,19 @@ export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
       // locked behind three subentries. Refuse until the reserve can be
       // freed by closing the account rather than sweeping it.
       if (!moved.swept && moved.reason !== 'legacy-empty') {
+        const isMoveRefusal = (r: string): r is MoveRefusal =>
+          [
+            'destination-reserve',
+            'pool-shares',
+            'open-offers',
+            'frozen-asset',
+            'sponsorship',
+            'too-many-assets',
+            'no-destination-key',
+          ].includes(r);
+        if (typeof moved.reason === 'string' && isMoveRefusal(moved.reason)) {
+          return { bound: false, issue: moved.reason, shortfallXlm: moved.shortfallXlm };
+        }
         return { bound: false, issue: 'funded' };
       }
     }

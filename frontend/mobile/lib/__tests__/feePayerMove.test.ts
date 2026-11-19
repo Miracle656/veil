@@ -92,6 +92,8 @@ describe('planMove — it moves everything or nothing', () => {
     expect(planMove({ ...base, from: INCIDENT, xlmStroops: toStroops('1.4') })).toEqual({
       ok: false,
       reason: 'destination-reserve',
+      shortfallStroops: 1_000_000n,
+      shortfallXlm: 1,
     });
   });
 
@@ -100,7 +102,42 @@ describe('planMove — it moves everything or nothing', () => {
     expect(planMove({ from: INCIDENT, to, xlmStroops: 0n, hasDestinationKey: true })).toEqual({
       ok: false,
       reason: 'destination-reserve',
+      shortfallStroops: 3_000_000n,
+      shortfallXlm: 1,
     });
+  });
+
+  it('calculates shortfall and proves that topping up by exactly that amount passes planMove', () => {
+    // Real scenario from incident: account held 2.66 XLM, 2.5 XLM locked, leaving 0.16 XLM free.
+    const strandedAccount: MoveAccount = {
+      balances: [usdc('0.0000000'), native('2.6600000')],
+      subentry_count: 3,
+    };
+    const freeToMove = toStroops('0.1600000');
+    const refusedPlan = planMove({
+      from: strandedAccount,
+      to: null,
+      xlmStroops: freeToMove,
+      hasDestinationKey: true,
+    });
+
+    expect(refusedPlan.ok).toBe(false);
+    if (refusedPlan.ok) return;
+
+    expect(refusedPlan.reason).toBe('destination-reserve');
+    expect(refusedPlan.shortfallXlm).toBeDefined();
+    expect(refusedPlan.shortfallXlm).toBe(1); // 1.0 needed - 0.16 have = 0.84 shortfall -> 1 XLM
+
+    // Top up by exactly that amount:
+    const topUpStroops = BigInt(refusedPlan.shortfallXlm!) * 10_000_000n;
+    const passedPlan = planMove({
+      from: strandedAccount,
+      to: null,
+      xlmStroops: freeToMove + topUpStroops,
+      hasDestinationKey: true,
+    });
+
+    expect(passedPlan.ok).toBe(true);
   });
 
   it('refuses a trustline it cannot sign for', () => {

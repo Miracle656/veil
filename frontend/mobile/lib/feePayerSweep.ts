@@ -22,7 +22,7 @@
 import { Horizon, Networks } from '@stellar/stellar-sdk';
 
 import { planFeePayerRecovery, retainedForSweep, type RecoveryPlan } from './feePayerRecovery';
-import { holdsOtherAssets, submitMove, type MoveAccount } from './feePayerMove';
+import { holdsOtherAssets, submitMove, MoveRefusedError, type MoveAccount, type MoveRefusal } from './feePayerMove';
 import { readBreadcrumbs } from './walletBreadcrumbs';
 
 export type AccountSnapshot = {
@@ -58,7 +58,7 @@ export type SweepSkipped =
 
 export type SweepOutcome =
   | { swept: true; amount: string; txHash: string; from: string; to: string }
-  | { swept: false; reason: SweepSkipped | string };
+  | { swept: false; reason: SweepSkipped | MoveRefusal | string; shortfallXlm?: number };
 
 /**
  * Look for a fee-payer stranded by the credential-id-to-PRF move, and bring it
@@ -199,8 +199,11 @@ export async function migrateFeePayerToPasskey(
   try {
     const txHash = await deps.sendXlm(params.fromSecret, params.to, amount, params.toSecret ?? null);
     return { swept: true, amount, txHash, from: params.from, to: params.to };
-  } catch {
+  } catch (error) {
     // The money has not moved, so the caller must NOT adopt the new key.
+    if (error instanceof MoveRefusedError) {
+      return { swept: false, reason: error.reason, shortfallXlm: error.shortfallXlm };
+    }
     return { swept: false, reason: 'sweep-failed' };
   }
 }

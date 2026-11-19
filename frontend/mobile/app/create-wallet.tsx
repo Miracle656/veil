@@ -562,7 +562,7 @@ function recoveryTitle(issue: 'unsupported' | 'cancelled' | 'failed' | 'funded')
  * whose stock password manager has no PRF got stuck, and every case here has a
  * repair that lives on this screen instead.
  */
-function recoveryMessage(issue: 'unsupported' | 'cancelled' | 'failed' | 'funded'): string {
+function recoveryMessage(issue: string): string {
   switch (issue) {
     case 'unsupported':
       return "Your passkey was saved in a password manager that can't hold a recovery secret, so on a new phone the passkey alone would not be enough to find this wallet. Use a different passkey, or save a recovery file — either one fixes it. Do it before adding money.";

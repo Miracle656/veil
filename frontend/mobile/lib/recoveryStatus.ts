@@ -1,4 +1,5 @@
 import type { FeePayerSource } from './feePayerSource';
+import type { MoveRefusal } from './feePayerMove';
 import type { PrfOutcome } from './prfOutcome';
 
 export type PrfRecoveryState =
@@ -12,7 +13,26 @@ export type PrfRecoveryState =
   | 'legacy'
   /** A keypair-mode testnet wallet: there is no passkey to recover from. */
   | 'keypair'
+  | MoveRefusal
   | Exclude<PrfOutcome, 'ok'>;
+
+export const MOVE_REFUSAL_REASONS: readonly MoveRefusal[] = [
+  'destination-reserve',
+  'pool-shares',
+  'open-offers',
+  'frozen-asset',
+  'sponsorship',
+  'too-many-assets',
+  'no-destination-key',
+] as const;
+
+export function isMoveRefusal(state: string): state is MoveRefusal {
+  return (MOVE_REFUSAL_REASONS as readonly string[]).includes(state);
+}
+
+export function isFailedMove(state: PrfRecoveryState): boolean {
+  return state === 'funded' || isMoveRefusal(state);
+}
 
 /**
  * Seed the PRF state from the record the create path writes (#1178, the same
@@ -50,6 +70,8 @@ export type RecoveryStatusInput = {
    * instructions about the same button.
    */
   prfFailedChecks?: number;
+  /** Shortfall in XLM when the move was refused for destination-reserve. */
+  moveShortfallXlm?: number;
 };
 export type RecoveryMechanism = {
   key: 'prf' | 'backup' | 'servers';
@@ -70,7 +92,12 @@ export type RecoveryStatus = {
  * What the PRF row says, in consequences rather than mechanism (#1178): what
  * still works, what does not, and what to do about it. Never any key material.
  */
-function prfDetail(hasWallet: boolean, prf: PrfRecoveryState, exhausted = false): string {
+function prfDetail(
+  hasWallet: boolean,
+  prf: PrfRecoveryState,
+  exhausted = false,
+  shortfallXlm?: number,
+): string {
   if (!hasWallet) return 'Set up a wallet to check its recovery options.';
   // Past the screen's own retry threshold, pointing at the passkey again is
   // advice it has already stopped believing. Point at the backup instead.
@@ -95,11 +122,24 @@ function prfDetail(hasWallet: boolean, prf: PrfRecoveryState, exhausted = false)
       return 'This wallet predates passkey recovery secrets: it can be restored from the passkey, but through a derivation anyone who learns the (non-secret) credential ID can rebuild. Keep only fee money on the fee payer.';
     case 'keypair':
       return 'A keypair-mode testnet wallet has no passkey to recover from. An encrypted backup is its only recovery path.';
+    case 'destination-reserve': {
+      const amount = shortfallXlm && shortfallXlm > 0 ? shortfallXlm : 1;
+      return `Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. Your spending account needs about ${amount} more XLM before it can be moved. Send it to your spending address, then press the check again.`;
+    }
+    case 'pool-shares':
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. It holds liquidity pool shares, which cannot be moved automatically. Withdraw your pool shares, then press the check again.';
+    case 'open-offers':
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. It has open trading offers that lock its balance. Cancel your open offers, then press the check again.';
+    case 'frozen-asset':
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. An asset issuer has frozen one of its trustlines, so it cannot be transferred. Contact the asset issuer or save your spending key.';
+    case 'sponsorship':
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. It is involved in account or entry sponsorship. Remove any active sponsorships, then press the check again.';
+    case 'too-many-assets':
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. It holds more assets than can be moved in a single transaction. Consolidate or send some assets to another account, then press the check again.';
+    case 'no-destination-key':
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. The destination account key was not available to establish required trustlines. Save your spending key to protect your funds.';
     case 'funded':
-      // This used to send the user to the encrypted backup. The backup never
-      // holds a private key, so it cannot save a spending account, and saying
-      // it could is how someone ends up believing they are covered.
-      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. It still lives only on this phone. Save its key from the warning on the home screen, then try this check again later. An encrypted backup does not include that key.';
+      return 'Veil could not move your spending account to one your passkey can restore, so nothing was changed and your money is where it was. It still lives only on this phone. Save its key from the warning on the home screen or settings. An encrypted backup does not include that key.';
     case 'unsupported':
       return 'This passkey manager does not support PRF, so the passkey alone can never restore this wallet on another device. Everything on this device keeps working. Create an encrypted backup instead.';
     default:
@@ -131,10 +171,12 @@ export function deriveRecoveryStatus(input: RecoveryStatusInput): RecoveryStatus
       action:
         input.prf === 'random'
           ? 'Repair with passkey'
-          : needsPrfCheck
-            ? 'Check passkey'
-            : 'Create an encrypted backup',
-      detail: prfDetail(hasWallet, input.prf, exhausted),
+          : isFailedMove(input.prf)
+            ? 'Save spending key'
+            : needsPrfCheck
+              ? 'Check passkey'
+              : 'Create an encrypted backup',
+      detail: prfDetail(hasWallet, input.prf, exhausted, input.moveShortfallXlm),
     },
     {
       key: 'backup',

@@ -98,7 +98,14 @@ export type MovePlan =
       /** Reserve released by the closed trustlines, in stroops. */
       freedStroops: bigint;
     }
-  | { ok: false; reason: MoveRefusal };
+  | {
+      ok: false;
+      reason: MoveRefusal;
+      /** How many stroops the destination is short of its reserve. */
+      shortfallStroops?: bigint;
+      /** Suggested top-up in whole XLM (rounded up with fee headroom). */
+      shortfallXlm?: number;
+    };
 
 const STROOPS_PER_XLM = 10_000_000n;
 /** Stellar's base reserve: 0.5 XLM. An account holds two, plus one per subentry. */
@@ -180,14 +187,29 @@ export function planMove(input: {
   // The new account must be able to hold what arrives: two base reserves for
   // itself and one for every trustline, old and new.
   const xlm = input.xlmStroops > 0n ? input.xlmStroops : 0n;
+  let needed: bigint;
+  let have: bigint;
   if (to === null) {
-    const needed = (2n + newTrustlines) * BASE_RESERVE;
-    if (xlm < needed) return { ok: false, reason: 'destination-reserve' };
+    needed = (2n + newTrustlines) * BASE_RESERVE;
+    have = xlm;
   } else {
     const native = to.balances.find((b) => b.asset_type === 'native');
-    const have = toStroops(native?.balance ?? '0') + xlm;
-    const needed = (2n + BigInt(to.subentry_count) + newTrustlines) * BASE_RESERVE;
-    if (have < needed) return { ok: false, reason: 'destination-reserve' };
+    have = toStroops(native?.balance ?? '0') + xlm;
+    needed = (2n + BigInt(to.subentry_count) + newTrustlines) * BASE_RESERVE;
+  }
+  if (have < needed) {
+    const shortfallStroops = needed - have;
+    // Work out the shortfall from the same numbers planMove already has: what
+    // the new account needs, minus the XLM that can go across. Round up to a
+    // number a person would actually send, and add a small margin for the fee.
+    const shortfallXlmRaw = Number(shortfallStroops) / Number(STROOPS_PER_XLM);
+    const shortfallXlm = Math.max(1, Math.ceil(shortfallXlmRaw + 0.05));
+    return {
+      ok: false,
+      reason: 'destination-reserve',
+      shortfallStroops,
+      shortfallXlm,
+    };
   }
 
   return {
@@ -201,7 +223,10 @@ export function planMove(input: {
 
 /** What a refusal means, for a log line or an error message. */
 export class MoveRefusedError extends Error {
-  constructor(public readonly reason: MoveRefusal) {
+  constructor(
+    public readonly reason: MoveRefusal,
+    public readonly shortfallXlm?: number,
+  ) {
     super(`move-refused:${reason}`);
     this.name = 'MoveRefusedError';
   }
@@ -253,7 +278,7 @@ export async function submitMove(params: {
     xlmStroops: toStroops(params.xlmAmount),
     hasDestinationKey: toKey !== null,
   });
-  if (!plan.ok) throw new MoveRefusedError(plan.reason);
+  if (!plan.ok) throw new MoveRefusedError(plan.reason, plan.shortfallXlm);
 
   const builder = new TransactionBuilder(fromAccount, {
     fee: params.fee,
