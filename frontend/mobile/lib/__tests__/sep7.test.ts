@@ -1,7 +1,8 @@
 import { buildSep7Memo, buildSep7PayUri, looksLikeStellarAddress, parseQrValue, parseSep7Uri } from '../sep7';
 
-const DESTINATION = 'GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ';
-const ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+const DESTINATION = 'GCSWM5I2FRYFIDSVJDGLWDH4TMQZY6IVT4JDF2SCFW6PPJ56TSBH23NO';
+const ISSUER = 'GD2VUFNSFXBAVZEZIU6VRPFU2KMSU4VQKP65SCE4TR5C2MJPLJ6VEAIM';
+const CONTRACT = 'CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WJ5LKR5PNUCGLIMAO4K';
 
 describe('parseSep7Uri', () => {
   it('parses a destination-only pay URI', () => {
@@ -68,7 +69,7 @@ describe('parseSep7Uri', () => {
 describe('looksLikeStellarAddress', () => {
   it('accepts 56-character G and C addresses', () => {
     expect(looksLikeStellarAddress(DESTINATION)).toBe(true);
-    expect(looksLikeStellarAddress(`C${DESTINATION.slice(1)}`)).toBe(true);
+    expect(looksLikeStellarAddress(CONTRACT)).toBe(true);
   });
 
   it('rejects the wrong length or prefix', () => {

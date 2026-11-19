@@ -21,7 +21,7 @@ module.exports = {
   modulePaths: ['<rootDir>/node_modules'],
   transformIgnorePatterns: expoPreset.transformIgnorePatterns.map((pattern) =>
     pattern.startsWith('/node_modules/(?!(')
-      ? pattern.replace('(?!(', '(?!(@noble|@walletconnect|')
+      ? pattern.replace('(?!(', '(?!(@exodus|@noble|@stellar|@walletconnect|uint8array-extras|')
       : pattern
   ),
   moduleNameMapper: {

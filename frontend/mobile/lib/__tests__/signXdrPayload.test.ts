@@ -147,7 +147,7 @@ function contractInstanceKey(contractId: string): xdr.LedgerKey {
     new xdr.LedgerKeyContractData({
       contract: Address.fromString(contractId).toScAddress(),
       key: xdr.ScVal.scvLedgerKeyContractInstance(),
-      durability: xdr.ContractDataDurability.persistent(),
+      durability: xdr.ContractDataDurability.persistent,
     }),
   );
 }
@@ -202,14 +202,17 @@ let simulations: { kind: 'recording' | 'nonce' | 'enforce' }[];
 
 function invokedFunctionName(tx: Transaction): string {
   const op = tx.operations[0] as Operation.InvokeHostFunction;
-  return op.func.invokeContract().functionName().toString();
+  if (op.func.type !== 'hostFunctionTypeInvokeContract') return '';
+  return op.func.invokeContract.functionName.toString();
 }
 
 function isSigned(tx: Transaction): boolean {
   const op = tx.operations[0] as Operation.InvokeHostFunction;
-  return (op.auth ?? []).some(
-    (entry) => entry.credentials().address().signature().switch().name !== 'scvVoid',
-  );
+  return (op.auth ?? []).some((entry) => {
+    const credentials = entry.credentials;
+    return credentials.type === 'sorobanCredentialsAddress'
+      && credentials.address.signature.type !== 'scvVoid';
+  });
 }
 
 async function fakeSimulate(tx: Transaction) {
@@ -271,11 +274,20 @@ function hostOp(tx: Transaction): Operation.InvokeHostFunction {
 function walletCredentials(tx: Transaction): xdr.SorobanAddressCredentials {
   const auth = hostOp(tx).auth ?? [];
   expect(auth).toHaveLength(1);
-  return auth[0].credentials().address();
+  const credentials = auth[0].credentials;
+  if (credentials.type !== 'sorobanCredentialsAddress') {
+    throw new Error('expected an address credential');
+  }
+  return credentials.address;
+}
+
+function scBytes(value: xdr.ScVal): Uint8Array {
+  return (value as unknown as { bytes: { toBytes(): Uint8Array } }).bytes.toBytes();
 }
 
 function signatureVector(tx: Transaction): xdr.ScVal[] {
-  return walletCredentials(tx).signature().vec() ?? [];
+  const signature = walletCredentials(tx).signature;
+  return signature.type === 'scvVec' ? signature.vec ?? [] : [];
 }
 
 beforeAll(() => {
@@ -291,7 +303,7 @@ beforeEach(() => {
   );
   jest
     .spyOn(SorobanRpc.Server.prototype, 'getLatestLedger')
-    .mockResolvedValue({ id: 'x', protocolVersion: '22', sequence: LATEST_LEDGER });
+    .mockResolvedValue({ id: 'x', protocolVersion: '22', sequence: LATEST_LEDGER } as never);
   jest
     .spyOn(SorobanRpc.Server.prototype, 'getAccount')
     .mockImplementation(async (id: string) => new Account(id, FEE_PAYER_SEQUENCE));
@@ -321,8 +333,8 @@ describe('requirement 1: the host function', () => {
     const output = await sign_();
 
     const credentials = walletCredentials(output);
-    expect(Address.fromScAddress(credentials.address()).toString()).toBe(WALLET);
-    expect(credentials.signature().switch().name).toBe('scvVec');
+    expect(Address.fromScAddress(credentials.address).toString()).toBe(WALLET);
+    expect(credentials.signature.type).toBe('scvVec');
   });
 });
 
@@ -344,9 +356,9 @@ describe('requirement 2: a low-S signature', () => {
 
   it('puts a low-S signature in the credential, still valid for the passkey', async () => {
     const vector = signatureVector(await sign_());
-    const authData = Buffer.from(vector[1].bytes());
-    const clientDataJSON = Buffer.from(vector[2].bytes());
-    const signature = Buffer.from(vector[3].bytes());
+    const authData = Buffer.from(scBytes(vector[1]));
+    const clientDataJSON = Buffer.from(scBytes(vector[2]));
+    const signature = Buffer.from(scBytes(vector[3]));
 
     expect(signature).toHaveLength(64);
     const s = BigInt(`0x${signature.subarray(32).toString('hex')}`);
@@ -370,7 +382,7 @@ describe('requirement 3: an expiration ledger', () => {
   it('sets a future expiration on the credential', async () => {
     const credentials = walletCredentials(await sign_());
 
-    expect(credentials.signatureExpirationLedger()).toBe(LATEST_LEDGER + 100);
+    expect(credentials.signatureExpirationLedger).toBe(LATEST_LEDGER + 100);
   });
 
   it('signs the same expiration it attaches', async () => {
@@ -380,13 +392,13 @@ describe('requirement 3: an expiration ledger', () => {
     const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
       new xdr.HashIdPreimageSorobanAuthorization({
         networkId: hash(Buffer.from(Networks.TESTNET)),
-        nonce: credentials.nonce(),
-        invocation: (hostOp(output).auth ?? [])[0].rootInvocation(),
-        signatureExpirationLedger: credentials.signatureExpirationLedger(),
+        nonce: credentials.nonce,
+        invocation: (hostOp(output).auth ?? [])[0].rootInvocation,
+        signatureExpirationLedger: credentials.signatureExpirationLedger,
       }),
     );
     // What the host will compute is what the passkey must have been asked to sign.
-    const expectedChallenge = hash(preimage.toXDR()).toString('base64url');
+    const expectedChallenge = Buffer.from(hash(preimage.toXDR())).toString('base64url');
 
     expect(mockCeremonies[0].challenge).toBe(expectedChallenge);
   });
@@ -408,11 +420,15 @@ describe('requirement 4: a footprint from re-simulation', () => {
 
   it('assembles with the enforce-mode footprint, which includes the wallet', async () => {
     const output = await sign_();
-    const data = output.toEnvelope().v1().tx().ext().sorobanData();
-    const readOnly = data.resources().footprint().readOnly().map((key) => key.toXDR('base64'));
+    const envelope = output.toEnvelope();
+    if (envelope.type !== 'envelopeTypeTx') throw new Error('expected a v1 envelope');
+    const ext = envelope.v1.tx.ext;
+    if (ext.type !== 'sorobanData') throw new Error('expected soroban data');
+    const data = ext.sorobanData;
+    const readOnly = data.resources.footprint.readOnly.map((key: xdr.LedgerKey) => key.toXDR('base64'));
 
     expect(readOnly).toContain(contractInstanceKey(WALLET).toXDR('base64'));
-    expect(data.resourceFee().toString()).toBe('90000');
+    expect(data.resourceFee.toString()).toBe('90000');
   });
 });
 
@@ -434,7 +450,7 @@ describe('requirement 5: the right sequence', () => {
     const output = await sign_();
 
     expect(output.signatures).toHaveLength(1);
-    expect(FEE_PAYER.verify(output.hash(), output.signatures[0].signature())).toBe(true);
+    expect(FEE_PAYER.verify(output.hash(), output.signatures[0].signature)).toBe(true);
   });
 });
 
@@ -450,8 +466,8 @@ describe('requirement 6: a 5-element signature vector', () => {
     const vector = signatureVector(await sign_());
 
     expect(vector).toHaveLength(5);
-    expect(Buffer.from(vector[0].bytes())).toEqual(Buffer.from(mockPasskeyPublicKey));
-    expect(vector[4].switch().name).toBe('scvU64');
+    expect(Buffer.from(scBytes(vector[0]))).toEqual(Buffer.from(mockPasskeyPublicKey));
+    expect(vector[4].type).toBe('scvU64');
     expect(scValToNative(vector[4])).toBe(WALLET_NONCE);
   });
 

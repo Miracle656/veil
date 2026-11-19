@@ -347,14 +347,14 @@ function checkAuthEntries(
 ): void {
   let forWallet = 0
   for (const entry of authEntries) {
-    const cred = entry.credentials()
-    if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+    const cred = entry.credentials
+    if (cred.type !== 'sorobanCredentialsAddress') {
       throw new WalletConnectRefusal(
         getSdkError('UNSUPPORTED_ACCOUNTS').code,
         'The request asks for authorization by the transaction source account. This wallet only authorizes as its own contract.',
       )
     }
-    const address = Address.fromScAddress(cred.address().address()).toString()
+    const address = Address.fromScAddress(cred.address.address).toString()
     if (address !== walletAddress) {
       throw new WalletConnectRefusal(
         getSdkError('UNSUPPORTED_ACCOUNTS').code,
@@ -414,15 +414,17 @@ async function signXdrPayload(
 
   for (const parsed of authEntries) {
     // checkAuthEntries has already refused every other credential type.
-    const addrCred = parsed.credentials().address()
-    const contractAddr = Address.fromScAddress(addrCred.address()).toString()
+    const credentials = parsed.credentials
+    if (credentials.type !== 'sorobanCredentialsAddress') continue
+    const addrCred = credentials.address
+    const contractAddr = Address.fromScAddress(addrCred.address).toString()
     const currentNonce = await getWalletNonce(rpc, contractAddr, network.networkPassphrase)
 
     const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
       new xdr.HashIdPreimageSorobanAuthorization({
-        networkId: Buffer.from(networkIdBytes),
-        nonce: addrCred.nonce(),
-        invocation: parsed.rootInvocation(),
+        networkId: new Uint8Array(networkIdBytes),
+        nonce: addrCred.nonce,
+        invocation: parsed.rootInvocation,
         signatureExpirationLedger: validUntilLedger,
       }),
     )
@@ -435,7 +437,7 @@ async function signXdrPayload(
       throw new Error('USER_REJECTED')
     }
 
-    const sigElements = [
+    const sigElements: xdr.ScVal[] = [
       nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
       nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
       nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
@@ -444,18 +446,15 @@ async function signXdrPayload(
     if (currentNonce !== null) {
       sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }))
     }
-    const sigVec = xdr.ScVal.scvVec(sigElements)
-
-    parsed.credentials(
+    (parsed as { credentials: xdr.SorobanCredentials }).credentials =
       xdr.SorobanCredentials.sorobanCredentialsAddress(
         new xdr.SorobanAddressCredentials({
-          address: addrCred.address(),
-          nonce: addrCred.nonce(),
+          address: addrCred.address,
+          nonce: addrCred.nonce,
           signatureExpirationLedger: validUntilLedger,
-          signature: sigVec,
+          signature: xdr.ScVal.scvVec(sigElements),
         }),
-      ),
-    )
+      )
   }
 
   // Re-simulate with signed auth entries embedded so the simulator runs in

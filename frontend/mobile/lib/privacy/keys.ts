@@ -75,10 +75,9 @@ function concatBytes(...parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-function sha256(data: Uint8Array): Buffer {
-  // stellar-base types `hash` as Buffer in/out; wrapping the bytes is a view,
-  // not a copy, so the digest is exactly SHA-256 of those bytes.
-  return hash(Buffer.from(data));
+function sha256(data: Uint8Array): Uint8Array {
+  // SDK 17's `hash` returns Uint8Array; it hashes exactly these bytes.
+  return hash(new Uint8Array(data));
 }
 
 /** The SEP-53 payload SPP signs: prefix || message, as the raw bytes to hash. */

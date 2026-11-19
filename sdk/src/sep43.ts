@@ -189,14 +189,14 @@ export async function signSorobanAuthEntry(
   } catch (err) {
     throw new Error(`Invalid SorobanAuthorizationEntry XDR: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const credentials = entry.credentials();
+  const credentials = entry.credentials;
 
-  if (credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+  if (credentials.type !== 'sorobanCredentialsAddress') {
     throw new Error('Only address credentials (SorobanCredentialsAddress) can be signed.');
   }
 
-  const addressCredentials = credentials.address();
-  const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
+  const addressCredentials = credentials.address;
+  const contractAddress = Address.fromScAddress(addressCredentials.address).toString();
 
   if (contractAddress !== options.signerAddress) {
     throw new Error(
@@ -206,22 +206,22 @@ export async function signSorobanAuthEntry(
 
   const sigExpLedger =
     options.validUntilLedger ??
-    (addressCredentials.signatureExpirationLedger() || 100);
+    (addressCredentials.signatureExpirationLedger || 100);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const networkIdBytes = (stellarHash as any)(Buffer.from(options.networkPassphrase));
+  const networkIdBytes = (stellarHash as any)(new TextEncoder().encode(options.networkPassphrase));
 
   const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
     new xdr.HashIdPreimageSorobanAuthorization({
-      networkId: Buffer.from(networkIdBytes),
-      nonce: addressCredentials.nonce(),
-      invocation: entry.rootInvocation(),
+      networkId: new Uint8Array(networkIdBytes),
+      nonce: addressCredentials.nonce,
+      invocation: entry.rootInvocation,
       signatureExpirationLedger: sigExpLedger,
     })
   );
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const payloadHash = new Uint8Array((stellarHash as any)(Buffer.from(preimage.toXDR())));
+  const payloadHash = new Uint8Array((stellarHash as any)(preimage.toXDR()));
 
   const webAuthnSig = await options.signPayload(payloadHash);
   if (!webAuthnSig) {
@@ -233,26 +233,29 @@ export async function signSorobanAuthEntry(
     : null;
 
   const sigElements = [
-    nativeToScVal(Buffer.from(webAuthnSig.publicKey), { type: 'bytes' }),
-    nativeToScVal(Buffer.from(webAuthnSig.authData), { type: 'bytes' }),
-    nativeToScVal(Buffer.from(webAuthnSig.clientDataJSON), { type: 'bytes' }),
-    nativeToScVal(Buffer.from(webAuthnSig.signature), { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.publicKey), { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.authData), { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.clientDataJSON), { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.signature), { type: 'bytes' }),
   ];
 
   if (currentNonce !== null && currentNonce !== undefined) {
     sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
   }
 
-  entry.credentials(
-    xdr.SorobanCredentials.sorobanCredentialsAddress(
+  // SDK 17 entries are immutable: rebuild the entry with the signed
+  // credentials rather than mutating it in place.
+  entry = new xdr.SorobanAuthorizationEntry({
+    credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
       new xdr.SorobanAddressCredentials({
-        address: addressCredentials.address(),
-        nonce: addressCredentials.nonce(),
+        address: addressCredentials.address,
+        nonce: addressCredentials.nonce,
         signatureExpirationLedger: sigExpLedger,
         signature: xdr.ScVal.scvVec(sigElements),
       })
-    )
-  );
+    ),
+    rootInvocation: entry.rootInvocation,
+  });
 
   return entry.toXDR('base64');
 }

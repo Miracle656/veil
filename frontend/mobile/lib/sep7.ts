@@ -9,7 +9,7 @@
  * side of that: parsing a scanned QR value, and building a pay URI to hand out.
  */
 
-import { Memo } from '@stellar/stellar-sdk'
+import { Memo, StrKey } from '@stellar/stellar-sdk'
 
 export type Sep7MemoType = 'MEMO_TEXT' | 'MEMO_ID' | 'MEMO_HASH' | 'MEMO_RETURN'
 
@@ -150,7 +150,14 @@ export function parseSep7Uri(input: string): Sep7Parsed | null {
 
 export function looksLikeStellarAddress(s: string): boolean {
   const v = s.trim()
-  return (v.startsWith('G') || v.startsWith('C')) && v.length === 56
+  // G… account, M… muxed account, C… contract, or W… muxed contract. A W…
+  // address is valid (CAP-84); the send flow decides how to pay it.
+  return (
+    StrKey.isValidEd25519PublicKey(v) ||
+    StrKey.isValidMed25519PublicKey(v) ||
+    StrKey.isValidContract(v) ||
+    StrKey.isValidMuxedContract(v)
+  )
 }
 
 /** Parse a scanned QR value: either a bare Stellar address or a `web+stellar:` URI. */

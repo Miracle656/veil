@@ -35,14 +35,7 @@ jest.mock('@stellar/stellar-sdk', (): any => {
       if (val && val._isNonce) return 0n
       return 0n
     }),
-    xdr: {
-      ...actual.xdr,
-      SorobanAddressCredentials: jest.fn().mockImplementation(() => ({})),
-      SorobanCredentials: {
-        ...actual.xdr.SorobanCredentials,
-        sorobanCredentialsAddress: jest.fn().mockReturnValue({}),
-      },
-    },
+    xdr: { ...actual.xdr },
     rpc: {
       ...actual.rpc,
       Server: jest.fn(),
@@ -91,24 +84,17 @@ function makeMockAuthEntry() {
     subInvocations: [],
   })
 
-  const entry = {
-    credentials: jest.fn(),
-    rootInvocation: jest.fn().mockReturnValue(invocation),
-  }
-  entry.credentials.mockImplementation((newCred?: unknown) => {
-    if (newCred === undefined) {
-      return {
-        switch:  () => ({ value: 1 }), // SOROBAN_CREDENTIALS_ADDRESS = 1
-        address: () => ({
-          address:                   () => ({}),
-          nonce:                     () => 0n,
-          signatureExpirationLedger: () => 0,
-        }),
-      }
-    }
-    // setter invocation — intentional no-op
+  return new sdk.xdr.SorobanAuthorizationEntry({
+    credentials: sdk.xdr.SorobanCredentials.sorobanCredentialsAddress(
+      new sdk.xdr.SorobanAddressCredentials({
+        address: sdk.Address.fromString(CONTRACT_ADDRESS).toScAddress(),
+        nonce: sdk.xdr.Int64.fromString('0'),
+        signatureExpirationLedger: 0,
+        signature: sdk.xdr.ScVal.scvVoid(),
+      }),
+    ),
+    rootInvocation: invocation,
   })
-  return entry
 }
 
 const mockAssembled = { sign: jest.fn() }
@@ -150,8 +136,9 @@ describe('sweepContractBalance', () => {
         if (tx && tx.operations && tx.operations[0]) {
           const op = tx.operations[0]
           // Log details of the operation to see its structure
-          console.log('[mockSimulate] op type:', op.type, 'func:', op.func?.invokeContract?.()?.functionName?.()?.toString())
-          const fnName = op.func?.invokeContract?.()?.functionName?.()?.toString()
+          const fnName = op.func?.type === 'hostFunctionTypeInvokeContract'
+            ? op.func.invokeContract.functionName.toString()
+            : undefined
           isProbe = (fnName === 'get_nonce')
         }
       } catch (err) {

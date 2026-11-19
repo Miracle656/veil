@@ -123,7 +123,7 @@ export async function signWith<T extends Transaction | FeeBumpTransaction>(
     } catch {
         throw new Error('The signer returned something that is not a transaction envelope for this network.');
     }
-    if (signed.hash().toString('hex') !== tx.hash().toString('hex')) {
+    if (Buffer.from(signed.hash()).toString('hex') !== Buffer.from(tx.hash()).toString('hex')) {
         throw new Error('The signer returned a different transaction than the one it was asked to sign.');
     }
     if (signed.signatures.length <= tx.signatures.length) {

@@ -27,7 +27,11 @@ async function submitClassic(
     fee: inclusionFee(),
     networkPassphrase: upstream.networkPassphrase,
   });
-  for (const op of upstream.toEnvelope().v1().tx().operations()) {
+  const envelope = upstream.toEnvelope();
+  if (envelope.type !== 'envelopeTypeTx') {
+    throw new Error('This recovery transaction is not a v1 transaction envelope.');
+  }
+  for (const op of envelope.v1.tx.operations) {
     builder.addOperation(op);
   }
   builder.addMemo(upstream.memo);
@@ -95,7 +99,11 @@ export async function signAndSubmitSorobanXdr(params: {
   });
   // Copy the raw XDR operations — this preserves the invocation and its auth
   // entries (source-account credentials stay valid: same source account).
-  for (const op of upstream.toEnvelope().v1().tx().operations()) {
+  const envelope = upstream.toEnvelope();
+  if (envelope.type !== 'envelopeTypeTx') {
+    throw new Error('This recovery transaction is not a v1 transaction envelope.');
+  }
+  for (const op of envelope.v1.tx.operations) {
     builder.addOperation(op);
   }
   builder.setTimeout(120);

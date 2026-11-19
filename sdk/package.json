@@ -144,10 +144,10 @@
     "url": "https://github.com/Miracle656/veil/issues"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0"
+    "@stellar/stellar-sdk": "^17.4.0"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
@@ -237,11 +237,23 @@
       "^@stellar/stellar-sdk$": "<rootDir>/node_modules/@stellar/stellar-sdk"
     },
     "transform": {
-      "^.+\\.[tj]sx?$": "ts-jest",
-      "^.+\\.mjs$": "<rootDir>/jest/angular-esm-transformer.js"
+      "^.+\\.tsx?$": "ts-jest",
+      "^.+\\.mjs$": "<rootDir>/jest/angular-esm-transformer.js",
+      "^.+\\.jsx?$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "allowJs": true,
+            "module": "commonjs",
+            "target": "es2020",
+            "esModuleInterop": true,
+            "skipLibCheck": true
+          }
+        }
+      ]
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!@angular/(core|compiler))"
+      "node_modules/(?!(@angular/(core|compiler)|@exodus|@noble|@stellar|uint8array-extras))"
     ],
     "globals": {
       "ts-jest": {

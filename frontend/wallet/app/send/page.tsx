@@ -11,13 +11,13 @@ import { resolveFederation } from '@/lib/federation'
 
 import {
   Keypair, TransactionBuilder, BASE_FEE, Asset, Operation, Memo,
-  Contract, rpc as SorobanRpc, nativeToScVal, Horizon,
+  Contract, StrKey, rpc as SorobanRpc, nativeToScVal, Horizon,
 } from '@stellar/stellar-sdk'
 import { fetchPlatformFee } from '@/lib/platformFee'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
 import { ContactPicker } from '@/components/ContactPicker'
-import { QrScanner } from '@/components/QrScanner'
+import { QrScanner, isValidStellarAddress } from '@/components/QrScanner'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { readPaymentRequest, resolveRequestedAsset, type IssuedAsset } from '@/lib/requestedAsset'
 // #704: SEP-7 URIs may declare the memo kind; it is parsed alongside the
@@ -47,6 +47,14 @@ import {
 const network = getNetwork()
 
 type Step = 'form' | 'confirm' | 'signing' | 'done' | 'error'
+
+/**
+ * A CAP-84 muxed contract address is valid, but only as the destination of a
+ * Stellar Asset Contract transfer. A Soroban transaction cannot carry a memo,
+ * so the memo field is what has to be refused — not the address.
+ */
+const MUXED_CONTRACT_MEMO_ERROR =
+  'A muxed contract address (W…) can only be paid by a Stellar Asset Contract transfer, which cannot carry a memo. The muxed ID in the address identifies the recipient.'
 
 interface WalletAsset {
   code: string
@@ -158,6 +166,9 @@ export default function SendPage() {
   const memoLengthError = memoIsText ? validateMemoText(memo) : null
   /** What the memo field shows: the first reason the memo cannot be sent, if any. */
   const memoFieldError = memo ? validateMemo(memo, memoType) : null
+  const muxedContractDestination = StrKey.isValidMuxedContract(recipient.trim())
+  const muxedContractMemoError =
+    muxedContractDestination && memo.trim() ? MUXED_CONTRACT_MEMO_ERROR : null
 
   /**
    * Prefill from the query string, so another screen can hand off a payment it
@@ -383,12 +394,13 @@ export default function SendPage() {
     const isFederated = recipient.trim().includes('*')
     const validAddress = isFederated
       ? Boolean(resolvedAddress)
-      : (recipient.startsWith('G') || recipient.startsWith('C')) && recipient.length === 56
+      : isValidStellarAddress(recipient)
     if (!validAddress) return false
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return false
     if (!selectedAsset) return false
     if (lockedAssetMismatch()) return false
     if (memo.trim() && validateMemo(memo, memoType) !== null) return false
+    if (muxedContractMemoError) return false
     return true
   }
 
@@ -422,6 +434,11 @@ export default function SendPage() {
           return
         }
       }
+      if (muxedContractMemoError) {
+        setErrorMsg(muxedContractMemoError)
+        setStep('error')
+        return
+      }
 
       const signerSecret = walletSession.getItem('veil_signer_secret')
         || walletLocal.getItem('veil_signer_secret')
@@ -453,7 +470,7 @@ export default function SendPage() {
       const horizonServer = new Server(network.horizonUrl)
       const destination = resolvedAddress ?? recipient
 
-      if (destination.startsWith('G') && destination.length === 56) {
+      if (StrKey.isValidEd25519PublicKey(destination) || StrKey.isValidMed25519PublicKey(destination)) {
         const account = await horizonServer.loadAccount(feePayerKp.publicKey())
         const builder = new TransactionBuilder(account, {
           fee: inclusionFee(),
@@ -522,6 +539,43 @@ export default function SendPage() {
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
         setTxHash(result.hash)
+        // TODO(#1003): remove platform limitation call when multi-origin contract ships
+        markFirstSpendCompleted(walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('invisible_wallet_address'))
+      } else if (StrKey.isValidMuxedContract(destination)) {
+        // CAP-84: a W… destination is paid through the asset's SAC. The SDK
+        // builder preserves the muxed id and supplies the footprint and
+        // source-account authorization entry, so no simulation is needed.
+        const rpcServer     = new SorobanRpc.Server(network.rpcUrl)
+        const feePayerAcct  = await rpcServer.getAccount(feePayerKp.publicKey())
+        const sendAsset     = selectedAsset?.issuer
+          ? new Asset(selectedAsset.code, selectedAsset.issuer)
+          : Asset.native()
+        const amountStroops = BigInt(Math.round(parseFloat(amount) * 10_000_000))
+
+        const tx = new TransactionBuilder(feePayerAcct, {
+          fee: inclusionFee(),
+          networkPassphrase: network.networkPassphrase,
+        })
+          .addSacTransferOperation(destination, sendAsset, amountStroops)
+          .setTimeout(30)
+          .build()
+        tx.sign(feePayerKp)
+
+        const sendResult = await rpcServer.sendTransaction(tx)
+        if (sendResult.status === 'ERROR') {
+          throw new Error(`Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown'}`)
+        }
+        for (let i = 0; i < 30; i++) {
+          const result = await rpcServer.getTransaction(sendResult.hash)
+          if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
+            if (result.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+              throw new Error(`Transaction failed: ${result.status}`)
+            }
+            break
+          }
+          await new Promise(r => setTimeout(r, 1_000))
+        }
+        setTxHash(sendResult.hash)
         // TODO(#1003): remove platform limitation call when multi-origin contract ships
         markFirstSpendCompleted(walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('invisible_wallet_address'))
       } else {
@@ -781,7 +835,7 @@ export default function SendPage() {
                   id="send-recipient"
                   className="input-field mono"
                   type="text"
-                  placeholder="G… or C…"
+                  placeholder="G…, M…, C… or W…"
                   value={recipient}
                   onChange={e => { setRecipient(e.target.value.trim()); setImgError(null); setRequestError(null) }}
                   autoComplete="off"
@@ -882,13 +936,13 @@ export default function SendPage() {
                 aria-invalid={memoFieldError ? true : undefined}
                 aria-describedby={memoFieldError ? 'send-memo-error' : undefined}
               />
-              {memoFieldError && (
+              {(memoFieldError || muxedContractMemoError) && (
                 <p
                   id="send-memo-error"
                   role="alert"
                   style={{ fontSize: '0.75rem', color: '#e5484d', marginTop: '0.375rem', lineHeight: 1.4 }}
                 >
-                  {memoFieldError}
+                  {memoFieldError || muxedContractMemoError}
                 </p>
               )}
             </div>
