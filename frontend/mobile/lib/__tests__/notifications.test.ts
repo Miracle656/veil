@@ -1,32 +1,24 @@
 import {
-  counterpartyPreposition,
+  assertSafePushBody,
+  fireTransferNotification,
   routeForNotificationResponse,
   shortenAddress,
 } from '../notifications';
+import * as Notifications from 'expo-notifications';
 
 jest.mock('expo-notifications', () => ({
   scheduleNotificationAsync: jest.fn(),
   getLastNotificationResponseAsync: jest.fn(),
   addNotificationResponseReceivedListener: jest.fn(),
 }));
+jest.mock('../notificationPrefs', () => ({
+  hydrateNotifPrefs: jest.fn().mockResolvedValue(undefined),
+  getNotifIncoming: jest.fn().mockReturnValue(true),
+  getNotifOutgoing: jest.fn().mockReturnValue(true),
+}));
 
-describe('counterpartyPreposition', () => {
-  it('names the sender for money coming in', () => {
-    expect(counterpartyPreposition('received')).toBe('From');
-  });
-
-  it('names the recipient for money going out', () => {
-    // The bug this pins: a sent payment read "Payment sent — From GB3JS2…",
-    // which labels the recipient as the sender. On a notification that line is
-    // the only context there is, so it reads as money arriving from an address
-    // the user does not recognise — the opposite of what happened, and
-    // alarming rather than merely wrong.
-    expect(counterpartyPreposition('sent')).toBe('To');
-  });
-
-  it('treats a confirmation as outgoing', () => {
-    expect(counterpartyPreposition('confirmed')).toBe('To');
-  });
+beforeEach(() => {
+  jest.clearAllMocks();
 });
 
 describe('shortenAddress', () => {
@@ -44,6 +36,77 @@ describe('shortenAddress', () => {
   });
 });
 
+describe('assertSafePushBody', () => {
+  it('accepts only generic payment text', () => {
+    expect(assertSafePushBody('A payment arrived.')).toBe('A payment arrived.');
+  });
+
+  it('rejects the natural amount-and-address notification', () => {
+    expect(() =>
+      assertSafePushBody(
+        'Your 5.00 USDC arrived from GAE6BEVEA6IH4HLTGU3AEGZZWSLNCCWLKD4GLN2XHLXFFNFB24COWUJY'
+      )
+    ).toThrow(/Refusing to send/);
+  });
+
+  it('rejects a Stellar address', () => {
+    expect(() => assertSafePushBody(`Payment from G${'A'.repeat(55)}.`)).toThrow(
+      /Refusing to send/
+    );
+  });
+
+  it('rejects a contract id', () => {
+    expect(() => assertSafePushBody(`Contract C${'A'.repeat(55)} confirmed.`)).toThrow(
+      /Refusing to send/
+    );
+  });
+
+  it('rejects a transaction hash', () => {
+    expect(() => assertSafePushBody(`Transaction ${'a'.repeat(64)} confirmed.`)).toThrow(
+      /Refusing to send/
+    );
+  });
+
+  it('rejects an 11-digit identifier without storing a NIN fixture', () => {
+    const digits = Array.from({ length: 11 }, (_, i) => String(i % 10)).join('');
+    expect(() => assertSafePushBody(`Payment for ${digits}.`)).toThrow(/Refusing to send/);
+  });
+
+  it('rejects personal names and other unapproved dynamic text', () => {
+    expect(() => assertSafePushBody('Payment received for Jane Doe.')).toThrow(/Refusing to send/);
+  });
+
+  it('rejects a decimal amount', () => {
+    expect(() => assertSafePushBody('Received 5.00 USDC.')).toThrow(/Refusing to send/);
+  });
+});
+
+describe('fireTransferNotification', () => {
+  it('sends only generic text and an event type/id for local lookup', async () => {
+    await fireTransferNotification({ type: 'received', eventId: '123' });
+
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({
+          body: 'A payment arrived.',
+          data: {
+            route: '/transactions',
+            eventType: 'received',
+            eventId: '123',
+          },
+        }),
+      })
+    );
+  });
+
+  it('refuses an unsafe event id before scheduling a notification', async () => {
+    await expect(
+      fireTransferNotification({ type: 'received', eventId: 'a'.repeat(64) })
+    ).rejects.toThrow(/safe activity event id/);
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  });
+});
+
 describe('routeForNotificationResponse', () => {
   const withData = (data: unknown) => ({
     notification: { request: { content: { data } } },
@@ -51,8 +114,16 @@ describe('routeForNotificationResponse', () => {
 
   it('returns the route a transfer notification carries', () => {
     expect(routeForNotificationResponse(withData({ route: '/transactions' }))).toBe(
-      '/transactions',
+      '/transactions'
     );
+  });
+
+  it('carries only an event type and safe id for local lookup', () => {
+    expect(
+      routeForNotificationResponse(
+        withData({ route: '/transactions', eventType: 'received', eventId: 'w-42' })
+      )
+    ).toBe('/transactions?eventId=w-42&eventType=received');
   });
 
   it('returns null when there is no data, so a tap is a no-op not a crash', () => {

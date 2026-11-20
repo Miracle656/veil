@@ -9,6 +9,7 @@ import {
 
 import { useNetwork } from '../hooks/useNetwork';
 import { useTheme } from '../hooks/useTheme';
+import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import { explorerTxUrl, openExternalUrl } from '../lib/about';
 import type { ThemeColors } from '../lib/theme';
 import type { TxRecord } from '../lib/activityFeed';
@@ -39,6 +40,7 @@ export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
   function TxDetailSheet({ tx }, ref) {
     const { colors } = useTheme();
     const { network } = useNetwork();
+    const { mask } = useHiddenAmounts();
     const styles = useMemo(() => createStyles(colors), [colors]);
 
     // Resolved against the *active* network: the app is dual-network at
@@ -63,11 +65,11 @@ export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
             <>
               <Text style={styles.kind}>{TITLES[tx.type]}</Text>
               <Text style={styles.amount}>
-                {tx.amount} {tx.asset}
+                {mask(tx.amount)} {tx.asset}
               </Text>
               {tx.type === 'swapped' && tx.destAmount ? (
                 <Text style={styles.swapTo}>
-                  → {tx.destAmount} {tx.destAsset}
+                  → {mask(tx.destAmount)} {tx.destAsset}
                 </Text>
               ) : null}
 

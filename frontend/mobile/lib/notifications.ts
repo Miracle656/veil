@@ -2,13 +2,12 @@
  * Local notification service for Veil mobile.
  *
  * Fires local notifications when the activity feed detects a new incoming
- * transfer (or, optionally, a completed outgoing transaction). Notifications
- * respect the wallet's lock state and hidden-amounts toggle: when either is
- * active, the notification body never reveals the amount.
+ * transfer (or, optionally, a completed outgoing transaction). Notification
+ * content is generic; transaction details stay on-device in the activity feed.
  *
  * The Veil drape mark is configured as the notification icon in app.config.ts
- * (expo-notifications plugin). Push (remote) notifications are explicitly out
- * of scope — local-only keeps the wallet self-contained.
+ * (expo-notifications plugin). There is no remote-push sender in this app;
+ * local notifications use the same generic-content boundary.
  *
  * Requires a new dev build — notification permissions and the icon cannot be
  * added over the air.
@@ -17,28 +16,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { getHiddenAmounts } from './hiddenAmounts';
 import { getNotifIncoming, getNotifOutgoing, hydrateNotifPrefs } from './notificationPrefs';
-
-// ── Lock-state tracking ──────────────────────────────────────────────────────
-
-/**
- * Module-level lock flag. Updated by the root layout whenever the route
- * changes to/from the lock screen. When `true`, every notification suppresses
- * the amount so a shoulder-surfing bystander learns *something* arrived but
- * not *how much*.
- */
-let _isAppLocked = false;
-
-/** Called by the root layout when the route transitions to the lock screen. */
-export function setAppLocked(locked: boolean): void {
-  _isAppLocked = locked;
-}
-
-/** Whether the wallet is currently on the lock screen. */
-export function isAppLocked(): boolean {
-  return _isAppLocked;
-}
 
 // ── Permission handling ──────────────────────────────────────────────────────
 
@@ -109,51 +87,44 @@ export function configureNotificationHandler(): void {
   });
 }
 
-// ── Amount masking helper ────────────────────────────────────────────────────
+// ── Private-payload boundary ─────────────────────────────────────────────────
 
 /**
- * Build the notification body text, hiding the amount when the wallet is
- * locked or the user has hidden amounts turned on.
+ * Notification bodies are deliberately limited to generic copy. A strict
+ * allowlist also rejects names and any future dynamic text that does not match
+ * one of these messages.
  */
-function buildBody(
-  type: 'received' | 'sent' | 'confirmed',
-  amount: string,
-  asset: string,
-  forceHide = false,
-): string {
-  const hideAmount = forceHide || _isAppLocked || getHiddenAmounts();
+const SAFE_NOTIFICATION_BODIES = new Set([
+  'A payment arrived.',
+  'A payment was sent.',
+  'A transaction was confirmed.',
+]);
 
-  if (hideAmount) {
-    switch (type) {
-      case 'received':
-        return 'You received a payment.';
-      case 'sent':
-        return 'Your payment was sent.';
-      case 'confirmed':
-        return 'A transaction confirmed.';
-    }
+export function assertSafePushBody(body: string): string {
+  const containsPrivateShape =
+    /\b[GC][A-Z2-7]{55}\b/.test(body) ||
+    /\b[0-9a-f]{64}\b/i.test(body) ||
+    /(?<!\d)\d{11}(?!\d)/.test(body) ||
+    /\b\d+(?:,\d{3})*(?:\.\d+)\b/.test(body);
+
+  if (containsPrivateShape || !SAFE_NOTIFICATION_BODIES.has(body)) {
+    throw new Error(
+      'Refusing to send a notification body containing private or unapproved content.'
+    );
   }
 
-  switch (type) {
-    case 'received':
-      return `Received ${amount} ${asset}`;
-    case 'sent':
-      return `Sent ${amount} ${asset}`;
-    case 'confirmed':
-      return `${amount} ${asset} confirmed`;
-  }
+  return body;
 }
 
-/**
- * How the counterparty relates to the user, for this kind of transfer.
- *
- * A sent payment showed "Payment sent — From GB3JS2…", which names the
- * recipient as the sender. On a notification that is the only context there
- * is, so it reads as money arriving from an address the user does not
- * recognise — the opposite of what happened.
- */
-export function counterpartyPreposition(type: 'received' | 'sent' | 'confirmed'): string {
-  return type === 'received' ? 'From' : 'To';
+function buildBody(type: 'received' | 'sent' | 'confirmed'): string {
+  switch (type) {
+    case 'received':
+      return 'A payment arrived.';
+    case 'sent':
+      return 'A payment was sent.';
+    case 'confirmed':
+      return 'A transaction was confirmed.';
+  }
 }
 
 /** Middle-truncate an address so both ends stay checkable. */
@@ -164,26 +135,33 @@ export function shortenAddress(address: string): string {
 // ── Notification scheduling ──────────────────────────────────────────────────
 
 /**
- * Fire a local notification for a new transfer. Respects the lock state,
- * hidden-amounts toggle, and per-type notification preferences.
+ * Fire a generic local notification for a new transfer. Private details are
+ * looked up from the on-device activity feed after the user opens the app.
  *
  * No-op when the relevant preference is disabled.
  */
+function assertSafeEventId(eventId: string): string {
+  const safeShape = /^(?:w-)?[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(eventId);
+  const privateShape =
+    /^G[A-Z2-7]{55}$/.test(eventId) ||
+    /^C[A-Z2-7]{55}$/.test(eventId) ||
+    /^[0-9a-f]{64}$/i.test(eventId) ||
+    /^\d{11}$/.test(eventId);
+
+  if (!safeShape || privateShape) {
+    throw new Error('Refusing to send a notification without a safe activity event id.');
+  }
+
+  return eventId;
+}
+
 export async function fireTransferNotification(params: {
   type: 'received' | 'sent' | 'confirmed';
-  amount: string;
-  asset: string;
-  counterparty?: string;
-  /** Activity-feed record id, so a tap can open the right place. */
-  txId?: string;
-  /** Stellar transaction hash, for a future per-transaction screen. */
-  hash?: string;
-  /**
-   * Treat the wallet as locked for this one notification. The background check
-   * passes it: the app is closed, so the lock flag the layout keeps is stale.
-   */
-  hideAmount?: boolean;
+  /** Local activity record id, used to look up details after the app opens. */
+  eventId: string;
 }): Promise<void> {
+  assertSafeEventId(params.eventId);
+
   await hydrateNotifPrefs();
 
   const pref = params.type === 'received' ? getNotifIncoming() : getNotifOutgoing();
@@ -196,30 +174,19 @@ export async function fireTransferNotification(params: {
         ? 'Payment sent'
         : 'Transaction confirmed';
 
-  const body = buildBody(params.type, params.amount, params.asset, params.hideAmount);
-
-  const counterparty = params.counterparty;
-  const subtitle =
-    counterparty && !_isAppLocked && !params.hideAmount
-      ? `${counterpartyPreposition(params.type)} ${shortenAddress(counterparty)}`
-      : undefined;
+  const body = assertSafePushBody(buildBody(params.type));
 
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
       body,
-      subtitle,
       // The Veil drape mark is configured as the Android small icon in
       // app.config.ts; iOS uses the app icon automatically.
       sound: false,
-      // Carried so tapping the notification can open the transaction rather
-      // than dumping the user on whatever screen they last had open. Without
-      // this the tap is indistinguishable from opening the app normally.
       data: {
         route: NOTIFICATION_ROUTE,
-        txId: params.txId,
-        hash: params.hash,
-        type: params.type,
+        eventType: params.type,
+        eventId: params.eventId,
       },
     },
     // Android carries the channel on the TRIGGER, not the content, and a null
@@ -252,6 +219,26 @@ export function routeForNotificationResponse(response: unknown): string | null {
   const data = (response as { notification?: { request?: { content?: { data?: unknown } } } })
     ?.notification?.request?.content?.data;
   if (!data || typeof data !== 'object') return null;
-  const route = (data as { route?: unknown }).route;
-  return typeof route === 'string' && route.startsWith('/') ? route : null;
+  const payload = data as { route?: unknown; eventType?: unknown; eventId?: unknown };
+  const route = payload.route;
+  if (typeof route !== 'string' || !route.startsWith('/')) return null;
+  if (route !== NOTIFICATION_ROUTE) return route;
+
+  if (payload.eventId === undefined && payload.eventType === undefined) return route;
+
+  if (
+    typeof payload.eventId !== 'string' ||
+    !/^(?:w-)?[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(payload.eventId) ||
+    /^G[A-Z2-7]{55}$/.test(payload.eventId) ||
+    /^C[A-Z2-7]{55}$/.test(payload.eventId) ||
+    /^[0-9a-f]{64}$/i.test(payload.eventId) ||
+    /^\d{11}$/.test(payload.eventId) ||
+    !['received', 'sent', 'confirmed'].includes(String(payload.eventType))
+  ) {
+    return null;
+  }
+
+  return `${route}?eventId=${encodeURIComponent(payload.eventId)}&eventType=${encodeURIComponent(
+    String(payload.eventType)
+  )}`;
 }

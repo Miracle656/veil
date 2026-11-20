@@ -29,7 +29,6 @@ import {
   configureNotificationChannel,
   configureNotificationHandler,
   requestNotificationPermissions,
-  setAppLocked,
 } from '../lib/notifications';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
 import { WalletProvider } from '../components/WalletProvider';
@@ -110,43 +109,42 @@ export default function RootLayout() {
           nothing inside it is near a signing path, so the fallback can promise
           the wallet is untouched. */}
       <ErrorBoundary>
-      <SafeAreaProvider>
-        {/* The app is edge-to-edge, which means Android no longer resizes the
+        <SafeAreaProvider>
+          {/* The app is edge-to-edge, which means Android no longer resizes the
             window when the keyboard opens — so React Native's own
             KeyboardAvoidingView has nothing to react to and silently does
             nothing. This provider reads the real inset from the platform,
             which is the only thing that still tells the truth once the window
             stops changing size. */}
-        <KeyboardProvider>
-        <BottomSheetModalProvider>
-          <ConnectivityProvider>
-            <WalletProvider>
-              <BootnodeBanner />
-              <ConnectivityGate />
-              <OutboxReplayGate />
-              <InactivityLockGate />
-              <NotificationGate />
-              <LockStateTracker />
-              <Stack
-                screenOptions={{
-                  headerShown: false,
-                  // Painted behind every route, so a screen that is still loading (or
-                  // shorter than the viewport) never shows the opposite theme.
-                  contentStyle: { backgroundColor: colors.background },
-                }}
-              >
-                {/* Privacy sub-navigator — shield / private-send / unshield. */}
-                <Stack.Screen name="privacy" />
-              </Stack>
-              {/* Mounted once at the root so a dApp request is presented for approval
+          <KeyboardProvider>
+            <BottomSheetModalProvider>
+              <ConnectivityProvider>
+                <WalletProvider>
+                  <BootnodeBanner />
+                  <ConnectivityGate />
+                  <OutboxReplayGate />
+                  <InactivityLockGate />
+                  <NotificationGate />
+                  <Stack
+                    screenOptions={{
+                      headerShown: false,
+                      // Painted behind every route, so a screen that is still loading (or
+                      // shorter than the viewport) never shows the opposite theme.
+                      contentStyle: { backgroundColor: colors.background },
+                    }}
+                  >
+                    {/* Privacy sub-navigator — shield / private-send / unshield. */}
+                    <Stack.Screen name="privacy" />
+                  </Stack>
+                  {/* Mounted once at the root so a dApp request is presented for approval
               no matter which screen the user is on. */}
-              <WalletConnectApprovalModal />
-              <StatusBar style={isDark ? 'light' : 'dark'} />
-            </WalletProvider>
-          </ConnectivityProvider>
-        </BottomSheetModalProvider>
-        </KeyboardProvider>
-      </SafeAreaProvider>
+                  <WalletConnectApprovalModal />
+                  <StatusBar style={isDark ? 'light' : 'dark'} />
+                </WalletProvider>
+              </ConnectivityProvider>
+            </BottomSheetModalProvider>
+          </KeyboardProvider>
+        </SafeAreaProvider>
       </ErrorBoundary>
     </GestureHandlerRootView>
   );
@@ -172,18 +170,6 @@ function InactivityLockGate() {
  */
 function NotificationGate() {
   useNotifications();
-  return null;
-}
-
-/**
- * Tracks the current route and updates the module-level lock flag in
- * `notifications.ts` so that notification content respects the lock state.
- */
-function LockStateTracker() {
-  const segments = useSegments();
-  useEffect(() => {
-    setAppLocked(segments[0] === 'lock');
-  }, [segments]);
   return null;
 }
 
