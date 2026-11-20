@@ -109,6 +109,17 @@
       },
       "default": "./dist/stellarWalletsKit.js"
     },
+    "./stealth-announcements": {
+      "import": {
+        "types": "./dist/esm/stealthAnnouncements.d.ts",
+        "default": "./dist/esm/stealthAnnouncements.js"
+      },
+      "require": {
+        "types": "./dist/stealthAnnouncements.d.ts",
+        "default": "./dist/stealthAnnouncements.js"
+      },
+      "default": "./dist/stealthAnnouncements.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
