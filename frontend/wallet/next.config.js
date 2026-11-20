@@ -85,6 +85,7 @@ const nextConfig = {
       ...(config.resolve.alias || {}),
       '@veil/backstop-disclosure': path.resolve(__dirname, '../mobile/components/BackstopDisclosure'),
       'react-native$': false,
+      'expo-secure-store$': false,
     };
     return config;
   },

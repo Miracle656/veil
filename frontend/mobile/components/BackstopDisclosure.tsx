@@ -38,23 +38,30 @@ export interface BackstopDisclosureProps {
 // In-memory fallback for test and non-storage environments
 const memoryStore = new Map<string, string>();
 
+let secureStore: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  secureStore = require('expo-secure-store');
+} catch {
+  secureStore = null;
+}
+
 async function getStorageItem(key: string): Promise<string | null> {
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
-      return window.localStorage.getItem(key);
+      const val = window.localStorage.getItem(key);
+      if (val !== null) return val;
     } catch {
       // Local storage unavailable or blocked
     }
   }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mobileStorage = require('../lib/storage');
-    if (mobileStorage?.getSecureItem) {
-      const val = await mobileStorage.getSecureItem(key);
+  if (secureStore && typeof secureStore.getItemAsync === 'function') {
+    try {
+      const val = await secureStore.getItemAsync(key);
       if (val !== null) return val;
+    } catch {
+      // Secure store error
     }
-  } catch {
-    // Not running in mobile or SecureStore unavailable
   }
   return memoryStore.get(key) ?? null;
 }
@@ -68,15 +75,13 @@ async function setStorageItem(key: string, value: string): Promise<void> {
       // Local storage unavailable or blocked
     }
   }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mobileStorage = require('../lib/storage');
-    if (mobileStorage?.setSecureItem) {
-      await mobileStorage.setSecureItem(key, value);
+  if (secureStore && typeof secureStore.setItemAsync === 'function') {
+    try {
+      await secureStore.setItemAsync(key, value);
       return;
+    } catch {
+      // Secure store error
     }
-  } catch {
-    // Not running in mobile
   }
   memoryStore.set(key, value);
 }
@@ -125,19 +130,15 @@ export async function hasAcknowledgedBackstop(poolId: string): Promise<boolean> 
   return ack !== null && ack.poolId.toLowerCase() === poolId.toLowerCase() && Boolean(ack.timestamp);
 }
 
-// React Native runtime detection
-const isReactNative =
-  typeof navigator !== 'undefined' && (navigator as any).product === 'ReactNative';
-
+// React Native detection: true when react-native is resolvable with View/Text components
 let RN: any = null;
-if (isReactNative) {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    RN = require('react-native');
-  } catch {
-    RN = null;
-  }
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  RN = require('react-native');
+} catch {
+  RN = null;
 }
+const hasRN = Boolean(RN && RN.View && RN.Text);
 
 /**
  * Unified cross-platform disclosure component for backstop deposits (#1301).
@@ -181,7 +182,7 @@ export function BackstopDisclosure({
   }, [acknowledged, onAcknowledge, poolId]);
 
   // If React Native is available, render with React Native primitives
-  if (RN && RN.View && RN.Text) {
+  if (hasRN) {
     const defaultStyles = RN.StyleSheet.create({
       card: {
         borderWidth: 1,
