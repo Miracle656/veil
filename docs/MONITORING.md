@@ -114,7 +114,8 @@ Verified by reading the source on 30 August 2026, not from the issue tracker.
 
 ### Agent
 
-- `GET /health` (`packages/agent/src/server.ts`). No metrics.
+- `GET /api/agent` on the wallet deployment (the standalone
+  `packages/agent/src/server.ts` was retired). No metrics.
 
 ### The real gap
 
