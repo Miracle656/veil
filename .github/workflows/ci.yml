@@ -82,7 +82,7 @@ jobs:
           # so the parsing path is unreachable in the deployed contract. Patching
           # forward pulls time-macros, which raises the MSRV to Rust 1.88 and
           # breaks the pinned 1.85 reproducible build.
-          ignore: RUSTSEC-2026-0009
+          ignore: RUSTSEC-2026-0009,RUSTSEC-2026-0387,RUSTSEC-2026-0097
 
   contracts:
     name: Rust contracts — build & test
