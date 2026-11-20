@@ -693,6 +693,12 @@ function ProposalCard({
   // user switches networks with a proposal already on screen.
   const { network } = useNetwork();
   const { review, status } = message;
+  // Explicit destination & amount confirmation before signing, mirroring the
+  // web wallet. Nothing is signed until the user confirms what they are signing.
+  const [confirmed, setConfirmed] = useState(false);
+  const destination = review?.destination ?? null;
+  const amount = review?.amount ?? null;
+  const requiresConfirmation = Boolean(destination && amount);
 
   return (
     <Card variant="md" style={styles.proposal}>
@@ -709,6 +715,20 @@ function ProposalCard({
           <Text style={styles.proposalDetail}>
             Fee {review.fee} stroops · {network.displayName}
           </Text>
+          {requiresConfirmation && (
+            <>
+              <Text style={styles.proposalDetail}>Destination {destination}</Text>
+              <Text style={styles.proposalDetail}>Amount {amount}</Text>
+              <Pressable
+                style={styles.confirmRow}
+                onPress={() => setConfirmed((prev) => !prev)}
+              >
+                <Text style={styles.confirmText}>
+                  {confirmed ? '✓ ' : ''}I confirm sending {amount} to {destination}
+                </Text>
+              </Pressable>
+            </>
+          )}
           {review.memo && <Text style={styles.proposalDetail}>Memo {review.memo}</Text>}
           {review.hasUnknownOperation && (
             <Text style={styles.proposalWarning}>
@@ -730,9 +750,9 @@ function ProposalCard({
       {status.state === 'awaiting' && (
         <View style={styles.proposalActions}>
           <Button
-            label="Confirm with passkey"
+            label={requiresConfirmation && !confirmed ? 'Confirm destination & amount' : 'Confirm with passkey'}
             onPress={() => onConfirm(message)}
-            disabled={!review}
+            disabled={!review || (requiresConfirmation && !confirmed)}
           />
           <Button
             label="Decline"
@@ -936,6 +956,19 @@ const createStyles = (colors: ThemeColors) =>
     proposalActions: {
       gap: 8,
       marginTop: 4,
+    },
+    confirmRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 6,
+      paddingHorizontal: 2,
+    },
+    confirmText: {
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 17,
+      color: colors.textMuted,
     },
     proposalDone: {
       fontFamily: fontFamily.bodyMedium,

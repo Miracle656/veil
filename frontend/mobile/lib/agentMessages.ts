@@ -47,6 +47,10 @@ export type ProposalReview = {
   operations: string[];
   /** True when the transaction contains an operation this app cannot describe. */
   hasUnknownOperation: boolean;
+  /** Destination of the first payment operation, when there is one. */
+  destination?: string;
+  /** Formatted amount + asset of the first payment operation, when there is one. */
+  amount?: string;
 };
 
 export type AgentMessage =
@@ -184,12 +188,26 @@ export function reviewProposedTransaction(
 
   const described = tx.operations.map(describeOperation);
 
+  // The destination and amount of the first payment, shown explicitly on the
+  // approval card so the user confirms what they are signing rather than taking
+  // the agent's summary at face value.
+  let destination: string | undefined
+  let amount: string | undefined
+  for (const op of tx.operations) {
+    if (op.type === 'payment' && destination === undefined) {
+      destination = op.destination
+      amount = `${op.amount} ${describeAsset(op.asset)}`
+    }
+  }
+
   return {
     source: tx.source,
     fee: tx.fee,
     memo: tx.memo?.value ? String(tx.memo.value) : null,
     operations: described.map((operation) => operation.text),
     hasUnknownOperation: described.some((operation) => !operation.known),
+    ...(destination ? { destination } : {}),
+    ...(amount ? { amount } : {}),
   };
 }
 
