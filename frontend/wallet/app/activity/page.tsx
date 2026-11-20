@@ -12,12 +12,13 @@
  * `activityFeed` store, so this screen renders whatever has been fetched
  * rather than starting its own scan.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { PageHeader } from '@/components/ui/primitives'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useActivityFeed } from '@/lib/activityFeed'
 import { useReverseName } from '@/hooks/useReverseName'
+import { knownDepositAddresses, txLabel } from '@/lib/cashOutAddresses'
 
 type Filter = 'all' | 'sent' | 'received' | 'swapped'
 
@@ -28,15 +29,30 @@ const FILTERS: { key: Filter; label: string }[] = [
   { key: 'swapped', label: 'Swaps' },
 ]
 
-function label(tx: TxRecord): string {
-  return tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'
+/** "6:02 AM" for today, "Nov 17, 2026" for any other day. */
+function when(timestamp: number): string {
+  if (!timestamp) return ''
+  const date = new Date(timestamp * 1000)
+  const today = new Date()
+  const sameDay = date.toDateString() === today.toDateString()
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function short(value: string): string {
   return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-6)}` : value
 }
 
-function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
+function ActivityRow({
+  tx,
+  onSelect,
+  depositAddresses,
+}: {
+  tx: TxRecord
+  onSelect: () => void
+  depositAddresses: string[]
+}) {
   const { name } = useReverseName(tx.counterparty)
   const displayParty = name ?? short(tx.counterparty)
 
@@ -47,7 +63,7 @@ function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
       onClick={onSelect}
     >
       <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-        <span style={{ fontSize: '14px', fontWeight: 500 }}>{label(tx)}</span>
+        <span style={{ fontSize: '14px', fontWeight: 500 }}>{txLabel(tx, depositAddresses)}</span>
         <span className="vw-meta">{displayParty}</span>
       </span>
       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', flexShrink: 0 }}>
@@ -68,6 +84,7 @@ function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
             {tx.type === 'sent' ? '-' : '+'}{tx.amount} {tx.asset}
           </span>
         )}
+        <span className="vw-meta">{when(tx.timestamp)}</span>
       </span>
     </button>
   )
@@ -77,6 +94,11 @@ export default function ActivityPage() {
   const transactions = useActivityFeed()
   const [filter, setFilter] = useState<Filter>('all')
   const [selected, setSelected] = useState<TxRecord | null>(null)
+  const [depositAddresses, setDepositAddresses] = useState<string[]>([])
+
+  useEffect(() => {
+    setDepositAddresses(knownDepositAddresses())
+  }, [])
 
   const rows = filter === 'all' ? transactions : transactions.filter((t) => t.type === filter)
 
@@ -110,13 +132,20 @@ export default function ActivityPage() {
             <ActivityRow
               key={tx.id}
               tx={tx}
+              depositAddresses={depositAddresses}
               onSelect={() => setSelected(tx)}
             />
           ))
         )}
       </div>
 
-      {selected && <TxDetailSheet tx={selected} onClose={() => setSelected(null)} />}
+      {selected && (
+        <TxDetailSheet
+          tx={selected}
+          knownDepositAddresses={depositAddresses}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </>
   )
 }

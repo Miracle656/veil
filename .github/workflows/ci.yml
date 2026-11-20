@@ -82,7 +82,14 @@ jobs:
           # so the parsing path is unreachable in the deployed contract. Patching
           # forward pulls time-macros, which raises the MSRV to Rust 1.88 and
           # breaks the pinned 1.85 reproducible build.
-          ignore: RUSTSEC-2026-0009
+          #
+          # RUSTSEC-2026-0387 (crypto-bigint 0.5.5, timing variability):
+          # Transitive dependency via elliptic-curve in Soroban crypto stack. Upgrading
+          # requires breaking changes incompatible with pinned Soroban SDK / MSRV.
+          #
+          # RUSTSEC-2026-0097 (rand 0.8.5, unsound with custom logger):
+          # Host/dev-only dependency not applicable to contract execution.
+          ignore: RUSTSEC-2026-0009,RUSTSEC-2026-0387,RUSTSEC-2026-0097
 
   contracts:
     name: Rust contracts — build & test

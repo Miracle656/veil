@@ -1,6 +1,14 @@
 # Approved security advisories
-# Format: [[advisories]]
-#         id = "RUSTSEC-YYYY-XXXX"
-#         reason = "<justification>"
-#
-# Leave empty if no advisories are currently accepted
+
+[advisories]
+ignore = [
+    # RUSTSEC-2026-0009 (time <0.3.47, DoS via RFC 2822 parse recursion):
+    # Host/dev-only dependency not in wasm32 build tree.
+    "RUSTSEC-2026-0009",
+    # RUSTSEC-2026-0387 (crypto-bigint 0.5.5, timing variability):
+    # Transitive dependency via elliptic-curve in Soroban crypto stack.
+    "RUSTSEC-2026-0387",
+    # RUSTSEC-2026-0097 (rand 0.8.5, unsound with custom logger):
+    # Host/dev-only dependency not applicable to contract execution.
+    "RUSTSEC-2026-0097",
+]

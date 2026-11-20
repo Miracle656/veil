@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { getNetwork } from '@/lib/network'
 import { useReverseName } from '@/hooks/useReverseName'
+import { txLabel } from '@/lib/cashOutAddresses'
 
 export interface TxRecord {
   id: string
@@ -21,9 +22,10 @@ export interface TxRecord {
 interface TxDetailSheetProps {
   tx: TxRecord
   onClose: () => void
+  knownDepositAddresses?: string[]
 }
 
-export function TxDetailSheet({ tx, onClose }: TxDetailSheetProps) {
+export function TxDetailSheet({ tx, onClose, knownDepositAddresses }: TxDetailSheetProps) {
   const { name: reverseName } = useReverseName(tx.counterparty)
 
   // Close on Escape
@@ -78,7 +80,7 @@ export function TxDetailSheet({ tx, onClose }: TxDetailSheetProps) {
         </h3>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-          <DetailRow label="Type" value={tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swap' : 'Received'} />
+          <DetailRow label="Type" value={txLabel(tx, knownDepositAddresses, { swapLabel: 'Swap' })} />
           {tx.type === 'swapped' ? (
             <>
               <DetailRow label="Sent" value={`${tx.amount} ${tx.asset}`} />

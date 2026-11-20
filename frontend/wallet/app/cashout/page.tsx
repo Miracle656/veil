@@ -21,6 +21,7 @@ import { PageHeader } from '@/components/ui/primitives'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { NIGERIAN_BANKS, bankName } from '@/lib/nigerianBanks'
 import { getNetwork, getUsdcIssuer } from '@/lib/network'
+import { rememberDepositAddress } from '@/lib/cashOutAddresses'
 import {
   OfframpUnavailable,
   createOrder,
@@ -32,7 +33,6 @@ import {
   isTerminal,
   lastKnownAvailability,
   rememberActiveOrder,
-  rememberDepositAddress,
   verifyBankAccount,
   type OfframpCoin,
   type OfframpOrder,
@@ -253,7 +253,7 @@ export default function CashOutPage() {
       setIdempotencyKey(null)
       rememberActiveOrder(created.id)
       // So activity can call this "Cashed out" instead of "Sent".
-      rememberDepositAddress(created.walletAddress)
+      rememberDepositAddress(created.walletAddress, contractAddress ?? undefined)
       setStep('deposit')
     } catch (err) {
       setError(errorMessage(err))
