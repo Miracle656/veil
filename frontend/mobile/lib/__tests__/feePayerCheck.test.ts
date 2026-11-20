@@ -12,8 +12,11 @@ import { Horizon, Keypair } from '@stellar/stellar-sdk';
 
 import {
   assessFeePayerFunding,
+  assertFeePayerCanCoverBackstop,
   assertFeePayerCanCoverFee,
+  backstopFeeNeededXlm,
   checkFeePayerFunding,
+  FeePayerCannotCoverBackstopExit,
   FeePayerNotFunded,
   FeePayerShort,
   feePayerMinimumXlm,
@@ -240,5 +243,72 @@ describe('assessFeePayerFunding — the three banner states (V193 / #766)', () =
     const needed = requiredFeePayerXlm(1);
     const assessed = assessFeePayerFunding({ exists: true, balance: needed, subentries: 1 });
     expect(assessed.status).toBe('healthy');
+  });
+
+  describe('assertFeePayerCanCoverBackstop', () => {
+    let mockLoadAccount: jest.SpyInstance;
+
+    beforeEach(() => {
+      jest.resetAllMocks();
+      mockGetNetwork.mockReturnValue({ name: 'mainnet', horizonUrl: 'https://horizon.stellar.org' });
+      mockLoadAccount = jest.spyOn(Horizon.Server.prototype, 'loadAccount');
+    });
+
+    afterEach(() => {
+      mockLoadAccount.mockRestore();
+    });
+
+    const account = (balance: string) => ({
+      subentry_count: 0,
+      balances: [{ asset_type: 'native', balance }],
+    });
+
+    it('needs more for a deposit than for any later step, so the way out is already paid for', () => {
+      expect(backstopFeeNeededXlm('deposit')).toBeCloseTo(feePayerMinimumXlm() * 3, 10);
+      expect(backstopFeeNeededXlm('queue')).toBeCloseTo(feePayerMinimumXlm() * 2, 10);
+      expect(backstopFeeNeededXlm('withdraw')).toBeCloseTo(feePayerMinimumXlm(), 10);
+    });
+
+    it('refuses a deposit when the fee-payer is at its reserve floor, and says what to send', async () => {
+      // The reserve for an account with no subentries is 1 XLM. Exactly that is the floor.
+      mockLoadAccount.mockResolvedValue(account('1.0000000'));
+
+      const attempt = assertFeePayerCanCoverBackstop(G_ADDR, 'deposit');
+
+      await expect(attempt).rejects.toThrow(FeePayerCannotCoverBackstopExit);
+      await expect(attempt).rejects.toThrow(G_ADDR);
+    });
+
+    it('refuses to queue when it could pay for one transaction but not the withdraw after it', async () => {
+      // Spendable 0.03: covers one transaction (0.02) but not queue + withdraw (0.04).
+      mockLoadAccount.mockResolvedValue(account('1.0300000'));
+
+      await expect(assertFeePayerCanCoverBackstop(G_ADDR, 'withdraw')).resolves.toBeUndefined();
+      await expect(assertFeePayerCanCoverBackstop(G_ADDR, 'queue')).rejects.toThrow(
+        FeePayerCannotCoverBackstopExit,
+      );
+    });
+
+    it('lets a well-funded account in', async () => {
+      mockLoadAccount.mockResolvedValue(account('5.0000000'));
+
+      await expect(assertFeePayerCanCoverBackstop(G_ADDR, 'deposit')).resolves.toBeUndefined();
+    });
+
+    it('reports a missing account as not funded', async () => {
+      mockLoadAccount.mockRejectedValue({ response: { status: 404 } });
+
+      await expect(assertFeePayerCanCoverBackstop(G_ADDR, 'deposit')).rejects.toThrow(FeePayerNotFunded);
+    });
+
+    it('carries the shortfall on the error', async () => {
+      mockLoadAccount.mockResolvedValue(account('1.0100000'));
+
+      const error = await assertFeePayerCanCoverBackstop(G_ADDR, 'deposit').catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(FeePayerCannotCoverBackstopExit);
+      expect((error as FeePayerCannotCoverBackstopExit).neededXlm).toBeCloseTo(0.06, 10);
+      expect((error as FeePayerCannotCoverBackstopExit).haveXlm).toBeCloseTo(0.01, 10);
+    });
   });
 });

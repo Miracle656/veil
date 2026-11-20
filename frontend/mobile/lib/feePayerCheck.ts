@@ -307,3 +307,75 @@ export async function checkFeePayerFunding(): Promise<FeePayerFundingState> {
     feePayerAddress: feePayer,
   };
 }
+
+// ── Backstop exit guard ──────────────────────────────────────────────────────
+
+/**
+ * Transactions a backstop position still needs the fee-payer for, counted from
+ * the step about to be taken. A position leaves in two (`queue_withdrawal`, then
+ * `withdraw`), and a deposit is one more on top.
+ *
+ * This is the trap the guard exists for: every backstop transaction is paid by
+ * the classic G… account, so a user who puts everything into the backstop and
+ * leaves that account at its reserve floor cannot pay to queue the way out.
+ */
+export const BACKSTOP_TXS_REMAINING = {
+  deposit: 3,
+  queue: 2,
+  cancel: 1,
+  withdraw: 1,
+} as const;
+
+export type BackstopStep = keyof typeof BACKSTOP_TXS_REMAINING;
+
+/** The fee-payer cannot afford the rest of a backstop round trip. */
+export class FeePayerCannotCoverBackstopExit extends Error {
+  readonly feePayerAddress: string;
+  readonly haveXlm: number;
+  readonly neededXlm: number;
+
+  constructor(feePayerAddress: string, haveXlm: number, neededXlm: number, step: BackstopStep) {
+    const lead =
+      step === 'deposit'
+        ? 'Your fee-payer account could not pay to get this deposit back out. '
+        : 'Your fee-payer account could not pay for the rest of this withdrawal. ';
+    super(
+      `${lead}It has ${haveXlm.toFixed(7)} XLM available above its reserve and ` +
+        `${neededXlm.toFixed(7)} XLM is needed. ` +
+        `Send ${(neededXlm - haveXlm).toFixed(7)} XLM to ${feePayerAddress} first.`,
+    );
+    this.name = 'FeePayerCannotCoverBackstopExit';
+    this.feePayerAddress = feePayerAddress;
+    this.haveXlm = haveXlm;
+    this.neededXlm = neededXlm;
+  }
+}
+
+/** XLM the fee-payer must have free to take a backstop position from `step` to the end. */
+export function backstopFeeNeededXlm(step: BackstopStep): number {
+  return feePayerMinimumXlm() * BACKSTOP_TXS_REMAINING[step];
+}
+
+/**
+ * Assert the fee-payer can pay for every transaction left in the backstop round
+ * trip, not just the next one. Call it before a deposit (so the way out is
+ * already paid for) and before each later step.
+ *
+ * Throws `FeePayerNotFunded` when the account does not exist, and
+ * `FeePayerCannotCoverBackstopExit` when it exists but is short.
+ */
+export async function assertFeePayerCanCoverBackstop(
+  feePayerAddress: string,
+  step: BackstopStep,
+  horizonUrl?: string,
+): Promise<void> {
+  const needed = backstopFeeNeededXlm(step);
+  const result = await queryFeePayerBalance(feePayerAddress, horizonUrl);
+
+  if (!result.exists) {
+    throw new FeePayerNotFunded(feePayerAddress, needed);
+  }
+  if (result.spendableXlm < needed) {
+    throw new FeePayerCannotCoverBackstopExit(feePayerAddress, result.spendableXlm, needed, step);
+  }
+}
