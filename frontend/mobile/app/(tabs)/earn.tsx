@@ -16,12 +16,17 @@ import {
 } from 'react-native';
 
 import { Button, Card, Screen } from '../../components/ui';
+import {
+  formatObservedRate,
+  SavingsRiskDisclosure,
+} from '../../components/SavingsRiskDisclosure';
 import { useTheme } from '../../hooks/useTheme';
 import { useHiddenAmounts } from '../../hooks/useHiddenAmounts';
 import type { ThemeColors } from '../../lib/theme';
 import { fontFamily, typography } from '../../theme/typography';
 
 import {
+  BLEND_FIXED_V2_MAINNET_POOL_ID,
   buildBlendSupplyXdr,
   buildBlendWithdrawXdr,
   loadBlendPools,
@@ -37,7 +42,7 @@ import { requirePasskey } from '../../lib/passkey';
 import { isPasskeyCancellation, PasskeyCeremonyError } from '../../lib/passkeyOutcome';
 import { signAndSubmitSorobanXdr } from '../../lib/sorobanTx';
 import { getSignerSecret, getWalletAddress } from '../../lib/walletStore';
-import { openExternalUrl } from '../../lib/about';
+import { explorerAddressUrl, openExternalUrl } from '../../lib/about';
 
 /**
  * Earn — lend idle USDC or XLM to Blend lending pools and redeem it.
@@ -112,6 +117,7 @@ export default function EarnRoute() {
   const [positions, setPositions] = useState<BlendPosition[]>([]);
   const [loadingPools, setLoadingPools] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [observedAt, setObservedAt] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<Selected | null>(null);
   const [balances, setBalances] = useState<EarnBalances | null>(null);
@@ -130,6 +136,7 @@ export default function EarnRoute() {
     ]);
     setPools(nextPools.filter((pool) => pool.reserves.length > 0));
     setPositions(nextPositions);
+    setObservedAt(new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'));
     setLoadingPools(false);
   }, []);
 
@@ -319,34 +326,25 @@ export default function EarnRoute() {
             <Text style={[typography.accent, styles.eyebrow]}>Earn</Text>
             <Text style={[typography.heading, styles.title]}>Put idle money to work</Text>
             <Text style={styles.lede}>
-              Lend USDC or XLM to Blend and earn interest. Nothing is locked, withdraw any time.
+              Lend USDC or XLM to Blend Protocol. This is not a bank deposit, nothing is insured, rates move with demand, and withdrawals depend on available pool liquidity.
             </Text>
           </View>
 
           {step === 'pools' ? (
             <>
-              <Card style={styles.disclosureCard}>
-                <View style={styles.rowBetween}>
-                  <Text style={[typography.accent, styles.disclosureLabel]}>Disclosures</Text>
-                  <Pressable
-                    accessibilityRole="link"
-                    accessibilityLabel="Learn how Veil invest works and disclosures"
-                    hitSlop={8}
-                    onPress={() => void openExternalUrl('https://docs.useveilapp.xyz/invest')}
-                  >
-                    <Text style={styles.disclosureLink}>How it works &amp; risks →</Text>
-                  </Pressable>
-                </View>
-                <Text style={styles.disclosureText}>
-                  Veil is a self-custody wallet, not a broker. Veil never takes custody, never performs KYC, and never gives advice.
-                </Text>
-              </Card>
+              <SavingsRiskDisclosure
+                poolName={pools[0]?.name}
+                poolId={pools[0]?.id ?? BLEND_FIXED_V2_MAINNET_POOL_ID}
+                network={network}
+              />
 
               {!loadingPools && bestApy > 0 ? (
                 <Card variant="md" style={styles.hero}>
-                  <Text style={[typography.accent, styles.heroLabel]}>Best rate today</Text>
+                  <Text style={[typography.accent, styles.heroLabel]}>Observed rate right now</Text>
                   <Text style={styles.heroRate}>{formatApy(bestApy)}</Text>
-                  <Text style={styles.muted}>a year, paid by borrowers. The rate moves with demand.</Text>
+                  <Text style={styles.muted} testID="earn-hero-observed-rate">
+                    {formatObservedRate(bestApy, observedAt)}. Paid by borrowers; moves with demand and is never an annual promise.
+                  </Text>
                 </Card>
               ) : null}
 
@@ -392,28 +390,45 @@ export default function EarnRoute() {
                     </Text>
                   </Card>
                 ) : (
-                  pools.map((pool) => (
-                    <Card key={pool.id} style={styles.card}>
-                      <View style={styles.rowBetween}>
-                        <Text style={[typography.heading, styles.cardTitle]}>{pool.name} pool</Text>
-                        <Text style={[typography.accent, styles.badge]}>Blend</Text>
-                      </View>
-                      {pool.reserves.map((reserve) => (
-                        <View key={reserve.assetId} style={styles.reserveRow}>
-                          <View style={styles.reserveText}>
-                            <Text style={styles.assetCode}>{reserve.code}</Text>
-                            <Text style={styles.apy}>{formatApy(reserve.supplyApy)} APY</Text>
-                          </View>
-                          <Button
-                            label="Deposit"
-                            fullWidth={false}
-                            style={styles.smallButton}
-                            onPress={() => openDeposit(pool, reserve)}
-                          />
+                  pools.map((pool) => {
+                    const poolUrl =
+                      explorerAddressUrl(pool.id, network) ??
+                      `https://stellar.expert/explorer/public/contract/${pool.id}`;
+                    return (
+                      <Card key={pool.id} style={styles.card}>
+                        <View style={styles.rowBetween}>
+                          <Text style={[typography.heading, styles.cardTitle]}>{pool.name} pool</Text>
+                          <Text style={[typography.accent, styles.badge]}>Blend Protocol</Text>
                         </View>
-                      ))}
-                    </Card>
-                  ))
+                        <Pressable
+                          accessibilityRole="link"
+                          accessibilityLabel={`Inspect ${pool.name} pool contract ${pool.id}`}
+                          onPress={() => void openExternalUrl(poolUrl)}
+                          testID={`pool-contract-link-${pool.id}`}
+                        >
+                          <Text style={styles.poolContractId} selectable>
+                            Contract: {pool.id} ↗
+                          </Text>
+                        </Pressable>
+                        {pool.reserves.map((reserve) => (
+                          <View key={reserve.assetId} style={styles.reserveRow}>
+                            <View style={styles.reserveText}>
+                              <Text style={styles.assetCode}>{reserve.code}</Text>
+                              <Text style={styles.apy} testID={`reserve-rate-${reserve.code}`}>
+                                {formatObservedRate(reserve.supplyApy, observedAt)}
+                              </Text>
+                            </View>
+                            <Button
+                              label="Deposit"
+                              fullWidth={false}
+                              style={styles.smallButton}
+                              onPress={() => openDeposit(pool, reserve)}
+                            />
+                          </View>
+                        ))}
+                      </Card>
+                    );
+                  })
                 )}
               </View>
             </>
@@ -421,9 +436,14 @@ export default function EarnRoute() {
 
           {step === 'deposit-form' && selected ? (
             <View style={styles.section}>
+              <SavingsRiskDisclosure
+                poolName={selected.pool.name}
+                poolId={selected.pool.id}
+                network={network}
+              />
               <Card style={styles.card}>
-                <Text style={[typography.accent, styles.sectionLabel]}>
-                  Deposit {selected.reserve.code} · {formatApy(selected.reserve.supplyApy)} APY
+                <Text style={[typography.accent, styles.sectionLabel]} testID="deposit-form-observed-rate">
+                  Deposit {selected.reserve.code} · {formatObservedRate(selected.reserve.supplyApy, observedAt)}
                 </Text>
                 <View style={styles.amountRow}>
                   <TextInput
@@ -434,6 +454,7 @@ export default function EarnRoute() {
                     placeholderTextColor={colors.textFaint}
                     keyboardType="decimal-pad"
                     accessibilityLabel="Deposit amount"
+                    testID="deposit-amount-input"
                     autoFocus
                   />
                   <Text style={styles.amountUnit}>{selected.reserve.code}</Text>
@@ -460,18 +481,16 @@ export default function EarnRoute() {
                 )}
                 {parsedAmount > 0 && !overBalance ? (
                   <Text style={styles.muted}>
-                    About{' '}
-                    <Text style={styles.positive}>
-                      {formatAmount(parsedAmount * selected.reserve.supplyApy)} {selected.reserve.code}
-                    </Text>{' '}
-                    a year at today&apos;s rate.
+                    Observed rate right now: {formatObservedRate(selected.reserve.supplyApy, observedAt)}. Variable and not an annual promise.
                   </Text>
                 ) : null}
               </Card>
               <Text style={styles.footnote}>
-                In the {selected.pool.name} pool on Blend. Withdrawals return to your spending account.
+                In the {selected.pool.name} pool ({selected.pool.id}) on Blend Protocol. Withdrawals return to your spending account when pool liquidity is available.
               </Text>
-              <Button label="Deposit" disabled={!depositIsValid} onPress={handleDeposit} />
+              <View testID="deposit-submit-button">
+                <Button label="Deposit" disabled={!depositIsValid} onPress={handleDeposit} />
+              </View>
               <Button label="Cancel" variant="ghost" onPress={() => setStep('pools')} />
             </View>
           ) : null}
@@ -558,6 +577,12 @@ const createStyles = (colors: ThemeColors) =>
     cardCentered: { padding: 18, gap: 12, alignItems: 'center' },
     cardTitle: { color: colors.textStrong, fontSize: 20, lineHeight: 26 },
     badge: { color: colors.accent, fontSize: 11 },
+    poolContractId: {
+      fontFamily: fontFamily.address,
+      fontSize: 11,
+      lineHeight: 16,
+      color: colors.accentText,
+    },
     rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
     reserveRow: {
       flexDirection: 'row',
@@ -566,10 +591,11 @@ const createStyles = (colors: ThemeColors) =>
       paddingTop: 12,
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: colors.border,
+      gap: 12,
     },
-    reserveText: { gap: 2 },
+    reserveText: { flex: 1, gap: 2 },
     assetCode: { fontFamily: fontFamily.bodySemiBold, fontSize: 16, color: colors.textPrimary },
-    apy: { fontFamily: fontFamily.bodyMedium, fontSize: 13, color: colors.positive },
+    apy: { fontFamily: fontFamily.bodyMedium, fontSize: 12, lineHeight: 17, color: colors.positive },
     value: { fontFamily: fontFamily.bodySemiBold, fontSize: 16, color: colors.textPrimary },
     smallButton: { paddingVertical: 9, paddingHorizontal: 20 },
     muted: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.textMuted },
