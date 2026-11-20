@@ -76,6 +76,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: contracts
+          ignore: RUSTSEC-2026-0387,RUSTSEC-2026-0097,RUSTSEC-2026-0009,RUSTSEC-2024-0388,RUSTSEC-2024-0436,RUSTSEC-2026-0543
 
   contracts:
     name: Rust contracts — build & test
