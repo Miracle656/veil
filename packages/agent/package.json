@@ -10,18 +10,11 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
-    },
-    "./server": {
-      "import": "./dist/server.js",
-      "types": "./dist/server.d.ts"
     }
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "prestart": "npm run build",
-    "start": "node dist/server.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.cjs"
   },
   "keywords": [

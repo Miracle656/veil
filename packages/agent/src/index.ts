@@ -39,3 +39,24 @@ export {
   isRegisteredIssuer,
   type RegisteredAsset,
 } from './assets.js'
+
+export {
+  createAgentAuth,
+  verifyAgentMessage,
+  addressForAgentKey,
+  isAuthFailure,
+  AGENT_MESSAGE_DOMAIN,
+  DEFAULT_CHALLENGE_TTL_MS,
+  DEFAULT_SESSION_TTL_MS,
+  type AgentAuth,
+  type AgentAuthOptions,
+  type AgentSignedMessage,
+  type AuthFailure,
+  type ChallengeIssued,
+  type SessionOpened,
+} from './auth.js'
+
+export {
+  parseAuthenticatedChatRequest,
+  parseAuthenticatedClearHistoryRequest,
+} from './handler.js'

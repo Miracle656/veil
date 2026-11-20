@@ -4,12 +4,14 @@ import { PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Asset, Keypair, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk'
+import { signMessage } from '@veil/sdk'
 import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { screenButton, type ScreenButton } from '@/lib/assistantScreens'
 import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
+import { buildSignAuthEntry } from '@/lib/passkeySigner'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import {
   proposalRefusal,
@@ -113,6 +115,96 @@ function extractProposalConfirmations(xdr: string): ProposalConfirmation[] {
   } catch {
     return []
   }
+}
+
+/**
+ * The agent session: proof this device holds the wallet's passkey, not a
+ * claimed address. Kept in memory, backed by sessionStorage so a reload does
+ * not re-prompt while the tab lives. Never localStorage — a session token is
+ * a live credential for reading this wallet's agent history.
+ */
+interface AgentSession {
+  token: string
+  walletAddress: string
+  expiresAt: number
+}
+
+function loadAgentSession(walletAddress: string): AgentSession | null {
+  try {
+    const raw = sessionStorage.getItem('veil_agent_session')
+    if (!raw) return null
+    const saved = JSON.parse(raw) as AgentSession
+    if (saved.walletAddress !== walletAddress) return null
+    if (!saved.token || saved.expiresAt <= Date.now()) return null
+    return saved
+  } catch {
+    return null
+  }
+}
+
+function saveAgentSession(session: AgentSession) {
+  try {
+    sessionStorage.setItem('veil_agent_session', JSON.stringify(session))
+  } catch { /* private mode — memory still works for this page */ }
+}
+
+function clearAgentSession() {
+  try {
+    sessionStorage.removeItem('veil_agent_session')
+  } catch { /* ignore */ }
+}
+
+function base64UrlToBytes(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+  const bin = atob(padded)
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0))
+}
+
+/**
+ * Prove ownership of the wallet to the agent route: fetch a fresh challenge,
+ * sign it with the passkey through the SAME signing path every other Veil
+ * signature uses (VEIL_SIGNED_MESSAGE_V1 domain separation + WebAuthn
+ * ceremony), and trade the assertion for a session token. The chat requests
+ * that follow carry the token and no address.
+ */
+async function openAgentSession(walletAddress: string): Promise<AgentSession> {
+  const challengeRes = await fetch('/api/agent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'challenge', walletAddress }),
+  })
+  const challengeData = await challengeRes.json().catch(() => ({}))
+  if (!challengeRes.ok || typeof challengeData.challenge !== 'string') {
+    throw new Error(challengeData?.error ?? 'Could not start agent verification.')
+  }
+
+  const credentialId = walletLocal.getItem('invisible_wallet_key_id')
+  if (!credentialId) {
+    throw new Error('No passkey found on this device. Sign in to the wallet first.')
+  }
+  const signed = await signMessage(
+    base64UrlToBytes(challengeData.challenge),
+    buildSignAuthEntry(),
+    credentialId,
+  )
+
+  const verifyRes = await fetch('/api/agent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'verify', challenge: challengeData.challenge, signed }),
+  })
+  const verifyData = await verifyRes.json().catch(() => ({}))
+  if (!verifyRes.ok || typeof verifyData.sessionToken !== 'string') {
+    throw new Error(verifyData?.error ?? 'Agent verification failed.')
+  }
+  const session: AgentSession = {
+    token: verifyData.sessionToken,
+    walletAddress: verifyData.walletAddress ?? walletAddress,
+    expiresAt: verifyData.expiresAt ?? Date.now() + 12 * 60 * 60 * 1000,
+  }
+  saveAgentSession(session)
+  return session
 }
 
 function decode(xdr: string): ProposalReview | null {
@@ -323,6 +415,39 @@ export default function AgentPage() {
   // One POST per message to the wallet's own /api/agent route. It used to be a
   // WebSocket to a separate always-on server; the route is serverless, so the
   // recent conversation travels with each request instead.
+  //
+  // The request carries a session token, never a wallet address: the first
+  // message opens a session by signing a server challenge with the passkey,
+  // and the route resolves the address from that session.
+  const sessionRef = useRef<AgentSession | null>(null)
+  const ensureSession = useCallback(async (): Promise<AgentSession> => {
+    const cached = sessionRef.current ?? loadAgentSession(walletAddress)
+    if (cached) {
+      sessionRef.current = cached
+      return cached
+    }
+    const opened = await openAgentSession(walletAddress)
+    sessionRef.current = opened
+    return opened
+  }, [walletAddress])
+
+  const postChat = useCallback(
+    async (text: string, history: { role: 'user' | 'assistant'; content: string }[], sessionToken: string) => {
+      return fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        body: JSON.stringify({
+          message: text,
+          feePayerAddress,
+          profile: getUserProfile(),
+          history,
+          sessionToken,
+        }),
+      })
+    },
+    [feePayerAddress],
+  )
+
   const sendMessage = useCallback(async () => {
     const text = input.trim()
     if (!text || isThinking) return
@@ -346,17 +471,33 @@ export default function AgentPage() {
 
     setIsThinking(true)
     try {
-      const res = await fetch('/api/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: text,
-          walletAddress,
-          feePayerAddress,
-          profile: getUserProfile(),
-          history,
-        }),
-      })
+      let session: AgentSession
+      try {
+        session = await ensureSession()
+      } catch (err) {
+        if (isPasskeyCancellation(err)) {
+          setMessages((prev) => [...prev, { role: 'agent', content: 'Cancelled — nothing was sent.' }])
+          return
+        }
+        throw err
+      }
+      let res = await postChat(text, history, session.token)
+      if (res.status === 401) {
+        // Session expired or unknown to this instance — sign once more and retry once.
+        clearAgentSession()
+        sessionRef.current = null
+        try {
+          session = await openAgentSession(walletAddress)
+        } catch (err) {
+          if (isPasskeyCancellation(err)) {
+            setMessages((prev) => [...prev, { role: 'agent', content: 'Cancelled — nothing was sent.' }])
+            return
+          }
+          throw err
+        }
+        sessionRef.current = session
+        res = await postChat(text, history, session.token)
+      }
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data?.error ?? `Request failed (${res.status})`)
 
@@ -399,7 +540,7 @@ export default function AgentPage() {
     } finally {
       setIsThinking(false)
     }
-  }, [input, isThinking, messages, walletAddress, feePayerAddress])
+  }, [input, isThinking, messages, feePayerAddress, ensureSession, postChat, walletAddress])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -531,10 +672,20 @@ export default function AgentPage() {
     }
   }
 
-  const clearHistory = () => {
+  const clearHistory = useCallback(() => {
     const profile = getUserProfile()
     setMessages([{ role: 'agent', content: buildGreeting(profile) }])
-  }
+    // The server keeps no per-wallet history, but the acknowledgement is
+    // still session-gated, so a stranger cannot clear someone else's chat.
+    const token = sessionRef.current?.token ?? loadAgentSession(walletAddress)?.token
+    if (token) {
+      fetch('/api/agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ action: 'clear_history', sessionToken: token }),
+      }).catch(() => { /* local clear already happened */ })
+    }
+  }, [walletAddress])
 
   // Finish onboarding → save profile, show greeting, enter chat
   const finishOnboarding = () => {
