@@ -1,7 +1,4 @@
 # Approved security advisories
-# Format: [[advisories]]
-#         id = "RUSTSEC-YYYY-XXXX"
-#         reason = "<justification>"
 
 [advisories]
 ignore = [
@@ -9,3 +6,6 @@ ignore = [
     "RUSTSEC-2026-0387",
     "RUSTSEC-2026-0097",
 ]
+
+[yanked]
+ignore = true

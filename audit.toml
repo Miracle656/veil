@@ -1,0 +1,11 @@
+# Approved security advisories
+
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0009",
+    "RUSTSEC-2026-0387",
+    "RUSTSEC-2026-0097",
+]
+
+[yanked]
+ignore = true
