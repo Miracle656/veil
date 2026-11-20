@@ -4,6 +4,7 @@
 #         reason = "<justification>"
 
 [advisories]
+# Ignored advisories (unreachable in deployed wasm or dev-only dependencies)
 ignore = [
     "RUSTSEC-2026-0009",
     "RUSTSEC-2026-0387",
