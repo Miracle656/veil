@@ -155,14 +155,12 @@ export function BackstopDisclosure({
   style,
 }: BackstopDisclosureProps) {
   const [acknowledged, setAcknowledged] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     hasAcknowledgedBackstop(poolId).then((hasAck) => {
       if (!cancelled) {
         setAcknowledged(hasAck);
-        setLoading(false);
       }
     });
     return () => {
