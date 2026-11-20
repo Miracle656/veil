@@ -90,7 +90,19 @@ jobs:
           # so the parsing path is unreachable in the deployed contract. Patching
           # forward pulls time-macros, which raises the MSRV to Rust 1.88 and
           # breaks the pinned 1.85 reproducible build.
-          ignore: RUSTSEC-2026-0009
+          #
+          # RUSTSEC-2026-0387 (crypto-bigint <0.7.6, timing variability in
+          # constant-time ops): reached in the wasm tree only through
+          # p256 → primeorder → elliptic-curve, and only from code that
+          # processes PUBLIC on-chain inputs — the on-curve check in
+          # factory's validate_public_key and ES256 signature verification
+          # in invisible_wallet. Nothing secret is ever operated on inside
+          # the contract: passkey private keys never leave the user's
+          # authenticator, so there is no timing side channel to exploit.
+          # The fixed 0.7.x line is semver-incompatible with elliptic-curve
+          # ^0.13, which soroban-env-host 22.x pins (even 22.1.4) — the fix
+          # has to come from a Stellar SDK dependency bump.
+          ignore: RUSTSEC-2026-0009, RUSTSEC-2026-0387
 
   contracts:
     name: Rust contracts — build & test
