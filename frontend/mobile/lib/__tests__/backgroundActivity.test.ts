@@ -26,9 +26,13 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
 jest.mock('../activityFeed', () => ({
   movementKey: (r: { hash?: string; id: string }) => r.hash ?? r.id,
 }));
-jest.mock('../horizonActivity', () => ({ loadHorizonActivity: (...a: unknown[]) => mockLoadActivity(...a) }));
+jest.mock('../horizonActivity', () => ({
+  loadHorizonActivity: (...a: unknown[]) => mockLoadActivity(...a),
+}));
 jest.mock('../network', () => ({ hydrateNetwork: async () => 'mainnet' }));
-jest.mock('../notifications', () => ({ fireTransferNotification: (...a: unknown[]) => mockFire(...a) }));
+jest.mock('../notifications', () => ({
+  fireTransferNotification: (...a: unknown[]) => mockFire(...a),
+}));
 jest.mock('../walletStore', () => ({ getWalletAddress: () => mockGetWalletAddress() }));
 
 import { checkForNewActivity } from '../backgroundActivity';
@@ -60,7 +64,7 @@ it('notifies about a payment that arrived while the app was closed, without the 
   await expect(checkForNewActivity()).resolves.toBe(1);
 
   expect(mockFire).toHaveBeenCalledTimes(1);
-  expect(mockFire).toHaveBeenCalledWith(expect.objectContaining({ hash: 'new', hideAmount: true }));
+  expect(mockFire).toHaveBeenCalledWith({ type: 'received', eventId: 'op-new' });
   expect(JSON.parse(mockStorage.get('veil_notified_movements')!)).toEqual(['old', 'new']);
 });
 

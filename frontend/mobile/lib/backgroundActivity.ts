@@ -22,7 +22,11 @@ import { movementKey } from './activityFeed';
 import { loadHorizonActivity } from './horizonActivity';
 import { hydrateNetwork } from './network';
 import { fireTransferNotification } from './notifications';
-import { loadNotifiedMovements, notifiedMovements, saveNotifiedMovements } from './notifiedMovements';
+import {
+  loadNotifiedMovements,
+  notifiedMovements,
+  saveNotifiedMovements,
+} from './notifiedMovements';
 import { getWalletAddress } from './walletStore';
 
 export const ACTIVITY_TASK = 'veil-activity-check';
@@ -39,7 +43,10 @@ type TaskManagerModule = typeof import('expo-task-manager');
  * launch for anyone still on an older dev client. Without them the app notifies
  * only while open, as before.
  */
-function loadNativeModules(): { BackgroundTask: BackgroundTaskModule; TaskManager: TaskManagerModule } | null {
+function loadNativeModules(): {
+  BackgroundTask: BackgroundTaskModule;
+  TaskManager: TaskManagerModule;
+} | null {
   if (Platform.OS === 'web') return null;
   try {
     return {
@@ -84,14 +91,7 @@ export async function checkForNewActivity(): Promise<number> {
 
     await fireTransferNotification({
       type: tx.type,
-      amount: tx.amount,
-      asset: tx.asset,
-      counterparty: tx.counterparty,
-      txId: tx.id,
-      hash: tx.hash,
-      // The wallet is effectively locked while it is closed, and the in-app
-      // rule for a locked wallet is that a notification never shows the amount.
-      hideAmount: true,
+      eventId: tx.id,
     });
     posted++;
   }
@@ -108,12 +108,18 @@ if (native) {
         await checkForNewActivity();
         return BackgroundTask.BackgroundTaskResult.Success;
       } catch (err) {
-        console.warn('[activity] background check failed:', err instanceof Error ? err.message : err);
+        console.warn(
+          '[activity] background check failed:',
+          err instanceof Error ? err.message : err
+        );
         return BackgroundTask.BackgroundTaskResult.Failed;
       }
     });
   } catch (err) {
-    console.warn('[activity] background task unavailable:', err instanceof Error ? err.message : err);
+    console.warn(
+      '[activity] background task unavailable:',
+      err instanceof Error ? err.message : err
+    );
   }
 }
 
@@ -126,6 +132,9 @@ export async function registerActivityCheck(): Promise<void> {
     if (status !== BackgroundTask.BackgroundTaskStatus.Available) return;
     await BackgroundTask.registerTaskAsync(ACTIVITY_TASK, { minimumInterval: INTERVAL_MINUTES });
   } catch (err) {
-    console.warn('[activity] background check not registered:', err instanceof Error ? err.message : err);
+    console.warn(
+      '[activity] background check not registered:',
+      err instanceof Error ? err.message : err
+    );
   }
 }

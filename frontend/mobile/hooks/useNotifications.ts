@@ -18,7 +18,11 @@ import * as Notifications from 'expo-notifications';
 import { useRouter, useSegments } from 'expo-router';
 
 import { fireTransferNotification, routeForNotificationResponse } from '../lib/notifications';
-import { loadNotifiedMovements, notifiedMovements, saveNotifiedMovements } from '../lib/notifiedMovements';
+import {
+  loadNotifiedMovements,
+  notifiedMovements,
+  saveNotifiedMovements,
+} from '../lib/notifiedMovements';
 import { consumePendingRoute, setPendingRoute } from '../lib/pendingRoute';
 
 /**
@@ -152,20 +156,12 @@ export function useNotifications(): void {
         if (tx.type === 'received') {
           void fireTransferNotification({
             type: 'received',
-            amount: tx.amount,
-            asset: tx.asset,
-            counterparty: tx.counterparty,
-            txId: tx.id,
-            hash: tx.hash,
+            eventId: tx.id,
           });
         } else if (tx.type === 'sent') {
           void fireTransferNotification({
             type: 'sent',
-            amount: tx.amount,
-            asset: tx.asset,
-            counterparty: tx.counterparty,
-            txId: tx.id,
-            hash: tx.hash,
+            eventId: tx.id,
           });
         }
         // 'swapped' records are intentionally not notified — they are
