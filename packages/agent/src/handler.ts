@@ -2,14 +2,26 @@ import { runAgent, type AgentResult, type UserProfile } from './agent.js'
 import type { ChatTurn, LlmProvider } from './llm.js'
 
 /**
+ * Re-exported so the route has one import for the whole authenticated
+ * surface: parsing here, wallet-signed sessions in auth.ts.
+ */
+export { createAgentAuth, isAuthFailure } from './auth.js'
+export type { AgentSignedMessage } from './auth.js'
+
+/**
  * One chat request, over plain HTTP.
  *
  * The agent used to be a long-lived WebSocket server that kept each wallet's
  * conversation in memory, which needed an always-on host of its own. Serverless
  * functions (the wallet's Vercel deployment) cannot hold a socket or remember
  * anything between calls, so each request now carries the recent conversation
- * itself and gets one answer back. That also removed a problem: the server no
- * longer keeps anyone's history keyed by an address anyone could claim.
+ * itself and gets one answer back.
+ *
+ * The wallet address is NEVER taken from the request body: Stellar addresses
+ * are public, so anyone can state somebody else's. The route authenticates the
+ * caller first (a wallet-signed challenge, see auth.ts) and hands the verified
+ * address in separately. A body that names a different address is rejected
+ * rather than honoured — there is no address in the request to lie about.
  *
  * Framework-free on purpose, so the Next.js route stays a thin wrapper and this
  * is testable without one.
@@ -43,6 +55,11 @@ function shortString(value: unknown): string | undefined {
  * is treated as untrusted: the history in particular is replayed to the model,
  * so it is capped in turns and length and anything malformed is dropped rather
  * than passed on.
+ *
+ * The wallet address comes from the verified session, never from the body —
+ * see parseAuthenticatedChatRequest. This function still checks a body-supplied
+ * address for shape so callers get a clear error, but its value is never used
+ * as authority.
  */
 export function parseChatRequest(body: unknown): ParseResult {
   if (!body || typeof body !== 'object') return { ok: false, error: 'Expected a JSON body' }
@@ -92,6 +109,45 @@ export function parseChatRequest(body: unknown): ParseResult {
   while (history.length && history[0].role !== 'user') history.shift()
 
   return { ok: true, value: { message, walletAddress, feePayerAddress, profile, history } }
+}
+
+/**
+ * The authenticated entry point. `verifiedWalletAddress` is the address the
+ * session proved ownership of (see auth.ts) — the ONLY source of authority.
+ * A body walletAddress that disagrees is a confused-deputy attempt and is
+ * rejected; a matching or absent one is ignored in favour of the session.
+ */
+export function parseAuthenticatedChatRequest(body: unknown, verifiedWalletAddress: string): ParseResult {
+  if (typeof verifiedWalletAddress !== 'string' || !STELLAR_ADDRESS.test(verifiedWalletAddress.trim())) {
+    return { ok: false, error: 'session has no verified wallet address' }
+  }
+  const parsed = parseChatRequest(body)
+  if (!parsed.ok) return parsed
+  const claimed = (body as Record<string, unknown> | null)?.walletAddress
+  if (typeof claimed === 'string' && claimed.trim() && claimed.trim() !== verifiedWalletAddress.trim()) {
+    return { ok: false, error: 'walletAddress does not match the session' }
+  }
+  return { ok: true, value: { ...parsed.value, walletAddress: verifiedWalletAddress.trim() } }
+}
+
+/**
+ * Clearing history needs the same session as chatting: the address comes
+ * from the session, so there is nothing to claim. Stateless routes keep no
+ * server-side history; this just gates the acknowledgement on authentication
+ * so a stranger cannot clear (or probe) someone else's conversation.
+ */
+export function parseAuthenticatedClearHistoryRequest(
+  body: unknown,
+  verifiedWalletAddress: string,
+): { ok: true; value: { walletAddress: string } } | { ok: false; error: string } {
+  if (typeof verifiedWalletAddress !== 'string' || !STELLAR_ADDRESS.test(verifiedWalletAddress.trim())) {
+    return { ok: false, error: 'session has no verified wallet address' }
+  }
+  const claimed = (body as Record<string, unknown> | null)?.walletAddress
+  if (typeof claimed === 'string' && claimed.trim() && claimed.trim() !== verifiedWalletAddress.trim()) {
+    return { ok: false, error: 'walletAddress does not match the session' }
+  }
+  return { ok: true, value: { walletAddress: verifiedWalletAddress.trim() } }
 }
 
 export async function handleChat(request: ChatRequest, llm: LlmProvider): Promise<AgentResult> {

@@ -227,7 +227,12 @@ Additional endpoints: `GET /summary/:address`, `GET /transfers/address/:address`
 
 ### Agent (packages/agent)
 
-Claude-powered AI agent embedded in the Veil wallet. Connects via WebSocket. Tools:
+Claude-powered AI agent embedded in the Veil wallet. Served serverlessly from
+the wallet's `/api/agent` route (one POST per message); the standalone
+WebSocket server (`src/server.ts`) was retired. Every request is bound to a
+wallet-signed session: the client signs a fresh server challenge with its
+passkey and the route resolves the wallet address from the verified session,
+never from the request body. Tools:
 
 | Tool                    | Description                                                       |
 | ----------------------- | ----------------------------------------------------------------- |
