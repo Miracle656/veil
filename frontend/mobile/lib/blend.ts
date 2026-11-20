@@ -35,12 +35,14 @@ function blendNet(): Network {
 }
 
 /**
- * Blend's public Fixed pool on mainnet (XLM, USDC, EURC). A pool id is public
+ * Blend's public Fixed V2 pool on mainnet (XLM, USDC, EURC). A pool id is public
  * and permanent, so shipping it as the default means Earn works in any build
  * rather than only in one whose environment was set up right.
  */
+export const BLEND_FIXED_V2_MAINNET_POOL_ID = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD';
+
 const DEFAULT_POOL_IDS: Record<'mainnet' | 'testnet', string> = {
-  mainnet: 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD',
+  mainnet: BLEND_FIXED_V2_MAINNET_POOL_ID,
   testnet: '',
 };
 

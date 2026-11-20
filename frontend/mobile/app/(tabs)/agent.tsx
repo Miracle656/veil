@@ -33,6 +33,7 @@ import {
 } from 'react-native';
 
 import { Button, Card, Screen } from '../../components/ui';
+import { SavingsRiskDisclosure } from '../../components/SavingsRiskDisclosure';
 import { KeyboardStickyView, useKeyboardState } from 'react-native-keyboard-controller';
 
 import { ArrowUpIcon, BackIcon } from '../../components/icons';
@@ -608,9 +609,10 @@ function SwapHandoff({ intent }: { intent: { from: string; to: string; amount?: 
 function InvestHandoff({ intent }: { intent: import('../../lib/agentMessages').InvestIntent }) {
   const router = useRouter();
   return (
-    <View style={{ marginTop: 10 }}>
+    <View style={{ marginTop: 10, gap: 10 }}>
+      <SavingsRiskDisclosure />
       <Button
-label="Open Earn Section"
+        label="Open Earn Section"
         onPress={() => {
           const code = intent.code ?? intent.asset?.code ?? '';
           const issuer = intent.issuer ?? intent.asset?.issuer ?? '';
