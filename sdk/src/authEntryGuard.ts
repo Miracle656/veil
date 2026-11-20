@@ -45,8 +45,10 @@ export function hostFunctionCalls(tx: Transaction): xdr.InvokeContractArgs[] {
     for (const op of tx.operations) {
         if (op.type !== 'invokeHostFunction') continue;
         const { func } = op as Operation.InvokeHostFunction;
-        if (func.switch().value === xdr.HostFunctionType.hostFunctionTypeInvokeContract().value) {
-            calls.push(func.invokeContract());
+        // SDK 17 generated XDR unions: the arm is a `type` discriminant and its
+        // payload is a property, not the old `.switch()` / `.invokeContract()`.
+        if (func.type === 'hostFunctionTypeInvokeContract') {
+            calls.push(func.invokeContract);
         }
     }
     return calls;
@@ -60,10 +62,9 @@ export function hostFunctionCalls(tx: Transaction): xdr.InvokeContractArgs[] {
 export function rootContractCall(
     entry: xdr.SorobanAuthorizationEntry,
 ): xdr.InvokeContractArgs | null {
-    const fn = entry.rootInvocation().function();
-    const contractFn = xdr.SorobanAuthorizedFunctionType.sorobanAuthorizedFunctionTypeContractFn();
-    if (fn.switch().value !== contractFn.value) return null;
-    return fn.contractFn();
+    const fn = entry.rootInvocation.function;
+    if (fn.type !== 'sorobanAuthorizedFunctionTypeContractFn') return null;
+    return fn.contractFn;
 }
 
 /**
@@ -80,8 +81,8 @@ function sameCall(a: xdr.InvokeContractArgs, b: xdr.InvokeContractArgs): boolean
 
 /** A readable `contract.function` for an error message. */
 function describe(call: xdr.InvokeContractArgs): string {
-    const contract = Address.fromScAddress(call.contractAddress()).toString();
-    return `${contract}.${call.functionName().toString()}`;
+    const contract = Address.fromScAddress(call.contractAddress).toString();
+    return `${contract}.${call.functionName.toString()}`;
 }
 
 /**
@@ -95,15 +96,14 @@ export function assertEntryAuthorized(
     entry: xdr.SorobanAuthorizationEntry,
     options: { walletAddress: string; allowed: xdr.InvokeContractArgs[] },
 ): void {
-    const credentials = entry.credentials();
-    const addressType = xdr.SorobanCredentialsType.sorobanCredentialsAddress();
-    if (credentials.switch().value !== addressType.value) {
+    const credentials = entry.credentials;
+    if (credentials.type !== 'sorobanCredentialsAddress') {
         throw new AuthEntryRejected(
             'Refusing to sign: the simulation returned an authorisation that is not an address credential.',
         );
     }
 
-    const credentialAddress = Address.fromScAddress(credentials.address().address()).toString();
+    const credentialAddress = Address.fromScAddress(credentials.address.address).toString();
     if (credentialAddress !== options.walletAddress) {
         throw new AuthEntryRejected(
             `Refusing to sign: the simulation asked this wallet to authorise ${credentialAddress}, ` +

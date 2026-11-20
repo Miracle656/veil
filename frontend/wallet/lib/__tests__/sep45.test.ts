@@ -30,7 +30,6 @@ Object.defineProperty(globalThis, 'crypto', {
 Object.assign(globalThis, { TextEncoder, TextDecoder })
 
 import { Address, Keypair, xdr, nativeToScVal } from '@stellar/stellar-sdk'
-import * as jsXdr from '@stellar/js-xdr'
 import type { WebAuthnSignature } from '@veil/sdk'
 import {
   fetchSep45Challenge,
@@ -45,12 +44,8 @@ import {
 const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015'
 const ANCHOR_CONTRACT = 'CD3LA6RKF5D2FN2R2L57MWXLBRSEWWENE74YBEFZSSGNJRJGICFGQXMX'
 
-const AuthEntryArray = new jsXdr.VarArray(xdr.SorobanAuthorizationEntry)
-
 function encodeEntries(entries: xdr.SorobanAuthorizationEntry[]): string {
-  const writer = new jsXdr.XdrWriter()
-  AuthEntryArray.write(entries, writer)
-  return writer.finalize().toString('base64')
+  return xdr.encodeArray(xdr.SorobanAuthorizationEntry, entries, 'base64')
 }
 
 const HOME_DOMAIN = 'testanchor.stellar.org'
@@ -273,9 +268,11 @@ describe('signSep45Challenge', () => {
 
     const [walletEntry, anchorEntry] = signed
     // Wallet entry: now carries a real signature and the deliberate expiration.
-    const walletCred = walletEntry.credentials().address()
-    expect(walletCred.signature().switch().name).toBe('scvVec')
-    expect(walletCred.signatureExpirationLedger()).toBe(1000 + SEP45_SIGNATURE_EXPIRATION_LEDGERS)
+    const walletCredentials = walletEntry.credentials
+    if (walletCredentials.type !== 'sorobanCredentialsAddress') throw new Error('expected address credentials')
+    const walletCred = walletCredentials.address
+    expect(walletCred.signature.type).toBe('scvVec')
+    expect(walletCred.signatureExpirationLedger).toBe(1000 + SEP45_SIGNATURE_EXPIRATION_LEDGERS)
 
     // Anchor entry: byte-for-byte unchanged (already signed by the anchor).
     expect(anchorEntry.toXDR('base64')).toBe(challenge.entries[1].toXDR('base64'))
@@ -287,7 +284,9 @@ describe('signSep45Challenge', () => {
 
     const [signedWallet] = await signSep45Challenge(challenge, signAuthEntry, 500, WALLET, ANCHOR_CONTRACT, HOME_DOMAIN, 10)
 
-    expect(signedWallet.credentials().address().signatureExpirationLedger()).toBe(510)
+    const credentials = signedWallet.credentials
+    if (credentials.type !== 'sorobanCredentialsAddress') throw new Error('expected address credentials')
+    expect(credentials.address.signatureExpirationLedger).toBe(510)
   })
 
   it('throws SIGNATURE_REJECTED when the passkey ceremony is cancelled', async () => {

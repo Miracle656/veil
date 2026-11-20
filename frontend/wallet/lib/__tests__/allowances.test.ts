@@ -50,13 +50,15 @@ function allowanceVal(amount: bigint, expiry: bigint | null): xdr.ScVal {
 }
 
 function entryXdr(spender: string, token: string, amount: bigint, expiry: bigint | null): string {
-  const key = allowanceLedgerKey(WALLET, spender, token).contractData()
+  const ledgerKey = allowanceLedgerKey(WALLET, spender, token)
+  if (ledgerKey.type !== 'contractData') throw new Error('expected a contract data key')
+  const key = ledgerKey.contractData
   return xdr.LedgerEntryData.contractData(
     new xdr.ContractDataEntry({
-      ext: new xdr.ExtensionPoint(0),
-      contract: key.contract(),
-      key: key.key(),
-      durability: key.durability(),
+      ext: xdr.ExtensionPoint.v0(),
+      contract: key.contract,
+      key: key.key,
+      durability: key.durability,
       val: allowanceVal(amount, expiry),
     }),
   ).toXDR('base64')
@@ -87,21 +89,31 @@ function fakeRpc(stored: Stored[], latestLedger = 1000) {
 
 describe('allowanceLedgerKey', () => {
   it('is the contract’s persistent DataKey::Allowance(AllowanceKey { spender, token })', () => {
-    const key = allowanceLedgerKey(WALLET, BLEND_POOL, USDC_SAC).contractData()
-    expect(Address.fromScAddress(key.contract()).toString()).toBe(WALLET)
-    expect(key.durability()).toEqual(xdr.ContractDataDurability.persistent())
+    const ledgerKey = allowanceLedgerKey(WALLET, BLEND_POOL, USDC_SAC)
+    if (ledgerKey.type !== 'contractData') throw new Error('expected a contract data key')
+    const key = ledgerKey.contractData
+    expect(Address.fromScAddress(key.contract).toString()).toBe(WALLET)
+    expect(key.durability).toEqual(xdr.ContractDataDurability.persistent)
 
-    const [tag, body] = key.key().vec()!
-    expect(tag.sym().toString()).toBe('Allowance')
-    const fields = body.map()!
-    expect(fields.map((f) => f.key().sym().toString())).toEqual(['spender', 'token'])
-    expect(Address.fromScVal(fields[0].val()).toString()).toBe(BLEND_POOL)
-    expect(Address.fromScVal(fields[1].val()).toString()).toBe(USDC_SAC)
+    const vec = key.key.type === 'scvVec' ? key.key.vec : null
+    if (!vec) throw new Error('expected a vec key')
+    const [tag, body] = vec
+    if (tag.type !== 'scvSymbol' || body.type !== 'scvMap' || !body.map) throw new Error('unexpected key shape')
+    expect(tag.sym.toString()).toBe('Allowance')
+    const fields = body.map
+    expect(fields.map((f: xdr.ScMapEntry) => f.key.type === 'scvSymbol' ? f.key.sym.toString() : '')).toEqual(['spender', 'token'])
+    expect(Address.fromScVal(fields[0].val).toString()).toBe(BLEND_POOL)
+    expect(Address.fromScVal(fields[1].val).toString()).toBe(USDC_SAC)
   })
 
   it('also accepts an account (G…) spender', () => {
-    const key = allowanceLedgerKey(WALLET, ACCOUNT_SPENDER, USDC_SAC).contractData()
-    const spender = key.key().vec()![1].map()![0].val()
+    const ledgerKey = allowanceLedgerKey(WALLET, ACCOUNT_SPENDER, USDC_SAC)
+    if (ledgerKey.type !== 'contractData') throw new Error('expected a contract data key')
+    const key = ledgerKey.contractData
+    if (key.key.type !== 'scvVec' || !key.key.vec) throw new Error('expected a vec key')
+    const body = key.key.vec[1]
+    if (body.type !== 'scvMap' || !body.map) throw new Error('expected a map')
+    const spender = body.map[0].val
     expect(Address.fromScVal(spender).toString()).toBe(ACCOUNT_SPENDER)
   })
 })
@@ -239,9 +251,9 @@ describe('controls', () => {
       STOP_REPLACEMENT.expiry ?? undefined,
     )
     // Compared by name: the SDK source may resolve its own copy of stellar-sdk.
-    expect(amount.switch().name).toBe('scvI128')
-    expect(expiry.switch().name).toBe('scvU64')
-    expect(expiry.u64().toString()).toBe('0')
+    expect(amount.type).toBe('scvI128')
+    expect(expiry.type).toBe('scvU64')
+    expect(expiry.type === 'scvU64' ? expiry.u64.toString() : '').toBe('0')
   })
 })
 

@@ -89,7 +89,8 @@ const FAKE_WEBAUTHN_SIG = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function invokedFunction(tx: any): string | undefined {
   try {
-    return tx.operations[0].func?.invokeContract?.()?.functionName?.()?.toString()
+    const func = tx.operations[0].func
+    return func?.type === 'hostFunctionTypeInvokeContract' ? func.invokeContract.functionName.toString() : undefined
   } catch {
     return undefined
   }
@@ -107,22 +108,23 @@ function makeMockAuthEntry() {
     subInvocations: [],
   })
   const setCredentials = jest.fn()
-  const entry = {
-    rootInvocation: jest.fn().mockReturnValue(invocation),
-    credentials: jest.fn().mockImplementation((newCred?: unknown) => {
-      if (newCred === undefined) {
-        return {
-          switch: () => ({ value: 1 }), // SOROBAN_CREDENTIALS_ADDRESS
-          address: () => ({
-            address: () => sdk.Address.fromString(WALLET_ADDRESS).toScAddress(),
-            nonce: () => sdk.xdr.Int64.fromString('0'),
-            signatureExpirationLedger: () => 0,
-          }),
-        }
-      }
-      setCredentials(newCred)
-    }),
+  let credentials = {
+    type: 'sorobanCredentialsAddress' as const,
+    address: {
+      address: sdk.Address.fromString(WALLET_ADDRESS).toScAddress(),
+      nonce: sdk.xdr.Int64.fromString('0'),
+      signatureExpirationLedger: 0,
+      signature: sdk.xdr.ScVal.scvVoid(),
+    },
   }
+  const entry = { rootInvocation: invocation } as Record<string, unknown>
+  Object.defineProperty(entry, 'credentials', {
+    get: () => credentials,
+    set: (value) => {
+      setCredentials(value)
+      credentials = value as typeof credentials
+    },
+  })
   return { entry, setCredentials }
 }
 
@@ -179,7 +181,7 @@ describe('guardian recovery client (#1174)', () => {
 
   it('readGuardian returns the stored address and null when none is set', async () => {
     mockServer.getContractData.mockResolvedValueOnce({
-      val: { contractData: () => ({ val: () => ({ _native: GUARDIAN_KP.publicKey() }) }) },
+      val: { type: 'contractData', contractData: { val: { _native: GUARDIAN_KP.publicKey() } } },
     })
     expect(await readGuardian(WALLET_ADDRESS, RPC_URL)).toBe(GUARDIAN_KP.publicKey())
 
@@ -335,8 +337,11 @@ describe('guardian recovery client (#1174)', () => {
     // The passkey signed a 32-byte payload hash…
     expect(signAuthEntry).toHaveBeenCalledTimes(1)
     expect((signAuthEntry.mock.calls[0][0] as Uint8Array).length).toBe(32)
-    // …its signature was attached to the entry…
-    expect(setCredentials).toHaveBeenCalledTimes(1)
+    // …its signature was attached to the rebuilt entry the enforce-mode
+    // re-simulation sees.
+    const rebuilt = mockServer.simulateTransaction.mock.calls[2][0].operations[0].auth[0]
+    expect(rebuilt.credentials.type).toBe('sorobanCredentialsAddress')
+    expect(rebuilt.credentials.address.signature.type).toBe('scvVec')
     // …the recording sim targeted cancel_recovery, and an enforce-mode
     // re-simulation ran before assembly (3 sims incl. the nonce probe).
     expect(invokedFunction(mockServer.simulateTransaction.mock.calls[1][0])).toBe('cancel_recovery')

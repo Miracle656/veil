@@ -40,11 +40,13 @@ export function buildWebAuthnSignatureVector(
         throw new Error('Wallet nonce cannot be negative.');
     }
 
+    // Copy into this realm's Uint8Array: callers may hand in a Node Buffer,
+    // which SDK 17's XDR layer rejects under a different realm's `instanceof`.
     return xdr.ScVal.scvVec([
-        nativeToScVal(signature.publicKey,      { type: 'bytes' }),
-        nativeToScVal(signature.authData,       { type: 'bytes' }),
-        nativeToScVal(signature.clientDataJSON, { type: 'bytes' }),
-        nativeToScVal(signature.signature,      { type: 'bytes' }),
-        nativeToScVal(nonce,                    { type: 'u64' }),
+        nativeToScVal(new Uint8Array(signature.publicKey),      { type: 'bytes' }),
+        nativeToScVal(new Uint8Array(signature.authData),       { type: 'bytes' }),
+        nativeToScVal(new Uint8Array(signature.clientDataJSON), { type: 'bytes' }),
+        nativeToScVal(new Uint8Array(signature.signature),      { type: 'bytes' }),
+        nativeToScVal(nonce,                                    { type: 'u64' }),
     ]);
 }

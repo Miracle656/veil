@@ -1359,7 +1359,7 @@ export class InvisibleWalletCore {
 
         // stellarHash is a synchronous SHA-256 — avoids crypto.subtle (unavailable on some RN setups)
         const networkIdBytes = new Uint8Array(
-            (stellarHash as (input: Buffer) => Buffer)(Buffer.from(this.config.networkPassphrase))
+            (stellarHash as (input: Uint8Array) => Uint8Array)(new TextEncoder().encode(this.config.networkPassphrase))
         );
 
         // Read lazily: a simulation with no address credentials signs nothing and
@@ -1367,9 +1367,10 @@ export class InvisibleWalletCore {
         const nonces = new Map<string, bigint>();
         let latestLedger: number | undefined;
 
-        for (const parsed of authEntries) {
-            const cred = parsed.credentials();
-            if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+        for (let i = 0; i < authEntries.length; i++) {
+            const parsed = authEntries[i];
+            const cred = parsed.credentials;
+            if (cred.type !== 'sorobanCredentialsAddress') {
                 continue;
             }
 
@@ -1378,8 +1379,8 @@ export class InvisibleWalletCore {
             // understand. Throws AuthEntryRejected.
             assertEntryAuthorized(parsed, { walletAddress, allowed });
 
-            const addrCred = cred.address();
-            const contractAddress = Address.fromScAddress(addrCred.address()).toString();
+            const addrCred = cred.address;
+            const contractAddress = Address.fromScAddress(addrCred.address).toString();
             let nonce = nonces.get(contractAddress);
             if (nonce === undefined) {
                 nonce = await this.readWalletNonce(server, contractAddress);
@@ -1387,33 +1388,36 @@ export class InvisibleWalletCore {
             }
 
             latestLedger ??= (await server.getLatestLedger()).sequence;
-            const expiration = cappedExpiration(addrCred.signatureExpirationLedger(), latestLedger);
+            const expiration = cappedExpiration(addrCred.signatureExpirationLedger, latestLedger);
 
             const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
                 new xdr.HashIdPreimageSorobanAuthorization({
-                    networkId: Buffer.from(networkIdBytes),
-                    nonce: addrCred.nonce(),
-                    invocation: parsed.rootInvocation(),
+                    networkId: new Uint8Array(networkIdBytes),
+                    nonce: addrCred.nonce,
+                    invocation: parsed.rootInvocation,
                     signatureExpirationLedger: expiration,
                 })
             );
             const payloadHash = new Uint8Array(
-                (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
+                (stellarHash as (input: Uint8Array) => Uint8Array)(preimage.toXDR())
             );
 
             const webAuthnSig = await this.signAuthEntry(payloadHash);
             if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
 
-            parsed.credentials(
-                xdr.SorobanCredentials.sorobanCredentialsAddress(
+            // SDK 17 entries are immutable: rebuild the entry, and replace it
+            // in the simulation's auth array that assembly reads.
+            authEntries[i] = new xdr.SorobanAuthorizationEntry({
+                credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
                     new xdr.SorobanAddressCredentials({
-                        address: addrCred.address(),
-                        nonce: addrCred.nonce(),
+                        address: addrCred.address,
+                        nonce: addrCred.nonce,
                         signatureExpirationLedger: expiration,
                         signature: buildWebAuthnSignatureVector(webAuthnSig, nonce),
                     })
-                )
-            );
+                ),
+                rootInvocation: parsed.rootInvocation,
+            });
         }
     }
 
@@ -2347,7 +2351,7 @@ export class InvisibleWalletCore {
             const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
             if (!result || !result.retval) throw new Error('Simulation returned no result');
 
-            if (result.retval.switch() === xdr.ScValType.scvVoid()) {
+            if (result.retval.type === 'scvVoid') {
                 return null;
             }
 

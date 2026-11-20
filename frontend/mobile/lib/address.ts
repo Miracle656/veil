@@ -1,19 +1,38 @@
-import { StrKey } from '@stellar/stellar-sdk';
+import { StrKey, extractBaseAddress } from '@stellar/stellar-sdk';
 
 // Hostname with a TLD — mirrors the SDK's origin-domain check (sdk/src/sep7.ts).
 const DOMAIN_RE = /^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$/;
 
 /**
  * True for a valid on-chain Stellar destination — a G… account, an M… muxed
- * account, or a C… contract. Same rule as the SDK's `isValidDestination`
- * (`sdk/src/sep7.ts`), using StrKey checksum validation.
+ * account, a C… contract, or a W… muxed contract. Same rule as the SDK's
+ * `isValidDestination` (`sdk/src/sep7.ts`), using StrKey checksum validation.
  */
 export function isValidStellarAddress(value: string): boolean {
   return (
     StrKey.isValidEd25519PublicKey(value) ||
     StrKey.isValidMed25519PublicKey(value) ||
-    StrKey.isValidContract(value)
+    StrKey.isValidContract(value) ||
+    StrKey.isValidMuxedContract(value)
   );
+}
+
+/**
+ * True for a CAP-84 muxed contract address (W…). It is a valid address, but it
+ * is only payable as the destination of a Stellar Asset Contract transfer —
+ * never by a classic payment operation.
+ */
+export function isMuxedContractAddress(value: string): boolean {
+  return StrKey.isValidMuxedContract(value.trim());
+}
+
+/**
+ * The underlying C… contract of a muxed contract address, or the input
+ * unchanged for a plain C…/G…/M… address. Uses the SDK's `extractBaseAddress`
+ * so the strkey checksum is verified rather than assumed from its prefix.
+ */
+export function baseAddress(value: string): string {
+  return extractBaseAddress(value.trim());
 }
 
 /**

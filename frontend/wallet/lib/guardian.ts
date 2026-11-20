@@ -79,7 +79,9 @@ export async function readGuardian(
       xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Guardian')]),
       SorobanRpc.Durability.Persistent,
     )
-    const value = scValToNative(entry.val.contractData().val())
+    const data = entry.val
+    if (data.type !== 'contractData') return null
+    const value = scValToNative(data.contractData.val)
     return typeof value === 'string' ? value : String(value)
   } catch {
     // Missing entry (no guardian) and an undeployed wallet both land here; the
@@ -303,21 +305,23 @@ export async function cancelPendingRecovery(params: {
 
   const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
   const authEntries = successSim.result?.auth
+  const signedAuthEntries: xdr.SorobanAuthorizationEntry[] = []
   if (authEntries) {
     const networkIdBytes = new Uint8Array(
       await crypto.subtle.digest('SHA-256', new TextEncoder().encode(networkPassphrase)),
     )
     for (const parsed of authEntries) {
-      const cred = parsed.credentials()
-      if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+      const cred = parsed.credentials
+      if (cred.type !== 'sorobanCredentialsAddress') {
+        signedAuthEntries.push(parsed)
         continue
       }
-      const addrCred = cred.address()
+      const addrCred = cred.address
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addrCred.nonce(),
-          invocation: parsed.rootInvocation(),
+          networkId: new Uint8Array(networkIdBytes),
+          nonce: addrCred.nonce,
+          invocation: parsed.rootInvocation,
           signatureExpirationLedger: validUntilLedger,
         }),
       )
@@ -338,15 +342,18 @@ export async function cancelPendingRecovery(params: {
         sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }))
       }
 
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
-          new xdr.SorobanAddressCredentials({
-            address: addrCred.address(),
-            nonce: addrCred.nonce(),
-            signatureExpirationLedger: validUntilLedger,
-            signature: xdr.ScVal.scvVec(sigElements),
-          }),
-        ),
+      signedAuthEntries.push(
+        new xdr.SorobanAuthorizationEntry({
+          credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+            new xdr.SorobanAddressCredentials({
+              address: addrCred.address,
+              nonce: addrCred.nonce,
+              signatureExpirationLedger: validUntilLedger,
+              signature: xdr.ScVal.scvVec(sigElements),
+            }),
+          ),
+          rootInvocation: parsed.rootInvocation,
+        }),
       )
     }
   }
@@ -359,7 +366,7 @@ export async function cancelPendingRecovery(params: {
     .addOperation(
       Operation.invokeHostFunction({
         func: ihfOp.func,
-        auth: authEntries ?? [],
+        auth: signedAuthEntries,
         source: ihfOp.source,
       }),
     )

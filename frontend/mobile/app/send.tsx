@@ -10,7 +10,7 @@ import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
-import { isFederatedAddress, isValidDestination } from '../lib/address';
+import { baseAddress, isFederatedAddress, isMuxedContractAddress, isValidDestination } from '../lib/address';
 import { resolveFederation } from '../lib/federation';
 import { ContactPicker } from '../components/ContactPicker';
 import { QrScanner } from '../components/QrScanner';
@@ -22,7 +22,7 @@ import { fetchContractAssetBalance } from '../lib/activity';
 import { sendAssetFromContract, getFeePayerSpendableXlm, getFeePayerXlm, type FeePayerXlm } from '../lib/contractSpend';
 import { useWallet } from '../components/WalletProvider';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
-import { sendPayment } from '../lib/sendPayment';
+import { MUXED_CONTRACT_MEMO_ERROR, sendPayment } from '../lib/sendPayment';
 import { validateMemoText } from '../lib/memo';
 import { validateMemo } from '../lib/sep7';
 import { truncateAddress } from '../components/ui/AddressChip';
@@ -194,6 +194,13 @@ export default function SendScreen() {
   const trimmed = recipient.trim();
   const recipientValid = isValidDestination(trimmed);
   const showError = trimmed.length > 0 && !recipientValid;
+  // A W… address is valid, so it must never produce the "invalid address"
+  // message. It is a contract destination, though, and the two things this
+  // screen has to explain are that it is paid by a SAC transfer and that such a
+  // transfer cannot carry a memo.
+  const muxedContract = recipientValid && isMuxedContractAddress(trimmed);
+  const muxedContractBase = muxedContract ? baseAddress(trimmed) : null;
+  const muxedContractMemoError = muxedContract && !!memo.trim() ? MUXED_CONTRACT_MEMO_ERROR : null;
   // The contract's balance OF THE SELECTED ASSET. Previously this only ever
   // read native XLM, so the smart wallet could not be chosen as the source for
   // anything else — the routing would use it, but nothing on screen said so.
@@ -268,7 +275,15 @@ export default function SendScreen() {
       : null;
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
   const memoError = memo ? (memoType ? validateMemo(memo, memoType) : validateMemoText(memo)) : null;
-  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient && !!selected && !requestProblem && !memoError;
+  const canSubmit =
+    recipientValid &&
+    amtNum > 0 &&
+    editable &&
+    !insufficient &&
+    !!selected &&
+    !requestProblem &&
+    !memoError &&
+    !muxedContractMemoError;
 
   const up = selected ? unitPrice(selected) : null;
   const fiatOfAmount = up !== null && isFinite(amtNum) && amtNum > 0 ? format(amtNum * up) : null;
@@ -296,6 +311,11 @@ export default function SendScreen() {
         setStep('error');
         return;
       }
+    }
+    if (isMuxedContractAddress(recipient.trim()) && memo.trim()) {
+      setError(MUXED_CONTRACT_MEMO_ERROR);
+      setStep('error');
+      return;
     }
     setError(null);
     try {
@@ -601,7 +621,13 @@ export default function SendScreen() {
           </View>
         </View>
         {showError && (
-          <Text style={styles.errorText} testID="send-recipient-error">Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
+          <Text style={styles.errorText} testID="send-recipient-error">Enter a valid Stellar address (G/M/C/W…) or federated address (name*domain).</Text>
+        )}
+        {muxedContract && (
+          <Text style={styles.note} testID="send-muxed-contract-note">
+            This is a muxed contract address (W…). It will be paid by a Stellar Asset Contract transfer, and the
+            muxed ID stays with the payment. Its base contract is {muxedContractBase}.
+          </Text>
         )}
 
         {/* Memo */}
@@ -617,9 +643,9 @@ export default function SendScreen() {
             editable={editable}
           />
         </View>
-        {memoError && (
+        {(memoError || muxedContractMemoError) && (
           <Text style={styles.errorText} testID="send-memo-error">
-            {memoError}
+            {memoError || muxedContractMemoError}
           </Text>
         )}
 
@@ -644,9 +670,15 @@ export default function SendScreen() {
           </Text>
         )}
         {requestProblem && <Text style={styles.errorBanner} accessibilityRole="alert">{requestProblem}</Text>}
-        {nonNative && (
+        {nonNative && !muxedContract && (
           <Text style={styles.note}>
             Sending {assetCode} — the recipient needs a {assetCode} trustline, at a classic (G…) address.
+          </Text>
+        )}
+        {nonNative && muxedContract && (
+          <Text style={styles.note}>
+            Sending {assetCode} — a W… destination receives it through the {assetCode} Stellar Asset Contract, so no
+            trustline is needed on the recipient side.
           </Text>
         )}
 

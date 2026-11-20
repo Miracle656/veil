@@ -1,4 +1,10 @@
 /**
+ * @jest-environment node
+ *
+ * The SDK's XDR code compares TextEncoder output across realms, which the
+ * jsdom environment breaks; this suite needs no DOM.
+ */
+/**
  * Tests for the SEP-7 "pay" request builder/parser/validator.
  *
  * Covers builder↔parser round-trips, field normalisation, and safe rejection of
@@ -6,7 +12,7 @@
  * dangerous callback schemes).
  */
 
-import { Asset, Networks } from '@stellar/stellar-sdk'
+import { Asset, Networks, StrKey } from '@stellar/stellar-sdk'
 import {
   buildSep7PayUri,
   parseSep7PayUri,
@@ -20,6 +26,10 @@ import {
 // Real keys with valid StrKey checksums.
 const DEST = 'GCSWM5I2FRYFIDSVJDGLWDH4TMQZY6IVT4JDF2SCFW6PPJ56TSBH23NO'
 const ISSUER = 'GD2VUFNSFXBAVZEZIU6VRPFU2KMSU4VQKP65SCE4TR5C2MJPLJ6VEAIM'
+const CONTRACT = 'CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WJ5LKR5PNUCGLIMAO4K'
+const MUXED_CONTRACT = StrKey.encodeMuxedContract(
+  Buffer.concat([StrKey.decodeContract(CONTRACT), Buffer.from('0000000000000005', 'hex')]),
+)
 
 describe('buildSep7PayUri', () => {
   it('builds a minimal pay URI', () => {
@@ -194,9 +204,16 @@ describe('parseSep7QrValue', () => {
 })
 
 describe('isValidDestination', () => {
-  it('accepts G and C addresses, rejects others', () => {
+  it('accepts G, C and W addresses and rejects malformed input', () => {
     expect(isValidDestination(DEST)).toBe(true)
+    expect(isValidDestination(CONTRACT)).toBe(true)
+    expect(isValidDestination(MUXED_CONTRACT)).toBe(true)
     expect(isValidDestination('GINVALID')).toBe(false)
     expect(isValidDestination('')).toBe(false)
+  })
+
+  it('round-trips a muxed contract destination through build and parse', () => {
+    const parsed = parseSep7PayUri(buildSep7PayUri({ destination: MUXED_CONTRACT, amount: '10' }))
+    expect(parsed.destination).toBe(MUXED_CONTRACT)
   })
 })

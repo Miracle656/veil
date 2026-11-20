@@ -128,7 +128,10 @@ let txSign: jest.SpyInstance
 let simAuth: () => any[]
 
 /** A successful simulation in the parsed shape `rpc.Server` returns. */
-function simSuccess(auth: any[], retval = sdk.xdr.ScVal.scvVoid()) {
+function simSuccess(
+  auth: any[],
+  retval: import('@stellar/stellar-sdk').xdr.ScVal = sdk.xdr.ScVal.scvVoid(),
+) {
   return {
     _parsed: true,
     id: '1',
@@ -249,7 +252,8 @@ async function load(opts: { init?: boolean } = {}) {
   rpc = {
     simulateTransaction: jest.spyOn(proto, 'simulateTransaction').mockImplementation(async (tx: any) => {
       const op = tx.operations[0]
-      const fn = op.func.invokeContract().functionName().toString()
+      if (op.func.type !== 'hostFunctionTypeInvokeContract') throw new Error('expected an invoke operation')
+      const fn = op.func.invokeContract.functionName.toString()
       if (fn === 'get_nonce') return simSuccess([], sdk.nativeToScVal(9n, { type: 'u64' }))
       // The enforce-mode re-simulation carries the signed entries.
       if (op.auth && op.auth.length > 0) return simSuccess([])
@@ -610,14 +614,16 @@ describe('stellar_signXDR', () => {
     const op = signed.operations[0]
     expect(op.auth).toHaveLength(2)
     for (const entry of op.auth) {
-      const cred = entry.credentials().address()
-      expect(sdk.Address.fromScAddress(cred.address()).toString()).toBe(WALLET)
-      expect(cred.signatureExpirationLedger()).toBe(1100) // latest ledger + 100
-      const parts = cred.signature().vec()
+      const credentials = entry.credentials
+      if (credentials.type !== 'sorobanCredentialsAddress') throw new Error('expected address credentials')
+      const cred = credentials.address
+      expect(sdk.Address.fromScAddress(cred.address).toString()).toBe(WALLET)
+      expect(cred.signatureExpirationLedger).toBe(1100) // latest ledger + 100
+      const parts = cred.signature.type === 'scvVec' ? cred.signature.vec ?? [] : []
       // publicKey, authData, clientDataJSON, signature, nonce — what __check_auth reads.
       expect(parts).toHaveLength(5)
-      expect(Buffer.from(parts[0].bytes()).toString('hex')).toBe(PASSKEY_PUBLIC_KEY_HEX)
-      expect(Buffer.from(parts[3].bytes()).toString('hex')).toBe('11'.repeat(32) + '22'.repeat(32))
+      expect(Buffer.from((parts[0] as any).bytes.toBytes()).toString('hex')).toBe(PASSKEY_PUBLIC_KEY_HEX)
+      expect(Buffer.from((parts[3] as any).bytes.toBytes()).toString('hex')).toBe('11'.repeat(32) + '22'.repeat(32))
       expect(sdk.scValToNative(parts[4])).toBe(9n)
     }
   })
@@ -632,29 +638,31 @@ describe('stellar_signXDR', () => {
 
     const signed = sdk.TransactionBuilder.fromXDR(lastResponse().result.signedXDR, sdk.Networks.TESTNET) as any
     const entry = signed.operations[0].auth[0]
-    const cred = entry.credentials().address()
+    const cred = entry.credentials.address
     const networkId = sdk.hash(Buffer.from(sdk.Networks.TESTNET))
     const preimage = sdk.xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
       new sdk.xdr.HashIdPreimageSorobanAuthorization({
         networkId,
-        nonce: cred.nonce(),
-        invocation: entry.rootInvocation(),
-        signatureExpirationLedger: cred.signatureExpirationLedger(),
+        nonce: cred.nonce,
+        invocation: entry.rootInvocation,
+        signatureExpirationLedger: cred.signatureExpirationLedger,
       }),
     )
-    expect(Buffer.from(challenge).toString('hex')).toBe(sdk.hash(preimage.toXDR()).toString('hex'))
+    expect(Buffer.from(challenge).toString('hex')).toBe(Buffer.from(sdk.hash(preimage.toXDR())).toString('hex'))
   })
 
   it('omits the nonce element when the wallet nonce cannot be read', async () => {
     const original = rpc.simulateTransaction.getMockImplementation()!
     rpc.simulateTransaction.mockImplementation(async (tx: any) => {
-      const fn = tx.operations[0].func.invokeContract().functionName().toString()
+      const fn = tx.operations[0].func.type === 'hostFunctionTypeInvokeContract'
+        ? tx.operations[0].func.invokeContract.functionName.toString()
+        : ''
       if (fn === 'get_nonce') return { id: '1', latestLedger: 1000, events: [], error: 'no nonce' }
       return original(tx)
     })
     await wc.handleSignXdrRequest(request('stellar_signXDR', dappTxXdr()))
     const signed = sdk.TransactionBuilder.fromXDR(lastResponse().result.signedXDR, sdk.Networks.TESTNET) as any
-    expect(signed.operations[0].auth[0].credentials().address().signature().vec()).toHaveLength(4)
+    expect(signed.operations[0].auth[0].credentials.address.signature.vec).toHaveLength(4)
   })
 
   it('names a wallet-contract error from the enforce-mode re-simulation', async () => {
@@ -713,9 +721,9 @@ describe('stellar_signAndSubmitXDR', () => {
 
     const submitted = rpc.sendTransaction.mock.calls[0][0]
     expect(submitted.source).toBe(feePayer.publicKey())
-    const cred = submitted.operations[0].auth[0].credentials().address()
-    expect(sdk.Address.fromScAddress(cred.address()).toString()).toBe(WALLET)
-    expect(cred.signature().switch().name).toBe('scvVec')
+    const cred = submitted.operations[0].auth[0].credentials.address
+    expect(sdk.Address.fromScAddress(cred.address).toString()).toBe(WALLET)
+    expect(cred.signature.type).toBe('scvVec')
   })
 
   it('reports a transaction the network rejected', async () => {

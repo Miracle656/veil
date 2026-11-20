@@ -1,18 +1,35 @@
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 
-import { isFederatedAddress, isValidDestination, isValidStellarAddress } from '../address';
+import {
+  baseAddress,
+  isFederatedAddress,
+  isMuxedContractAddress,
+  isValidDestination,
+  isValidStellarAddress,
+} from '../address';
 
 // Real keys, so the checksum path is genuinely exercised rather than a
 // prefix-and-length lookalike.
 const ACCOUNT = Keypair.random().publicKey();
 const CONTRACT = StrKey.encodeContract(Buffer.alloc(32, 7));
 const MUXED = StrKey.encodeMed25519PublicKey(Buffer.alloc(40, 3));
+const MUXED_CONTRACT = StrKey.encodeMuxedContract(
+  Buffer.concat([StrKey.decodeContract(CONTRACT), Buffer.from('0000000000000005', 'hex')]),
+);
 
 describe('isValidStellarAddress', () => {
-  it('accepts G, M and C addresses', () => {
+  it('accepts G, M, C and W addresses', () => {
     expect(isValidStellarAddress(ACCOUNT)).toBe(true);
     expect(isValidStellarAddress(MUXED)).toBe(true);
     expect(isValidStellarAddress(CONTRACT)).toBe(true);
+    expect(isValidStellarAddress(MUXED_CONTRACT)).toBe(true);
+  });
+
+  it('identifies a muxed contract and derives its base C address without slicing', () => {
+    expect(isMuxedContractAddress(MUXED_CONTRACT)).toBe(true);
+    expect(isMuxedContractAddress(CONTRACT)).toBe(false);
+    expect(baseAddress(MUXED_CONTRACT)).toBe(CONTRACT);
+    expect(baseAddress(CONTRACT)).toBe(CONTRACT);
   });
 
   it('rejects an address whose checksum is wrong', () => {

@@ -296,20 +296,20 @@ async function attachPasskeyCredential(
   }
 ): Promise<boolean> {
   const { rpc, networkPassphrase, networkId, validUntilLedger, probeSource } = options;
-  const credentials = entry.credentials();
-  if (credentials.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+  const credentials = entry.credentials;
+  if (credentials.type !== 'sorobanCredentialsAddress') {
     return false;
   }
 
-  const addressCredentials = credentials.address();
-  const contractAddress = Address.fromScAddress(addressCredentials.address()).toString();
+  const addressCredentials = credentials.address;
+  const contractAddress = Address.fromScAddress(addressCredentials.address).toString();
   const currentNonce = await getWalletNonce(rpc, contractAddress, networkPassphrase, probeSource);
 
   const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
     new xdr.HashIdPreimageSorobanAuthorization({
-      networkId: Buffer.from(networkId),
-      nonce: addressCredentials.nonce(),
-      invocation: entry.rootInvocation(),
+      networkId: new Uint8Array(networkId),
+      nonce: addressCredentials.nonce,
+      invocation: entry.rootInvocation,
       signatureExpirationLedger: validUntilLedger,
     })
   );
@@ -327,25 +327,26 @@ async function attachPasskeyCredential(
   }
 
   const sigElements = [
-    nativeToScVal(webAuthnSig.publicKey, { type: 'bytes' }),
-    nativeToScVal(webAuthnSig.authData, { type: 'bytes' }),
-    nativeToScVal(webAuthnSig.clientDataJSON, { type: 'bytes' }),
-    nativeToScVal(webAuthnSig.signature, { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.publicKey), { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.authData), { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.clientDataJSON), { type: 'bytes' }),
+    nativeToScVal(new Uint8Array(webAuthnSig.signature), { type: 'bytes' }),
   ];
   if (currentNonce !== null) {
     sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }));
   }
 
-  entry.credentials(
-    xdr.SorobanCredentials.sorobanCredentialsAddress(
-      new xdr.SorobanAddressCredentials({
-        address: addressCredentials.address(),
-        nonce: addressCredentials.nonce(),
-        signatureExpirationLedger: validUntilLedger,
-        signature: xdr.ScVal.scvVec(sigElements),
-      })
-    )
+  // SDK 17 entries are immutable. Keep this helper's mutate-in-place contract
+  // for its caller by replacing the credentials on the existing object.
+  const signedCredentials = xdr.SorobanCredentials.sorobanCredentialsAddress(
+    new xdr.SorobanAddressCredentials({
+      address: addressCredentials.address,
+      nonce: addressCredentials.nonce,
+      signatureExpirationLedger: validUntilLedger,
+      signature: xdr.ScVal.scvVec(sigElements),
+    })
   );
+  (entry as { credentials: xdr.SorobanCredentials }).credentials = signedCredentials;
   return true;
 }
 

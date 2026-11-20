@@ -145,7 +145,7 @@ function recordingAuthEntry(fn: string, args: xdr.ScVal[]): xdr.SorobanAuthoriza
 
 function invokedFunction(tx: Transaction): string {
   const op = tx.operations[0] as Operation.InvokeHostFunction
-  return op.func.invokeContract().functionName().toString()
+  return op.func.invokeContract.functionName.toString()
 }
 
 /** Wire the RPC stand-in. `signersAfter` is what get_signers returns. */
@@ -177,7 +177,7 @@ function wireServer(opts: { signersAfter?: Uint8Array[]; txStatus?: string } = {
     if ((op.auth ?? []).length === 0) {
       // Recording mode: tell the caller which authorisation the contract wants.
       return {
-        result: { retval: xdr.ScVal.scvVoid(), auth: [recordingAuthEntry(fn, op.func.invokeContract().args())] },
+        result: { retval: xdr.ScVal.scvVoid(), auth: [recordingAuthEntry(fn, op.func.invokeContract.args)] },
         latestLedger: 1,
       }
     }
@@ -225,10 +225,10 @@ describe('buildWebAuthnSignatureVector', () => {
   const sig = { publicKey: PRIMARY_KEY, authData: new Uint8Array(37), clientDataJSON: new Uint8Array(10), signature: new Uint8Array(64) }
 
   it('has exactly the five elements __check_auth requires, nonce last as u64', () => {
-    const vec = buildWebAuthnSignatureVector(sig, 41n).vec()!
+    const vec = buildWebAuthnSignatureVector(sig, 41n).vec!
     expect(WEBAUTHN_SIGNATURE_VECTOR_LENGTH).toBe(5)
     expect(vec).toHaveLength(5)
-    expect(vec[4].switch().name).toBe('scvU64')
+    expect(vec[4].type).toBe('scvU64')
     expect(scValToNative(vec[4])).toBe(41n)
     expect(Buffer.from(scValToNative(vec[0]) as Buffer)).toEqual(Buffer.from(PRIMARY_KEY))
   })
@@ -303,13 +303,13 @@ describe('addSigner()', () => {
     expect(res.signerIndex).toBe(1)
     expect(sent).toHaveLength(1)
     const op = sent[0].operations[0] as Operation.InvokeHostFunction
-    expect(op.func.invokeContract().functionName().toString()).toBe('add_signer')
-    const cred = op.auth![0].credentials().address()
-    const vec = cred.signature().vec()!
+    expect(op.func.invokeContract.functionName.toString()).toBe('add_signer')
+    const cred = op.auth![0].credentials.address
+    const vec = cred.signature.vec!
     expect(vec).toHaveLength(5)
     expect(scValToNative(vec[4])).toBe(WALLET_NONCE)
     expect(Buffer.from(scValToNative(vec[0]) as Buffer)).toEqual(Buffer.from(PRIMARY_KEY))
-    expect(cred.signatureExpirationLedger()).toBe(5100)
+    expect(cred.signatureExpirationLedger).toBe(5100)
     // The primary passkey is the one asked to approve.
     expect(mockAuthenticate).toHaveBeenCalledWith(expect.objectContaining({ credentialId: PRIMARY_BINDING.invisible_wallet_key_id }))
   })
@@ -333,8 +333,8 @@ describe('removeSigner()', () => {
     await makeWallet(store).removeSigner(FEE_PAYER, 1)
 
     const op = sent[0].operations[0] as Operation.InvokeHostFunction
-    expect(op.func.invokeContract().functionName().toString()).toBe('remove_signer')
-    expect(op.auth![0].credentials().address().signature().vec()).toHaveLength(5)
+    expect(op.func.invokeContract.functionName.toString()).toBe('remove_signer')
+    expect(op.auth![0].credentials.address.signature.vec).toHaveLength(5)
   })
 })
 
@@ -493,7 +493,7 @@ describe('a simulation that asks for something else', () => {
     mockServer.getLatestLedger.mockResolvedValue({ sequence: 5000 })
     mockServer.simulateTransaction.mockImplementation(async (tx: Transaction) => {
       const op = tx.operations[0] as Operation.InvokeHostFunction
-      const fn = op.func.invokeContract().functionName().toString()
+      const fn = op.func.invokeContract.functionName.toString()
       if (fn === 'get_nonce') {
         return { result: { retval: nativeToScVal(WALLET_NONCE, { type: 'u64' }) }, latestLedger: 1 }
       }
@@ -569,6 +569,6 @@ describe('a simulation that asks for something else', () => {
 
     expect(sent).toHaveLength(1)
     const op = sent[0].operations[0] as Operation.InvokeHostFunction
-    expect(op.auth![0].credentials().address().signatureExpirationLedger()).toBe(5100)
+    expect(op.auth![0].credentials.address.signatureExpirationLedger).toBe(5100)
   })
 })

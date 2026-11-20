@@ -1,4 +1,4 @@
-import { Asset, Operation, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
+import { Asset, type OperationRecord, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk';
 
 /**
  * The agent conversation's data model: what the assistant can say, and what a
@@ -129,29 +129,50 @@ function describeAsset(asset: Asset): string {
   return asset.isNative() ? 'XLM' : asset.getCode();
 }
 
+/**
+ * SDK 17 exposes a decoded operation as a union whose `type` is a literal, but
+ * not every arm can be narrowed through a plain `switch` on a union alias. This
+ * shape names only the fields the card reads; anything absent is not shown.
+ */
+type DescribableOperation = {
+  type: string;
+  amount?: string;
+  asset?: Asset;
+  destination?: string;
+  sendAmount?: string;
+  sendAsset?: Asset;
+  destMin?: string;
+  destAsset?: Asset;
+  sendMax?: string;
+  destAmount?: string;
+  line?: { toString(): string };
+  startingBalance?: string;
+};
+
 /** One line per operation, in the terms the user cares about. */
-function describeOperation(operation: Operation): { text: string; known: boolean } {
+function describeOperation(record: OperationRecord): { text: string; known: boolean } {
+  const operation = record as unknown as DescribableOperation;
   switch (operation.type) {
     case 'payment':
       return {
-        text: `Send ${operation.amount} ${describeAsset(operation.asset)} to ${shortenAddress(operation.destination)}`,
+        text: `Send ${operation.amount} ${describeAsset(operation.asset!)} to ${shortenAddress(operation.destination!)}`,
         known: true,
       };
     case 'pathPaymentStrictSend':
       return {
-        text: `Swap ${operation.sendAmount} ${describeAsset(operation.sendAsset)} for at least ${operation.destMin} ${describeAsset(operation.destAsset)} to ${shortenAddress(operation.destination)}`,
+        text: `Swap ${operation.sendAmount} ${describeAsset(operation.sendAsset!)} for at least ${operation.destMin} ${describeAsset(operation.destAsset!)} to ${shortenAddress(operation.destination!)}`,
         known: true,
       };
     case 'pathPaymentStrictReceive':
       return {
-        text: `Swap up to ${operation.sendMax} ${describeAsset(operation.sendAsset)} for ${operation.destAmount} ${describeAsset(operation.destAsset)} to ${shortenAddress(operation.destination)}`,
+        text: `Swap up to ${operation.sendMax} ${describeAsset(operation.sendAsset!)} for ${operation.destAmount} ${describeAsset(operation.destAsset!)} to ${shortenAddress(operation.destination!)}`,
         known: true,
       };
     case 'changeTrust':
-      return { text: `Add a trustline for ${operation.line.toString()}`, known: true };
+      return { text: `Add a trustline for ${operation.line!.toString()}`, known: true };
     case 'createAccount':
       return {
-        text: `Create account ${shortenAddress(operation.destination)} with ${operation.startingBalance} XLM`,
+        text: `Create account ${shortenAddress(operation.destination!)} with ${operation.startingBalance} XLM`,
         known: true,
       };
     case 'invokeHostFunction':
@@ -187,7 +208,11 @@ export function reviewProposedTransaction(
   return {
     source: tx.source,
     fee: tx.fee,
-    memo: tx.memo?.value ? String(tx.memo.value) : null,
+    memo: tx.memo?.value
+      ? tx.memo.value instanceof Uint8Array
+        ? Buffer.from(tx.memo.value).toString('utf8')
+        : String(tx.memo.value)
+      : null,
     operations: described.map((operation) => operation.text),
     hasUnknownOperation: described.some((operation) => !operation.known),
   };

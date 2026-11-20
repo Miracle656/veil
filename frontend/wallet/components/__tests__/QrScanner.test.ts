@@ -6,11 +6,11 @@ import { isValidStellarAddress, isRecognizedQrValue } from '../QrScanner'
 
 describe('isValidStellarAddress', () => {
   it('accepts a valid G-address (56 chars)', () => {
-    expect(isValidStellarAddress('G' + 'A'.repeat(55))).toBe(true)
+    expect(isValidStellarAddress('GCSWM5I2FRYFIDSVJDGLWDH4TMQZY6IVT4JDF2SCFW6PPJ56TSBH23NO')).toBe(true)
   })
 
   it('accepts a valid C-address (56 chars)', () => {
-    expect(isValidStellarAddress('C' + 'A'.repeat(55))).toBe(true)
+    expect(isValidStellarAddress('CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WJ5LKR5PNUCGLIMAO4K')).toBe(true)
   })
 
   it('rejects address shorter than 56 chars', () => {
@@ -35,8 +35,8 @@ describe('isValidStellarAddress', () => {
 })
 
 describe('isRecognizedQrValue', () => {
-  const G_ADDR = 'G' + 'A'.repeat(55)
-  const C_ADDR = 'C' + 'A'.repeat(55)
+  const G_ADDR = 'GCSWM5I2FRYFIDSVJDGLWDH4TMQZY6IVT4JDF2SCFW6PPJ56TSBH23NO'
+  const C_ADDR = 'CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WJ5LKR5PNUCGLIMAO4K'
 
   it('accepts bare G and C addresses', () => {
     expect(isRecognizedQrValue(G_ADDR)).toBe(true)

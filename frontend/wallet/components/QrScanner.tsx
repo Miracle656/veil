@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { StrKey } from '@stellar/stellar-sdk'
+
 import { parseQrValue } from '@/lib/sep7'
 
 interface QrScannerProps {
@@ -22,7 +24,14 @@ declare const BarcodeDetector: {
 }
 
 export function isValidStellarAddress(addr: string): boolean {
-  return (addr.startsWith('G') || addr.startsWith('C')) && addr.length === 56
+  const v = addr.trim()
+  // G… account, M… muxed account, C… contract, or W… muxed contract (CAP-84).
+  return (
+    StrKey.isValidEd25519PublicKey(v) ||
+    StrKey.isValidMed25519PublicKey(v) ||
+    StrKey.isValidContract(v) ||
+    StrKey.isValidMuxedContract(v)
+  )
 }
 
 export function isRecognizedQrValue(raw: string): boolean {

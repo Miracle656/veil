@@ -163,7 +163,8 @@ let simulations: string[];
 
 function invokedFunctionName(tx: Transaction): string {
   const op = tx.operations[0] as Operation.InvokeHostFunction;
-  return op.func.invokeContract().functionName().toString();
+  if (op.func.type !== 'hostFunctionTypeInvokeContract') return '';
+  return op.func.invokeContract.functionName.toString();
 }
 
 function parsed(xdrString: string): xdr.SorobanAuthorizationEntry {
@@ -171,11 +172,20 @@ function parsed(xdrString: string): xdr.SorobanAuthorizationEntry {
 }
 
 function credentialOf(xdrString: string): xdr.SorobanAddressCredentials {
-  return parsed(xdrString).credentials().address();
+  const credentials = parsed(xdrString).credentials;
+  if (credentials.type !== 'sorobanCredentialsAddress') {
+    throw new Error('expected an address credential');
+  }
+  return credentials.address;
+}
+
+function scBytes(value: xdr.ScVal): Uint8Array {
+  return (value as unknown as { bytes: { toBytes(): Uint8Array } }).bytes.toBytes();
 }
 
 function signatureVector(xdrString: string): xdr.ScVal[] {
-  return credentialOf(xdrString).signature().vec() ?? [];
+  const signature = credentialOf(xdrString).signature;
+  return signature.type === 'scvVec' ? signature.vec ?? [] : [];
 }
 
 /** The only simulation this path makes: `get_nonce` on the wallet contract. */
@@ -207,7 +217,7 @@ beforeEach(() => {
   );
   jest
     .spyOn(SorobanRpc.Server.prototype, 'getLatestLedger')
-    .mockResolvedValue({ id: 'x', protocolVersion: '22', sequence: LATEST_LEDGER });
+    .mockResolvedValue({ id: 'x', protocolVersion: '22', sequence: LATEST_LEDGER } as never);
   jest
     .spyOn(SorobanRpc.Server.prototype, 'getAccount')
     .mockImplementation(async (id: string) => new (require('@stellar/stellar-sdk').Account)(id, '41'));
@@ -230,9 +240,9 @@ describe('the signed entry', () => {
 
     const before = parsed(input);
     const after = parsed(output);
-    expect(after.rootInvocation().toXDR('base64')).toBe(before.rootInvocation().toXDR('base64'));
-    expect(credentialOf(output).nonce().toString()).toBe(AUTH_NONCE.toString());
-    expect(Address.fromScAddress(credentialOf(output).address()).toString()).toBe(WALLET);
+    expect(after.rootInvocation.toXDR('base64')).toBe(before.rootInvocation.toXDR('base64'));
+    expect(credentialOf(output).nonce.toString()).toBe(AUTH_NONCE.toString());
+    expect(Address.fromScAddress(credentialOf(output).address).toString()).toBe(WALLET);
   });
 
   it('answers in base64, the shape SEP-43 documents', async () => {
@@ -246,7 +256,7 @@ describe('the signed entry', () => {
     const vector = signatureVector(await signAuthEntryPayload(entryXdr()));
 
     expect(vector).toHaveLength(5);
-    expect(Buffer.from(vector[0].bytes())).toEqual(Buffer.from(mockPasskeyPublicKey));
+    expect(Buffer.from(scBytes(vector[0]))).toEqual(Buffer.from(mockPasskeyPublicKey));
     expect(scValToNative(vector[4])).toBe(WALLET_NONCE);
   });
 
@@ -264,25 +274,25 @@ describe('the payload behind the signature', () => {
     const output = await signAuthEntryPayload(entryXdr());
     const credentials = credentialOf(output);
 
-    expect(credentials.signatureExpirationLedger()).toBe(LATEST_LEDGER + 100);
+    expect(credentials.signatureExpirationLedger).toBe(LATEST_LEDGER + 100);
 
     const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
       new xdr.HashIdPreimageSorobanAuthorization({
         networkId: hash(Buffer.from(Networks.TESTNET)),
-        nonce: credentials.nonce(),
-        invocation: parsed(output).rootInvocation(),
-        signatureExpirationLedger: credentials.signatureExpirationLedger(),
+        nonce: credentials.nonce,
+        invocation: parsed(output).rootInvocation,
+        signatureExpirationLedger: credentials.signatureExpirationLedger,
       }),
     );
     expect(mockCeremonies).toHaveLength(1);
-    expect(mockCeremonies[0].challenge).toBe(hash(preimage.toXDR()).toString('base64url'));
+    expect(mockCeremonies[0].challenge).toBe(Buffer.from(hash(preimage.toXDR())).toString('base64url'));
   });
 
   it('puts a low-S signature in the credential, still valid for the passkey', async () => {
     const vector = signatureVector(await signAuthEntryPayload(entryXdr()));
-    const authData = Buffer.from(vector[1].bytes());
-    const clientDataJSON = Buffer.from(vector[2].bytes());
-    const signature = Buffer.from(vector[3].bytes());
+    const authData = Buffer.from(scBytes(vector[1]));
+    const clientDataJSON = Buffer.from(scBytes(vector[2]));
+    const signature = Buffer.from(scBytes(vector[3]));
 
     expect(signature).toHaveLength(64);
     expect(BigInt(`0x${signature.subarray(32).toString('hex')}`) <= P256_N >> 1n).toBe(true);
@@ -346,7 +356,8 @@ describe('the limits of the standalone path', () => {
     const entry = parsed(entryXdr());
     // The other credential the XDR defines authorises the source account, which
     // is not a passkey-signed wallet credential and is not ours to fill in.
-    entry.credentials(xdr.SorobanCredentials.sorobanCredentialsSourceAccount());
+    (entry as { credentials: xdr.SorobanCredentials }).credentials =
+      xdr.SorobanCredentials.sorobanCredentialsSourceAccount();
 
     await expect(signAuthEntryPayload(entry.toXDR('base64'))).rejects.toThrow(/no wallet credential/);
     expect(mockCeremonies).toHaveLength(0);

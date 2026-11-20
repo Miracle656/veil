@@ -208,7 +208,7 @@ function encodeUncompressed(point: Exclude<EcPoint, null>): Uint8Array {
  */
 export function sha256Bytes(data: Uint8Array): Uint8Array {
     return new Uint8Array(
-        (stellarHash as (input: Buffer) => Buffer)(Buffer.from(data))
+        (stellarHash as (input: Uint8Array) => Uint8Array)(new Uint8Array(data))
     );
 }
 

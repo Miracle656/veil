@@ -209,7 +209,7 @@ export default function AssetsPage() {
         const signer = Keypair.fromSecret(secret)
         const account = await server.loadAccount(signer.publicKey())
         const tx = buildChangeTrustTx({
-          account,
+          account: account as unknown as Parameters<typeof buildChangeTrustTx>[0]['account'],
           networkPassphrase: network.networkPassphrase,
           code,
           issuer,

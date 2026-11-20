@@ -240,12 +240,13 @@ function apply(contractId: string, fn: string, args: unknown[]) {
 /** Decode the single invokeContract operation of a transaction. */
 function decodeCall(tx: sdk.Transaction) {
   const op = tx.operations[0] as sdk.Operation.InvokeHostFunction
-  const ic = op.func.invokeContract()
+  if (op.func.type !== 'hostFunctionTypeInvokeContract') throw new Error('expected an invoke operation')
+  const ic = op.func.invokeContract
   return {
-    contractId: Address.fromScAddress(ic.contractAddress()).toString(),
-    fn: ic.functionName().toString(),
-    args: ic.args().map((a) => scValToNative(a)),
-    rawArgs: ic.args(),
+    contractId: Address.fromScAddress(ic.contractAddress).toString(),
+    fn: ic.functionName.toString(),
+    args: ic.args.map((a: sdk.xdr.ScVal) => scValToNative(a)),
+    rawArgs: ic.args,
   }
 }
 
@@ -308,9 +309,9 @@ beforeEach(() => {
     }),
     prepareTransaction: jest.spyOn(proto, 'prepareTransaction').mockImplementation(async (tx: any) => tx),
     sendTransaction: jest.spyOn(proto, 'sendTransaction').mockImplementation(async (tx: any) => {
-      const hash = tx.hash().toString('hex')
+      const hash = Buffer.from(tx.hash()).toString('hex')
       const op = tx.operations[0]
-      if (op.func.switch().name === 'hostFunctionTypeCreateContractV2' || op.func.switch().name === 'hostFunctionTypeCreateContract') {
+      if (op.func.type === 'hostFunctionTypeCreateContractV2' || op.func.type === 'hostFunctionTypeCreateContract') {
         sent.push({ deploy: tx })
         vaults.set(deployedId, { config: null, balance: 0n, reserved: 0n, withdrawals: [] })
       } else {
@@ -511,19 +512,33 @@ describe('deployAndInitializeVault', () => {
     expect(sent).toHaveLength(2)
     const deploy = (sent[0] as { deploy: sdk.Transaction }).deploy
     const create = (deploy.operations[0] as sdk.Operation.InvokeHostFunction).func
-    const args = create.switch().name === 'hostFunctionTypeCreateContractV2' ? create.createContractV2() : create.createContract()
-    expect(args.executable().wasmHash().toString('hex')).toBe(WASM_HASH)
+    const args =
+      create.type === 'hostFunctionTypeCreateContractV2'
+        ? create.createContractV2
+        : create.type === 'hostFunctionTypeCreateContract'
+          ? create.createContract
+          : null
+    if (!args) throw new Error('expected a create-contract operation')
+    const wasmHash = args.executable.type === 'contractExecutableWasm' ? args.executable.wasmHash : null
+    expect(wasmHash ? Buffer.from(wasmHash.toBytes()).toString('hex') : null).toBe(WASM_HASH)
     // FINDING, fixed here: this was passed as a bare string, and the SDK threw
     // before anything was built. Breaks: no vault can be created at all.
-    const deployer = args.contractIdPreimage().fromAddress().address()
+    const preimage = args.contractIdPreimage.type === 'contractIdPreimageFromAddress'
+      ? args.contractIdPreimage.fromAddress
+      : null
+    if (!preimage) throw new Error('expected a from-address preimage')
+    const deployer = preimage.address
     expect(Address.fromScAddress(deployer).toString()).toBe(OWNER.publicKey())
-    expect(args.contractIdPreimage().fromAddress().salt()).toHaveLength(32)
+    const salt = args.contractIdPreimage.type === 'contractIdPreimageFromAddress'
+      ? args.contractIdPreimage.fromAddress.salt
+      : null
+    expect(salt ? Buffer.from(salt.toBytes()) : []).toHaveLength(32)
 
     const init = sent[1] as ReturnType<typeof decodeCall>
     expect(init.contractId).toBe(deployedId)
     expect(init.fn).toBe('initialize')
     expect(init.args).toEqual([OWNER.publicKey(), NATIVE, BigInt(DELAY)])
-    expect(init.rawArgs[2].switch().name).toBe('scvU64')
+    expect(init.rawArgs[2].type).toBe('scvU64')
   })
 
   it('reads the new contract id from v3 result meta too', async () => {
@@ -608,7 +623,7 @@ describe('depositToVault sends', () => {
     expect(call.contractId).toBe(NATIVE)
     expect(call.fn).toBe('transfer')
     expect(call.args).toEqual([OWNER.publicKey(), VAULT, 123_456_789n])
-    expect(call.rawArgs[2].switch().name).toBe('scvI128')
+    expect(call.rawArgs[2].type).toBe('scvI128')
     expect(txSign.mock.calls.length).toBe(1)
     expect(vaults.get(VAULT)!.balance).toBe(123_456_789n)
   })
@@ -653,7 +668,7 @@ describe('queueVaultWithdrawal', () => {
     await queueVaultWithdrawal({ contractId: VAULT, to: RECIPIENT, amountXlm: '2.5', ...as(OWNER) })
     const call = sent[0] as ReturnType<typeof decodeCall>
     expect(call).toMatchObject({ contractId: VAULT, fn: 'queue_withdrawal', args: [RECIPIENT, 25_000_000n] })
-    expect(call.rawArgs[1].switch().name).toBe('scvI128')
+    expect(call.rawArgs[1].type).toBe('scvI128')
   })
 
   it('allows exactly the available balance', async () => {
@@ -717,7 +732,7 @@ describe('cancel and execute', () => {
     await executeVaultWithdrawal({ contractId: VAULT, withdrawalId: 1, ...as(OWNER) })
     const call = sent[sent.length - 1] as ReturnType<typeof decodeCall>
     expect(call).toMatchObject({ contractId: VAULT, fn: 'execute_withdrawal', args: [1n] })
-    expect(call.rawArgs[0].switch().name).toBe('scvU64')
+    expect(call.rawArgs[0].type).toBe('scvU64')
   })
 
   it('execute is refused one second before unlock, without signing', async () => {

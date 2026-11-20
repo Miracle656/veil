@@ -8,6 +8,7 @@
  */
 
 import {
+  MUXED_CONTRACT_MEMO_ERROR,
   isClassicAddress,
   pollForResult,
   sendPayment,
@@ -16,10 +17,15 @@ import {
   type TransactionPoller,
   type WalletSigner,
 } from '../sendPayment';
+import { StrKey } from '@stellar/stellar-sdk';
 import { requireSigner, SignerUnavailableError } from '../signer';
 
 const G_ADDR = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 const C_ADDR = 'CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WJ5LKR5PNUCGLIMAO4K';
+const M_ADDR = StrKey.encodeMed25519PublicKey(Buffer.alloc(40, 3));
+const W_ADDR = StrKey.encodeMuxedContract(
+  Buffer.concat([StrKey.decodeContract(C_ADDR), Buffer.from('0000000000000005', 'hex')]),
+);
 
 describe('validateSend', () => {
   it('accepts a valid classic address and positive amount', () => {
@@ -28,6 +34,17 @@ describe('validateSend', () => {
 
   it('accepts a contract address', () => {
     expect(validateSend(C_ADDR, '1')).toEqual({});
+  });
+
+  it('accepts muxed-account and muxed-contract addresses', () => {
+    expect(validateSend(M_ADDR, '1')).toEqual({});
+    expect(validateSend(W_ADDR, '1')).toEqual({});
+  });
+
+  it('explains that a muxed contract cannot carry a memo instead of calling it invalid', () => {
+    const res = validateSend(W_ADDR, '1', 'invoice 42');
+    expect(res.recipient).toBeUndefined();
+    expect(res.memo).toBe(MUXED_CONTRACT_MEMO_ERROR);
   });
 
   it('rejects a malformed recipient', () => {
@@ -60,9 +77,11 @@ describe('validateSend', () => {
 });
 
 describe('isClassicAddress', () => {
-  it('is true for G… accounts and false for C… contracts', () => {
+  it('is true for G… accounts and false for M…, C… and W… addresses', () => {
     expect(isClassicAddress(G_ADDR)).toBe(true);
+    expect(isClassicAddress(M_ADDR)).toBe(false);
     expect(isClassicAddress(C_ADDR)).toBe(false);
+    expect(isClassicAddress(W_ADDR)).toBe(false);
   });
 });
 

@@ -138,9 +138,12 @@ describe('addPasskeySigner', () => {
     const xdr = mockSignXdr.mock.calls[0][0] as string;
     const { TransactionBuilder } = jest.requireActual('@stellar/stellar-sdk');
     const tx = TransactionBuilder.fromXDR(xdr, 'Test SDF Network ; September 2015');
-    const call = tx.operations[0].func.invokeContract();
-    expect(call.functionName().toString()).toBe('add_signer');
-    expect(Buffer.from(call.args()[0].bytes())).toEqual(NEW_KEY);
+    const func = tx.operations[0].func;
+    if (func.type !== 'hostFunctionTypeInvokeContract') throw new Error('expected an invoke operation');
+    const call = func.invokeContract;
+    expect(call.functionName.toString()).toBe('add_signer');
+    const firstArg = call.args[0] as unknown as { bytes: { toBytes(): Uint8Array } };
+    expect(Buffer.from(firstArg.bytes.toBytes())).toEqual(NEW_KEY);
     expect(tx.source).toBe(FEE_PAYER.publicKey());
   });
 
