@@ -10,6 +10,8 @@ import {
   Keypair,
   nativeToScVal,
   scValToNative,
+  type FeeBumpTransaction,
+  type Transaction,
 } from '@stellar/stellar-sdk'
 import { HORIZON_URL, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
 import { getRegisteredAsset, isRegisteredIssuer } from './assets.js'
@@ -135,6 +137,88 @@ export async function buildPayment(input: PaymentInput): Promise<string> {
 
   const tx = builder.setTimeout(180).build()
   return tx.toXDR()
+}
+
+// ── Server-side review of a transaction the server itself built ──────────────
+
+/**
+ * The operations this app can describe and therefore offer for signing. Mirrors
+ * the client-side `proposalRefusal` in `frontend/mobile/lib/agentMessages.ts`
+ * so the server never hands the user a transaction it cannot itself explain.
+ */
+export const SUPPORTED_OPERATION_TYPES = new Set([
+  'payment',
+  'pathPaymentStrictSend',
+  'pathPaymentStrictReceive',
+  'changeTrust',
+  'createAccount',
+  'invokeHostFunction',
+])
+
+export interface TransactionVerdict {
+  ok: boolean
+  reason?: string
+}
+
+/**
+ * Fail-closed review of a transaction built by this server. Mirrors
+ * `proposalRefusal` in `frontend/mobile/lib/agentMessages.ts` exactly:
+ *
+ * - refuses XDR that cannot be decoded;
+ * - refuses when there is no fee payer address to check against (never skips
+ *   the source-account check);
+ * - refuses when the transaction's source account (after unwrapping a fee
+ *   bump, matching how `reviewProposedTransaction` handles
+ *   `FeeBumpTransaction` vs `Transaction`) is not the wallet's fee payer;
+ * - refuses when any operation carries a `source` override that is not the
+ *   fee payer;
+ * - refuses any operation outside the supported set (`setOptions`,
+ *   `accountMerge`, and anything else unknown).
+ */
+export function validateBuiltTransaction(
+  xdr: string,
+  feePayerAddress: string,
+  networkPassphrase: string,
+): TransactionVerdict {
+  let parsed: Transaction | FeeBumpTransaction
+  try {
+    parsed = TransactionBuilder.fromXDR(xdr, networkPassphrase)
+  } catch {
+    return { ok: false, reason: 'This transaction could not be decoded, so it cannot be approved.' }
+  }
+
+  // A fee bump wraps the transaction that does the work; review the inner one,
+  // whose source and operations are what actually execute — matching
+  // `reviewProposedTransaction`.
+  const tx: Transaction =
+    'innerTransaction' in parsed ? parsed.innerTransaction : parsed
+
+  // Never skip the source check: a missing/empty fee payer address means we
+  // cannot verify ownership, so fail closed.
+  if (!feePayerAddress || tx.source !== feePayerAddress) {
+    return {
+      ok: false,
+      reason: `This transaction is sourced from ${tx.source}, which is not this wallet's fee payer. Nothing was signed.`,
+    }
+  }
+
+  // Any operation-level `source` override must also be the fee payer.
+  for (const op of tx.operations) {
+    if ('source' in op && op.source && op.source !== feePayerAddress) {
+      return {
+        ok: false,
+        reason: `An operation in this transaction is sourced from ${op.source}, which is not this wallet's fee payer. Nothing was signed.`,
+      }
+    }
+    if (!SUPPORTED_OPERATION_TYPES.has(op.type)) {
+      return {
+        ok: false,
+        reason: 'This transaction contains an operation this app cannot show you, so it will not be signed. Nothing was signed.',
+      }
+    }
+  }
+
+  return { ok: true }
 }
 
 /**

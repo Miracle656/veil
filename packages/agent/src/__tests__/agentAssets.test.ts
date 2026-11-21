@@ -15,6 +15,7 @@ const mockGetBalances: any = jest.fn()
 jest.unstable_mockModule('../txBuilder.js', () => ({
   getBalances: mockGetBalances,
   buildPayment: jest.fn(),
+  validateBuiltTransaction: jest.fn(),
 }))
 
 const { runAgent } = await import('../agent.js')

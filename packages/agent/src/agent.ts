@@ -5,10 +5,10 @@ import {
   type ChatTurn,
   type LlmProvider,
 } from './llm.js'
-import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { HORIZON_URL, NETWORK, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
 import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js'
 import { getPrice } from './price.js'
-import { buildPayment, getBalances } from './txBuilder.js'
+import { buildPayment, getBalances, validateBuiltTransaction } from './txBuilder.js'
 import { getTrendingActivity } from './trending.js'
 import { StrKey } from '@stellar/stellar-sdk'
 import { redactSensitive, toModelTools, type VeilTool } from './boundary.js'
@@ -259,20 +259,20 @@ export const TOOL_REGISTRY: VeilTool[] = [
     kind: 'prepare',
     approval: 'self',
     description:
-      'ALWAYS call this before any transaction executes. ' +
-      'Sends the transaction to the wallet UI for passkey (biometric) approval. ' +
-      'The user must approve with Face ID / fingerprint before the tx is submitted.',
+      'Approve the payment transaction the server just built and hand it to the wallet UI for passkey ' +
+      'approval. Name what the transaction does (amount, asset, recipient) in `summary`. ' +
+      'The user must approve with Face ID / fingerprint before the tx is submitted. ' +
+      'Never supply raw transaction bytes here — the server signs only what it built itself.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        transaction_xdr: { type: 'string', description: 'Unsigned transaction XDR (base64)' },
         summary: {
           type: 'string',
           description: 'Plain English: what this transaction does, amounts, assets, recipient',
         },
         estimated_fee_xlm: { type: 'number', description: 'Estimated network fee in XLM' },
       },
-      required: ['transaction_xdr', 'summary'],
+      required: ['summary'],
     },
   },
 ]
@@ -442,6 +442,8 @@ export async function runAgent(
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
+  /** The transaction bytes this server built itself. Never sent to the model; only handed to the client once `request_user_approval` runs. */
+  let builtXdr: string | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
   let unavailablePrice: { assetA: string; assetB: string } | undefined
@@ -715,7 +717,19 @@ export async function runAgent(
           wallet_address: feePayerAddress ?? (input as any).wallet_address,
         }
         const xdr = await buildPayment(payInput)
-        return JSON.stringify({ transaction_xdr: xdr, status: 'built' })
+
+        // Review the transaction the server just built, using the same rules the
+        // wallet applies client-side (proposalRefusal). Fail closed on anything
+        // we cannot decode or explain.
+        const verdict = validateBuiltTransaction(xdr, feePayerAddress ?? walletAddress, NETWORK_PASSPHRASE)
+        if (!verdict.ok) {
+          return JSON.stringify({ error: verdict.reason })
+        }
+
+        // Retain the server-built XDR server-side. The model never receives raw
+        // transaction bytes, so it cannot echo back a transaction we did not build.
+        builtXdr = xdr
+        return JSON.stringify({ status: 'built' })
       }
 
       case 'request_user_approval': {
@@ -723,8 +737,11 @@ export async function runAgent(
           cashOutPaymentBlocked = true
           return JSON.stringify({ error: 'Cash-out deposits must be sent from the Cash Out screen.' })
         }
-        pendingTxXdr = input.transaction_xdr as string
+        // Never echo a model-supplied transaction back. Approve only the
+        // transaction this server built and validated itself. Any transaction_xdr
+        // the model injects is ignored.
         pendingTxSummary = input.summary as string
+        pendingTxXdr = builtXdr
         return JSON.stringify({ status: 'awaiting_approval' })
       }
 
