@@ -37,6 +37,8 @@ import { beginTx, endTx } from '@/lib/txState'
 import { fetchPrices } from '@/lib/fetchPrice'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { isPrivacyEnabled } from '@/lib/privacy/config'
+import { getConnectApp, type PendingConnect } from '@/lib/connect'
+import { ALLOW_DEMO_APP, answer, clearPending, readPending } from '@/lib/connectWindow'
 // TODO(#1003): remove platform limitation warning when multi-origin contract ships
 import {
   FIRST_SPEND_LIMITATION_MESSAGE,
@@ -206,6 +208,36 @@ export default function SendPage() {
     }
   }, [step])
   const [txHash, setTxHash]           = useState<string | null>(null)
+  /**
+   * Set when another app opened this window through Veil Connect and asked
+   * for this payment. It changes nothing about how the payment is made: it
+   * only names the app on screen and tells it the hash afterwards.
+   */
+  const [connectPay, setConnectPay] = useState<PendingConnect | null>(null)
+  const [connectTold, setConnectTold] = useState(false)
+  useEffect(() => {
+    const pending = readPending()
+    if (pending?.request.type === 'pay') setConnectPay(pending)
+  }, [])
+  const connectAppName = connectPay ? getConnectApp(connectPay.appId, ALLOW_DEMO_APP)?.name ?? null : null
+  // Tell the app as soon as the payment is through, so closing this window
+  // early does not leave it waiting.
+  useEffect(() => {
+    if (step !== 'done' || !txHash || !connectPay || connectPay.request.type !== 'pay' || connectTold) return
+    // The fields can be edited after the hand-off. If what was sent is not
+    // what the app asked for, say so instead of passing it off as its payment.
+    const asked = connectPay.request
+    const sentTo = (resolvedAddress ?? recipient).trim()
+    const matches = sentTo === asked.to
+      && Number(amount) === Number(asked.amount)
+      && selectedAsset?.code === asked.asset
+    answer(connectPay, matches
+      ? { ok: true, type: 'pay', hash: txHash, reference: asked.reference, network: getNetworkName() }
+      : { ok: false, error: 'refused', reason: 'A payment was sent, but not the one that was asked for.' })
+    clearPending()
+    setConnectTold(true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, txHash, connectPay, connectTold])
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
   const [showPicker, setShowPicker]   = useState(false)
 
@@ -603,6 +635,11 @@ export default function SendPage() {
       <main className="wallet-main wallet-main--wide">
         <div style={{ marginBottom: '1.75rem' }}>
           <PageHeader eyebrow="Transfer" title="Send money" />
+          {connectAppName && connectPay?.request.type === 'pay' && step !== 'done' && (
+            <p className="card" style={{ fontSize: '0.85rem', padding: '0.75rem 1rem' }}>
+              {connectAppName} asked for this payment (reference {connectPay.request.reference}). Check the address and the amount before you confirm.
+            </p>
+          )}
         </div>
 
         {/* Entry to the #716 private-send flow. Flag-gated and testnet-only
@@ -1036,9 +1073,15 @@ export default function SendPage() {
                 </p>
               )}
             </div>
-            <button className="btn-gold" onClick={() => router.push('/dashboard')}>
-              Done
-            </button>
+            {connectAppName ? (
+              <button className="btn-gold" onClick={() => { try { window.close() } catch { /* stays open */ } router.push('/dashboard') }}>
+                Back to {connectAppName}
+              </button>
+            ) : (
+              <button className="btn-gold" onClick={() => router.push('/dashboard')}>
+                Done
+              </button>
+            )}
           </div>
         )}
 
