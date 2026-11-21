@@ -34,7 +34,7 @@ import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule }
 import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
-import { mapOperations, HISTORY_PAGE_SIZE, type HorizonOperation } from '@/lib/walletHistory'
+import { mapOperations, mergeHistory, HISTORY_MAX_ROWS, HISTORY_PAGE_SIZE, type HorizonOperation } from '@/lib/walletHistory'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
@@ -349,12 +349,9 @@ function DashboardPageContent() {
           })),
         ]
 
-        // Merge Wraith records with Horizon records, deduplicate by hash, sort newest first
-        const merged = [...wraithRecords, ...txRecords]
-          .filter((tx, i, arr) => arr.findIndex(t => t.hash === tx.hash) === i)
-          .sort((a, b) => b.timestamp - a.timestamp)
-          .slice(0, 30)
-        txRecords = merged
+        // Join the two sources. Never by transaction hash alone: a send and
+        // its fee share one, and that is how the send used to go missing.
+        txRecords = mergeHistory(txRecords, wraithRecords).slice(0, HISTORY_MAX_ROWS)
       } catch { /* Wraith offline — fall back to Horizon only */ }
     }
 

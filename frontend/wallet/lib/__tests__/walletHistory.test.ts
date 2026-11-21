@@ -154,3 +154,36 @@ describe('classic operations still map as before', () => {
     expect(rows[0].timestamp).toBe(Math.floor(Date.parse('2026-11-17T10:00:00Z') / 1000))
   })
 })
+
+describe('joining Horizon rows with indexer rows', () => {
+  const { mergeHistory } = jest.requireActual('../walletHistory') as typeof import('../walletHistory')
+  const row = (id: string, hash: string, timestamp: number, amount = '1.0000000') => ({
+    id, hash, timestamp, amount, type: 'sent' as const, asset: 'USDC', counterparty: BANK,
+  })
+
+  it('keeps a payment and its fee although they share one transaction', () => {
+    // Horizon lists newest first, so the fee (the later operation) comes first.
+    const fee = row('op-2', 'tx-1', 100, '0.0200000')
+    const payment = row('op-1', 'tx-1', 100, '4.1900000')
+    const rows = mergeHistory([fee, payment], [])
+    expect(rows.map((r) => r.amount)).toEqual(['0.0200000', '4.1900000'])
+  })
+
+  it('drops an indexer row for a transaction Horizon already reported', () => {
+    const rows = mergeHistory([row('op-1', 'tx-1', 100)], [row('w-9', 'tx-1', 100)])
+    expect(rows.map((r) => r.id)).toEqual(['op-1'])
+  })
+
+  it('keeps an indexer row for a transaction Horizon did not report', () => {
+    const rows = mergeHistory([row('op-1', 'tx-1', 100)], [row('w-9', 'tx-2', 200)])
+    expect(rows.map((r) => r.id)).toEqual(['w-9', 'op-1'])
+  })
+
+  it('drops the same row given twice, and sorts newest first', () => {
+    const rows = mergeHistory(
+      [row('op-1', 'tx-1', 100), row('op-1', 'tx-1', 100), row('op-3', 'tx-3', 300)],
+      [row('w-1', 'tx-2', 200), row('w-1', 'tx-2', 200)],
+    )
+    expect(rows.map((r) => r.id)).toEqual(['op-3', 'w-1', 'op-1'])
+  })
+})
