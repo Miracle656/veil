@@ -245,6 +245,52 @@ in the wallet config is likewise deprecated in favour of `sponsorSigner`, and
 the escrow helpers' `senderKeypair` / `claimantKeypair` options in favour of
 `sender` / `claimant`.
 
+## Session keys
+
+A session key is an ed25519 key the wallet owner registers with a passkey. Until its expiry it may call one function on one contract, and the third argument of each call (the amount, for a token `transfer`) counts against a cap that covers the key's whole life. It does not limit who receives a transfer.
+
+These helpers follow the wallet code every Veil wallet on mainnet runs (WASM SHA-256 `b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5`, source `contracts/invisible_wallet/src/` at commit `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2`), not `main`.
+
+```ts
+import {
+  buildRegisterSessionKeyCall,
+  buildRevokeSessionKeyCall,
+  readSessionKeyNetworkLimits,
+  readSessionKey,
+  signAuthEntryWithSessionKey,
+  sessionKeyRetryableError,
+} from 'invisible-wallet-sdk';
+
+// Owner side: build the call, then sign it with the passkey ceremony
+// (mobile: invokeAsWallet(call.contractId, call.method, call.args)).
+const limits = await readSessionKeyNetworkLimits(server);
+const call = buildRegisterSessionKeyCall(walletAddress, {
+  pubkey, keyId, targetContract: tokenId, selector: 'transfer',
+  amountCap: 10_000_000n, expiry: limits.ledgerTime + 86_400n,
+}, limits);
+
+// Session-key side: sign each wallet auth entry of a simulated call.
+const { entry } = signAuthEntryWithSessionKey(simulatedEntry, {
+  sessionKey, keyId, walletAddress, allowed: hostFunctionCalls(tx),
+  walletNonce, validUntilLedger, networkPassphrase,
+});
+
+// Anyone: read the record. null means "cannot authorise anything now".
+const record = await readSessionKey(server, walletAddress, keyId);
+```
+
+What the deployed contract does, and what the helpers assume:
+
+- `amount_cap` is a lifetime total. `spent` only goes up. Registering the same `key_id` again overwrites the record and sets `spent` back to 0.
+- The wallet nonce is shared with the passkey. If both sign against the same nonce, one is refused with `NonceMismatch`. The host reports every `__check_auth` refusal as `Error(Auth, InvalidAction)`, so `sessionKeyRetryableError(simulation, walletAddress)` reads the wallet's own error from the simulation's diagnostic events and returns a retryable `SessionKeyNonceMismatch` only for that case. Read the nonce again and resubmit.
+- `readSessionKey` returns `null` for a revoked key, an expired key whose record was removed and a key that was never registered alike. It does not guess which.
+- **Longest expiry.** The contract extends the record's storage lifetime to `(expiry - now) / 5 + 10` ledgers. Measured on testnet against the deployed WASM: a request for `maxEntryTtl - 1` ledgers is accepted, and a request for `maxEntryTtl` fails the whole registration with `Error(Storage, InvalidAction)`. With `maxEntryTtl` at 3,110,400 ledgers (mainnet and testnet), that is about 180 days. `buildRegisterSessionKeyCall` refuses any expiry past `maxSessionKeyExpiry(limits)`, which keeps one hour below that edge.
+- The record also lives for at least the network's minimum temporary-entry lifetime (17,280 ledgers, about a day, on mainnet; 720 on testnet), so a key with a short expiry stays readable after it stops working. The contract refuses it from 60 seconds after `expiry`.
+
+What a session key can and cannot do, with transaction hashes from testnet, is in [`docs/SESSION_KEYS.md`](../docs/SESSION_KEYS.md).
+
+`npm run test:network` runs these against the deployed wallet code on testnet. It deploys a fresh wallet from the WASM read from mainnet by hash, checks that hash, and drives it with a software passkey.
+
 ## Subpath Exports
 
 The package provides verified export subpaths:
