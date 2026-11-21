@@ -236,14 +236,33 @@ describe('streamed events', () => {
 
 describe('appendActivityFeed', () => {
   // Breaks: a paged fetch appends the same payment again and the total history overstates spending.
-  it('appends only records whose hash is new', () => {
-    hydrateActivityFeed([record({ hash: HASH_A, amount: '1.0000000' })])
+  it('does not append a record whose id is already there', () => {
+    hydrateActivityFeed([record({ id: 'op-1', hash: HASH_A, amount: '1.0000000' })])
 
-    appendActivityFeed([record({ id: 'duplicate', hash: HASH_A, amount: '999.0000000' })])
+    appendActivityFeed([record({ id: 'op-1', hash: HASH_A, amount: '999.0000000' })])
 
     const view = watch()
     expect(view.latest()).toHaveLength(1)
     expect(view.latest()[0].amount).toBe('1.0000000')
+  })
+
+  // Breaks: a send and its fee share one transaction, so matching on the hash
+  // keeps the 0.02 fee and drops the payment it belonged to.
+  it('keeps two payments of one transaction as two rows', () => {
+    hydrateActivityFeed([record({ id: 'op-2', hash: HASH_A, amount: '0.0200000' })])
+
+    appendActivityFeed([record({ id: 'op-1', hash: HASH_A, amount: '4.1900000' })])
+
+    expect(watch().latest().map((r) => r.amount).sort()).toEqual(['0.0200000', '4.1900000'])
+  })
+
+  // Breaks: the indexer and Horizon both report one transfer, and it shows twice.
+  it('does not append an indexer row for a transaction already listed', () => {
+    hydrateActivityFeed([record({ id: 'op-1', hash: HASH_A })])
+
+    appendActivityFeed([record({ id: 'w-77', hash: HASH_A })])
+
+    expect(watch().latest()).toHaveLength(1)
   })
 
   // Breaks: a newly paged record with an older ledger time jumps to the top, so the feed shows fetch order instead of time order.
