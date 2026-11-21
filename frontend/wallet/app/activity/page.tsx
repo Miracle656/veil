@@ -32,6 +32,17 @@ function label(tx: TxRecord): string {
   return tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'
 }
 
+/** "6:02 AM" for today, "Nov 17, 2026" for any other day. */
+function when(timestamp: number): string {
+  if (!timestamp) return ''
+  const date = new Date(timestamp * 1000)
+  const today = new Date()
+  const sameDay = date.toDateString() === today.toDateString()
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 function short(value: string): string {
   return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-6)}` : value
 }
@@ -68,6 +79,7 @@ function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
             {tx.type === 'sent' ? '-' : '+'}{tx.amount} {tx.asset}
           </span>
         )}
+        <span className="vw-meta">{when(tx.timestamp)}</span>
       </span>
     </button>
   )

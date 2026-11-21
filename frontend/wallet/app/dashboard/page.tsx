@@ -34,6 +34,7 @@ import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule }
 import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { mapOperations, HISTORY_PAGE_SIZE, type HorizonOperation } from '@/lib/walletHistory'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
@@ -48,17 +49,6 @@ import { mergeAssetBalances, readContractAssetBalances } from '@/lib/contractAss
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
-type HorizonOp = {
-  id: string; type: string
-  from?: string; to?: string; funder?: string; account?: string
-  amount?: string; starting_balance?: string
-  asset_type?: string; asset_code?: string; asset_issuer?: string
-  source_amount?: string
-  source_asset_type?: string; source_asset_code?: string
-  created_at: string; transaction_hash: string
-  transaction?: { memo?: string }
-}
-
 type WraithTransfer = {
   id: number; eventType: string; fromAddress: string | null
   toAddress: string | null; amount: string; ledger: number
@@ -66,44 +56,6 @@ type WraithTransfer = {
 }
 
 type WraithPage = { transfers: WraithTransfer[], next_cursor?: string | null }
-
-function mapHorizonOps(ops: HorizonOp[], signerPublicKey: string): import('@/components/TxDetailSheet').TxRecord[] {
-  return ops
-    .filter(p => p.type === 'payment' || p.type === 'create_account' || p.type === 'path_payment_strict_send')
-    .map(p => {
-      if (p.type === 'create_account') {
-        return {
-          id: p.id, type: 'received' as const,
-          amount: p.starting_balance ?? '0', asset: 'XLM',
-          counterparty: p.funder ?? 'Friendbot',
-          timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
-          hash: p.transaction_hash,
-        }
-      }
-      if (p.type === 'path_payment_strict_send') {
-        const srcAsset = p.source_asset_type === 'native' ? 'XLM' : (p.source_asset_code ?? 'XLM')
-        const dstAsset = p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? '')
-        return {
-          id: p.id, type: 'swapped' as const,
-          amount: p.source_amount ?? '0', asset: srcAsset,
-          destAmount: p.amount ?? '0', destAsset: dstAsset,
-          counterparty: 'Stellar DEX',
-          timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
-          hash: p.transaction_hash,
-        }
-      }
-      return {
-        id: p.id,
-        type: p.from === signerPublicKey ? 'sent' as const : 'received' as const,
-        amount: p.amount ?? '0',
-        asset: p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? ''),
-        counterparty: p.from === signerPublicKey ? (p.to ?? '') : (p.from ?? ''),
-        timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
-        hash: p.transaction_hash,
-        memo: p.transaction?.memo,
-      }
-    })
-}
 
 // ── Module-level cache ────────────────────────────────────────────────────────
 // Survives component unmount/remount within the SPA so navigating away and
@@ -338,16 +290,21 @@ function DashboardPageContent() {
           .filter(b => b.asset_type !== 'native' && parseFloat(b.balance) > 0)
           .map(b => ({ code: b.asset_code, issuer: b.asset_issuer, balance: b.balance }))
 
-        // Transaction history (fee-payer account)
-        const paymentsPage = await horizonServer
-          .payments()
+        // Transaction history. Operations, not payments: the payments feed
+        // leaves out contract calls, so cash-outs and anything else the wallet
+        // contract did never showed here. See lib/walletHistory.ts.
+        const operationsPage = await horizonServer
+          .operations()
           .forAccount(signerPublicKey)
-          .limit(20)
+          .limit(HISTORY_PAGE_SIZE)
           .order('desc')
           .call()
 
-        horizonNextRef.current = paymentsPage.records.length >= 20 ? paymentsPage.next : null
-        txRecords = mapHorizonOps(paymentsPage.records as HorizonOp[], signerPublicKey)
+        horizonNextRef.current = operationsPage.records.length >= HISTORY_PAGE_SIZE ? operationsPage.next : null
+        txRecords = mapOperations(
+          operationsPage.records as unknown as HorizonOperation[],
+          [signerPublicKey, walletAddress],
+        )
       } catch { /* not yet funded */ }
     }
 
@@ -475,8 +432,10 @@ function DashboardPageContent() {
       if (horizonNextRef.current) {
         try {
           const page = await horizonNextRef.current()
-          additionalRecords.push(...mapHorizonOps(page.records as HorizonOp[], signerPublicKey))
-          horizonNextRef.current = page.records.length >= 20 ? page.next : null
+          additionalRecords.push(
+            ...mapOperations(page.records as unknown as HorizonOperation[], [signerPublicKey, walletAddress]),
+          )
+          horizonNextRef.current = page.records.length >= HISTORY_PAGE_SIZE ? page.next : null
         } catch { /* Horizon unavailable */ }
       }
 
