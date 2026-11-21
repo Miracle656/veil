@@ -4,6 +4,12 @@
 /// `WalletError` variant returned.  The replay test re-uses the same
 /// signature payload twice to confirm the nonce gate catches the replay.
 ///
+/// The suite is grouped by concern so a reader can see the shape:
+///
+///   - Authorisation  — who is allowed to sign (wrong key, wrong payload,
+///                      malformed signature format, corrupted signature bytes)
+///   - Limits         — nonce / replay protection (stale nonce, replayed nonce)
+///
 /// Failure modes covered:
 ///   1. expired_valid_until_ledger  — a nonce that has already been consumed
 ///   2. replayed_nonce              — identical (payload, nonce=0, sig) sent twice → NonceMismatch
@@ -12,6 +18,10 @@
 ///   5. wrong_payload               — valid sig over payload_a submitted with payload_b → InvalidChallenge
 ///   6. invalid_signature_format    — Vec of only 3 elements → InvalidSignatureFormat
 ///   7. non_low_s_sig               — s-half corrupted by XOR → verification failure
+///
+/// Every test below that guards a specific hazard carries a one-line
+/// comment stating what breaks if it fails.  Do not delete those comments
+/// without understanding the incident they encode.
 
 #[allow(unused_imports)]
 use super::*;
@@ -173,6 +183,9 @@ fn setup(env: &Env) -> (InvisibleWalletClient, [u8; 65], SigningKey) {
 //
 // After nonce=0 is consumed the on-chain nonce is 1.
 // Re-submitting nonce=0 is rejected as NonceMismatch.
+//
+// Hazard: without this gate a captured signature could be replayed forever,
+// draining the wallet with a single leaked authorisation.
 
 #[test]
 fn expired_valid_until_ledger_returns_nonce_mismatch() {
@@ -203,6 +216,9 @@ fn expired_valid_until_ledger_returns_nonce_mismatch() {
 }
 
 // ── Test 2: replay — exact same triple submitted twice ───────────────────────
+//
+// Hazard: a byte-identical (payload, nonce, sig) triple must never authorise
+// twice; otherwise any observed transaction can be re-broadcast to move funds.
 
 #[test]
 fn replayed_nonce_returns_nonce_mismatch() {
@@ -233,6 +249,9 @@ fn replayed_nonce_returns_nonce_mismatch() {
 }
 
 // ── Test 3: signature from unregistered key → SignerNotAuthorized ─────────────
+//
+// Hazard: if an unregistered P-256 key could authorise, anyone holding any
+// keypair could sign for the wallet and steal its balance.
 
 #[test]
 fn wrong_key_returns_signer_not_authorized() {
@@ -260,6 +279,10 @@ fn wrong_key_returns_signer_not_authorized() {
 // raw ECDSA bytes are garbage (all zeros).  secp256r1_verify traps; testutils
 // surface this as SignatureVerificationFailed or a host-level Err(_).
 // Most importantly the nonce must not advance.
+//
+// Hazard: accepting garbage signature bytes would let an attacker bypass
+// the P-256 check entirely; advancing the nonce on failure would also burn
+// the legitimate signer's next nonce.
 
 #[test]
 fn malformed_sig_bytes_returns_verification_failed() {
@@ -287,6 +310,9 @@ fn malformed_sig_bytes_returns_verification_failed() {
 //
 // clientDataJSON embeds base64url(payload_a) as the challenge, but we
 // supply payload_b to __check_auth.  The challenge search fails → InvalidChallenge.
+//
+// Hazard: if the challenge were not bound to the payload, a signature
+// harvested from one transaction could authorise a different one.
 
 #[test]
 fn wrong_payload_returns_invalid_challenge() {
@@ -314,6 +340,10 @@ fn wrong_payload_returns_invalid_challenge() {
 //
 // __check_auth expects exactly 5 elements; a 3-element Vec is rejected
 // before any crypto work begins.
+//
+// Hazard: a short Vec must be rejected up front; otherwise a malformed
+// signature could reach crypto code with missing fields and panic the host
+// (or, worse, be interpreted with attacker-chosen defaults).
 
 #[test]
 fn invalid_sig_format_returns_format_error() {
@@ -343,6 +373,10 @@ fn invalid_sig_format_returns_format_error() {
 // We XOR 0xFF into the first byte of s (bytes [32..64] of the raw sig).
 // This is not a valid P-256 signature in any normalised or non-normalised
 // form, so secp256r1_verify must reject it.  Nonce must not advance.
+//
+// Hazard: a corrupted s-component must fail verification; if it slipped
+// through, malleability would let an attacker produce a second valid
+// signature for the same message.
 
 #[test]
 fn non_low_s_sig_returns_verification_failed() {

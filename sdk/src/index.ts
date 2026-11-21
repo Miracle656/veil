@@ -2,6 +2,7 @@ export type * from './types';
 export * from './useInvisibleWallet';
 export * from './utils';
 export * from './outbox';
+export { encodeApproveArgs } from './allowance';
 export {
     encryptBackup,
     decryptBackup,
@@ -71,5 +72,8 @@ export * from './reserves';
 export * from './deriveFeePayer';
 export * from './feePayer';
 export * from './walletStorage';
+export * from './additionalSigners';
+export * from './signatureVector';
+export * from './sep43';
 
 

@@ -1,48 +1,62 @@
-# Veil dApp Connector
+# Veil dApp Connector — SEP-43 Standard Reference
 
-A minimal reference implementation showing how a dApp can request transaction
-signatures from the Veil wallet extension without ever seeing private key material.
+A reference implementation showing how a Stellar dApp interacts with the Veil wallet via **SEP-0043** (Standard Web Wallet API Interface) without bespoke adapters or seeing private key material.
 
 ## Architecture
 
 ```
-dApp page  ──window.postMessage──▶  content-script (connector.js)
-                                          │
-                                          │ chrome.runtime.sendMessage
-                                          ▼
-                                    background (wallet)
-                                    signs & returns result
-                                          │
-                                    chrome.runtime.onMessage
-                                          │
-                               ◀──window.postMessage──  content-script
-dApp page receives result
+dApp page  ──window.stellar.veil──▶  connector.js (content-script)
+                                            │
+                                            │ chrome.runtime.sendMessage
+                                            ▼
+                                      background (wallet)
+                                      signs & returns result
+                                            │
+                                            │ chrome.runtime.onMessage
+                                            ▼
+dApp page receives SEP-43 response ◀──connector.js
 ```
 
-The dApp only ever sends serialised transaction payloads (XDR blobs or JSON).
-The private key never leaves the extension's background context.
+The dApp only interacts with the standard SEP-43 methods. The private key material never leaves the user's secure WebAuthn authenticator context.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `connector.js` | Content script injected into every page — bridges `window.veil` ↔ extension |
-| `dapp/index.html` | Minimal reference dApp using the `window.veil` API |
-| `dapp/app.js` | dApp logic: connect, sign_tx, display result |
+| `connector.js` | Content script injected into pages — exposes `window.stellar.veil` & `window.veil` |
+| `dapp/index.html` | Reference dApp UI driving the standard SEP-43 interface |
+| `dapp/app.js` | dApp logic: `getAddress`, `getNetwork`, `signTransaction`, `signAuthEntry`, `signMessage` |
 | `manifest.json` | Chrome extension manifest (MV3) |
 
-## API
+## SEP-43 API
 
-The connector exposes a Promise-based API on `window.veil`:
+The provider is exposed under `window.stellar.veil` (and `window.veil`):
 
 ```js
-// Connect (returns the wallet's Stellar public key)
-const { publicKey } = await window.veil.request({ method: 'connect' });
+const provider = window.stellar.veil;
 
-// Sign a transaction XDR
-const { signedXdr } = await window.veil.request({
-  method: 'sign_tx',
-  params: { xdr: '<base64-encoded XDR>' }
+// 1. Get Address
+const { address } = await provider.getAddress();
+
+// 2. Get Network
+const { network, networkPassphrase } = await provider.getNetwork();
+
+// 3. Sign Transaction
+const { signedTxXdr, signerAddress } = await provider.signTransaction(txXdr, {
+  networkPassphrase,
+  address,
+  submit: false,
+});
+
+// 4. Sign Soroban Auth Entry
+const { signedAuthEntry } = await provider.signAuthEntry(authEntryXdr, {
+  networkPassphrase,
+  address,
+});
+
+// 5. Sign Message
+const { signedMessage } = await provider.signMessage("Hello Stellar Testnet", {
+  address,
 });
 ```
 

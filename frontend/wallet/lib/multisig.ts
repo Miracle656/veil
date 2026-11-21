@@ -49,7 +49,13 @@ export async function getOrFundFeePayer(explicitSecret?: string): Promise<Keypai
     return Keypair.fromSecret(stored);
   }
 
-  // Fallback: Generate a random key and fund it via Friendbot
+  // Fallback: On testnet, generate a random key and fund it via Friendbot.
+  // On mainnet, Friendbot does not exist so a funded fee-payer is required.
+  const net = getNetwork();
+  if (net.name !== 'testnet') {
+    throw new Error('No fee-payer key found. On mainnet, a funded fee-payer key is required.');
+  }
+
   const tempKp = Keypair.random();
   console.log("Funding temporary fee payer:", tempKp.publicKey());
   const resp = await fetch(`https://friendbot.stellar.org?addr=${tempKp.publicKey()}`);

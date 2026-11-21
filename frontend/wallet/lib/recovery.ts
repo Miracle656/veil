@@ -2,7 +2,7 @@ import * as bip39 from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import { p256 } from '@noble/curves/nist';
 import { sha256 } from '@noble/hashes/sha256';
-import { hexToUint8Array } from '@veil/utils';
+import { bufferToHex, hexToUint8Array } from '@veil/utils';
 import {
   Sep30Client,
   collectRecoverySignatures,
@@ -262,7 +262,20 @@ export function initRecoveryInterceptor() {
 
       const privateKey = hexToUint8Array(privateKeyHex);
       const publicKey = hexToUint8Array(publicKeyHex);
-      
+      // The stored public key is the signer the wallet contract knows. A private
+      // key that does not produce it (a stale key from another wallet, or a
+      // half-overwritten recovery) would sign for the wrong wallet, so refuse
+      // here. The error never carries the key: it is caught and rethrown bare.
+      let derivedHex: string | null = null;
+      try {
+        derivedHex = bufferToHex(p256.getPublicKey(privateKey, false));
+      } catch {
+        // Not a valid P-256 scalar; falls through to the refusal below.
+      }
+      if (derivedHex !== bufferToHex(publicKey)) {
+        throw new Error('Recovery key does not match this wallet\'s signer. Please recover again.');
+      }
+
       let challenge: Uint8Array;
       if (options?.publicKey?.challenge) {
         challenge = new Uint8Array(options.publicKey.challenge);
@@ -285,6 +298,10 @@ export function initRecoveryInterceptor() {
           signature: derSig.buffer,
           userHandle: new Uint8Array([1]).buffer,
         },
+        // A recovery key is not an authenticator, so it has no PRF output. Say
+        // so the way a real credential does, rather than leave a PRF caller to
+        // crash on a missing method and treat the crash as a PRF error.
+        getClientExtensionResults: () => ({}),
       } as any;
     }
     return originalGet(options);
@@ -371,6 +388,9 @@ export async function resolveRecoveryServers(
     clients.map(async (client): Promise<RecoveryServer | null> => {
       try {
         const account = await client.getAccount(address);
+        // A server answering for a different account contributes a signer that
+        // cannot recover this one.
+        if (account.address !== address) return null;
         const signerKey = account.signers[0]?.key;
         return signerKey ? { client, signerKey } : null;
       } catch {

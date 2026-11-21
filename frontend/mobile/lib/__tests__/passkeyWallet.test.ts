@@ -27,6 +27,9 @@ const mockGetItem = jest.fn();
 jest.mock('../passkey', () => ({
   evaluatePrf: (...a: unknown[]) => mockEvaluatePrf(...a),
 }));
+jest.mock('../classicWallet', () => ({
+  fundWithFriendbot: (...a: unknown[]) => mockFundWithFriendbot(...a),
+}));
 jest.mock('../testnetWallet', () => ({
   fundWithFriendbot: (...a: unknown[]) => mockFundWithFriendbot(...a),
 }));
@@ -51,7 +54,7 @@ import { Keypair } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { createPasskeyWallet, type PasskeyWalletResult } from '../passkeyWallet';
-import type { CreatedWallet } from '../testnetWallet';
+import type { CreatedWallet } from '../classicWallet';
 import { deriveFeePayerKeypair } from '../deriveFeePayer';
 
 const CREDENTIAL_ID = 'QUJDRA'; // base64url, arbitrary but valid

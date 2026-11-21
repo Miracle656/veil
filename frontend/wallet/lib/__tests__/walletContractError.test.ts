@@ -1,3 +1,9 @@
+import { webcrypto } from 'crypto'
+import { TextEncoder, TextDecoder } from 'util'
+
+Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true, writable: true })
+Object.assign(globalThis, { TextEncoder, TextDecoder })
+
 import { signedOrigin, walletContractErrorMessage } from '../walletContractError'
 
 /**

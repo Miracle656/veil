@@ -19,7 +19,7 @@ import { ConfirmModal } from '../../components/ConfirmModal';
 import { NoticeModal } from '../../components/NoticeModal';
 import { getWalletAddress, hasUsableWallet } from '../../lib/walletStore';
 import { getFeePayerAddress } from '../../lib/activity';
-import { fundWithFriendbot } from '../../lib/testnetWallet';
+import { fundWithFriendbot } from '../../lib/classicWallet';
 import {
   getNotifIncoming,
   getNotifOutgoing,
@@ -217,6 +217,8 @@ export default function SettingsScreen() {
       switch: { value: !onTestnet, onChange: (v) => handleNetworkToggle(v) },
     },
     { key: 'fee-payer', title: 'Fee payer', subtitle: 'The account that pays network fees, and its balance', onPress: () => router.push('/settings/fee-payer') },
+    { key: 'veil-name', title: 'Veil name', subtitle: 'Get paid by name instead of a 56-character address', onPress: () => router.push('/names') },
+    { key: 'veil-ians', title: 'Veil-ians', subtitle: 'Twenty veiled figures, 5 USDC each, for name holders', onPress: () => router.push('/veil-ians') },
     { key: 'dapps', title: 'Discover dApps', subtitle: 'Browse the Stellar apps Veil can open', onPress: () => router.push('/dapps') },
     { key: 'trustlines', title: 'Trustlines & reserves', subtitle: `Manage enabled assets and reclaim locked reserves (${TRUSTLINE_RESERVE_COST_XLM} XLM each)`, onPress: () => router.push('/assets') },
     { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
@@ -239,6 +241,15 @@ export default function SettingsScreen() {
     const address = await getWalletAddress();
     if (!address) {
       setNotice({ title: 'No wallet', message: 'Create a wallet first.', tone: 'error' });
+      return;
+    }
+    const network = getNetwork();
+    if (network.name !== 'testnet' || !network.friendbotUrl) {
+      setNotice({
+        title: 'Unavailable on mainnet',
+        message: 'Friendbot is testnet only. Send real XLM to fund accounts on mainnet.',
+        tone: 'error',
+      });
       return;
     }
     // Smart (C…) wallet: fund BOTH sides — the fee-payer G-account (classic

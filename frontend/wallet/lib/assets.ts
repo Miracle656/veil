@@ -18,9 +18,17 @@ export interface RegisteredAsset {
   issuerName: string
   homeDomain?: string
   network: 'mainnet' | 'testnet' | 'all'
-  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native'
+  kind: 'treasury' | 'fund' | 'equity' | 'governance' | 'stablecoin' | 'native'
   reserveXlm?: number
   sacContractId?: string
+}
+
+/** Stellar uses alphanum4 for codes up to 4 chars and alphanum12 thereafter. */
+export function stellarAssetTypeForCode(code: string): 'credit_alphanum4' | 'credit_alphanum12' {
+  if (!/^[A-Za-z0-9]{1,12}$/.test(code)) {
+    throw new Error('Stellar asset codes must contain 1 to 12 alphanumeric characters.')
+  }
+  return code.length <= 4 ? 'credit_alphanum4' : 'credit_alphanum12'
 }
 
 export const USDY_MAINNET_ISSUER = 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6'
@@ -30,6 +38,7 @@ export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSD
 export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA'
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
+export const ETHERFUSE_MAINNET_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC'
 
 export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
   USDC: {
@@ -61,6 +70,7 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     kind: 'stablecoin',
     reserveXlm: 0.5,
   },
+  // AQUA floats and is priced from the order book, never from a hardcoded rate.
   AQUA: {
     code: 'AQUA',
     issuer: AQUA_MAINNET_ISSUER,
@@ -68,7 +78,7 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     issuerName: 'Aquarius',
     homeDomain: 'aqua.network',
     network: 'mainnet',
-    kind: 'equity',
+    kind: 'governance',
     reserveXlm: 0.5,
   },
   USDY: {
@@ -90,6 +100,33 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     kind: 'stablecoin',
     reserveXlm: 0.5,
     sacContractId: USDT0_MAINNET_SAC,
+  },
+  CETES: {
+    code: 'CETES',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Mexican Treasury Certificates',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+  },
+  USTRY: {
+    code: 'USTRY',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'US Treasury Notes',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
+  },
+  TESOURO: {
+    code: 'TESOURO',
+    issuer: ETHERFUSE_MAINNET_ISSUER,
+    name: 'Brazilian Treasury',
+    issuerName: 'Etherfuse',
+    homeDomain: 'etherfuse.com',
+    network: 'mainnet',
+    kind: 'treasury',
   },
 }
 

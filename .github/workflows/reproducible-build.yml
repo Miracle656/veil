@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source (first build)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Acceptance: CI fails if the build drifts from the committed hash.
       - name: Build & verify against committed hashes
@@ -38,7 +38,7 @@ jobs:
       # Acceptance: second build starts from a clean checkout and an empty target/
       # with zero shared state from the first build.
       - name: Clean checkout (independent second build)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: clean-rebuild
           clean: true
@@ -75,12 +75,21 @@ jobs:
           artifacts2 = r2.get("artifacts", {})
           exp_artifacts = expected.get("artifacts", {})
 
+          def report(title, left_name, left, right_name, right):
+              # Every differing artifact, with both hashes in full — never truncated.
+              print(f"::error::{title}", file=sys.stderr)
+              for name in sorted(set(left) | set(right)):
+                  if left.get(name) != right.get(name):
+                      print(f"  {name}", file=sys.stderr)
+                      print(f"    {left_name:<10} {left.get(name, '(absent)')}", file=sys.stderr)
+                      print(f"    {right_name:<10} {right.get(name, '(absent)')}", file=sys.stderr)
+
           if artifacts1 != artifacts2:
-              print("::error::Hashes differ between run 1 and run 2", file=sys.stderr)
+              report("Hashes differ between run 1 and run 2", "run 1", artifacts1, "run 2", artifacts2)
               sys.exit(1)
 
           if artifacts1 != exp_artifacts:
-              print("::error::Hashes do not match contracts/expected-hashes.json", file=sys.stderr)
+              report("Hashes do not match contracts/expected-hashes.json", "expected", exp_artifacts, "built", artifacts1)
               sys.exit(1)
 
           lines = [

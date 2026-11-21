@@ -32,6 +32,11 @@ import { Keypair, hash } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
 import { evaluatePrf } from '../passkey';
+import {
+  PASSKEY_CANCELLED_MESSAGE,
+  PasskeyCeremonyError,
+  toPasskeyCeremonyError,
+} from '../passkeyOutcome';
 import { PrivacyError } from '../privacy';
 import { getPasskeyId, getSignerSecret } from '../walletStore';
 
@@ -187,7 +192,8 @@ export async function isPrivacyRecoverySupported(): Promise<boolean> {
  *   here at all; the thrown {@link NO_PRF_PASSKEY_MESSAGE} says why in the
  *   user's terms, and `isPrivacyRecoverySupported` gives the shield screen the
  *   same answer without needing a signature first.
- * - Ceremony cancelled: throws a plain error — retryable, not a warning.
+ * - Ceremony cancelled: throws a `PasskeyCeremonyError` with outcome
+ *   `cancelled` — retryable, and not an error state on the screen.
  * - Keypair-mode wallet (testnet quick create): signs with the stored key and
  *   reports `recoverySupported: false` — those keys live in this device's
  *   keychain only.
@@ -216,12 +222,14 @@ export async function preparePrivacySigner(ownerAddress?: string): Promise<Priva
       return signPrivacyKeyDerivation(derived, { recoverySupported: true });
     }
     if (result.outcome === 'unsupported') {
-      throw new PrivacyError(NO_PRF_PASSKEY_MESSAGE);
+      // A passkey manager without PRF is an authenticator limitation, not a
+      // transient failure: the message names the limitation and what to use.
+      throw new PasskeyCeremonyError('refused', NO_PRF_PASSKEY_MESSAGE);
     }
     if (result.outcome === 'cancelled') {
-      throw new Error('Passkey cancelled. Please try again.');
+      throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
     }
-    throw new Error(result.detail ?? 'Passkey verification failed.');
+    throw toPasskeyCeremonyError(result.detail ?? 'Passkey verification failed.');
   }
 
   if (!stored) throw new PrivacyError('This device holds no wallet to derive privacy keys from.');

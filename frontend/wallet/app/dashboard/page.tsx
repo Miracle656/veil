@@ -1,6 +1,7 @@
 'use client'
 import { isNonSafariIOS } from '@/lib/iosBrowser'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,6 +44,7 @@ const network = getNetwork()
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 import type { WalletAsset } from '@/lib/walletTypes'
+import { mergeAssetBalances, readContractAssetBalances } from '@/lib/contractAssets'
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -262,7 +264,7 @@ function DashboardPageContent() {
     // Establish the fee-payer for this session (idempotent, fire-and-forget).
     // PRF wallets keep the seed in sessionStorage only — never copied to
     // localStorage — so the lock protects it at rest (ADR 0003, C3).
-    void ensureFeePayer().then(() => {
+    void ensureFeePayer(undefined, { passive: true }).then(() => {
       // After the fee-payer is established, check whether a silent PRF→legacy
       // downgrade occurred (issue #629). Show a banner if so.
       setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
@@ -419,10 +421,16 @@ function DashboardPageContent() {
     }
 
     // ── 5. Combine and display ───────────────────────────────────────────────
+    // XLM was already summed across the contract and the fee-payer; every
+    // other asset came from the fee-payer alone. So USDC sitting in the wallet
+    // contract was invisible, and a wallet could show plenty while the
+    // contract that actually spends it held nothing — which is exactly what
+    // happened the first time somebody tried to buy a name.
+    const contractAssets = await readContractAssetBalances(walletAddress, otherAssets)
     const totalXlm = (contractXlm + feePayerXlm).toFixed(7)
     const finalAssets: WalletAsset[] = [
       { code: 'XLM', issuer: null, balance: totalXlm },
-      ...otherAssets,
+      ...mergeAssetBalances(otherAssets, contractAssets),
     ]
     cachedAssets = finalAssets
     setAssets(finalAssets)
@@ -593,12 +601,18 @@ function DashboardPageContent() {
       if (!feePayer) throw new Error('No passkey found. Please register again.')
       const signerPublicKey = feePayer.publicKey()
 
-      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
-      if (!friendbotUrl) {
+      if (getNetwork().name !== 'testnet') {
         await fetchData()
         setFundingError(
           `Fee-payer restored. Fund ${signerPublicKey} with XLM from an external wallet to send or swap on mainnet.`
         )
+        return
+      }
+
+      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
+      if (!friendbotUrl) {
+        await fetchData()
+        setFundingError('Friendbot is unavailable.')
         return
       }
 
@@ -627,43 +641,8 @@ function DashboardPageContent() {
     setIsSweeping(true)
     setSweepError(null)
     try {
-      const signerSecret = walletSession.getItem('veil_signer_secret')
-        || walletLocal.getItem('veil_signer_secret')
-      if (!signerSecret) throw new Error('Signing key not found. Return to dashboard and tap "Set up fee-payer".')
-      const feePayerKp = Keypair.fromSecret(signerSecret)
-
-      const localSignAuthEntry = async (payload: Uint8Array): Promise<WebAuthnSignature | null> => {
-        const keyId        = walletLocal.getItem('invisible_wallet_key_id')
-        const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
-        if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
-
-        const challenge  = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer
-        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
-        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
-        const credIdBin  = atob(padded)
-        const credId     = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
-
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge,
-            allowCredentials: [{ id: credId, type: 'public-key' }],
-            userVerification: 'required',
-          },
-        }) as PublicKeyCredential | null
-
-        if (!assertion) return null
-
-        const response   = assertion.response as AuthenticatorAssertionResponse
-        const rawSig     = derToRawSignature(response.signature)
-        const publicKeyBytes = hexToUint8Array(publicKeyHex)
-
-        return {
-          publicKey:      publicKeyBytes,
-          authData:       new Uint8Array(response.authenticatorData),
-          clientDataJSON: new Uint8Array(response.clientDataJSON),
-          signature:      rawSig,
-        }
-      }
+      const feePayerKp = getFeePayerKeypair()
+      const localSignAuthEntry = buildSignAuthEntry()
 
       // Moving the contract's own balance is a call `__check_auth` answers, so
       // the contract must exist. Wallets are deployed on first use; funds can
@@ -941,6 +920,7 @@ function DashboardPageContent() {
             currencyCode={currencyCode}
             fxRate={fxRate}
             hideAmounts={hideAmounts}
+            walletAddress={walletAddress}
           />
         )}
 
@@ -954,7 +934,7 @@ function DashboardPageContent() {
         <div className="vw-center-col">
           {/* ── Activity feed ── */}
           <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', padding: '20px 0 4px' }}>
               <div className="vw-label">Activity</div>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/activity')}>See all</button>
             </div>
@@ -1009,7 +989,7 @@ function DashboardPageContent() {
             truth (#740). */}
         <div className="vw-rail">
           <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', padding: '20px 0 6px' }}>
               <div className="vw-label">Assets</div>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
             </div>

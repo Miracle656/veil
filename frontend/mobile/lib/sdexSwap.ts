@@ -14,6 +14,9 @@ import { getNetwork } from './network';
 import { inclusionFee } from './fees';
 import { classicAsset, pathPaysOut, sameSwapAsset, type PathRecordAssets, type SwapAsset } from './swapAssets';
 import { assertFeePayerCanCoverFee } from './feePayerCheck';
+import { fetchPlatformFee } from './platformFee';
+import { spendableNativeXlm } from './reserves';
+import { canAffordSdexSwapFee } from './sdexSwapFeeAttach';
 
 // Assets arrive as registry-checked code:issuer pairs (lib/swapAssets). This
 // module used to keep its own code → issuer table — a third, unsynced copy of
@@ -89,26 +92,59 @@ export async function sdexSwap(params: {
   const builder = new TransactionBuilder(account, {
     fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
-  });
+  }).setTimeout(60);
 
   // The order book pays out `dst`, so the account must trust it first.
-  if (!trustsAsset(account.balances as unknown as Array<Record<string, unknown>>, dst)) {
+  const addsTrustline = !trustsAsset(account.balances as unknown as Array<Record<string, unknown>>, dst);
+  if (addsTrustline) {
     builder.addOperation(Operation.changeTrust({ asset: dst }));
   }
 
-  const tx = builder
-    .addOperation(
-      Operation.pathPaymentStrictSend({
-        sendAsset: src,
-        sendAmount: params.amountIn,
-        destination: kp.publicKey(),
-        destAsset: dst,
-        destMin,
-        path,
+  builder.addOperation(
+    Operation.pathPaymentStrictSend({
+      sendAsset: src,
+      sendAmount: params.amountIn,
+      destination: kp.publicKey(),
+      destAsset: dst,
+      destMin,
+      path,
+    }),
+  );
+
+  // The Veil fee rides on this transaction as one more payment op — classic
+  // operations only, and only when the swap pays in XLM: the fee is
+  // denominated in what the account is already spending, so no second balance
+  // or trustline is ever needed to carry it.
+  //
+  // Appended after the user's own operations, and dropped whenever the account
+  // cannot cover it at the transaction's REAL cost — including the extra
+  // operation's share of the fee bid and the 0.5 XLM reserve a changeTrust in
+  // this same transaction locks (#1201). A fee nobody asked for must never
+  // turn a swappable balance into a failed swap.
+  const platformFee = src.isNative() ? await fetchPlatformFee('XLM', Number(params.amountIn)) : null;
+  const accountLike = account as unknown as Parameters<typeof spendableNativeXlm>[0];
+  if (
+    platformFee &&
+    canAffordSdexSwapFee({
+      spendableXlm: spendableNativeXlm(accountLike),
+      nativeAmountIn: params.amountIn,
+      feeAmount: platformFee.amount,
+      perOpBidStroops: Number(inclusionFee()),
+      opsWithoutFee: builder.build().operations.length,
+      addsTrustline,
+    })
+  ) {
+    builder.addOperation(
+      Operation.payment({
+        destination: platformFee.destination,
+        // Native has no issuer, and `new Asset('XLM', undefined)` is not it.
+        asset: Asset.native(),
+        amount: platformFee.amount,
       }),
-    )
-    .setTimeout(60)
-    .build();
+    );
+  }
+
+  const tx = builder.build();
 
   tx.sign(kp);
   const res = await server.submitTransaction(tx);

@@ -9,7 +9,7 @@
  */
 
 import { errorMessage } from './errorMessage';
-import { isUserRejection } from './walletConnectHelpers';
+import { isPasskeyCancellation } from './passkeyOutcome';
 
 export type PrfOutcome =
   /** A usable PRF output. */
@@ -35,8 +35,13 @@ export function prfFromAssertion(assertionReturned: boolean, output: Uint8Array 
   return { output: null, outcome: 'unsupported' };
 }
 
-/** Classify a thrown assertion. */
+/**
+ * Classify a thrown assertion.
+ *
+ * Only the passkey ceremony's own cancellation signal counts: a bare timeout in
+ * some other error's text is a failure, not a reason to call the prompt closed.
+ */
 export function prfFromError(error: unknown): PrfEvaluation {
-  if (isUserRejection(error)) return { output: null, outcome: 'cancelled' };
+  if (isPasskeyCancellation(error)) return { output: null, outcome: 'cancelled' };
   return { output: null, outcome: 'failed', detail: errorMessage(error) };
 }
