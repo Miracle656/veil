@@ -21,6 +21,13 @@ import {
   type VaultWithdrawal,
 } from '@/lib/vault'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { VaultPositionHistory } from '@/components/VaultPositionHistory'
+import {
+  formatAbsoluteTimestamp,
+  queueMaturityTimestamp,
+  VAULT_COPY,
+  type VaultPositionValueSnapshot,
+} from '@/lib/vaultPresentation'
 
 const VAULT_STORAGE_KEY = 'veil_vault_contract'
 
@@ -44,21 +51,7 @@ function formatDelay(seconds: number): string {
 }
 
 function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp * 1_000).toLocaleString()
-}
-
-function formatCountdown(unlockAt: number, now: number): string {
-  const remaining = Math.max(0, unlockAt - now)
-  if (remaining === 0) return 'Ready to execute'
-
-  const days = Math.floor(remaining / 86_400)
-  const hours = Math.floor((remaining % 86_400) / 3_600)
-  const minutes = Math.floor((remaining % 3_600) / 60)
-  const seconds = remaining % 60
-
-  if (days > 0) return `${days}d ${hours}h ${minutes}m`
-  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
-  return `${minutes}m ${seconds}s`
+  return formatAbsoluteTimestamp(timestamp)
 }
 
 function withdrawalStatus(withdrawal: VaultWithdrawal, now: number): string {
@@ -86,6 +79,8 @@ export default function VaultPage() {
   const [depositAmount, setDepositAmount] = useState('')
   const [recipient, setRecipient] = useState('')
   const [withdrawalAmount, setWithdrawalAmount] = useState('')
+  const [depositTermsAcknowledged, setDepositTermsAcknowledged] = useState(false)
+  const positionValueHistory: readonly VaultPositionValueSnapshot[] = []
 
   useEffect(() => {
     const walletAddress = walletSession.getItem('invisible_wallet_address')
@@ -218,7 +213,10 @@ export default function VaultPage() {
       contractId,
       amountXlm: depositAmount,
     }), true)
-    if (succeeded) setDepositAmount('')
+    if (succeeded) {
+      setDepositAmount('')
+      setDepositTermsAcknowledged(false)
+    }
   }
 
   async function handleQueue(event: FormEvent): Promise<void> {
@@ -386,6 +384,8 @@ export default function VaultPage() {
               )}
             </section>
 
+            <VaultPositionHistory history={positionValueHistory} />
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
               <section className="card">
                 <h2 style={sectionHeadingStyle}>Deposit XLM</h2>
@@ -401,10 +401,37 @@ export default function VaultPage() {
                     onChange={(event) => setDepositAmount(event.target.value)}
                     placeholder="0.00"
                   />
+                  <div
+                    style={{
+                      marginTop: '0.875rem',
+                      padding: '0.875rem',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(197,160,89,0.25)',
+                      background: 'rgba(197,160,89,0.06)',
+                    }}
+                  >
+                    <p style={labelStyle}>{VAULT_COPY.exitTermsTitle.toUpperCase()}</p>
+                    <p style={{ ...sectionCopyStyle, marginTop: 0 }}>
+                      Withdrawals enter a <strong>{formatDelay(details?.config.delaySeconds ?? 0)}</strong> queue.
+                      The queue starts at confirmation and the withdrawal cannot execute before its maturity date.
+                    </p>
+                    <p style={{ ...sectionCopyStyle, color: 'rgb(255,150,150)', marginTop: '0.5rem' }}>
+                      {VAULT_COPY.riskFirstLoss}
+                    </p>
+                    <label style={{ ...labelStyle, display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginTop: '0.75rem', marginBottom: 0, letterSpacing: 0, fontFamily: 'Inter, sans-serif', fontSize: '0.8125rem', color: 'var(--off-white)' }}>
+                      <input
+                        type="checkbox"
+                        checked={depositTermsAcknowledged}
+                        onChange={(event) => setDepositTermsAcknowledged(event.target.checked)}
+                        style={{ marginTop: '0.125rem' }}
+                      />
+                      <span>{VAULT_COPY.depositConfirmation}</span>
+                    </label>
+                  </div>
                   <button
                     className="btn-gold"
                     type="submit"
-                    disabled={action !== null || !isOwner || depositAmount.length === 0}
+                    disabled={action !== null || !isOwner || depositAmount.length === 0 || !depositTermsAcknowledged}
                     style={{ marginTop: '0.75rem' }}
                   >
                     {action === 'deposit' ? 'Depositing...' : 'Deposit'}
@@ -475,6 +502,12 @@ export default function VaultPage() {
                     const pending = !withdrawal.cancelled && !withdrawal.executed
                     const ready = pending && now >= withdrawal.unlockAt
                     const status = withdrawalStatus(withdrawal, now)
+                    const derivedMaturity = details
+                      ? queueMaturityTimestamp(withdrawal.queuedAt, details.config.delaySeconds)
+                      : withdrawal.unlockAt
+                    const maturityTimestamp = withdrawal.unlockAt === derivedMaturity
+                      ? withdrawal.unlockAt
+                      : derivedMaturity
                     const currentAction = action === `cancel-${withdrawal.id}`
                       || action === `execute-${withdrawal.id}`
 
@@ -501,45 +534,65 @@ export default function VaultPage() {
                           <InfoRow label="Destination" value={withdrawal.to} mono />
                           <InfoRow label="Queued" value={formatTimestamp(withdrawal.queuedAt)} />
                           <InfoRow
-                            label="Unlocks"
-                            value={pending
-                              ? `${formatTimestamp(withdrawal.unlockAt)} (${formatCountdown(withdrawal.unlockAt, now)})`
-                              : formatTimestamp(withdrawal.unlockAt)}
+                            label={pending ? VAULT_COPY.maturityLabel : 'Matured'}
+                            value={formatTimestamp(maturityTimestamp)}
                           />
                         </div>
 
                         {pending && (
-                          <div style={{ display: 'grid', gridTemplateColumns: ready ? '1fr 1fr' : '1fr', gap: '0.75rem', marginTop: '1rem' }}>
-                            <button
-                              className="btn-ghost"
-                              disabled={action !== null || !isOwner}
-                              onClick={() => runAction(
-                                `cancel-${withdrawal.id}`,
-                                () => cancelVaultWithdrawal({
-                                  contractId,
-                                  withdrawalId: withdrawal.id,
-                                }),
-                                true,
-                              )}
+                          <>
+                            <div
+                              role="status"
+                              aria-label="Queued withdrawal terms"
+                              style={{
+                                display: 'grid',
+                                gap: '0.375rem',
+                                marginTop: '1rem',
+                                padding: '0.875rem',
+                                borderRadius: '12px',
+                                background: 'rgba(255,255,255,0.02)',
+                                border: '1px solid var(--border-dim)',
+                                fontSize: '0.8125rem',
+                                lineHeight: 1.5,
+                              }}
                             >
-                              {action === `cancel-${withdrawal.id}` ? 'Cancelling...' : 'Cancel'}
-                            </button>
-                            {ready && (
+                              <strong>{VAULT_COPY.emissionsQueued}</strong>
+                              <strong>{VAULT_COPY.interestQueued}</strong>
+                              <span style={{ color: 'rgba(246,247,248,0.55)' }}>{VAULT_COPY.cancellation}</span>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: ready ? '1fr 1fr' : '1fr', gap: '0.75rem', marginTop: '1rem' }}>
                               <button
-                                className="btn-secondary"
-                                disabled={action !== null}
+                                className="btn-ghost"
+                                aria-label={`Cancel withdrawal ${withdrawal.id}`}
+                                disabled={action !== null || !isOwner}
                                 onClick={() => runAction(
-                                  `execute-${withdrawal.id}`,
-                                  () => executeVaultWithdrawal({
+                                  `cancel-${withdrawal.id}`,
+                                  () => cancelVaultWithdrawal({
                                     contractId,
                                     withdrawalId: withdrawal.id,
                                   }),
+                                  true,
                                 )}
                               >
-                                {action === `execute-${withdrawal.id}` ? 'Executing...' : 'Execute'}
+                                {action === `cancel-${withdrawal.id}` ? VAULT_COPY.cancelPending : VAULT_COPY.cancelLabel}
                               </button>
-                            )}
-                          </div>
+                              {ready && (
+                                <button
+                                  className="btn-secondary"
+                                  disabled={action !== null}
+                                  onClick={() => runAction(
+                                    `execute-${withdrawal.id}`,
+                                    () => executeVaultWithdrawal({
+                                      contractId,
+                                      withdrawalId: withdrawal.id,
+                                    }),
+                                  )}
+                                >
+                                  {action === `execute-${withdrawal.id}` ? 'Executing...' : 'Execute'}
+                                </button>
+                              )}
+                            </div>
+                          </>
                         )}
 
                         {currentAction && (
