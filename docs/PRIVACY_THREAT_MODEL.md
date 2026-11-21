@@ -2,6 +2,7 @@
 
 **Status:** Draft · **Scope:** the Veil/Stellar Private Payments (SPP) integration · **Owner:** privacy wave (V131–V149)
 **Read alongside:** `docs/PRIVACY_COST.md` (costs, "integrate don't build"), `docs/adr/0003-fee-payer-key-from-webauthn-prf.md` (key derivation), the issue batch in `scripts/wave-issues-privacy.md`.
+**Mechanism decision:** [ADR 0006 — Privacy Mechanisms: Which Problem Each One Solves](adr/0006-privacy-mechanisms.md) defines the pool/stealth boundary and the observer view.
 
 **Reference conventions.** V-numbers point at the privacy wave issue definitions in [scripts/wave-issues-privacy.md](../scripts/wave-issues-privacy.md). Code references are `path:line` into this repo; `sdk/native/…` paths are upstream SPP code ([NethermindEth/stellar-private-payments](https://github.com/NethermindEth/stellar-private-payments)). Once the wave is published, repoint the V-number links at the GitHub issue URLs.
 
