@@ -21,14 +21,9 @@ import { getWalletAddress, hasUsableWallet } from '../../lib/walletStore';
 import { getFeePayerAddress } from '../../lib/activity';
 import { fundWithFriendbot } from '../../lib/classicWallet';
 import {
-  getNotifIncoming,
-  getNotifOutgoing,
-  isNotifPrefsHydrated,
   subscribeToNotifPrefs,
-  setNotifIncoming,
-  setNotifOutgoing,
+  summarizeNotificationCategories,
 } from '../../lib/notificationPrefs';
-import { requestNotificationPermissions } from '../../lib/notifications';
 import { TRUSTLINE_RESERVE_COST_XLM } from '../../lib/reserves';
 import { walletKind } from '../../lib/secretExport';
 
@@ -139,40 +134,20 @@ export default function SettingsScreen() {
     { key: 'danger', title: 'Danger zone', subtitle: 'Reset this device’s wallet', onPress: () => router.push('/settings/danger') },
   ];
 
-  // Live notification preferences.
-  const notifIncoming = useSyncExternalStore(subscribeToNotifPrefs, getNotifIncoming, getNotifIncoming);
-  const notifOutgoing = useSyncExternalStore(subscribeToNotifPrefs, getNotifOutgoing, getNotifOutgoing);
+  // Live notification category summary (#1287).
+  const notifSummary = useSyncExternalStore(
+    subscribeToNotifPrefs,
+    () => summarizeNotificationCategories(),
+    () => summarizeNotificationCategories()
+  );
 
   const notifications: Row[] = [
     {
-      key: 'notif-incoming',
-      title: 'Incoming transfers',
-      subtitle: 'Notify when you receive a payment',
-      onPress: () => {
-        void requestNotificationPermissions().then((granted) => {
-          if (!granted) {
-            setNotice({ title: 'Notifications off', message: 'Enable notifications in your device settings to receive alerts.', tone: 'neutral' });
-          } else {
-            void setNotifIncoming(!notifIncoming);
-          }
-        });
-      },
-      switch: { value: notifIncoming, onChange: (v) => {
-        void requestNotificationPermissions().then((granted) => {
-          if (!granted) {
-            setNotice({ title: 'Notifications off', message: 'Enable notifications in your device settings to receive alerts.', tone: 'neutral' });
-          } else {
-            void setNotifIncoming(v);
-          }
-        });
-      } },
-    },
-    {
-      key: 'notif-outgoing',
-      title: 'Outgoing confirmations',
-      subtitle: 'Notify when a sent transaction confirms',
-      onPress: () => void setNotifOutgoing(!notifOutgoing),
-      switch: { value: notifOutgoing, onChange: (v) => void setNotifOutgoing(v) },
+      key: 'notifications',
+      title: 'Notification categories',
+      subtitle: 'Activity, Security, Product & Seasonal — and what Veil can see',
+      value: notifSummary,
+      onPress: () => router.push('/settings/notifications'),
     },
   ];
 
