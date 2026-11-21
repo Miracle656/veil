@@ -52,6 +52,8 @@ import { ContactIcon } from '../components/icons';
 import { pickContactNumber } from '../lib/pickContact';
 import { FlowHeader } from '../components/FlowHeader';
 import { SlideToConfirm } from '../components/SlideToConfirm';
+import { SavedRecipients, SaveRecipientSwitch } from '../components/SavedRecipients';
+import { useSavedRecipients } from '../hooks/useSavedRecipients';
 import { useWallet } from '../components/WalletProvider';
 import { useTheme } from '../hooks/useTheme';
 import { useNetwork } from '../hooks/useNetwork';
@@ -136,6 +138,8 @@ export default function AirtimeScreen() {
   const [provider, setProvider] = useState<string>('MTN');
   const [providerTouched, setProviderTouched] = useState(false);
   const [phone, setPhone] = useState('');
+  const [saveForNextTime, setSaveForNextTime] = useState(false);
+  const savedPhones = useSavedRecipients('phone');
   const [amountNGN, setAmountNGN] = useState('');
   const [coin, setCoin] = useState<NairaCoin>('usdc');
 
@@ -399,6 +403,9 @@ export default function AirtimeScreen() {
       });
       setWaitingForPasskey(false);
       setPayHash(hash);
+      if (saveForNextTime) {
+        void savedPhones.save({ kind: 'phone', phoneNumber: phoneDigits, network: provider }).catch(() => undefined);
+      }
     } catch (err) {
       setWaitingForPasskey(false);
       // Back to the confirmation with the order intact and no red error: the
@@ -417,7 +424,7 @@ export default function AirtimeScreen() {
       }
       setStep('confirm');
     }
-  }, [customerRef, refundAddress, rate, ngn, provider, phoneDigits, coin, wallet.deploy, code]);
+  }, [customerRef, refundAddress, rate, ngn, provider, phoneDigits, coin, wallet.deploy, code, saveForNextTime, savedPhones.save]);
 
   // Stop polling on unmount
   useEffect(() => {
@@ -493,6 +500,20 @@ export default function AirtimeScreen() {
         {/* ── b1 · form ─────────────────────────────────────────────────── */}
         {!mainnetOnly && step === 'form' && (
           <>
+            <SavedRecipients
+              choices={savedPhones.recipients.map((item) => ({ key: item.phoneNumber, label: item.network, detail: item.phoneNumber }))}
+              onPick={(key) => {
+                const item = savedPhones.recipients.find((entry) => entry.phoneNumber === key);
+                if (!item) return;
+                setPhone(item.phoneNumber);
+                setProvider(item.network);
+                setProviderTouched(true);
+              }}
+              onRemove={(key) => {
+                const item = savedPhones.recipients.find((entry) => entry.phoneNumber === key);
+                if (item) void savedPhones.remove(item).catch(() => undefined);
+              }}
+            />
             <Text style={styles.label}>NETWORK</Text>
             <View style={styles.networkRow}>
               {NETWORKS.map((n) => (
@@ -673,6 +694,8 @@ export default function AirtimeScreen() {
                 to this wallet.
               </Text>
             </View>
+
+            <SaveRecipientSwitch value={saveForNextTime} onChange={setSaveForNextTime} />
 
             <SlideToConfirm
               testID="slide-to-confirm-btn"

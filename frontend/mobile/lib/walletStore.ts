@@ -16,6 +16,7 @@ import { PENDING_RECOVERY_KEY, RECOVERY_SERVERS_KEY } from './recovery';
 import { ORIGIN_PERMISSIONS_STORAGE_KEY } from './permissions';
 import { OFFRAMP_ACTIVE_ORDER_KEY, OFFRAMP_DEPOSIT_ADDRESSES_KEY } from './offramp';
 import { FEE_PAYER_SOURCE_KEY } from './feePayerSource';
+import { clearSavedRecipients, SAVED_RECIPIENTS_KEY } from './savedRecipients';
 
 /**
  * Thin, typed accessors for the wallet identifiers the app keeps on the device.
@@ -173,10 +174,7 @@ export const SDK_KEYS = [
  */
 export const WALLET_SESSION_ADDRESS_KEY = 'veil_wallet_session_address';
 export const WALLET_SESSION_SIGNER_SECRET_KEY = 'veil_wallet_session_signer_secret';
-export const SESSION_KEYS = [
-  WALLET_SESSION_ADDRESS_KEY,
-  WALLET_SESSION_SIGNER_SECRET_KEY,
-] as const;
+export const SESSION_KEYS = [WALLET_SESSION_ADDRESS_KEY, WALLET_SESSION_SIGNER_SECRET_KEY] as const;
 
 /**
  * Cached, wallet-derived AsyncStorage state.
@@ -225,6 +223,7 @@ export function walletCacheKeys(): readonly string[] {
     OFFRAMP_DEPOSIT_ADDRESSES_KEY,
     FEE_PAYER_SOURCE_KEY,
     RECOVERY_SERVERS_KEY,
+    SAVED_RECIPIENTS_KEY,
   ];
 }
 
@@ -235,7 +234,7 @@ export function walletCacheKeys(): readonly string[] {
  * to call time for the same import-cycle reason as {@link walletCacheKeys}.
  */
 export function networkScopedWalletCacheKeys(): ReadonlySet<string> {
-  return new Set([FEE_PAYER_SOURCE_KEY]);
+  return new Set([FEE_PAYER_SOURCE_KEY, SAVED_RECIPIENTS_KEY]);
 }
 
 /** Wipe the ACTIVE NETWORK's stored wallet identifiers only. */
@@ -251,6 +250,7 @@ export async function clearWalletStore(): Promise<void> {
     key(SecureKey.additionalSigners).then(deleteSecureItem),
     key(SecureKey.retiredFeePayers).then(deleteSecureItem),
     ...SDK_KEYS.map((k) => AsyncStorage.removeItem(`${k}${suffix}`)),
+    clearSavedRecipients(),
     // Clear SPP state when the wallet is removed.
     walletAddress ? clearSppDatabase(walletAddress) : Promise.resolve(),
   ]);
@@ -276,9 +276,7 @@ export async function resetWallet(): Promise<void> {
     clearWalletStore(),
     Promise.all(SESSION_KEYS.map((k) => deleteSecureItem(k))),
     ...walletCacheKeys().map((k) =>
-      networkScoped.has(k)
-        ? AsyncStorage.removeItem(`${k}${suffix}`)
-        : AsyncStorage.removeItem(k)
+      networkScoped.has(k) ? AsyncStorage.removeItem(`${k}${suffix}`) : AsyncStorage.removeItem(k)
     ),
   ]);
 }

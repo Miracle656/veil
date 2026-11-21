@@ -1,18 +1,32 @@
 import React from 'react';
 import * as Clipboard from 'expo-clipboard';
 import { BILL_SERVICES } from '../components/PayForGrid';
-import {
-  DISCOS,
-  formatToken,
-  naira,
-} from '../app/electricity';
+import { DISCOS, formatToken, naira } from '../app/electricity';
 
 // Mocks
 const mockPush = jest.fn();
 const mockBack = jest.fn();
 jest.mock('expo-router', () => ({
   useRouter: () => ({ push: mockPush, back: mockBack }),
+  useFocusEffect: () => undefined,
 }));
+
+const mockSavedMeters: Array<{
+  kind: 'meter';
+  meterNumber: string;
+  provider: string;
+  meterType: 'prepaid' | 'postpaid';
+}> = [];
+jest.mock('../hooks/useSavedRecipients', () => ({
+  useSavedRecipients: () => ({ recipients: mockSavedMeters, save: jest.fn(), remove: jest.fn() }),
+}));
+jest.mock('../components/SavedRecipients', () => {
+  const React = require('react');
+  return {
+    SavedRecipients: (props: object) => React.createElement('SavedRecipients', props),
+    SaveRecipientSwitch: (props: object) => React.createElement('SaveRecipientSwitch', props),
+  };
+});
 
 jest.mock('expo-clipboard', () => ({
   setStringAsync: jest.fn(async () => true),
@@ -161,6 +175,7 @@ async function renderScreen() {
 describe('ElectricityScreen (#1134)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockSavedMeters.length = 0;
     jest.useFakeTimers();
     mockNetworkName.current = 'mainnet';
     mockGetCustomerRef.mockResolvedValue('user_ref_123');
@@ -216,6 +231,25 @@ describe('ElectricityScreen (#1134)', () => {
   });
 
   describe('Acceptance Criteria: Meter Verification & Blocking', () => {
+    it('fills the form from a saved meter and still requires a fresh verification', async () => {
+      mockSavedMeters.push({
+        kind: 'meter',
+        meterNumber: '000000000001',
+        provider: 'AEDC',
+        meterType: 'postpaid',
+      });
+      const root = await renderScreen();
+      const saved = root.findByType('SavedRecipients');
+      await renderer.act(async () => {
+        saved.props.onPick?.('AEDC:postpaid:000000000001');
+      });
+
+      expect(root.findByProps({ testID: 'meter-input' }).props.value).toBe('000000000001');
+      expect(getAllText(root)).toContain('Abuja Electricity  selected');
+      expect(root.findByProps({ testID: 'continue-button' }).props.disabled).toBe(true);
+      expect(mockVerifyMeter).not.toHaveBeenCalled();
+    });
+
     it('blocks purchase when meter is unverified or unverifiable', async () => {
       const root = await renderScreen();
 
@@ -454,7 +488,7 @@ describe('ElectricityScreen (#1134)', () => {
           token: '45128923018499214402',
           units: '35.4 kWh',
           status: 'completed',
-        }),
+        })
       );
     });
 

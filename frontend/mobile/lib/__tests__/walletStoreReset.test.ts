@@ -48,6 +48,7 @@ import { PENDING_RECOVERY_KEY, RECOVERY_SERVERS_KEY } from '../recovery';
 import { ORIGIN_PERMISSIONS_STORAGE_KEY } from '../permissions';
 import { OFFRAMP_ACTIVE_ORDER_KEY, OFFRAMP_DEPOSIT_ADDRESSES_KEY } from '../offramp';
 import { FEE_PAYER_SOURCE_KEY } from '../feePayerSource';
+import { SAVED_RECIPIENTS_KEY } from '../savedRecipients';
 
 /** The active wallet's own secure-store identifiers. */
 const SECURE_IDENTITY_KEYS = Object.values(SecureKey);
@@ -72,6 +73,7 @@ const WALLET_DERIVED_ASYNC_KEYS = [
   OFFRAMP_DEPOSIT_ADDRESSES_KEY,
   FEE_PAYER_SOURCE_KEY,
   RECOVERY_SERVERS_KEY,
+  SAVED_RECIPIENTS_KEY,
 ];
 
 /** AsyncStorage keys that derail a re-created wallet if left behind. */
@@ -117,7 +119,10 @@ describe('resetWallet', () => {
       const store = require('../walletStore') as typeof import('../walletStore');
       expect(store.walletCacheKeys()).toContain(owner.FEE_PAYER_SOURCE_KEY);
       expect(store.walletCacheKeys().filter((k) => typeof k !== 'string')).toEqual([]);
-      expect([...store.networkScopedWalletCacheKeys()]).toEqual([owner.FEE_PAYER_SOURCE_KEY]);
+      expect([...store.networkScopedWalletCacheKeys()]).toEqual([
+        owner.FEE_PAYER_SOURCE_KEY,
+        SAVED_RECIPIENTS_KEY,
+      ]);
     });
   });
 

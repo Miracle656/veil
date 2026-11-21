@@ -65,6 +65,8 @@ import {
   type PersistedBillOrder,
 } from '../lib/billOrders';
 import { CheckIcon, CopyIcon } from '../components/icons';
+import { SavedRecipients, SaveRecipientSwitch } from '../components/SavedRecipients';
+import { useSavedRecipients } from '../hooks/useSavedRecipients';
 
 export type Step = 'form' | 'confirm' | 'paying' | 'done' | 'failed' | 'unconfirmed';
 
@@ -122,6 +124,8 @@ export default function ElectricityScreen() {
   const [provider, setProvider] = useState<string>('IKEDC');
   const [meterType, setMeterType] = useState<MeterType>('prepaid');
   const [meterNumber, setMeterNumber] = useState('');
+  const [saveForNextTime, setSaveForNextTime] = useState(false);
+  const savedMeters = useSavedRecipients('meter');
   const [amountNGN, setAmountNGN] = useState('');
   const [coin, setCoin] = useState<NairaCoin>('usdc');
 
@@ -479,6 +483,9 @@ export default function ElectricityScreen() {
 
       setWaitingForPasskey(false);
       setPayHash(hash);
+      if (saveForNextTime) {
+        void savedMeters.save({ kind: 'meter', meterNumber: cleanMeterDigits, provider, meterType }).catch(() => undefined);
+      }
     } catch (err) {
       setWaitingForPasskey(false);
       if (err instanceof NotEnoughToSend) {
@@ -504,6 +511,8 @@ export default function ElectricityScreen() {
     code,
     meterType,
     refreshPastOrders,
+    saveForNextTime,
+    savedMeters.save,
   ]);
 
   const copyToClipboard = async (tok: string) => {
@@ -562,6 +571,24 @@ export default function ElectricityScreen() {
           {/* ── Step 1: Form ──────────────────────────────────────────────── */}
           {!mainnetOnly && step === 'form' && (
             <>
+              <SavedRecipients
+                choices={savedMeters.recipients.map((item) => ({
+                  key: `${item.provider}:${item.meterType}:${item.meterNumber}`,
+                  label: `${item.provider} · ${item.meterType}`,
+                  detail: item.meterNumber,
+                }))}
+                onPick={(key) => {
+                  const item = savedMeters.recipients.find((entry) => `${entry.provider}:${entry.meterType}:${entry.meterNumber}` === key);
+                  if (!item) return;
+                  onMeterNumberChange(item.meterNumber);
+                  onProviderChange(item.provider);
+                  onMeterTypeChange(item.meterType);
+                }}
+                onRemove={(key) => {
+                  const item = savedMeters.recipients.find((entry) => `${entry.provider}:${entry.meterType}:${entry.meterNumber}` === key);
+                  if (item) void savedMeters.remove(item).catch(() => undefined);
+                }}
+              />
               {/* Distribution Company (Disco) Selector */}
               <Text style={styles.label}>DISTRIBUTION COMPANY (DISCO)</Text>
               <ScrollView
@@ -846,6 +873,7 @@ export default function ElectricityScreen() {
               </View>
 
               {/* Name Confirmation Requirement */}
+              <SaveRecipientSwitch value={saveForNextTime} onChange={setSaveForNextTime} />
               <View style={styles.confirmationCard}>
                 <Text style={styles.confirmationTitle}>Confirm Customer Name</Text>
                 <Text style={styles.confirmationDesc}>
