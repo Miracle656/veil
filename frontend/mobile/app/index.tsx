@@ -7,6 +7,7 @@ import { useTheme } from "../hooks/useTheme";
 import type { ThemeColors } from "../lib/theme";
 import { fontFamily } from "../theme/typography";
 import { VeilLogo } from "../components/VeilLogo";
+import { getPendingClaimResumeRoute } from "../lib/claimFlow";
 import { getWalletAddress, getSignerSecret, getPasskeyId } from "../lib/walletStore";
 
 // Whether the intro has been seen is presentation state, not a secret, so it
@@ -17,7 +18,7 @@ const SEEN_WELCOME_KEY = "veil_seen_welcome";
 
 async function readEntryState(
   retries = 1,
-): Promise<{ wallet: string | null; seenWelcome: string | null }> {
+): Promise<{ wallet: string | null; seenWelcome: string | null; pendingClaimRoute: string | null }> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -25,14 +26,15 @@ async function readEntryState(
       // A wallet only counts as usable when there's a SIGNER (keypair secret or
       // a registered passkey) — an address with neither is a stale preview stub
       // that can't sign, so we route such state back to onboarding.
-      const [address, secret, passkeyId, seenWelcome] = await Promise.all([
+      const [address, secret, passkeyId, seenWelcome, pendingClaimRoute] = await Promise.all([
         getWalletAddress(),
         getSignerSecret(),
         getPasskeyId(),
         AsyncStorage.getItem(SEEN_WELCOME_KEY),
+        getPendingClaimResumeRoute(),
       ]);
       const wallet = address && (secret || passkeyId) ? address : null;
-      return { wallet, seenWelcome };
+      return { wallet, seenWelcome, pendingClaimRoute };
     } catch (error) {
       lastError = error;
     }
@@ -43,8 +45,9 @@ async function readEntryState(
 
 /**
  * App entry — the splash (design "4a"). The Drape mark breathes on near-black
- * while the wallet state is read, then routes to the dashboard (wallet exists)
- * or the welcome landing (no wallet yet).
+ * while the wallet state is read, then routes to any pending claim link first
+ * (surviving an install or interrupted claim), or otherwise to the dashboard
+ * (wallet exists) or the welcome landing (no wallet yet).
  */
 export default function Index() {
   const router = useRouter();
@@ -69,9 +72,13 @@ export default function Index() {
   useEffect(() => {
     (async () => {
       try {
-        const { wallet } = await readEntryState();
+        const { wallet, pendingClaimRoute } = await readEntryState();
         if (navigated.current) return;
         navigated.current = true;
+        if (pendingClaimRoute) {
+          router.replace(pendingClaimRoute as "/claim");
+          return;
+        }
         router.replace(wallet ? "/dashboard" : "/welcome");
       } catch {
         if (navigated.current) return;
@@ -81,7 +88,7 @@ export default function Index() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [router]);
 
   return (
     <View style={styles.container}>
