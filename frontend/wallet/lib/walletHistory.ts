@@ -163,3 +163,42 @@ export function mapOperations(operations: HorizonOperation[], mine: Iterable<str
   }
   return rows
 }
+
+/** The most rows the first load keeps. */
+export const HISTORY_MAX_ROWS = 100
+
+/**
+ * Join rows read from Horizon with rows read from the indexer.
+ *
+ * One transaction can hold several payments. A send from this wallet is two:
+ * the payment itself and the Veil fee. They share a transaction hash, so the
+ * hash must NOT be used to tell rows apart: doing that kept the 0.02 fee and
+ * dropped the payment it belonged to. Rows are told apart by their own id.
+ *
+ * The indexer and Horizon can both report the same transfer, under different
+ * ids. Horizon is the fuller record, so an indexer row is kept only when
+ * Horizon has nothing at all for that transaction.
+ */
+export function mergeHistory(horizon: TxRecord[], indexer: TxRecord[]): TxRecord[] {
+  const seenIds = new Set<string>()
+  const horizonHashes = new Set<string>()
+  const rows: TxRecord[] = []
+
+  for (const row of horizon) {
+    if (seenIds.has(row.id)) continue
+    seenIds.add(row.id)
+    if (row.hash) horizonHashes.add(row.hash)
+    rows.push(row)
+  }
+  for (const row of indexer) {
+    if (seenIds.has(row.id)) continue
+    if (row.hash && horizonHashes.has(row.hash)) continue
+    seenIds.add(row.id)
+    rows.push(row)
+  }
+  // Newest first. Rows of one transaction keep the order Horizon gave them.
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => b.row.timestamp - a.row.timestamp || a.index - b.index)
+    .map(({ row }) => row)
+}

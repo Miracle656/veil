@@ -17,6 +17,7 @@ import { useState } from 'react'
 import { PageHeader } from '@/components/ui/primitives'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useActivityFeed } from '@/lib/activityFeed'
+import { StellarIdenticon } from '@/components/StellarIdenticon'
 import { useReverseName } from '@/hooks/useReverseName'
 
 type Filter = 'all' | 'sent' | 'received' | 'swapped'
@@ -57,9 +58,12 @@ function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
       className="vw-listrow"
       onClick={onSelect}
     >
-      <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-        <span style={{ fontSize: '14px', fontWeight: 500 }}>{label(tx)}</span>
-        <span className="vw-meta">{displayParty}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+        <StellarIdenticon address={tx.counterparty} />
+        <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+          <span style={{ fontSize: '14px', fontWeight: 500 }}>{label(tx)}</span>
+          <span className="vw-meta">{displayParty}</span>
+        </span>
       </span>
       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', flexShrink: 0 }}>
         {tx.type === 'swapped' ? (
