@@ -80,6 +80,13 @@ name from a link in a chat or from another site.
 Before adding an app, know who runs it and what it does. The app's users
 become Veil users, and their naira moves through Veil's payment provider.
 
+## Testing from your own machine (Stake-Sync)
+
+While you build, use the app id `stakesync-test` from a page on
+`http://localhost:3000`. It talks to the live wallet, so payments are real:
+use small amounts. People see the name "Stake-Sync (test)". On your live site
+use `stakesync`. The test id is removed when the pilot goes live.
+
 ## Trying it locally
 
 1. Run the wallet: `cd frontend/wallet && npm run dev` (port 3000).

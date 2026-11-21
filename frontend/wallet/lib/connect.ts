@@ -43,6 +43,20 @@ export const CONNECT_APPS: Record<string, ConnectApp> = {
   },
 }
 
+/**
+ * Test entries for a partner who is still building. They answer to a page on
+ * the partner developer's own machine, so they are kept apart from the real
+ * list, carry "(test)" in the name the user sees, and are removed when the
+ * partner goes live.
+ */
+export const CONNECT_TEST_APPS: Record<string, ConnectApp> = {
+  'stakesync-test': {
+    id: 'stakesync-test',
+    name: 'Stake-Sync (test)',
+    origins: ['http://localhost:3000'],
+  },
+}
+
 /** A stand-in app for building against a local page. Never on in production. */
 const DEMO_APP: ConnectApp = {
   id: 'demo',
@@ -53,7 +67,9 @@ const DEMO_APP: ConnectApp = {
 export function getConnectApp(id: string | null | undefined, allowDemo = false): ConnectApp | null {
   if (!id) return null
   if (allowDemo && id === DEMO_APP.id) return DEMO_APP
-  return Object.prototype.hasOwnProperty.call(CONNECT_APPS, id) ? CONNECT_APPS[id] : null
+  if (Object.prototype.hasOwnProperty.call(CONNECT_APPS, id)) return CONNECT_APPS[id]
+  if (Object.prototype.hasOwnProperty.call(CONNECT_TEST_APPS, id)) return CONNECT_TEST_APPS[id]
+  return null
 }
 
 export function isAllowedOrigin(app: ConnectApp, origin: string): boolean {

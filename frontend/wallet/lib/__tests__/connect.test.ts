@@ -1,5 +1,6 @@
 import {
   CONNECT_APPS,
+  CONNECT_TEST_APPS,
   MAX_PAY_AMOUNT,
   decodePending,
   encodePending,
@@ -48,6 +49,20 @@ describe('which apps may use Veil Connect', () => {
     expect(isAllowedOrigin(app, 'https://usestakesync.xyz.evil.example')).toBe(false)
     expect(isAllowedOrigin(app, 'https://evil.example/https://usestakesync.xyz')).toBe(false)
     expect(isAllowedOrigin(app, 'null')).toBe(false)
+  })
+
+  it("keeps a partner's test entry apart from the real one", () => {
+    const test = getConnectApp('stakesync-test')
+    expect(test?.name).toBe('Stake-Sync (test)')
+    expect(isAllowedOrigin(test!, 'http://localhost:3000')).toBe(true)
+    expect(isAllowedOrigin(test!, 'http://localhost:3001')).toBe(false)
+    expect(isAllowedOrigin(test!, 'https://usestakesync.xyz')).toBe(false)
+    // The real app never answers to a developer's machine.
+    expect(isAllowedOrigin(CONNECT_APPS.stakesync, 'http://localhost:3000')).toBe(false)
+    for (const app of Object.values(CONNECT_TEST_APPS)) {
+      expect(app.name).toMatch(/\(test\)$/)
+      for (const origin of app.origins) expect(origin).toMatch(/^http:\/\/localhost:\d+$/)
+    }
   })
 
   it('lists only https origins for real apps', () => {
