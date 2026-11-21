@@ -54,6 +54,8 @@ import { isPasskeyCancellation } from '../lib/passkeyOutcome';
 import type { PlatformFee } from '../lib/platformFee';
 import { useWallet } from '../components/WalletProvider';
 import { BankMark } from '../components/BankMark';
+import { SavedRecipients, SaveRecipientSwitch } from '../components/SavedRecipients';
+import { useSavedRecipients } from '../hooks/useSavedRecipients';
 import { CloseIcon, SearchIcon } from '../components/icons';
 
 /** Circle's USDC on mainnet — the only asset Linq's Stellar leg credits. */
@@ -150,6 +152,8 @@ export default function CashOutScreen() {
   const [bankCode, setBankCode] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [verified, setVerified] = useState<VerifiedBank | null>(null);
+  const [saveForNextTime, setSaveForNextTime] = useState(false);
+  const savedBanks = useSavedRecipients('bank');
 
   const [order, setOrder] = useState<OfframpOrder | null>(null);
   // Linq expires an order 10 minutes after creation if no deposit arrives.
@@ -438,6 +442,15 @@ export default function CashOutScreen() {
         walletAddress: wallet,
         idempotencyKey: idempotencyKey.current,
       });
+      if (saveForNextTime) {
+        void savedBanks.save({
+          kind: 'bank',
+          bankCode: verified.bankCode,
+          bankName: verified.bankName || bankName(verified.bankCode),
+          accountNumber: verified.accountNumber,
+          accountName: verified.accountName,
+        }).catch(() => undefined);
+      }
       setOrder(created);
       setStatus(created.status);
       setCreatedAt(Date.now());
@@ -673,6 +686,24 @@ export default function CashOutScreen() {
         {!mainnetOnly && step === 'bank' && (
           <>
             <Text style={styles.question}>Which account should we pay?</Text>
+            <SavedRecipients
+              choices={savedBanks.recipients.map((item) => ({
+                key: `${item.bankCode}:${item.accountNumber}`,
+                label: item.bankName,
+                detail: item.accountNumber,
+              }))}
+              onPick={(key) => {
+                const item = savedBanks.recipients.find((entry) => `${entry.bankCode}:${entry.accountNumber}` === key);
+                if (!item) return;
+                clearVerification();
+                setBankCode(item.bankCode);
+                setAccountNumber(item.accountNumber);
+              }}
+              onRemove={(key) => {
+                const item = savedBanks.recipients.find((entry) => `${entry.bankCode}:${entry.accountNumber}` === key);
+                if (item) void savedBanks.remove(item).catch(() => undefined);
+              }}
+            />
 
             <View style={styles.field}>
               <View style={styles.fieldHead}>
@@ -872,6 +903,8 @@ export default function CashOutScreen() {
               The exact USDC amount is fixed when the order is created, and you have 10
               minutes to send it.
             </Text>
+
+            <SaveRecipientSwitch value={saveForNextTime} onChange={setSaveForNextTime} />
 
             <Pressable
               onPress={handleCreateOrder}
