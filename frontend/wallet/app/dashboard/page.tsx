@@ -35,6 +35,7 @@ import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 import { mapOperations, mergeHistory, HISTORY_MAX_ROWS, HISTORY_PAGE_SIZE, type HorizonOperation } from '@/lib/walletHistory'
+import { assetFromContractId, loadContractSacActivity } from '@/lib/sacActivity'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
@@ -308,18 +309,27 @@ function DashboardPageContent() {
       } catch { /* not yet funded */ }
     }
 
-    // ── 3. Wraith: incoming SAC transfers to the wallet contract ────────────
+    // ── 3. SAC transfer events + Wraith indexer ─────────────────────────────
+    const activeNetwork = getNetworkName()
+    const sacAddresses = signerPublicKey ? [walletAddress, signerPublicKey] : [walletAddress]
+    const sacPromise = loadContractSacActivity(sacAddresses, HISTORY_MAX_ROWS, {
+      server: rpcServer,
+      network: activeNetwork,
+    })
+
     const wraithUrl = process.env.NEXT_PUBLIC_WRAITH_URL
     let localInCursor: string | null = null
     let localOutCursor: string | null = null
+    let wraithRecords: TxRecord[] = []
     if (wraithUrl) {
       try {
         // Incoming: to wallet C... address
         // Outgoing: from fee-payer G... address (sends go from fee-payer, not contract)
         const feePayerAddr = signerPublicKey || walletAddress
+        const netParam = `network=${encodeURIComponent(activeNetwork)}`
         const [inRes, outRes] = await Promise.all([
-          fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20`),
-          fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20`),
+          fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20&${netParam}`),
+          fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20&${netParam}`),
         ])
         const inData  = inRes.ok  ? await inRes.json()  as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
         const outData = outRes.ok ? await outRes.json() as WraithPage : { transfers: [] as WraithTransfer[], next_cursor: null }
@@ -328,12 +338,12 @@ function DashboardPageContent() {
         setWraithInCursor(localInCursor)
         setWraithOutCursor(localOutCursor)
 
-        const wraithRecords: TxRecord[] = [
+        wraithRecords = [
           ...inData.transfers.map(t => ({
             id:           `w-${t.id}`,
             type:         'received' as const,
             amount:       (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
-            asset:        'XLM',
+            asset:        assetFromContractId(t.contractId, activeNetwork),
             counterparty: t.fromAddress ?? 'unknown',
             timestamp:    Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
             hash:         t.txHash,
@@ -342,18 +352,19 @@ function DashboardPageContent() {
             id:           `w-${t.id}`,
             type:         'sent' as const,
             amount:       (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
-            asset:        'XLM',
+            asset:        assetFromContractId(t.contractId, activeNetwork),
             counterparty: t.toAddress ?? 'unknown',
             timestamp:    Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
             hash:         t.txHash,
           })),
         ]
-
-        // Join the two sources. Never by transaction hash alone: a send and
-        // its fee share one, and that is how the send used to go missing.
-        txRecords = mergeHistory(txRecords, wraithRecords).slice(0, HISTORY_MAX_ROWS)
-      } catch { /* Wraith offline — fall back to Horizon only */ }
+      } catch { /* Wraith offline — fall back to Horizon + RPC events */ }
     }
+
+    const sacRecords = await sacPromise
+    // Join Horizon with RPC events and indexer rows. Horizon wins on shared tx
+    // hashes; a payment and its fee in Horizon keep their own ids.
+    txRecords = mergeHistory(txRecords, [...sacRecords, ...wraithRecords]).slice(0, HISTORY_MAX_ROWS)
 
     // ── 4. Check for new incoming transfers → agent notification badge ─────
     const lastVisit = parseInt(localStorage.getItem('veil_agent_last_visit') ?? '0', 10)
@@ -442,10 +453,12 @@ function DashboardPageContent() {
 
       if (wraithUrl && (wraithInCursor || wraithOutCursor)) {
         try {
+          const activeNetwork = getNetworkName()
+          const netParam = `network=${encodeURIComponent(activeNetwork)}`
           const feePayerAddr = signerPublicKey || walletAddress
           const fetches: Promise<Response>[] = []
-          if (wraithInCursor)  fetches.push(fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20&cursor=${wraithInCursor}`))
-          if (wraithOutCursor) fetches.push(fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20&cursor=${wraithOutCursor}`))
+          if (wraithInCursor)  fetches.push(fetch(`${wraithUrl}/transfers/incoming/${walletAddress}?limit=20&cursor=${wraithInCursor}&${netParam}`))
+          if (wraithOutCursor) fetches.push(fetch(`${wraithUrl}/transfers/outgoing/${feePayerAddr}?limit=20&cursor=${wraithOutCursor}&${netParam}`))
           const responses = await Promise.all(fetches)
           let idx = 0
 
@@ -455,7 +468,8 @@ function DashboardPageContent() {
             newInCursor = data.next_cursor ?? null
             additionalRecords.push(...data.transfers.map(t => ({
               id: `w-${t.id}`, type: 'received' as const,
-              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7), asset: 'XLM',
+              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+              asset: assetFromContractId(t.contractId, activeNetwork),
               counterparty: t.fromAddress ?? 'unknown',
               timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
               hash: t.txHash,
@@ -468,7 +482,8 @@ function DashboardPageContent() {
             newOutCursor = data.next_cursor ?? null
             additionalRecords.push(...data.transfers.map(t => ({
               id: `w-${t.id}`, type: 'sent' as const,
-              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7), asset: 'XLM',
+              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+              asset: assetFromContractId(t.contractId, activeNetwork),
               counterparty: t.toAddress ?? 'unknown',
               timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
               hash: t.txHash,
