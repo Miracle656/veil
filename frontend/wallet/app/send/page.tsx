@@ -28,7 +28,7 @@ import { getRegisteredAsset } from '@/lib/assets'
 import { buildSep7Memo, type Sep7MemoType } from '@/lib/sep7'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
 import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
-import { horizonErrorMessage } from '@/lib/horizonError'
+import { horizonErrorMessage, loadPayingAccount } from '@/lib/horizonError'
 import { spendableNativeXlm } from '@/lib/reserves'
 import { validateMemoText } from '@/lib/memo'
 
@@ -486,7 +486,7 @@ export default function SendPage() {
       const destination = resolvedAddress ?? recipient
 
       if (destination.startsWith('G') && destination.length === 56) {
-        const account = await horizonServer.loadAccount(feePayerKp.publicKey())
+        const account = await loadPayingAccount(() => horizonServer.loadAccount(feePayerKp.publicKey()))
         const builder = new TransactionBuilder(account, {
           fee: inclusionFee(),
           networkPassphrase: network.networkPassphrase,
