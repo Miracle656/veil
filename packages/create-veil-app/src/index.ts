@@ -2,8 +2,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import degit from 'degit';
 import prompts from 'prompts';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json') as { version: string };
 
 const REPO = process.env.VEIL_TEMPLATE_REPO ?? 'Miracle656/veil';
 
@@ -71,7 +75,58 @@ function parseArgs(argv: string[]) {
   return { name: positionals[0], template };
 }
 
-async function main() {
+export interface ScaffoldOptions {
+  name?: string;
+  skipInstall?: boolean;
+}
+
+export async function scaffold(
+  template: TemplateKey,
+  targetDir: string,
+  options: ScaffoldOptions = {}
+) {
+  const { dir, label } = TEMPLATES[template];
+  const name = options.name ?? path.basename(targetDir);
+
+  const overrideRef = process.env.VEIL_TEMPLATE_REF;
+  const ref = overrideRef || `v${version}`;
+  if (overrideRef) {
+    console.warn(`[create-veil-app] using ref override: ${ref}`);
+  }
+
+  console.log(`\nScaffolding ${label} app in ./${name}...\n`);
+  try {
+    await degit(`${REPO}/${dir}#${ref}`, { force: true }).clone(targetDir);
+
+    console.log('Fetching the Veil SDK...');
+    await degit(`${REPO}/sdk#${ref}`, { force: true }).clone(path.join(targetDir, 'sdk'));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('could not find commit hash') || message.includes('No commits')) {
+      throw new Error(`Template tag ${ref} does not exist in ${REPO}. Check that this version has been released.`);
+    }
+    throw err;
+  }
+
+  // Templates reference the SDK from the monorepo (file:../../sdk); once
+  // scaffolded standalone the SDK lives at ./sdk instead.
+  replaceInFile(path.join(targetDir, 'package.json'), 'file:../../sdk', 'file:./sdk');
+  replaceInFile(path.join(targetDir, 'index.html'), '../../sdk/dist/vanilla.js', './sdk/dist/vanilla.js');
+  excludeSdkFromTsconfig(targetDir);
+
+  if (!options.skipInstall) {
+    console.log('Installing SDK dependencies and building...');
+    await run('npm', ['install'], path.join(targetDir, 'sdk'));
+    await run('npm', ['run', 'build'], path.join(targetDir, 'sdk'));
+
+    if (fs.existsSync(path.join(targetDir, 'package.json'))) {
+      console.log('Installing app dependencies...');
+      await run('npm', ['install'], targetDir);
+    }
+  }
+}
+
+export async function main() {
   const { name: nameArg, template: templateArg } = parseArgs(process.argv.slice(2));
 
   let name = nameArg;
@@ -111,28 +166,7 @@ async function main() {
     process.exit(1);
   }
 
-  const { dir, label } = TEMPLATES[template];
-
-  console.log(`\nScaffolding ${label} app in ./${name}...\n`);
-  await degit(`${REPO}/${dir}`, { force: true }).clone(targetDir);
-
-  console.log('Fetching the Veil SDK...');
-  await degit(`${REPO}/sdk`, { force: true }).clone(path.join(targetDir, 'sdk'));
-
-  // Templates reference the SDK from the monorepo (file:../../sdk); once
-  // scaffolded standalone the SDK lives at ./sdk instead.
-  replaceInFile(path.join(targetDir, 'package.json'), 'file:../../sdk', 'file:./sdk');
-  replaceInFile(path.join(targetDir, 'index.html'), '../../sdk/dist/vanilla.js', './sdk/dist/vanilla.js');
-  excludeSdkFromTsconfig(targetDir);
-
-  console.log('Installing SDK dependencies and building...');
-  await run('npm', ['install'], path.join(targetDir, 'sdk'));
-  await run('npm', ['run', 'build'], path.join(targetDir, 'sdk'));
-
-  if (fs.existsSync(path.join(targetDir, 'package.json'))) {
-    console.log('Installing app dependencies...');
-    await run('npm', ['install'], targetDir);
-  }
+  await scaffold(template, targetDir, { name, skipInstall: process.env.NODE_ENV === 'test' });
 
   console.log(`\nDone! Next steps:\n`);
   console.log(`  cd ${name}`);
@@ -140,7 +174,9 @@ async function main() {
   console.log(`\nSee ${name}/README.md for environment variables (factory address, RPC URL, etc.).\n`);
 }
 
-main().catch(err => {
-  console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+if (process.env.NODE_ENV !== 'test') {
+  main().catch(err => {
+    console.error(err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
