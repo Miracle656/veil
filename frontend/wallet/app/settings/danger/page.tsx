@@ -17,6 +17,7 @@ import { VeilMark } from '@/components/ui/VeilMark'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { useInvisibleWallet } from '@veil/sdk'
 import { walletLocal, walletSession, clearActiveNetworkWallet } from '@/lib/walletStorage'
+import { clearSavedRecipients } from '@/lib/savedRecipients'
 
 const Server = Horizon.Server
 const network = getNetwork()
@@ -183,6 +184,8 @@ export default function DangerPage() {
       // on testnet can never destroy a mainnet wallet (and vice versa).
       resetFeePayer()
       clearActiveNetworkWallet()
+      // Saved recipients are personal data. A wiped wallet keeps none of them.
+      clearSavedRecipients()
 
     } catch (err: any) {
       console.error(err)

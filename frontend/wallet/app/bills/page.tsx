@@ -48,6 +48,7 @@ import {
 } from '@/lib/billOrders'
 import { beginTx, endTx } from '@/lib/txState'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { savedRecipients, type SavedBillRecipient } from '@/lib/savedRecipients'
 
 type Step = 'form' | 'confirm' | 'paying' | 'done' | 'failed' | 'unconfirmed'
 
@@ -108,6 +109,9 @@ export default function BillsPage() {
   const [prepaidToken, setPrepaidToken] = useState<string | null>(null)
   const [tokenCopied, setTokenCopied] = useState(false)
   const [recentOrders, setRecentOrders] = useState<PersistedBillOrder[]>([])
+  // Saved in this browser only, and only when the user ticks the box.
+  const [savedBills, setSavedBills] = useState<SavedBillRecipient[]>([])
+  const [saveForNext, setSaveForNext] = useState(false)
 
   // Status polling state
   const [pollErrorCount, setPollErrorCount] = useState(0)
@@ -115,6 +119,10 @@ export default function BillsPage() {
   const [isRechecking, setIsRechecking] = useState(false)
 
   const pollerRef = useRef<BillPoller | null>(null)
+
+  useEffect(() => {
+    setSavedBills(savedRecipients.list().bill)
+  }, [])
 
   const refreshOrders = useCallback(() => {
     try {
@@ -239,6 +247,18 @@ export default function BillsPage() {
     setStep('confirm')
   }, [router, phone, provider])
 
+  function pickSavedBill(r: SavedBillRecipient) {
+    setProvider(r.provider)
+    setProviderTouched(true)
+    setPhone(r.identifier)
+    setError(null)
+  }
+
+  function removeSavedBill(id: string) {
+    savedRecipients.removeBill(id)
+    setSavedBills(savedRecipients.list().bill)
+  }
+
   const pay = useCallback(async () => {
     if (!customerRef || !feePayerAddress || !rate || ngn <= 0) return
     const signerSecret =
@@ -248,6 +268,10 @@ export default function BillsPage() {
       return
     }
 
+    if (saveForNext) {
+      savedRecipients.addBill({ provider, identifier: phoneDigits })
+      setSavedBills(savedRecipients.list().bill)
+    }
     beginTx()
     setStep('paying')
     setError(null)
@@ -344,7 +368,7 @@ export default function BillsPage() {
     } finally {
       endTx()
     }
-  }, [customerRef, feePayerAddress, rate, ngn, phoneDigits, provider, coin])
+  }, [customerRef, feePayerAddress, rate, ngn, phoneDigits, provider, coin, saveForNext])
 
   const manualCheckStatus = useCallback(async () => {
     if (!orderId || !customerRef || isRechecking || !pollerRef.current) return
@@ -431,6 +455,32 @@ export default function BillsPage() {
           {step === 'form' && (
             <Card>
               <div className="flex flex-col gap-6">
+                {savedBills.length > 0 && (
+                  <div>
+                    <SectionLabel>Saved recipients</SectionLabel>
+                    <div className="flex flex-col gap-2 mt-3">
+                      {savedBills.map((r) => (
+                        <div key={r.id} className="flex items-center justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => pickSavedBill(r)}
+                            className="text-left text-[14px] text-off-white hover:text-gold transition-colors"
+                          >
+                            {r.provider} · {r.identifier}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeSavedBill(r.id)}
+                            className="text-[13px] text-white/50 hover:text-white/80 transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div>
                   <SectionLabel>Network</SectionLabel>
                   <div className="flex gap-2 flex-wrap mt-3">
@@ -686,6 +736,15 @@ export default function BillsPage() {
                   back to this wallet.
                 </p>
               </div>
+
+              <label className="flex items-center gap-3 text-[14px] text-white/70">
+                <input
+                  type="checkbox"
+                  checked={saveForNext}
+                  onChange={(e) => setSaveForNext(e.target.checked)}
+                />
+                Save for next time
+              </label>
 
               <div className="flex flex-col gap-3">
                 <PrimaryAction
