@@ -3,14 +3,14 @@ title: Security
 description: Security model, threat analysis, and cryptographic properties of Veil.
 ---
 
-import { Callout } from 'nextra/components'
+import { Callout } from "nextra/components";
 
 # Security
 
 This page documents Veil's security model, the cryptographic guarantees it provides, known limitations, and responsible disclosure policy.
 
-<Callout type="warning">
-  Veil has not undergone a formal third-party security audit. Do **not** use on Stellar Mainnet until a full audit is complete.
+<Callout type="info">
+  Veil is live on Stellar Mainnet (deployed 2026-08-23). An external security audit was delivered on 2026-09-17.
 </Callout>
 
 ---
@@ -28,6 +28,7 @@ The P-256 private key is generated inside the device's **hardware secure enclave
 Every WebAuthn assertion embeds `base64url(challenge)` into `clientDataJSON`, which is signed by the authenticator. Veil uses the **Soroban `signature_payload`** (a 32-byte hash of the authorization entry) as the WebAuthn challenge.
 
 The contract verifies:
+
 ```rust
 challenge_is_present(&client_data_json, &base64url_encode_32(&signature_payload))
 ```
@@ -37,6 +38,7 @@ challenge_is_present(&client_data_json, &base64url_encode_32(&signature_payload)
 ### 3. On-Chain Verification — No Trusted Third Parties
 
 All cryptographic verification happens inside the Soroban VM:
+
 - Challenge substring search in `clientDataJSON`
 - `SHA256(authData || SHA256(clientDataJSON))` message hash
 - P-256 ECDSA `verify_prehash` using the `p256` crate
@@ -64,6 +66,7 @@ An attacker cannot use an arbitrary P-256 key — only keys explicitly registere
 Deployed Veil contracts (both the factory and individual smart wallets) are **immutable and cannot be upgraded in place**. Neither contract exposes an upgrade entrypoint or operator backdoor (`update_current_contract_wasm` or `set_wasm_hash`).
 
 **What this means:**
+
 - **No operator takeover:** A compromised operator or admin key cannot replace wallet bytecode or tamper with user authorization logic.
 - **Auditable & deterministic:** Wallets run the exact source code verified at deployment time for their entire lifetime.
 - **Fund safety:** What the user approved at registration remains what runs. Code cannot be swapped out under existing balances.
@@ -81,7 +84,7 @@ The table below summarises key threats at a glance. See the full **[Threat Model
 | Phishing (wrong origin) | WebAuthn origin binding | Authenticator embeds origin in `clientDataJSON`; contract can validate |
 | Signature replay | Challenge binding to `signature_payload` | Each tx has unique payload |
 | Rogue signer added | `add_signer` requires existing signer auth | Cannot add without biometric |
-| Contract bug | Full audit (planned) + unit tests | Immutable on-chain: fixes ship as a new factory; existing wallets keep deployed code |
+| Contract bug | External audit + unit tests | Immutable on-chain: fixes ship as a new factory; existing wallets keep deployed code |
 | Quantum computer | P-256 is classically secure | Post-quantum migration path: deploy new factory/wallets supporting ML-DSA when Soroban supports it |
 
 ---
@@ -120,14 +123,14 @@ Calling `remove_signer` on the only registered key permanently locks the contrac
 
 ## Cryptographic Primitives
 
-| Primitive | Standard | Implementation |
-|---|---|---|
-| Key generation | NIST P-256 (secp256r1) | Browser WebAuthn / hardware |
-| Signature scheme | ECDSA with SHA-256 (ES256) | `p256` Rust crate v0.13 |
-| Hash function | SHA-256 | `sha2` Rust crate v0.10 (no_std) |
-| Encoding | Base64URL (no padding) | Custom implementation in `auth.rs` |
-| Key format | Uncompressed SEC1 (65 bytes) | `0x04 \|\| x \|\| y` |
-| Signature format | Raw r \|\| s (64 bytes) | DER → raw in SDK `utils.ts` |
+| Primitive        | Standard                     | Implementation                     |
+| ---------------- | ---------------------------- | ---------------------------------- |
+| Key generation   | NIST P-256 (secp256r1)       | Browser WebAuthn / hardware        |
+| Signature scheme | ECDSA with SHA-256 (ES256)   | `p256` Rust crate v0.13            |
+| Hash function    | SHA-256                      | `sha2` Rust crate v0.10 (no_std)   |
+| Encoding         | Base64URL (no padding)       | Custom implementation in `auth.rs` |
+| Key format       | Uncompressed SEC1 (65 bytes) | `0x04 \|\| x \|\| y`               |
+| Signature format | Raw r \|\| s (64 bytes)      | DER → raw in SDK `utils.ts`        |
 
 ---
 
@@ -135,20 +138,15 @@ Calling `remove_signer` on the only registered key permanently locks the contrac
 
 If you discover a security vulnerability, please **do not open a public GitHub issue**. Instead:
 
-1. Email: `security@invisible-wallet.dev` (placeholder — update before launch)
-2. Use GitHub's [private vulnerability reporting](https://github.com/Miracle656/veil/security/advisories/new)
-3. Include: description, reproduction steps, affected versions, and potential impact
+1. Email: `security@useveilapp.xyz`
+2. Include: description, reproduction steps, affected versions, and potential impact
 
-We aim to acknowledge reports within 48 hours and resolve critical issues within 7 days.
+We aim to acknowledge reports promptly and coordinate remediation before public disclosure. Fixed vulnerabilities are published via GitHub Security Advisories and release notes.
 
 ---
 
 ## Audit Status
 
-| Scope | Auditor | Status |
-|---|---|---|
-| Smart contract (`auth.rs`, `lib.rs`) | TBD | Not yet scheduled |
-| SDK (`utils.ts`, `useInvisibleWallet.ts`) | TBD | Not yet scheduled |
-| Full system | TBD | Planned for Phase 4 |
+Veil is live on Stellar Mainnet (deployed 2026-08-23). An external security audit was delivered on 2026-09-17.
 
 Community review is welcome — see the [GitHub repository](https://github.com/Miracle656/veil) to review the source.
