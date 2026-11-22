@@ -234,6 +234,18 @@ function invocationToRecord(
 }
 
 /**
+ * One page of history and the token that asks Horizon for the page before it.
+ *
+ * `nextCursor` is the paging token of the oldest operation in the page, which
+ * is what `.cursor()` wants for the next (older) page in `desc` order. It is
+ * null when Horizon returned nothing at all — the history ends there.
+ */
+export type HorizonActivityPage = {
+  records: TxRecord[];
+  nextCursor: string | null;
+};
+
+/**
  * Map a Horizon OPERATIONS page into TxRecords.
  *
  * Operations rather than payments: Horizon's payments feed omits
@@ -245,26 +257,58 @@ function invocationToRecord(
  * `mine` is every address that counts as us (the fee-payer and, for a smart
  * wallet, the contract), so direction is judged against both.
  */
-async function loadClassicActivity(account: string, mine: Set<string>, limit: number): Promise<TxRecord[]> {
+/** A classic page plus the operation each row came from, for paging. */
+type ClassicActivityPage = HorizonActivityPage & {
+  /** Row id → paging token of the operation that produced it. */
+  rowTokens: Map<string, string>;
+};
+
+async function loadClassicActivity(
+  account: string,
+  mine: Set<string>,
+  limit: number,
+  cursor?: string,
+): Promise<ClassicActivityPage> {
   const server = new Horizon.Server(getNetwork().horizonUrl);
   let records: Array<Record<string, unknown>>;
   try {
     // Over-fetch: many operation types (manage_data breadcrumbs, change_trust,
     // contract deploys) yield no feed row, so asking for exactly `limit` ops
     // would return far fewer than `limit` rows.
-    const page = await server
+    let operations = server
       .operations()
       .forAccount(account)
       .order('desc')
-      .limit(Math.min(200, Math.max(limit, limit * 4)))
-      .call();
+      .limit(Math.min(200, Math.max(limit, limit * 4)));
+    // Older pages are addressed by the paging token of the last operation the
+    // user has already seen. In `desc` order that asks for the operations
+    // immediately before it, so consecutive pages never overlap.
+    if (cursor) operations = operations.cursor(cursor);
+    const page = await operations.call();
     records = page.records as unknown as Array<Record<string, unknown>>;
-  } catch {
-    return [];
+  } catch (error) {
+    // A first load degrades to an empty feed. An explicitly requested older
+    // page must fail loudly instead: the screen keeps its rows and offers a
+    // retry, rather than pretending the history ends here.
+    if (cursor) throw error;
+    return { records: [], nextCursor: null, rowTokens: new Map() };
   }
 
   const out: TxRecord[] = [];
-  for (const r of records) {
+  // Which operation produced each row, and where the loop stopped. The cursor
+  // has to point at the last operation whose row was SHOWN. The page is
+  // over-fetched (up to 200 operations) and the loop stops as soon as `limit`
+  // rows exist, so a cursor taken from the raw end of the page would jump over
+  // operations (101–200 in a 200-payment page with limit 100) that never became
+  // rows — and "Load older" would skip them forever.
+  const rowTokens = new Map<string, string>();
+  let lastShownIndex = -1;
+  let exhausted = true;
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i]!;
+    const addedFrom = out.length;
+
     if (String(r['type'] ?? '') === 'invoke_host_function') {
       const changes = (r['asset_balance_changes'] as BalanceChange[] | undefined) ?? [];
       const createdAt = String(r['created_at'] ?? '');
@@ -274,54 +318,145 @@ async function loadClassicActivity(account: string, mine: Set<string>, limit: nu
         hash: r['transaction_hash'] ? String(r['transaction_hash']) : undefined,
       });
       if (record) out.push(record);
-      if (out.length >= limit) break;
-      continue;
-    }
-    const type = String(r['type'] ?? '');
-    const id = String(r['id'] ?? '');
-    const hash = r['transaction_hash'] ? String(r['transaction_hash']) : undefined;
-    const createdAt = String(r['created_at'] ?? '');
-    const timestamp = createdAt ? Math.floor(new Date(createdAt).getTime() / 1000) : 0;
+    } else {
+      const type = String(r['type'] ?? '');
+      const id = String(r['id'] ?? '');
+      const hash = r['transaction_hash'] ? String(r['transaction_hash']) : undefined;
+      const createdAt = String(r['created_at'] ?? '');
+      const timestamp = createdAt ? Math.floor(new Date(createdAt).getTime() / 1000) : 0;
 
-    if (type === 'payment') {
-      const sent = r['from'] === account;
-      out.push({
-        id,
-        type: sent ? 'sent' : 'received',
-        amount: fmt(r['amount'] as string),
-        asset: assetOf(r['asset_type'] as string, r['asset_code'] as string),
-        counterparty: String((sent ? r['to'] : r['from']) ?? 'unknown'),
-        timestamp,
-        hash,
-      });
-    } else if (type === 'create_account') {
-      const sent = r['funder'] === account;
-      out.push({
-        id,
-        type: sent ? 'sent' : 'received',
-        amount: fmt(r['starting_balance'] as string),
-        asset: 'XLM',
-        counterparty: String((sent ? r['account'] : r['funder']) ?? 'unknown'),
-        timestamp,
-        hash,
-      });
-    } else if (type.startsWith('path_payment')) {
-      const sent = r['from'] === account;
-      out.push({
-        id,
-        type: 'swapped',
-        amount: fmt((r['source_amount'] as string) ?? (r['amount'] as string)),
-        asset: assetOf(r['source_asset_type'] as string, r['source_asset_code'] as string),
-        counterparty: String((sent ? r['to'] : r['from']) ?? 'unknown'),
-        timestamp,
-        hash,
-        destAmount: fmt(r['amount'] as string),
-        destAsset: assetOf(r['asset_type'] as string, r['asset_code'] as string),
-      });
+      if (type === 'payment') {
+        const sent = r['from'] === account;
+        out.push({
+          id,
+          type: sent ? 'sent' : 'received',
+          amount: fmt(r['amount'] as string),
+          asset: assetOf(r['asset_type'] as string, r['asset_code'] as string),
+          counterparty: String((sent ? r['to'] : r['from']) ?? 'unknown'),
+          timestamp,
+          hash,
+        });
+      } else if (type === 'create_account') {
+        const sent = r['funder'] === account;
+        out.push({
+          id,
+          type: sent ? 'sent' : 'received',
+          amount: fmt(r['starting_balance'] as string),
+          asset: 'XLM',
+          counterparty: String((sent ? r['account'] : r['funder']) ?? 'unknown'),
+          timestamp,
+          hash,
+        });
+      } else if (type.startsWith('path_payment')) {
+        const sent = r['from'] === account;
+        out.push({
+          id,
+          type: 'swapped',
+          amount: fmt((r['source_amount'] as string) ?? (r['amount'] as string)),
+          asset: assetOf(r['source_asset_type'] as string, r['source_asset_code'] as string),
+          counterparty: String((sent ? r['to'] : r['from']) ?? 'unknown'),
+          timestamp,
+          hash,
+          destAmount: fmt(r['amount'] as string),
+          destAsset: assetOf(r['asset_type'] as string, r['asset_code'] as string),
+        });
+      }
     }
-    if (out.length >= limit) break;
+
+    if (out.length > addedFrom) {
+      lastShownIndex = i;
+      const token = r['paging_token'] ? String(r['paging_token']) : '';
+      if (token) {
+        for (let k = addedFrom; k < out.length; k++) rowTokens.set(out[k]!.id, token);
+      }
+    }
+    if (out.length >= limit) {
+      exhausted = false;
+      break;
+    }
   }
-  return out;
+
+  // A whole page that was consumed ends at its last operation, as before; a
+  // page that stopped early ends at the operation of the last row shown.
+  const cursorIndex = exhausted ? records.length - 1 : lastShownIndex;
+  const cursorRecord = cursorIndex >= 0 ? records[cursorIndex] : undefined;
+  const nextCursor =
+    cursorRecord && cursorRecord['paging_token'] ? String(cursorRecord['paging_token']) : null;
+
+  return { records: out, nextCursor, rowTokens };
+}
+
+/**
+ * Load one page of an account's activity. Without a cursor this is the first
+ * load: classic wallets read Horizon's operations feed directly, and contract
+ * wallets merge two sources IN PARALLEL — the fee-payer G-account's classic
+ * operations and the contract's SAC transfer events — so a slow event scan
+ * never delays the classic half.
+ *
+ * With a cursor it loads the OLDER page the token points at, from Horizon
+ * only. Soroban RPC events cannot be paged back beyond their short retention
+ * window, so older pages of a smart wallet's history are honestly whatever
+ * Horizon still has; the screen says so.
+ */
+export async function loadHorizonActivityPage(
+  address: string,
+  limit = 25,
+  cursor?: string,
+): Promise<HorizonActivityPage> {
+  if (!StrKey.isValidContract(address)) {
+    const page = await loadClassicActivity(address, new Set([address]), limit, cursor);
+    return { records: page.records, nextCursor: page.nextCursor };
+  }
+
+  const feePayer = await getFeePayerAddress();
+  const mine = new Set(feePayer ? [address, feePayer] : [address]);
+
+  if (cursor) {
+    // No fee payer means no Horizon feed to page through for this wallet.
+    if (!feePayer) return { records: [], nextCursor: null };
+    const page = await loadClassicActivity(feePayer, mine, limit, cursor);
+    return { records: page.records, nextCursor: page.nextCursor };
+  }
+
+  const [contractRecords, classic] = await Promise.all([
+    loadContractSacActivity([...mine], limit),
+    feePayer
+      ? loadClassicActivity(feePayer, mine, limit)
+      : Promise.resolve<ClassicActivityPage>({ records: [], nextCursor: null, rowTokens: new Map() }),
+  ]);
+
+  if (contractRecords.length === 0) return { records: classic.records, nextCursor: classic.nextCursor };
+  // Merge classic + contract records, deduped by tx hash. Horizon is the
+  // richer source (a swap arrives as one 'swapped' row rather than a bare
+  // outgoing transfer), so where both describe the same transaction Horizon's
+  // version wins and the event-derived one is dropped.
+  const seen = new Set(classic.records.map((r) => r.hash).filter(Boolean));
+  const merged = [...classic.records, ...contractRecords.filter((r) => !r.hash || !seen.has(r.hash))].sort(
+    (a, b) => b.timestamp - a.timestamp,
+  );
+  let kept = merged.slice(0, limit);
+  if (classic.records.length > 0 && !kept.some((r) => classic.rowTokens.has(r.id))) {
+    // The trim dropped every classic row. Contract rows cannot be paged, so
+    // keep the newest classic row in place of the oldest row rather than lose
+    // it: the cursor then has a shown classic operation to resume from instead
+    // of jumping over rows that were built but never displayed.
+    const newestClassic = classic.records[0]!;
+    kept = [...kept.slice(0, Math.max(0, limit - 1)), newestClassic].sort(
+      (a, b) => b.timestamp - a.timestamp,
+    );
+  }
+  // Resume after the oldest classic row still on screen: classic rows the trim
+  // removed are older than it, so the next page returns them instead of
+  // skipping them. With no classic row at all, the page cursor stands.
+  let nextCursor = classic.nextCursor;
+  for (let i = kept.length - 1; i >= 0; i--) {
+    const token = classic.rowTokens.get(kept[i]!.id);
+    if (token) {
+      nextCursor = token;
+      break;
+    }
+  }
+  return { records: kept, nextCursor };
 }
 
 /**
@@ -331,23 +466,5 @@ async function loadClassicActivity(account: string, mine: Set<string>, limit: nu
  * events — so a slow event scan never delays the classic half.
  */
 export async function loadHorizonActivity(address: string, limit = 25): Promise<TxRecord[]> {
-  if (!StrKey.isValidContract(address)) {
-    return loadClassicActivity(address, new Set([address]), limit);
-  }
-
-  const feePayer = await getFeePayerAddress();
-  const mine = new Set(feePayer ? [address, feePayer] : [address]);
-  const [contractRecords, classic] = await Promise.all([
-    loadContractSacActivity([...mine], limit),
-    feePayer ? loadClassicActivity(feePayer, mine, limit) : Promise.resolve([]),
-  ]);
-
-  if (contractRecords.length === 0) return classic;
-  // Merge classic + contract records, deduped by tx hash. Horizon is the
-  // richer source (a swap arrives as one 'swapped' row rather than a bare
-  // outgoing transfer), so where both describe the same transaction Horizon's
-  // version wins and the event-derived one is dropped.
-  const seen = new Set(classic.map((r) => r.hash).filter(Boolean));
-  const merged = [...classic, ...contractRecords.filter((r) => !r.hash || !seen.has(r.hash))];
-  return merged.sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
+  return (await loadHorizonActivityPage(address, limit)).records;
 }
