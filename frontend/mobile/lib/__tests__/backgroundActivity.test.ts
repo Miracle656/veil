@@ -95,3 +95,34 @@ it('does nothing without a wallet', async () => {
   await expect(checkForNewActivity()).resolves.toBe(0);
   expect(mockLoadActivity).not.toHaveBeenCalled();
 });
+
+it('does not notify for dust payments (any asset) but still records them as seen', async () => {
+  mockStorage.set('veil_notified_movements', JSON.stringify(['old']));
+  mockLoadActivity.mockResolvedValue([
+    { ...received('dust-xlm'), amount: '0', asset: 'XLM', isDust: true },
+    { ...received('dust-usdc'), amount: '0', asset: 'USDC', isDust: true },
+    received('old'),
+  ]);
+
+  await expect(checkForNewActivity()).resolves.toBe(0);
+  expect(mockFire).not.toHaveBeenCalled();
+
+  const persisted = JSON.parse(mockStorage.get('veil_notified_movements')!);
+  expect(persisted).toEqual(expect.arrayContaining(['old', 'dust-xlm', 'dust-usdc']));
+
+  // Subsequent pass still does not notify
+  await expect(checkForNewActivity()).resolves.toBe(0);
+  expect(mockFire).not.toHaveBeenCalled();
+});
+
+it('notifies for a real payment of 0.0001', async () => {
+  mockStorage.set('veil_notified_movements', JSON.stringify(['old']));
+  mockLoadActivity.mockResolvedValue([
+    { ...received('tiny-real'), amount: '0.0001', asset: 'XLM', isDust: false },
+    received('old'),
+  ]);
+
+  await expect(checkForNewActivity()).resolves.toBe(1);
+  expect(mockFire).toHaveBeenCalledTimes(1);
+  expect(mockFire).toHaveBeenCalledWith(expect.objectContaining({ hash: 'tiny-real', amount: '0.0001' }));
+});

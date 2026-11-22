@@ -7,6 +7,7 @@ import {
   View,
 } from 'react-native';
 import { useActivityFeed, type TxRecord } from '../lib/activityFeed';
+import { DUST_AMOUNT_LABEL, isDustRecord } from '../lib/dust';
 import { StellarIdenticon } from './StellarIdenticon';
 import { knownDepositAddresses } from '../lib/offramp';
 import { useTheme } from '../hooks/useTheme';
@@ -116,6 +117,7 @@ export default function ActivityFeed({
     const isLast = index === filtered.length - 1;
     const received = item.type === 'received';
     const swapped = item.type === 'swapped';
+    const dust = !swapped && isDustRecord(item);
     const cashedOut = !received && depositAddresses.includes(item.counterparty);
     const label = cashedOut ? 'Cashed out' : swapped ? 'Swap' : received ? 'Received' : 'Sent';
     const when = formatWhen(item.timestamp);
@@ -131,7 +133,7 @@ export default function ActivityFeed({
         accessibilityLabel={
           swapped
             ? `Swap, ${item.amount} ${item.asset} for ${item.destAmount} ${item.destAsset}, ${when}`
-            : `${label} ${item.amount} ${item.asset}, ${received ? 'from' : 'to'} ${shortAddress(item.counterparty)}, ${when}`
+            : `${label} ${dust ? `${DUST_AMOUNT_LABEL} ${item.asset}` : `${item.amount} ${item.asset}`}, ${received ? 'from' : 'to'} ${shortAddress(item.counterparty)}, ${when}`
         }
       >
         {/* Identity first: which address, not which verb. Most rows say "Sent",
@@ -161,6 +163,11 @@ export default function ActivityFeed({
                 +{item.destAmount} {item.destAsset}
               </Text>
             </>
+          ) : dust ? (
+            <Text style={[styles.rowAmount, styles.rowAmountDust]}>
+              {received ? '+' : '−'}
+              {DUST_AMOUNT_LABEL} {item.asset}
+            </Text>
           ) : (
             <Text style={[styles.rowAmount, received && styles.rowAmountTeal]}>
               {received ? '+' : '−'}
@@ -307,6 +314,9 @@ const createStyles = (colors: ThemeColors) =>
     rowAmountTeal: {
       color: colors.positive,
       marginTop: 2,
+    },
+    rowAmountDust: {
+      color: colors.textFaint,
     },
     rowWhen: {
       fontSize: 12,
