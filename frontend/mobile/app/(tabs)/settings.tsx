@@ -132,6 +132,7 @@ export default function SettingsScreen() {
     { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
     { key: 'privacy', title: 'Privacy', subtitle: 'Private payments and crash reporting', onPress: () => router.push('/settings/privacy') },
     { key: 'dapps', title: 'Connected dApps', subtitle: 'Sites with permission, and revoke them', onPress: () => router.push('/settings/permissions') },
+    { key: 'assistant-allowance', title: 'Assistant allowance', subtitle: 'Set, see, or revoke the assistant’s USDC cap', onPress: () => router.push('/settings/assistant-allowance') },
     // Reset lives on its own screen now, reachable on BOTH networks. It used to
     // sit in the testnet-only Developer group, which left a mainnet user (real
     // funds) with no supported way to start over. The danger screen owns the
