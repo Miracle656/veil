@@ -1,6 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  type SharedValue,
+} from 'react-native-reanimated';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
@@ -43,10 +48,21 @@ const META: Record<string, TabMeta> = {
  * Order is fixed here rather than taken from `state.routes`, so Swap always
  * lands dead centre regardless of registration order.
  */
-export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
+export function VeilTabBar({
+  state,
+  navigation,
+  offset,
+}: BottomTabBarProps & { offset?: SharedValue<number> }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  // The layout moves the whole tab area while a swipe is in progress. Cancel
+  // that movement here so the bar itself stays put under the finger.
+  const fallbackOffset = useSharedValue(0);
+  const shift = offset ?? fallbackOffset;
+  const shiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: -shift.value }],
+  }));
   // Near-opaque so page content doesn't show through the floating bar.
   const barBg = isDark ? 'rgba(22,22,22,0.97)' : 'rgba(246,247,248,0.97)';
 
@@ -71,7 +87,7 @@ export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
 
   return (
     <>
-      <View style={styles.wrap} pointerEvents="box-none">
+      <Animated.View style={[styles.wrap, shiftStyle]} pointerEvents="box-none">
         <View style={[styles.bar, { backgroundColor: barBg }]}>
           {renderTab('dashboard')}
           {renderTab('earn')}
@@ -102,7 +118,7 @@ export function VeilTabBar({ state, navigation }: BottomTabBarProps) {
           {renderTab('agent')}
           {renderTab('settings')}
         </View>
-      </View>
+      </Animated.View>
       <MoreActionsSheet visible={moreOpen} onClose={() => setMoreOpen(false)} />
     </>
   );
