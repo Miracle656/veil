@@ -39,3 +39,12 @@ export {
   isRegisteredIssuer,
   type RegisteredAsset,
 } from './assets.js'
+
+export {
+  AllowanceError,
+  assertAllowanceCovers,
+  assertFreshAllowance,
+  type AllowanceFailure,
+  type AllowanceReader,
+  type AllowanceSnapshot,
+} from './allowance.js'

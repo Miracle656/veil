@@ -28,6 +28,19 @@ A `prepare` tool declares how it reaches the passkey:
 
 A tool that writes without approval does not get merged.
 
+## Allowance-backed assistant payments
+
+Autonomous payments are currently disabled. Issues #1314 and #1315 must close
+before the agent can be given a wallet payment path: the server must derive the
+wallet from an authenticated session and must build the transaction itself.
+
+When that path is enabled, it must read the deployed wallet's allowance
+immediately before building or submitting a payment and fail closed if the read
+fails. `src/allowance.ts` provides that preflight. It rejects missing, expired,
+or insufficient allowances, including any payment above the exact remaining
+amount. The contract's authorization check remains the final enforcement and
+must be left in place; a preflight read alone cannot prevent a race.
+
 ## What the tests enforce (`src/__tests__/boundary.test.ts`)
 
 - Every tool declares `read` or `prepare`; every `case` in `executeTool` is in the
