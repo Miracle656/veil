@@ -82,7 +82,9 @@ jobs:
           # so the parsing path is unreachable in the deployed contract. Patching
           # forward pulls time-macros, which raises the MSRV to Rust 1.88 and
           # breaks the pinned 1.85 reproducible build.
-          ignore: RUSTSEC-2026-0009
+          # RUSTSEC-2026-0387 (crypto-bigint <0.7.6):
+          # Transitive dependency via elliptic-curve 0.13 / p256 in contracts.
+          ignore: RUSTSEC-2026-0009, RUSTSEC-2026-0387
 
   contracts:
     name: Rust contracts — build & test

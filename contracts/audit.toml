@@ -2,5 +2,12 @@
 # Format: [[advisories]]
 #         id = "RUSTSEC-YYYY-XXXX"
 #         reason = "<justification>"
-#
-# Leave empty if no advisories are currently accepted
+
+[[advisories]]
+id = "RUSTSEC-2026-0009"
+reason = "time <0.3.47 is host/dev-only, unreachable in wasm32 deployed contract"
+
+[[advisories]]
+id = "RUSTSEC-2026-0387"
+reason = "crypto-bigint <0.7.6 is a transitive dependency of elliptic-curve 0.13 / p256 in contracts"
+
