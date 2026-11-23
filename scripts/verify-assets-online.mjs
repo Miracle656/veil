@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Live / online asset registry verification (#794, #892).
+ * Live / online asset registry verification (#794, #892, #978).
  *
  * Runs on a scheduled GitHub Actions workflow (or manual dispatch), never on the
  * push path. For every non-native mainnet registry entry it applies the same
@@ -16,7 +16,8 @@
  *   1: Verification error / asset mismatch (fail-closed: impostor TOML, wrong issuer)
  *   2: Network error / third-party service unreachable (not a registry fault)
  *
- * A declared home_domain that serves no stellar.toml (HTTP 404) is reported as a warning, not a failure.
+ * A declared home_domain that serves no stellar.toml (HTTP 404) is reported as a warning, not a failure,
+ * so the scheduled job stays red only for real registry faults (impostor TOML, wrong issuer).
  */
 
 import { writeFileSync } from 'node:fs';

@@ -4,9 +4,9 @@
   "private": true,
   "description": "Next.js client that pays an x402-guarded API with 0.01 XLM, signed via Veil",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node init && next dev",
+    "build": "node init && next build",
+    "start": "node init && next start",
     "lint": "next lint",
     "test": "tsx --test src/lib/challenge.test.ts",
     "typecheck": "tsc --noEmit"

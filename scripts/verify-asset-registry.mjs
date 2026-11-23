@@ -373,51 +373,13 @@ export async function main() {
     const walletAssets = parseAssetRegistry(walletAssetsPath);
     const mobileAssets = parseAssetRegistry(mobileAssetsPath);
     assertRegistryParity(walletAssets, mobileAssets);
-    console.log(
-      `Registry parity verified for wallet and mobile: ${walletAssets.map((asset) => asset.code).join(', ')}`,
-    );
-
-    let errors = 0;
-    let warnings = 0;
-    for (const asset of walletAssets.filter((entry) => entry.kind !== 'native')) {
-      const result = await verifyAssetResult(asset);
-      if (!result.ok) {
-        console.error(`  ✕ ${asset.code}:${asset.issuer} — ${errorMessage(result.error)}`);
-        errors += 1;
-        continue;
-      }
-
-      if (result.value.status === 'warning') {
-        console.warn(
-          `  ⚠ ${asset.code}:${asset.issuer} verified on ${asset.network} — ${result.value.note}`,
-        );
-        warnings += 1;
-        continue;
-      }
-
-      console.log(
-        `  ✓ ${asset.code}:${asset.issuer} verified on ${asset.network} — ${result.value.note}`,
-      );
-    }
-
-    if (warnings > 0) {
-      console.warn(`WARNING: ${warnings} asset(s) declare a home_domain that serves no stellar.toml.`);
-    }
-
-    if (errors > 0) {
-      console.error(`FAILED: ${errors} asset registry verification error(s) found.`);
-      return 1;
-    }
-
-    console.log('SUCCESS: All non-native registry entries verified by exact issuer identity.');
-    return 0;
   } catch (error) {
-    console.error(`FATAL ERROR: ${errorMessage(error)}`);
-    return 1;
+    console.error(`✗ Registry parity: ${errorMessage(error)}`);
+    process.exitCode = 1;
+    return;
   }
 }
 
-const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
-if (import.meta.url === invokedPath) {
-  process.exitCode = await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }
