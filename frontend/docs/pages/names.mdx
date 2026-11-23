@@ -62,19 +62,45 @@ in its own storage. Trustlines are a classic-account requirement.
 
 ## Buying a name
 
+In the Veil web wallet, open the **Names** screen from the main navigation (`/names`).
+
 <Steps>
 
 ### Pick a name
 
-It must be 3–20 characters of lowercase `a–z`, digits `0–9`, and underscore.
-No underscore at the start or end, and never two in a row. See
-[What a name may be](#what-a-name-may-be) for why the rules are this narrow.
+Enter your desired name (3–20 characters of lowercase `a–z`, digits `0–9`, and
+underscore; no underscore at start or end, and never two in a row). See
+[What a name may be](#what-a-name-may-be) for the character rules.
+
+As you type, the app checks availability on-chain: it calls `state(name)` to
+see if the name is Open, Active, or in Recovery, and simulates `register` to
+verify pricing and eligibility.
 
 ### Choose a term
 
-One to five years. Longer terms are not discounted — five years costs exactly
-five times one year. The reason to take a longer term is to stop thinking about
-renewals, not to save money.
+Select between one and five years. Longer terms are not discounted — five years
+costs exactly five times one year. The reason to take a longer term is to stop
+thinking about renewals, not to save money.
+
+### Automatic USDC top-up (if needed)
+
+A Veil wallet keeps money in two places: the smart contract wallet (`C…`), which
+holds user funds and executes contract transactions, and the classic spending
+account ("fee-payer", `G…`), which pays Stellar network fees. When you deposit
+or swap USDC, it typically arrives on the fee-payer account.
+
+The registration transaction spends USDC directly from the smart contract
+wallet. When you click **Register**, the app evaluates both balances:
+
+- If the contract holds enough USDC to pay the quote, registration proceeds
+  immediately.
+- If the contract has a shortfall, but the fee-payer holds enough USDC to cover
+  it, the app automatically executes a **top-up transaction first** — calling
+  the USDC Stellar Asset Contract (SAC) signed by the fee-payer to transfer the
+  exact shortfall to the contract.
+- The user clicks **one button**, and the app coordinates both transactions in
+  sequence. If both accounts combined still fall short of the required USDC,
+  the app reports insufficient funds.
 
 ### Pay and register
 
@@ -90,6 +116,33 @@ name resolves to you, transfer it and the name follows it to the new holder.
 You do not need to do anything else to point the name at your wallet.
 
 </Steps>
+
+## Who holds the name after purchase
+
+Who owns the name NFT and where the name resolves depends on how the wallet was created:
+
+- **Smart contract wallet (default):**
+  For a wallet created and operated in the browser, the buyer is the smart
+  contract wallet (`C…`). The name NFT is minted to the `C…` address, and the
+  name resolves to that contract. Anyone sending funds to `name*useveilapp.xyz`
+  pays directly into the smart contract wallet.
+- **Spending account fallback (mobile-origin wallets):**
+  A Veil wallet contract stores its WebAuthn origin (such as
+  `android:apk-key-hash:…`) in contract storage when first deployed. Soroban's
+  `__check_auth` verifies this origin byte-for-byte with no upgrade path.
+  Therefore, a wallet created on mobile **cannot sign WebAuthn transactions in a
+  web browser**.
+
+  To ensure mobile wallet holders can still buy names on the web, the app
+  automatically purchases the name using the spending account (`G…`) via
+  `registerNameAsFeePayer`, signed with a standard keypair signature.
+
+  **In plain words for the user:** The name NFT is minted to and held by your
+  classic `G…` spending account, and `name*useveilapp.xyz` resolves to your
+  `G…` address instead of the `C…` contract address. Incoming payments to the
+  name will arrive in your spending account rather than the contract. In
+  addition, no USDC is moved into the contract, preventing funds from being
+  stranded in a contract that cannot authorize web transactions.
 
 ## Renewal, and what "subscription" means here
 
@@ -227,11 +280,32 @@ We return the contract address rather than inventing a classic one because that
 is where the money actually is. A `G…` address that merely forwarded would be a
 second place for funds to go wrong.
 
+## Veil-ians
+
+Veil-ians (the Veil Masquerade collection) is an exclusive collection of 20
+digital figures available directly in the wallet at `/veil-ians`.
+
+- **Collection size:** Exactly 20 unique figures (tokens 1 to 20).
+- **Price:** **5 USDC** per figure (50,000,000 stroops), paid through the USDC
+  Stellar Asset Contract.
+- **Gated on holding a Veil Name:** You must already own a Veil Name to buy a
+  figure. The contract (and the app via `holdsAName()`) checks on-chain name
+  ownership before permitting a purchase. If your wallet does not hold a name,
+  the purchase button is gated until you register one.
+- **Purchase flow:** Buying a figure calls `buy(buyer, token_id)` on the
+  collection contract, transferring 5 USDC to the Veil treasury and minting the
+  token in a single transaction. For mobile-origin wallets on web, the app buys
+  as the `G…` fee-payer (`buyFigureAsFeePayer`), following the same pattern as
+  name purchases.
+- **Mainnet contract ID:**
+  `CA5TXFITGGMG6HG6FJIHWOTXSZ43EIR4F5UCTAAY5FJWB5FWBG5Z3WPN`
+
 ## On-chain reference
 
 | | |
 | --- | --- |
 | Registry contract | `CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4` |
+| Veil-ians collection | `CA5TXFITGGMG6HG6FJIHWOTXSZ43EIR4F5UCTAAY5FJWB5FWBG5Z3WPN` |
 | Network | Stellar mainnet |
 | Payment asset | USDC — `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75` |
 | USDC issuer | `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` |
@@ -266,9 +340,12 @@ expiry date are unaffected either way.
 
 ## Current status
 
-<Callout type="warning">
-**As of 8 November 2026:** the registry contract is deployed to mainnet and the
-federation endpoint is live, but **the `/names` page in the Veil app has not
-shipped yet**. Names can currently only be registered by calling the contract
-directly. Buying a name from the app is the next piece of work.
+<Callout type="info">
+The `/names` page is **live in production** in the Veil web wallet navigation
+(`app.useveilapp.xyz/names`). Users can search for names, view real-time quotes,
+automatically top up USDC from the spending account, and register or renew names
+directly in the app.
+
+The `/veil-ians` collection page is also live at `app.useveilapp.xyz/veil-ians`
+for Veil name holders.
 </Callout>
