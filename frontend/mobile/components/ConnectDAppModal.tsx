@@ -1,7 +1,7 @@
 import { errorMessage } from '../lib/errorMessage';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -15,7 +15,9 @@ import {
   View,
 } from 'react-native';
 
+import { useTheme } from '../hooks/useTheme';
 import { useWalletConnect } from '../hooks/useWalletConnect';
+import type { ThemeColors } from '../lib/theme';
 import { isWalletConnectUri } from '../lib/walletConnectHelpers';
 import { getWalletAddress } from '../lib/walletStore';
 
@@ -36,6 +38,8 @@ type Tab = 'scan' | 'paste';
 export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppModalProps) {
   const { isReady, error: clientError, pendingProposal, pair, approveSession, rejectSession } =
     useWalletConnect();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [tab, setTab] = useState<Tab>('scan');
   const [uriInput, setUriInput] = useState('');
@@ -175,11 +179,12 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
             {!pendingProposal ? (
               <>
                 <View style={styles.tabs}>
-                  <TabButton label="Scan QR" active={tab === 'scan'} onPress={() => setTab('scan')} />
+                  <TabButton label="Scan QR" active={tab === 'scan'} onPress={() => setTab('scan')} styles={styles} />
                   <TabButton
                     label="Paste URI"
                     active={tab === 'paste'}
                     onPress={() => setTab('paste')}
+                    styles={styles}
                   />
                 </View>
 
@@ -189,6 +194,8 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
                     canAskAgain={permission?.canAskAgain ?? true}
                     onRequestPermission={requestPermission}
                     onScanned={handleBarcodeScanned}
+                    styles={styles}
+                    colors={colors}
                   />
                 ) : (
                   <View>
@@ -196,7 +203,7 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
                     <TextInput
                       style={styles.input}
                       placeholder="wc:..."
-                      placeholderTextColor="#64748b"
+                      placeholderTextColor={colors.textFaint}
                       value={uriInput}
                       onChangeText={setUriInput}
                       autoCapitalize="none"
@@ -215,6 +222,8 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
                       loading={isPairing}
                       disabled={uriInput.trim().length === 0}
                       onPress={() => handlePair(uriInput)}
+                      styles={styles}
+                      colors={colors}
                     />
                   </View>
                 )}
@@ -263,6 +272,8 @@ export function ConnectDAppModal({ isOpen, onClose, onConnected }: ConnectDAppMo
                   loading={isApproving}
                   disabled={!walletAddress}
                   onPress={handleApprove}
+                  styles={styles}
+                  colors={colors}
                 />
                 <Pressable
                   accessibilityRole="button"
@@ -288,11 +299,15 @@ function ScannerPane({
   canAskAgain,
   onRequestPermission,
   onScanned,
+  styles,
+  colors,
 }: {
   granted: boolean;
   canAskAgain: boolean;
   onRequestPermission: () => void;
   onScanned: (result: { data: string }) => void;
+  styles: ReturnType<typeof createStyles>;
+  colors: ThemeColors;
 }) {
   if (!granted) {
     return (
@@ -303,7 +318,7 @@ function ScannerPane({
             : 'Camera access is blocked. Enable it in system settings, or paste the URI instead.'}
         </Text>
         {canAskAgain && (
-          <PrimaryButton label="Allow camera" onPress={onRequestPermission} />
+          <PrimaryButton label="Allow camera" onPress={onRequestPermission} styles={styles} colors={colors} />
         )}
       </View>
     );
@@ -328,10 +343,12 @@ function TabButton({
   label,
   active,
   onPress,
+  styles,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
+  styles: ReturnType<typeof createStyles>;
 }) {
   return (
     <Pressable
@@ -350,11 +367,15 @@ function PrimaryButton({
   disabled = false,
   loading = false,
   onPress,
+  styles,
+  colors,
 }: {
   label: string;
   disabled?: boolean;
   loading?: boolean;
   onPress: () => void;
+  styles: ReturnType<typeof createStyles>;
+  colors: ThemeColors;
 }) {
   return (
     <Pressable
@@ -368,225 +389,221 @@ function PrimaryButton({
         (disabled || loading) && styles.disabled,
       ]}
     >
-      {loading ? <ActivityIndicator color="#0F0F0F" size="small" /> : null}
+      {loading ? <ActivityIndicator color={colors.onAccent} size="small" /> : null}
       <Text style={styles.primaryLabel}>{label}</Text>
     </Pressable>
   );
 }
 
-const GOLD = '#FDDA24';
-const OFF_WHITE = '#F6F7F8';
-const BORDER_DIM = 'rgba(246,247,248,0.14)';
-const MUTED = 'rgba(246,247,248,0.5)';
-
-const styles = StyleSheet.create({
-  backdrop: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: 'rgba(0,0,0,0.72)',
-  },
-  sheetWrapper: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    maxHeight: '85%',
-    backgroundColor: '#141414',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderTopWidth: 1,
-    borderColor: BORDER_DIM,
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 28,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  title: {
-    color: OFF_WHITE,
-    fontSize: 20,
-    fontWeight: '600',
-    fontStyle: 'italic',
-    fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }),
-  },
-  close: {
-    color: OFF_WHITE,
-    fontSize: 26,
-    lineHeight: 26,
-    paddingHorizontal: 8,
-  },
-  tabs: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
-  },
-  tab: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-    paddingVertical: 7,
-    paddingHorizontal: 16,
-  },
-  tabActive: {
-    borderColor: GOLD,
-    backgroundColor: 'rgba(253,218,36,0.12)',
-  },
-  tabLabel: {
-    color: OFF_WHITE,
-    fontSize: 14,
-  },
-  tabLabelActive: {
-    color: GOLD,
-    fontWeight: '600',
-  },
-  scanner: {
-    aspectRatio: 1,
-    borderRadius: 12,
-    overflow: 'hidden',
-    backgroundColor: '#000',
-  },
-  scannerFallback: {
-    gap: 12,
-    paddingVertical: 8,
-  },
-  label: {
-    color: MUTED,
-    fontSize: 12,
-    marginBottom: 8,
-  },
-  input: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#334155',
-    color: '#f1f5f9',
-    fontSize: 15,
-    minHeight: 76,
-    padding: 12,
-    textAlignVertical: 'top',
-  },
-  hint: {
-    color: MUTED,
-    fontSize: 13,
-    lineHeight: 20,
-    marginTop: 12,
-  },
-  dappCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-    padding: 14,
-    marginTop: 12,
-    marginBottom: 12,
-  },
-  dappIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-  },
-  dappIconFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-  },
-  dappInitial: {
-    color: GOLD,
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  dappText: {
-    flex: 1,
-  },
-  dappName: {
-    color: OFF_WHITE,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  dappDescription: {
-    color: MUTED,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  permissionsCard: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-    padding: 14,
-    marginBottom: 16,
-    gap: 6,
-  },
-  permissionsTitle: {
-    color: OFF_WHITE,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  permissionsItem: {
-    color: MUTED,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  permissionsLabel: {
-    color: 'rgba(246,247,248,0.45)',
-    fontSize: 12,
-    marginTop: 6,
-  },
-  mono: {
-    color: OFF_WHITE,
-    fontSize: 12,
-    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
-  },
-  primaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: GOLD,
-    borderRadius: 999,
-    paddingVertical: 13,
-    marginTop: 14,
-  },
-  primaryLabel: {
-    color: '#0F0F0F',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  ghostButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-    paddingVertical: 12,
-    marginTop: 10,
-  },
-  ghostLabel: {
-    color: OFF_WHITE,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  pressed: {
-    opacity: 0.75,
-  },
-  disabled: {
-    opacity: 0.45,
-  },
-  error: {
-    marginTop: 14,
-    color: '#f87171',
-    fontSize: 13,
-    lineHeight: 19,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    backdrop: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: 'rgba(0,0,0,0.72)',
+    },
+    sheetWrapper: {
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      maxHeight: '85%',
+      backgroundColor: colors.surfaceRaised,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 20,
+      paddingTop: 16,
+      paddingBottom: 28,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 16,
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 20,
+      fontWeight: '600',
+      fontStyle: 'italic',
+      fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }),
+    },
+    close: {
+      color: colors.textStrong,
+      fontSize: 26,
+      lineHeight: 26,
+      paddingHorizontal: 8,
+    },
+    tabs: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 16,
+    },
+    tab: {
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 7,
+      paddingHorizontal: 16,
+    },
+    tabActive: {
+      borderColor: colors.accent,
+      backgroundColor: colors.surfaceMd,
+    },
+    tabLabel: {
+      color: colors.textSecondary,
+      fontSize: 14,
+    },
+    tabLabelActive: {
+      color: colors.accent,
+      fontWeight: '600',
+    },
+    scanner: {
+      aspectRatio: 1,
+      borderRadius: 12,
+      overflow: 'hidden',
+      backgroundColor: colors.background,
+    },
+    scannerFallback: {
+      gap: 12,
+      paddingVertical: 8,
+    },
+    label: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      marginBottom: 8,
+    },
+    input: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      color: colors.textPrimary,
+      fontSize: 15,
+      minHeight: 76,
+      padding: 12,
+      textAlignVertical: 'top',
+    },
+    hint: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 20,
+      marginTop: 12,
+    },
+    dappCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 14,
+      marginTop: 12,
+      marginBottom: 12,
+    },
+    dappIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 999,
+    },
+    dappIconFallback: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    dappInitial: {
+      color: colors.accent,
+      fontWeight: '700',
+      fontSize: 16,
+    },
+    dappText: {
+      flex: 1,
+    },
+    dappName: {
+      color: colors.textStrong,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    dappDescription: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      marginTop: 2,
+    },
+    permissionsCard: {
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 14,
+      marginBottom: 16,
+      gap: 6,
+    },
+    permissionsTitle: {
+      color: colors.textStrong,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    permissionsItem: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    permissionsLabel: {
+      color: colors.textFaint,
+      fontSize: 12,
+      marginTop: 6,
+    },
+    mono: {
+      color: colors.textPrimary,
+      fontSize: 12,
+      fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    },
+    primaryButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: colors.accent,
+      borderRadius: 999,
+      paddingVertical: 13,
+      marginTop: 14,
+    },
+    primaryLabel: {
+      color: colors.onAccent,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    ghostButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 12,
+      marginTop: 10,
+    },
+    ghostLabel: {
+      color: colors.textPrimary,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    pressed: {
+      opacity: 0.75,
+    },
+    disabled: {
+      opacity: 0.45,
+    },
+    error: {
+      marginTop: 14,
+      color: colors.danger,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+  });
