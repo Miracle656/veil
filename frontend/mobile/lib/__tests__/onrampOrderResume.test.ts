@@ -11,6 +11,7 @@
 
 import { forgetOnrampOrder, loadOnrampOrder, rememberOnrampOrder } from '../onramp';
 import type { OnrampOrder } from '../onramp';
+import { LATE_CHECK_GRACE_MS } from '../onrampOrderState';
 
 jest.mock('../walletStore', () => ({ getWalletAddress: jest.fn(async () => null) }));
 
@@ -45,13 +46,43 @@ describe('loadOnrampOrder', () => {
     });
   });
 
-  // Restoring a dead order is worse than losing it: it tells someone to pay an
-  // account that has stopped accepting payment.
-  it('refuses an expired order and clears it', async () => {
+  // Restoring a dead unpaid order is worse than losing it: it tells someone to
+  // pay an account that has stopped accepting payment.
+  it('refuses an unpaid expired order and clears it', async () => {
     await rememberOnrampOrder({ ...ORDER, expiresAt: new Date(Date.now() - 1000).toISOString() });
 
     await expect(loadOnrampOrder()).resolves.toBeNull();
     // Cleared on the way out, so the next launch does not re-read it.
+    await expect(loadOnrampOrder()).resolves.toBeNull();
+  });
+
+  // When the user already tapped "I've sent the transfer", dropping the order
+  // the moment the window closes loses track of a slow bank transfer across a
+  // restart. Keep it for the bounded grace window, then clear it.
+  it('retains a paid-claimed order past expiresAt during the bounded grace window', async () => {
+    const paidOrder: OnrampOrder = {
+      ...ORDER,
+      paidClaimed: true,
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+    };
+    await rememberOnrampOrder(paidOrder);
+
+    await expect(loadOnrampOrder()).resolves.toMatchObject({
+      orderId: 'ofr_123',
+      paidClaimed: true,
+      expiresAt: paidOrder.expiresAt,
+    });
+  });
+
+  it('clears a paid-claimed order once the bounded grace window has also ended', async () => {
+    const stalePaidOrder: OnrampOrder = {
+      ...ORDER,
+      paidClaimed: true,
+      expiresAt: new Date(Date.now() - LATE_CHECK_GRACE_MS - 1000).toISOString(),
+    };
+    await rememberOnrampOrder(stalePaidOrder);
+
+    await expect(loadOnrampOrder()).resolves.toBeNull();
     await expect(loadOnrampOrder()).resolves.toBeNull();
   });
 

@@ -67,6 +67,14 @@ import {
   type NairaCoin,
   type OnrampOrder,
 } from '../lib/onramp';
+import {
+  lateCheckSecondsRemaining,
+  resolveRestoredOnrampStep,
+  shouldPollOnramp,
+  transitionOnStatus,
+  transitionOnTick,
+  type OnrampStep,
+} from '../lib/onrampOrderState';
 
 /**
  * Coins a user may buy with naira. XLM only, for now.
@@ -85,7 +93,7 @@ import {
  */
 const BUYABLE_COINS: readonly NairaCoin[] = ['xlm'];
 
-type Step = 'amount' | 'confirm' | 'pay' | 'waiting' | 'done' | 'expired';
+type Step = OnrampStep;
 
 /** Verification is once per person, so the outcome is remembered. */
 
@@ -129,6 +137,7 @@ export default function BuyWithNairaScreen() {
   const [deliveryAddress, setDeliveryAddress] = useState<string | null>(null);
   const [order, setOrder] = useState<OnrampOrder | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [lateSecondsLeft, setLateSecondsLeft] = useState<number | null>(null);
   const [status, setStatus] = useState<string>('initiated');
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -261,9 +270,17 @@ export default function BuyWithNairaScreen() {
     let cancelled = false;
     void loadOnrampOrder().then((pending) => {
       if (cancelled || !pending) return;
+      const restoredStep = resolveRestoredOnrampStep(
+        pending.expiresAt,
+        Boolean(pending.paidClaimed),
+      );
+      if (!restoredStep) {
+        void forgetOnrampOrder();
+        return;
+      }
       setOrder(pending);
       setStatus(pending.status);
-      setStep('pay');
+      setStep(restoredStep);
     });
     return () => {
       cancelled = true;
@@ -272,37 +289,42 @@ export default function BuyWithNairaScreen() {
 
   // ── Countdown ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!order) return;
+    if (!order || !shouldPollOnramp(step)) return;
     const tick = () => {
-      const left = secondsUntil(order.expiresAt);
-      setSecondsLeft(left);
-      if (left === 0) {
-        // The window has closed, so the stored copy goes with it — a relaunch
-        // must not restore an account that has stopped accepting payment.
+      const now = Date.now();
+      setSecondsLeft(secondsUntil(order.expiresAt));
+      setLateSecondsLeft(lateCheckSecondsRemaining(order.expiresAt, now));
+      const next = transitionOnTick(step, order.expiresAt, now);
+      if (next.forgetOrder) {
         void forgetOnrampOrder();
-        setStep((s) => (s === 'pay' || s === 'waiting' ? 'expired' : s));
+      }
+      if (next.step !== step) {
+        setStep(next.step);
       }
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [order]);
+  }, [order, step]);
 
   // ── Status polling, only while an order is live ───────────────────────────
   useEffect(() => {
-    if (!order || !customerRef || (step !== 'pay' && step !== 'waiting')) return;
+    if (!order || !customerRef || !shouldPollOnramp(step)) return;
+    let cancelled = false;
     const check = async () => {
       try {
         const s = await getOnrampStatus(customerRef, order.orderId);
+        if (cancelled) return;
         setStatus(s.status);
-        if (/complete|success|settled/i.test(s.status)) {
-          // Settled, so the account must not be restored and offered again.
+        const next = transitionOnStatus(step, s.status);
+        if (next.forgetOrder) {
           void forgetOnrampOrder();
-          setStep('done');
         }
-        if (/fail|cancel/i.test(s.status)) {
-          void forgetOnrampOrder();
-          setError('This order did not complete.');
+        if (next.step !== step) {
+          if (next.step === 'failed') {
+            setError(null);
+          }
+          setStep(next.step);
         }
       } catch {
         // Silent: a failed poll is not news the user can act on, and the
@@ -312,10 +334,21 @@ export default function BuyWithNairaScreen() {
     void check();
     pollRef.current = setInterval(check, 12_000);
     return () => {
+      cancelled = true;
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = null;
     };
   }, [order, customerRef, step]);
+
+  const resetOrder = useCallback(() => {
+    void forgetOnrampOrder();
+    setOrder(null);
+    setSecondsLeft(null);
+    setLateSecondsLeft(null);
+    setError(null);
+    setStep('amount');
+    void loadRate();
+  }, [loadRate]);
 
   const ngn = Number(amountNGN.replace(/[^\d.]/g, '')) || 0;
   const code = coin.toUpperCase();
@@ -638,7 +671,12 @@ export default function BuyWithNairaScreen() {
             </Text>
 
             <Pressable
-              onPress={() => setStep('waiting')}
+              onPress={() => {
+                const updated: OnrampOrder = { ...order, paidClaimed: true };
+                setOrder(updated);
+                void rememberOnrampOrder(updated);
+                setStep('waiting');
+              }}
               style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
             >
               <Text style={styles.primaryText}>I&apos;ve sent the transfer</Text>
@@ -685,7 +723,14 @@ export default function BuyWithNairaScreen() {
               You can close Veil. Your {code} will appear in your balance when it arrives.
             </Text>
 
-            <Pressable onPress={() => setStep('pay')}>
+            <Pressable
+              onPress={() => {
+                const updated: OnrampOrder = { ...order, paidClaimed: false };
+                setOrder(updated);
+                void rememberOnrampOrder(updated);
+                setStep('pay');
+              }}
+            >
               <Text style={styles.linkText}>Haven&apos;t paid yet? Show the account again</Text>
             </Pressable>
             <Pressable
@@ -693,6 +738,100 @@ export default function BuyWithNairaScreen() {
               style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
             >
               <Text style={styles.secondaryText}>Back to home</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── a4b · waiting past window (bounded extra check) ──────────── */}
+        {!mainnetOnly && step === 'waiting_late' && order && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>STILL CHECKING</Text>
+              <Text style={styles.question}>We haven&apos;t seen your transfer yet</Text>
+              <Text style={styles.hint}>
+                The payment window closed, but bank transfers can take a few extra minutes to
+                arrive. We are still checking for your {naira(order.amountNgn)} transfer.
+              </Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Still checking for</Text>
+                <Text style={styles.rowValue}>
+                  {lateSecondsLeft === null ? '—' : clock(lateSecondsLeft)}
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Amount</Text>
+                <Text style={styles.rowValue}>{naira(order.amountNgn)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>To</Text>
+                <Text style={styles.rowValue}>
+                  {order.bankName} ··{order.accountNumber.slice(-4)}
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Status</Text>
+                <Text style={styles.rowValue}>{status}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.hint}>
+              Do not send the transfer again. You can close Veil and come back — your {code} will
+              appear in your balance as soon as it arrives.
+            </Text>
+
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.secondaryText}>Back to home</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── a5 · unconfirmed after bounded extra check ────────────────── */}
+        {!mainnetOnly && step === 'unconfirmed' && order && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>NOT CONFIRMED YET</Text>
+              <Text style={styles.question}>We couldn&apos;t confirm your transfer yet</Text>
+              <Text style={styles.hint}>
+                Your {naira(order.amountNgn)} transfer has not appeared after our extra checking
+                window, so we stopped checking automatically. This does not mean your transfer
+                failed.
+              </Text>
+            </View>
+
+            <View style={styles.card}>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Amount</Text>
+                <Text style={styles.rowValue}>{naira(order.amountNgn)}</Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>To</Text>
+                <Text style={styles.rowValue}>
+                  {order.bankName} ··{order.accountNumber.slice(-4)}
+                </Text>
+              </View>
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Order reference</Text>
+                <Text style={styles.rowValue}>{order.orderId}</Text>
+              </View>
+            </View>
+
+            <Text style={styles.hint}>
+              Do not send the transfer again. Check your bank app to see whether the payment went
+              through or was reversed. If your account was debited and your {code} does not appear
+              shortly, contact support with the order reference above.
+            </Text>
+
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>Back to home</Text>
             </Pressable>
           </>
         )}
@@ -761,14 +900,34 @@ export default function BuyWithNairaScreen() {
             </Text>
 
             <Pressable
-              onPress={() => {
-                void forgetOnrampOrder();
-                setOrder(null);
-                setSecondsLeft(null);
-                setError(null);
-                setStep('amount');
-                void loadRate();
-              }}
+              onPress={resetOrder}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.primaryText}>Start a new order</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.back()}
+              style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+            >
+              <Text style={styles.secondaryText}>Back to home</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* ── f2 · failed ───────────────────────────────────────────────── */}
+        {!mainnetOnly && step === 'failed' && (
+          <>
+            <View style={styles.card}>
+              <Text style={styles.eyebrow}>ORDER DID NOT COMPLETE</Text>
+              <Text style={styles.question}>This order could not be completed</Text>
+              <Text style={styles.hint}>
+                This payment order is no longer active and the account details have been cleared.
+                You can start a new order whenever you&apos;re ready.
+              </Text>
+            </View>
+
+            <Pressable
+              onPress={resetOrder}
               style={({ pressed }) => [styles.primaryBtn, pressed && styles.pressed]}
             >
               <Text style={styles.primaryText}>Start a new order</Text>
