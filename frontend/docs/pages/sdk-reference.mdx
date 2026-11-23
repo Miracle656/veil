@@ -7,19 +7,24 @@ import { Callout } from 'nextra/components'
 
 # SDK Reference
 
-The `invisible-wallet-sdk` is a TypeScript package providing a React hook, a Vue 3 composable, and utility functions for integrating Veil into web applications.
+The `invisible-wallet-sdk` is a TypeScript package providing framework adapters (React, Vue 3, Svelte, Solid.js, Angular), a framework-agnostic vanilla client, a Stellar Wallets Kit module, and utility functions for integrating Veil into web and React Native applications.
 
 **Package:** `invisible-wallet-sdk`
 **Source:** `sdk/src/`
 **Entry:** `dist/index.js` / `dist/index.d.ts`
 
-| Entry point | Import | For |
+| Entry point | Import | Exports |
 |---|---|---|
-| React | `invisible-wallet-sdk` | `useInvisibleWallet` hook |
+| Default (Core + React) | `invisible-wallet-sdk` | `useInvisibleWallet` hook, core types, error classes, and utility functions |
+| Vanilla (no framework) | `invisible-wallet-sdk/vanilla` | `createInvisibleWallet` client |
+| React (provider & hooks) | `invisible-wallet-sdk/react` | `VeilProvider`, `useVeilContext`, React Query hooks (`useBalance`, `useHistory`, `useSendTransaction`), and UI components |
 | Vue 3 | `invisible-wallet-sdk/vue` | `useInvisibleWallet` composable |
-| No framework | `invisible-wallet-sdk/vanilla` | `createInvisibleWallet` |
+| Svelte | `invisible-wallet-sdk/svelte` | `createWalletStore` readable store |
+| Solid.js | `invisible-wallet-sdk/solid` | `useInvisibleWallet` reactive primitive |
+| Angular | `invisible-wallet-sdk/angular` | `VeilService`, `provideVeil`, and `VeilModule` |
+| Stellar Wallets Kit | `invisible-wallet-sdk/stellar-wallets-kit` | `VeilModule` and `VEIL_ID` for `@creit-tech/stellar-wallets-kit` |
 
-All three wrap the same framework-agnostic core (`sdk/src/core.ts`), so the React and Vue adapters expose an identical set of actions. Neither entry point pulls in the other's framework.
+All framework adapters wrap the same framework-agnostic core (`sdk/src/core.ts`), so they expose an identical set of 26 wallet actions without pulling in other frameworks.
 
 ---
 
@@ -34,12 +39,26 @@ npm install invisible-wallet-sdk @stellar/stellar-sdk
 ## Quick Start
 
 ```typescript
-import { useInvisibleWallet } from 'invisible-wallet-sdk'
+import { useInvisibleWallet, type TransactionSigner } from 'invisible-wallet-sdk'
 
 const config = {
-  factoryAddress: 'CABC...', // Your deployed factory contract
+  factoryAddress: 'CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA',
   rpcUrl: 'https://soroban-testnet.stellar.org',
   networkPassphrase: 'Test SDF Network ; September 2015',
+}
+
+// Sign fee-payer transactions on your backend instead of shipping a secret key in the browser.
+const feePayer: TransactionSigner = {
+  publicKey: FEE_PAYER_PUBLIC_KEY,
+  signTransaction: async (xdr, { networkPassphrase }) => {
+    const res = await fetch('/api/sign', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ xdr, networkPassphrase }),
+    })
+    if (!res.ok) throw new Error('Signing was refused')
+    return (await res.json()).signedXdr
+  },
 }
 
 function App() {
@@ -47,11 +66,10 @@ function App() {
 
   const handleCreate = async () => {
     // 1. Create passkey + compute wallet address
-    const { walletAddress, publicKeyBytes } = await wallet.register('alice')
+    const { publicKeyBytes } = await wallet.register('alice')
 
     // 2. Deploy wallet contract on-chain
-    const signerKeypair = Keypair.fromSecret('S...')
-    await wallet.deploy(signerKeypair, publicKeyBytes)
+    await wallet.deploy(feePayer, publicKeyBytes)
   }
 
   return <button onClick={handleCreate}>Create Wallet</button>
@@ -62,15 +80,17 @@ function App() {
 
 ## `WalletConfig`
 
-Configuration object passed to `useInvisibleWallet`.
+Configuration object passed to `useInvisibleWallet`, `createInvisibleWallet`, `createWalletStore`, or `provideVeil`.
 
 ```typescript
 type WalletConfig = {
-  factoryAddress: string      // Factory contract address (C...)
-  rpcUrl: string              // Soroban RPC endpoint
-  networkPassphrase: string   // e.g. Networks.TESTNET
-  rpId?: string               // WebAuthn relying party ID (default: window.location.hostname)
-  origin?: string             // WebAuthn origin (default: window.location.origin)
+  factoryAddress: string          // Factory contract address (C...)
+  rpcUrl: string                  // Soroban RPC endpoint
+  networkPassphrase: string       // e.g. Networks.TESTNET
+  rpId?: string                   // WebAuthn relying party ID (default: window.location.hostname)
+  origin?: string                 // WebAuthn origin (default: window.location.origin)
+  storage?: StorageAdapter        // Optional custom persistence adapter
+  sponsorSigner?: TransactionSigner // Optional fee-bump sponsor signer
 }
 ```
 
@@ -78,7 +98,7 @@ type WalletConfig = {
 
 ## `useInvisibleWallet(config)`
 
-The primary React hook. Returns an `InvisibleWallet` object with state and methods.
+The primary React hook. Returns an `InvisibleWallet` object with state and actions.
 
 ```typescript
 const wallet = useInvisibleWallet(config)
@@ -97,7 +117,7 @@ const wallet = useInvisibleWallet(config)
 
 ## `useInvisibleWallet(config)` — Vue 3
 
-The same wallet as a Composition API composable. Every method below is available and behaves identically; only the state differs, arriving as refs.
+The same wallet as a Composition API composable. Every action below is available and behaves identically; only the state differs, arriving as refs.
 
 ```vue
 <script setup lang="ts">
@@ -133,18 +153,22 @@ Starters: [`examples/vue/`](https://github.com/Miracle656/veil/tree/main/example
 
 ---
 
-## Methods
+## Actions
 
-### `register(username?)`
+Every method that submits a transaction accepts a `SignerInput` (`TransactionSigner` recommended; passing a `Keypair` or secret string is deprecated so secrets stay off the browser).
 
-Creates a new passkey credential and computes the deterministic wallet address.
+### `register(username?, options?)`
+
+Creates a new WebAuthn passkey credential and computes the deterministic wallet address.
 
 ```typescript
 // Signature
-register(username?: string): Promise<RegisterResult>
+register: (username?: string, options?: RegisterOptions) => Promise<RegisterResult>
 
-// Example (3 lines)
-const { walletAddress, publicKeyBytes } = await wallet.register('alice')
+// Example
+const { walletAddress, publicKeyBytes } = await wallet.register('alice', {
+  authenticatorAttachment: 'platform',
+})
 console.log(walletAddress)
 ```
 
@@ -153,6 +177,7 @@ console.log(walletAddress)
 | Name | Type | Description |
 |---|---|---|
 | `username` | `string` (optional) | Display name for the passkey credential |
+| `options` | `RegisterOptions` (optional) | Optional WebAuthn registration options (e.g. `authenticatorAttachment: 'cross-platform'` for a roaming security key) |
 
 **Returns** `Promise<RegisterResult>`
 
@@ -161,37 +186,31 @@ console.log(walletAddress)
 | `walletAddress` | `string` | Deterministic contract address (C...) |
 | `publicKeyBytes` | `Uint8Array` | 65-byte uncompressed P-256 public key |
 
-**Flow:**
-1. Calls `navigator.credentials.create()` with `alg: -7` (ES256/P-256)
-2. Extracts the 65-byte uncompressed public key
-3. Computes the deterministic wallet address from the factory
-4. Stores `wallet_address`, `key_id`, and `public_key` in `localStorage`
-
 <Callout type="info">
 The challenge used during registration is a random 32-byte nonce — it is **not** a Soroban payload. Only `signAuthEntry` uses the actual payload as the challenge.
 </Callout>
 
 ---
 
-### `deploy(signerKeypair, publicKeyBytes?)`
+### `deploy(signer, publicKeyBytes?)`
 
-Deploys the wallet contract on-chain via the factory. If already deployed, returns the existing address.
+Deploys the wallet contract on-chain via the factory, or returns the existing address if already deployed.
 
 ```typescript
 // Signature
-deploy(signerKeypair: Keypair | string, publicKeyBytes?: Uint8Array): Promise<DeployResult>
+deploy: (signer: SignerInput, publicKeyBytes?: Uint8Array) => Promise<DeployResult>
 
-// Example (3 lines)
-const signer = Keypair.fromSecret('S...')
-const { walletAddress, alreadyDeployed } = await wallet.deploy(signer, publicKeyBytes)
+// Example
+const { walletAddress, alreadyDeployed } = await wallet.deploy(feePayer, publicKeyBytes)
+console.log(walletAddress, alreadyDeployed)
 ```
 
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
-| `signerKeypair` | `Keypair \| string` | Fee-payer keypair (pays transaction fees only) |
-| `publicKeyBytes` | `Uint8Array` (optional) | P-256 public key override. Defaults to localStorage value |
+| `signer` | `SignerInput` | `TransactionSigner` for the fee-payer account (pays transaction fees only) |
+| `publicKeyBytes` | `Uint8Array` (optional) | P-256 public key override; defaults to the key stored by `register()` |
 
 **Returns** `Promise<DeployResult>`
 
@@ -202,18 +221,24 @@ const { walletAddress, alreadyDeployed } = await wallet.deploy(signer, publicKey
 
 ---
 
-### `login()`
+### `login(options?)`
 
-Restores a wallet session from `localStorage`. Verifies the contract exists on-chain.
+Restores an existing wallet session from storage, or discovers one on a fresh device using a credential ID or known wallet address.
 
 ```typescript
 // Signature
-login(): Promise<{ walletAddress: string } | null>
+login: (options?: LoginOptions) => Promise<{ walletAddress: string } | null>
 
-// Example (3 lines)
+// Example
 const result = await wallet.login()
 if (result) console.log('Restored:', result.walletAddress)
 ```
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `options` | `LoginOptions` (optional) | Optional `{ credentialId }` or `{ walletAddress }` for cross-device login |
 
 **Returns** `Promise<{ walletAddress: string } | null>`
 
@@ -221,13 +246,13 @@ if (result) console.log('Restored:', result.walletAddress)
 
 ### `signAuthEntry(signaturePayload)`
 
-Signs a Soroban authorization entry using the device biometric.
+Signs a 32-byte Soroban authorization entry payload using the stored passkey.
 
 ```typescript
 // Signature
-signAuthEntry(signaturePayload: Uint8Array): Promise<WebAuthnSignature | null>
+signAuthEntry: (signaturePayload: Uint8Array) => Promise<WebAuthnSignature | null>
 
-// Example (3 lines)
+// Example
 const sig = await wallet.signAuthEntry(payload)
 if (sig) console.log('Got auth signature, publicKey len:', sig.publicKey.length)
 ```
@@ -236,71 +261,115 @@ if (sig) console.log('Got auth signature, publicKey len:', sig.publicKey.length)
 
 | Name | Type | Description |
 |---|---|---|
-| `signaturePayload` | `Uint8Array` | 32-byte Soroban `HashIdPreimage` (payload passed to WebAuthn challenge) |
+| `signaturePayload` | `Uint8Array` | 32-byte Soroban `HashIdPreimage` passed as the WebAuthn challenge |
 
-**Returns** `Promise<WebAuthnSignature | null>` — null if the user cancels.
+**Returns** `Promise<WebAuthnSignature | null>` — `null` if the user cancels.
 
-**Encoding for `__check_auth`:**
+---
+
+### `deriveCounterfactualAddress(publicKeyBytes)`
+
+Derives the deterministic counterfactual wallet contract address for a 65-byte P-256 public key before deployment.
+
 ```typescript
-const sigVec = [
-  xdr.ScVal.scvBytes(sig.publicKey),
-  xdr.ScVal.scvBytes(sig.authData),
-  xdr.ScVal.scvBytes(sig.clientDataJSON),
-  xdr.ScVal.scvBytes(sig.signature),
-]
+// Signature
+deriveCounterfactualAddress: (publicKeyBytes: Uint8Array) => CounterfactualAddress
+
+// Example
+const { address, salt } = wallet.deriveCounterfactualAddress(publicKeyBytes)
+console.log(address, salt)
+```
+
+---
+
+### `getPortableSigner()`
+
+Returns the roaming FIDO2 credential persisted as a portable signer, or `null` if the active credential is a device-bound platform passkey.
+
+```typescript
+// Signature
+getPortableSigner: () => Promise<PortableSigner | null>
+
+// Example
+const portable = await wallet.getPortableSigner()
+if (portable) console.log('Roaming credential:', portable.credentialId)
 ```
 
 ---
 
 ### `getNonce()`
 
-Read the wallet's current nonce via simulation (no transaction submitted).
+Reads the wallet contract's current nonce via simulation without submitting a transaction.
 
 ```typescript
 // Signature
-getNonce(): Promise<bigint>
+getNonce: () => Promise<bigint>
 
-// Example (2 lines)
-const nonce: bigint = await wallet.getNonce()
+// Example
+const nonce = await wallet.getNonce()
 console.log('nonce:', nonce)
 ```
 
 ---
 
-### `addSigner(signerKeypair, newPublicKeyBytes)`
+### `addSigner(signer, newPublicKeyBytes)`
 
-Register an additional P-256 public key as a valid signer.
+Registers an additional 65-byte uncompressed P-256 public key as a valid signer on the wallet contract.
 
 ```typescript
 // Signature
-addSigner(signerKeypair: Keypair, newPublicKeyBytes: Uint8Array): Promise<AddSignerResult>
+addSigner: (signer: SignerInput, newPublicKeyBytes: Uint8Array) => Promise<AddSignerResult>
 
-// Example (3 lines)
-const { signerIndex } = await wallet.addSigner(keypair, newPubKeyBytes)
+// Example
+const { signerIndex } = await wallet.addSigner(feePayer, newPublicKeyBytes)
 console.log('added signer index', signerIndex)
 ```
 
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `signerKeypair` | `Keypair` | Fee-payer keypair |
-| `newPublicKeyBytes` | `Uint8Array` | 65-byte uncompressed P-256 public key |
-
-**Returns** `Promise<AddSignerResult>` with `signerIndex`.
-
 ---
 
-### `removeSigner(signerKeypair, signerIndex)`
+### `registerAdditionalSigner(signer, options?)`
 
-Remove a signer by index.
+Creates a second WebAuthn passkey on this wallet and submits `add_signer` authorised by the primary passkey without overwriting the device's primary binding.
 
 ```typescript
 // Signature
-removeSigner(signerKeypair: Keypair, signerIndex: number): Promise<void>
+registerAdditionalSigner: (signer: SignerInput, options?: RegisterAdditionalSignerOptions) => Promise<RegisterAdditionalSignerResult>
 
-// Example (2 lines)
-await wallet.removeSigner(keypair, 1)
+// Example
+const added = await wallet.registerAdditionalSigner(feePayer, {
+  label: 'Backup security key',
+  authenticatorAttachment: 'cross-platform',
+})
+console.log('added signer index:', added.signerIndex)
+```
+
+---
+
+### `getAdditionalSigners()`
+
+Returns the additional passkeys recorded on this device (excluding the primary passkey).
+
+```typescript
+// Signature
+getAdditionalSigners: () => Promise<AdditionalSigner[]>
+
+// Example
+const extras = await wallet.getAdditionalSigners()
+console.log('additional signers:', extras.length)
+```
+
+---
+
+### `removeSigner(signer, signerIndex)`
+
+Removes a registered signer from the wallet contract by index.
+
+```typescript
+// Signature
+removeSigner: (signer: SignerInput, signerIndex: number) => Promise<void>
+
+// Example
+await wallet.removeSigner(feePayer, 1)
 ```
 
 <Callout type="warning">
@@ -309,93 +378,227 @@ Do not remove the last signer — this will lock the contract permanently unless
 
 ---
 
-### `getSigners()`
+### `rotateSigner(signer, username?, options?)`
 
-Fetch all registered signers from the wallet contract.
+Registers a new passkey and calls `rotate_signer` authorised by the current passkey, preserving the wallet address and balances.
 
 ```typescript
 // Signature
-getSigners(): Promise<SignerInfo[]>
+rotateSigner: (signer: SignerInput, username?: string, options?: RegisterOptions) => Promise<RotateSignerResult>
 
-// Example (3 lines)
-const signers: SignerInfo[] = await wallet.getSigners()
+// Example
+const rotated = await wallet.rotateSigner(feePayer, 'alice-new-device')
+console.log('rotated wallet:', rotated.walletAddress)
+```
+
+---
+
+### `getSigners()`
+
+Fetches all registered signers from the wallet contract.
+
+```typescript
+// Signature
+getSigners: () => Promise<SignerInfo[]>
+
+// Example
+const signers = await wallet.getSigners()
 signers.forEach(s => console.log(`#${s.index}: ${s.publicKey}`))
 ```
 
-**Returns** `Promise<SignerInfo[]>`
-
-| Field | Type | Description |
-|---|---|---|
-| `index` | `number` | Signer index in the contract |
-| `publicKey` | `string` | Hex-encoded P-256 public key |
-
 ---
 
-### `setGuardian(signerKeypair, guardianAddress)`
+### `setGuardian(signer, guardianAddress)`
 
-Set a guardian address for account recovery. Requires WebAuthn authentication.
+Sets a guardian Stellar address (`G...`) for account recovery, authorised with WebAuthn.
 
 ```typescript
 // Signature
-setGuardian(signerKeypair: Keypair, guardianAddress: string): Promise<void>
+setGuardian: (signer: SignerInput, guardianAddress: string) => Promise<void>
 
-// Example (2 lines)
-await wallet.setGuardian(keypair, 'G...')
+// Example
+await wallet.setGuardian(feePayer, guardianAddress)
 ```
 
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `signerKeypair` | `Keypair` | Fee-payer keypair used to submit the transaction |
-| `guardianAddress` | `string` | Stellar address (G...) of the guardian account |
-
-**Returns** `Promise<void>`
-
 ---
 
-### `initiateRecovery(guardianKeypair, newPublicKeyBytes)`
+### `initiateRecovery(signer, newPublicKeyBytes)`
 
-Start guardian-based key recovery. Initiates a timelock after which the new key replaces the existing signer.
+Starts guardian-based key recovery, opening a timelock after which the new P-256 key replaces the existing signer.
 
 ```typescript
 // Signature
-initiateRecovery(guardianKeypair: Keypair, newPublicKeyBytes: Uint8Array): Promise<InitiateRecoveryResult>
+initiateRecovery: (signer: SignerInput, newPublicKeyBytes: Uint8Array) => Promise<InitiateRecoveryResult>
 
-// Example (3 lines)
-const { unlockTime } = await wallet.initiateRecovery(guardianKp, newPubKey)
+// Example
+const { unlockTime } = await wallet.initiateRecovery(guardianSigner, newPublicKeyBytes)
 console.log('unlock after (unix):', unlockTime)
 ```
 
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `guardianKeypair` | `Keypair` | Guardian's Stellar Keypair used to sign the initiation |
-| `newPublicKeyBytes` | `Uint8Array` | 65-byte uncompressed P-256 public key for the new signer |
-
-**Returns** `Promise<InitiateRecoveryResult>` — object with `unlockTime` (unix seconds)
-
-**Throws:**
-- `NoGuardianSet` — no guardian configured on the wallet
+**Throws:** `NoGuardianSet` if no guardian is configured on the wallet.
 
 ---
 
-### `completeRecovery(payerKeypair)`
+### `completeRecovery(signer)`
 
-Complete a pending recovery after the timelock expires.
+Completes a pending guardian recovery after the timelock has expired (permissionless — any fee-payer signer can submit it).
 
 ```typescript
 // Signature
-completeRecovery(payerKeypair: Keypair): Promise<void>
+completeRecovery: (signer: SignerInput) => Promise<void>
 
-// Example (2 lines)
-await wallet.completeRecovery(payerKeypair)
+// Example
+await wallet.completeRecovery(feePayer)
 ```
 
-**Throws:**
-- `RecoveryTimelockActive` — timelock hasn't expired yet
-- `RecoveryNotPending` — no recovery in progress
+**Throws:** `RecoveryTimelockActive` if the timelock has not expired, or `RecoveryNotPending` if no recovery is in progress.
+
+---
+
+### `approve(signer, spender, token, amount, expiry?)`
+
+Sets a spending allowance for a spender on a specific token contract, authorised with WebAuthn (omitting `expiry` makes the allowance permanent).
+
+```typescript
+// Signature
+approve: (signer: SignerInput, spender: string, token: string, amount: number | bigint, expiry?: number | bigint) => Promise<void>
+
+// Example
+await wallet.approve(feePayer, spenderAddress, tokenContractId, 10_000_000n)
+```
+
+---
+
+### `getAllowance(spender, token)`
+
+Reads the current allowance and optional expiry for a spender and token contract, or returns `null` if none exists.
+
+```typescript
+// Signature
+getAllowance: (spender: string, token: string) => Promise<{ amount: number; expiry: number | undefined } | null>
+
+// Example
+const allowance = await wallet.getAllowance(spenderAddress, tokenContractId)
+if (allowance) console.log('allowance:', allowance.amount, 'expiry:', allowance.expiry)
+```
+
+---
+
+### `getBalance(token?)`
+
+Reads the wallet's current on-chain balance for a token contract (defaults to native XLM).
+
+```typescript
+// Signature
+getBalance: (token?: string) => Promise<{ address: string; amount: bigint; assetCode: string }>
+
+// Example
+const { amount, assetCode } = await wallet.getBalance()
+console.log(amount, assetCode)
+```
+
+---
+
+### `sendPayment(signer, to, amount, token?, memo?)`
+
+Sends a payment from the wallet contract in contract units (stroops for native XLM) using a fee-payer signer.
+
+```typescript
+// Signature
+sendPayment: (signer: SignerInput, to: string, amount: number | bigint, token?: string, memo?: string) => Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }>
+
+// Example
+const { transactionHash, status } = await wallet.sendPayment(feePayer, recipientAddress, 10_000_000n)
+console.log(transactionHash, status)
+```
+
+---
+
+### `outbox`
+
+The durable offline `TransactionOutbox` bound to the wallet's `StorageAdapter`, used to enqueue signed transactions before submission so they survive reloads.
+
+```typescript
+// Signature
+outbox: TransactionOutbox
+
+// Example
+const pending = await wallet.outbox.list()
+console.log('queued transactions:', pending.length)
+```
+
+---
+
+### `replayOutbox(opts?)`
+
+Replays queued transactions from `wallet.outbox` against the network with at-most-once hash deduplication.
+
+```typescript
+// Signature
+replayOutbox: (opts?: ReplayOptions) => Promise<ReplayResult>
+
+// Example
+const summary = await wallet.replayOutbox()
+console.log('confirmed:', summary.confirmed.length)
+```
+
+---
+
+### `encryptLocal(plaintext)`
+
+Encrypts local application data with a symmetric key derived from the passkey via WebAuthn PRF (falling back to a persisted local key if PRF is unsupported).
+
+```typescript
+// Signature
+encryptLocal: (plaintext: string | Uint8Array) => Promise<string>
+
+// Example
+const ciphertext = await wallet.encryptLocal(JSON.stringify({ note: 'rent' }))
+```
+
+---
+
+### `decryptLocal(payload)`
+
+Decrypts a base64 ciphertext previously produced by `encryptLocal` and returns the decoded UTF-8 string.
+
+```typescript
+// Signature
+decryptLocal: (payload: string) => Promise<string>
+
+// Example
+const plaintext = await wallet.decryptLocal(ciphertext)
+```
+
+---
+
+### `encryptionMode()`
+
+Returns whether local encryption for the active credential uses `'prf'` (passkey-bound) or `'fallback'` (local random key).
+
+```typescript
+// Signature
+encryptionMode: () => Promise<'prf' | 'fallback'>
+
+// Example
+const mode = await wallet.encryptionMode()
+if (mode === 'fallback') console.warn('Device does not support WebAuthn PRF')
+```
+
+---
+
+### `getSep43Wallet()`
+
+Returns a SEP-0043 compliant wallet interface backed by this wallet instance.
+
+```typescript
+// Signature
+getSep43Wallet: () => Sep43Wallet
+
+// Example
+const sep43 = wallet.getSep43Wallet()
+const { address } = await sep43.getAddress()
+```
 
 ---
 
@@ -431,7 +634,7 @@ Compute the deterministic wallet contract address from a factory address and pub
 ```typescript
 import { computeWalletAddress } from 'invisible-wallet-sdk'
 
-const addr = computeWalletAddress('CFACTORY...', pubkeyBytes)
+const addr = computeWalletAddress('CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA', pubkeyBytes)
 ```
 
 ### `derToRawSignature(derSig: ArrayBuffer): Uint8Array`
