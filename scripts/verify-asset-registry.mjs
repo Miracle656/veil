@@ -3,6 +3,13 @@
  * Verify registered non-native assets by exact issuer identity on their
  * claimed Stellar network, verifying wallet and mobile registry parity and
  * corroborating with stellar.toml.
+ *
+ * Outcomes per asset:
+ *   - verified:  stellar.toml lists the exact code+issuer pair
+ *   - warning:   issuer declares a home_domain that serves no usable stellar.toml
+ *                (a third-party gap we cannot fix; does not fail the job)
+ *   - failure:   identity mismatch, home_domain mismatch, or a stellar.toml that
+ *                exists but does not corroborate the exact pair (fail-closed)
  */
 
 import { readFileSync } from 'node:fs';
@@ -169,6 +176,18 @@ export function deriveSacContractId(asset) {
   return derived;
 }
 
+/**
+ * Error raised when the declared home_domain cannot serve a stellar.toml at all
+ * (network failure, non-2xx, unreadable body). This is a third-party gap, not
+ * evidence of impersonation, so callers may classify it as a warning.
+ */
+export class TomlUnavailableError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'TomlUnavailableError';
+  }
+}
+
 export async function fetchTomlText(
   domain,
   {
@@ -189,13 +208,13 @@ export async function fetchTomlText(
       signal: createTimeoutSignal(timeoutMs),
     });
   } catch (error) {
-    throw new Error(
+    throw new TomlUnavailableError(
       `Failed to fetch stellar.toml for declared home_domain ${domain}: ${errorMessage(error)}`,
     );
   }
 
   if (!response.ok) {
-    throw new Error(
+    throw new TomlUnavailableError(
       `Failed to fetch stellar.toml for declared home_domain ${domain}: HTTP ${response.status}`,
     );
   }
@@ -203,7 +222,7 @@ export async function fetchTomlText(
   try {
     return { url, text: await response.text() };
   } catch (error) {
-    throw new Error(
+    throw new TomlUnavailableError(
       `Failed to read stellar.toml for declared home_domain ${domain}: ${errorMessage(error)}`,
     );
   }
@@ -272,13 +291,11 @@ export async function verifyNonNativeAsset(
     );
   }
 
-  // Restored: #892 moved this declaration and the merge dropped it while
-  // keeping both usages below, so every asset that got past the home_domain
-  // check died on a ReferenceError rather than being verified.
   const derivedSacContractId = deriveSacContractId(asset);
   const homeDomain = account.home_domain;
   if (!homeDomain) {
     return {
+      status: 'verified',
       code: asset.code,
       issuer: asset.issuer,
       network: asset.network,
@@ -295,7 +312,27 @@ export async function verifyNonNativeAsset(
     );
   }
 
-  const tomlData = await fetchToml(homeDomain);
+  let tomlData;
+  try {
+    tomlData = await fetchToml(homeDomain);
+  } catch (error) {
+    if (error instanceof TomlUnavailableError) {
+      // The issuer declares a domain that serves no TOML. We cannot corroborate,
+      // but nothing here indicates impersonation: warn, do not fail.
+      return {
+        status: 'warning',
+        code: asset.code,
+        issuer: asset.issuer,
+        network: asset.network,
+        homeDomain,
+        tomlUrl: `https://${homeDomain}/.well-known/stellar.toml`,
+        derivedSacContractId,
+        note: `issuer declares home_domain ${homeDomain}, which serves no stellar.toml; corroboration unavailable (${errorMessage(error)})`,
+      };
+    }
+    throw error;
+  }
+
   if (!tomlData || typeof tomlData.text !== 'string') {
     throw new Error(
       `Failed to fetch stellar.toml from declared home_domain "${homeDomain}" for ${asset.code}:${asset.issuer}`,
@@ -310,6 +347,7 @@ export async function verifyNonNativeAsset(
   }
 
   return {
+    status: 'verified',
     code: asset.code,
     issuer: asset.issuer,
     network: asset.network,
@@ -340,6 +378,7 @@ export async function main() {
     );
 
     let errors = 0;
+    let warnings = 0;
     for (const asset of walletAssets.filter((entry) => entry.kind !== 'native')) {
       const result = await verifyAssetResult(asset);
       if (!result.ok) {
@@ -348,9 +387,21 @@ export async function main() {
         continue;
       }
 
+      if (result.value.status === 'warning') {
+        console.warn(
+          `  ⚠ ${asset.code}:${asset.issuer} verified on ${asset.network} — ${result.value.note}`,
+        );
+        warnings += 1;
+        continue;
+      }
+
       console.log(
         `  ✓ ${asset.code}:${asset.issuer} verified on ${asset.network} — ${result.value.note}`,
       );
+    }
+
+    if (warnings > 0) {
+      console.warn(`WARNING: ${warnings} asset(s) declare a home_domain that serves no stellar.toml.`);
     }
 
     if (errors > 0) {
@@ -370,4 +421,3 @@ const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).hr
 if (import.meta.url === invokedPath) {
   process.exitCode = await main();
 }
-

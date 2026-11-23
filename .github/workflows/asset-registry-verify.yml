@@ -3,6 +3,10 @@ name: Asset Registry Online Verification
 # Live check of the asset registry against Horizon and each issuer's stellar.toml (#794). It runs daily and
 # on demand, never on the push path, so a third party being down cannot turn a contributor's PR red. The fast
 # offline checks (StrKey, SAC derivation, wallet/mobile parity) are `npm run verify:assets:offline`.
+#
+# A declared home_domain that serves no stellar.toml (e.g. USDC/EURC on circle.com) is reported as a warning
+# by the verifier and does NOT fail this job. Only a real registry problem (a TOML naming a different issuer,
+# a pin mismatch, a StrKey error) fails the job and files an alert issue.
 
 on:
   schedule:

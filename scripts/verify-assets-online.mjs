@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Live / online asset registry verification (#794).
+ * Live / online asset registry verification (#794, #892).
  *
  * Runs on a scheduled GitHub Actions workflow (or manual dispatch), never on the
  * push path. For every non-native mainnet registry entry it applies the same
@@ -13,8 +13,10 @@
  *
  * Exit codes:
  *   0: All live checks pass (or --warn-only active)
- *   1: Verification error / asset mismatch
- *   2: Network error / third-party service unreachable
+ *   1: Verification error / asset mismatch (fail-closed: impostor TOML, wrong issuer)
+ *   2: Network error / third-party service unreachable (not a registry fault)
+ *
+ * A declared home_domain that serves no stellar.toml (HTTP 404) is reported as a warning, not a failure.
  */
 
 import { writeFileSync } from 'node:fs';
@@ -38,6 +40,7 @@ function errorMessage(error) {
 /**
  * Verify one registry entry against the live network.
  *
+ * A 404 on the declared home_domain is a third-party gap, reported as a warning.
  * `networkError` is true when a third party was unreachable or erroring (fetch
  * rejected, timed out, 429 or 5xx) as opposed to the registry actually being wrong,
  * so a flaky host can be told apart from a real mismatch.
@@ -56,13 +59,29 @@ export async function checkAssetOnline(asset, { fetchImpl = globalThis.fetch } =
     return response;
   };
 
+  let domainMissing = false;
+  const domainCheckingFetch = async (url, init) => {
+    const response = await trackedFetch(url, init);
+    if (response.status === 404) domainMissing = true;
+    return response;
+  };
+
   const result = await verifyAssetResult(asset, {
     loadAccount: (entry) => loadHorizonAccount(entry, { fetchImpl: trackedFetch }),
-    fetchToml: (domain) => fetchTomlText(domain, { fetchImpl: trackedFetch }),
+    fetchToml: (domain) => fetchTomlText(domain, { fetchImpl: domainCheckingFetch }),
   });
 
   if (result.ok) {
     return { code: asset.code, ok: true, issues: [], networkError: false, note: result.value.note };
+  }
+  if (domainMissing && asset.homeDomain) {
+    return {
+      code: asset.code,
+      ok: true,
+      warning: true,
+      issues: [`issuer declares home_domain ${asset.homeDomain} but it serves no stellar.toml (third-party gap, not a mismatch)`],
+      networkError: false,
+    };
   }
   return { code: asset.code, ok: false, issues: [errorMessage(result.error)], networkError };
 }
@@ -92,7 +111,9 @@ export async function runOnlineVerification(argv = process.argv.slice(2)) {
     console.log(JSON.stringify({ results }));
   } else {
     for (const r of results) {
-      if (r.ok) {
+      if (r.ok && r.warning) {
+        console.warn(`! ${r.code}: ${r.issues[0]}`);
+      } else if (r.ok) {
         console.log(`✓ ${r.code}: ${r.note}`);
       } else {
         console.error(`✗ ${r.code}: Verification failed${r.networkError ? ' (network error)' : ''}`);
@@ -102,7 +123,8 @@ export async function runOnlineVerification(argv = process.argv.slice(2)) {
   }
 
   // The report becomes an alert issue, so it is written only when a registry entry is actually wrong. A
-  // third party being unreachable still fails the job (exit 2) but must not file an issue.
+  // third party being unreachable still fails the job (exit 2) but must not file an issue, and a
+  // declared-but-unserved home_domain is a warning only.
   const failed = results.filter((r) => !r.ok);
   if (hasVerificationError && diffFilePath) {
     const lines = [
