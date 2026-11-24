@@ -109,6 +109,14 @@
       addMoney: function () {
         return open(appId, { type: 'fund' })
       },
+      /**
+       * Opens "Cash out" in Veil, where the person sends their own USDC to
+       * their own bank account as naira. Resolves once they are on their way.
+       * You do not pass an amount or a bank: the person chooses both in Veil.
+       */
+      cashOut: function () {
+        return open(appId, { type: 'cashout' })
+      },
     }
   }
 

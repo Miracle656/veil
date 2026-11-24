@@ -13,6 +13,7 @@ Status: **pilot**. One partner, small amounts, the interface may change.
 | `connect()` | "Share your wallet address with App?" | `{ address, network }` |
 | `pay({...})` | Who is asking, how much, to which address, then Veil's normal Send screen | `{ hash, reference, network, from }` |
 | `addMoney()` | "Buy with naira" in Veil | `{ type: 'fund' }` once they are on their way |
+| `cashOut()` | "Cash out" in Veil: their own USDC to their own bank, as naira | `{ type: 'cashout' }` once they are on their way |
 
 Each person has their own wallet and passes Veil's own identity check when
 they first add naira. Veil never holds the app's money, and the app never
