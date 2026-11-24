@@ -90,7 +90,11 @@
       connect: function () {
         return open(appId, { type: 'connect' })
       },
-      /** Resolves with { hash, reference, network }. Verify the hash on your server. */
+      /**
+       * Resolves with { hash, reference, network, from }. Verify the hash on
+       * your server. `from` is the G… address the money left, which is not the
+       * C… address connect() gives you.
+       */
       pay: function (payment) {
         payment = payment || {}
         return open(appId, {

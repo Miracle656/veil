@@ -150,7 +150,10 @@ export const CONNECT_VERSION = 1
 
 export type ConnectResult =
   | { ok: true; type: 'connect'; address: string; network: string }
-  | { ok: true; type: 'pay'; hash: string; reference: string; network: string }
+  // `from` is the address the money left. It is the wallet's spending account
+  // (G…), not the wallet address `connect` shares (C…), so an app that expects
+  // the payment to come from the connected address will not find it.
+  | { ok: true; type: 'pay'; hash: string; reference: string; network: string; from: string }
   | { ok: true; type: 'fund' }
   | { ok: false; error: 'cancelled' | 'refused'; reason?: string }
 
