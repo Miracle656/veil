@@ -10,7 +10,8 @@ import { Callout } from "nextra/components";
 This page documents Veil's security model, the cryptographic guarantees it provides, known limitations, and responsible disclosure policy.
 
 <Callout type="info">
-  Veil is live on Stellar Mainnet (deployed 2026-08-23). An external security audit was delivered on 2026-09-17.
+  Veil is live on Stellar Mainnet (deployed 2026-08-23). An external security
+  audit was delivered on 2026-09-17.
 </Callout>
 
 ---
@@ -77,15 +78,15 @@ Deployed Veil contracts (both the factory and individual smart wallets) are **im
 
 The table below summarises key threats at a glance. See the full **[Threat Model](/threat-model)** for the complete STRIDE analysis, attacker model, trust assumptions, and residual risks.
 
-| Threat | Mitigation | Notes |
-|---|---|---|
-| Stolen device | Biometric required at sign time | Attacker still needs fingerprint/face |
-| Malware on device | Secure enclave isolation | JS cannot access private key |
-| Phishing (wrong origin) | WebAuthn origin binding | Authenticator embeds origin in `clientDataJSON`; contract can validate |
-| Signature replay | Challenge binding to `signature_payload` | Each tx has unique payload |
-| Rogue signer added | `add_signer` requires existing signer auth | Cannot add without biometric |
-| Contract bug | External audit + unit tests | Immutable on-chain: fixes ship as a new factory; existing wallets keep deployed code |
-| Quantum computer | P-256 is classically secure | Post-quantum migration path: deploy new factory/wallets supporting ML-DSA when Soroban supports it |
+| Threat                  | Mitigation                                 | Notes                                                                                              |
+| ----------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Stolen device           | Biometric required at sign time            | Attacker still needs fingerprint/face                                                              |
+| Malware on device       | Secure enclave isolation                   | JS cannot access private key                                                                       |
+| Phishing (wrong origin) | WebAuthn origin binding                    | Authenticator embeds origin in `clientDataJSON`; contract can validate                             |
+| Signature replay        | Challenge binding to `signature_payload`   | Each tx has unique payload                                                                         |
+| Rogue signer added      | `add_signer` requires existing signer auth | Cannot add without biometric                                                                       |
+| Contract bug            | External audit + unit tests                | Immutable on-chain: fixes ship as a new factory; existing wallets keep deployed code               |
+| Quantum computer        | P-256 is classically secure                | Post-quantum migration path: deploy new factory/wallets supporting ML-DSA when Soroban supports it |
 
 ---
 
