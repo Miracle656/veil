@@ -46,6 +46,27 @@ export function receiveReadiness(
     : 'need-xlm'
 }
 
+/**
+ * On Send: the wallet's own balance of the asset being paid, when moving it
+ * would help. That is when the spending account holds none of it, or less than
+ * the amount typed. Null means there is nothing to offer.
+ *
+ * Matched on code AND issuer, like everything else that picks an asset.
+ */
+export function walletBalanceToOffer(
+  selected: { code: string; issuer: string | null; balance: string } | null,
+  walletHeld: IssuedWalletAsset[],
+  amount: string,
+): IssuedWalletAsset | null {
+  if (!selected?.issuer) return null
+  const held = walletHeld.find((a) => a.code === selected.code && a.issuer === selected.issuer)
+  if (!held) return null
+  const spending = Number(selected.balance)
+  if (!Number.isFinite(spending) || spending <= 0) return held
+  const wanted = Number(amount)
+  return Number.isFinite(wanted) && wanted > spending ? held : null
+}
+
 export function needXlmMessage(code: string): string {
   return `Your spending wallet needs about 1 XLM free before it can hold ${code}. Add a little XLM, then try again.`
 }

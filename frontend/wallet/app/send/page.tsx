@@ -39,6 +39,9 @@ import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { isPrivacyEnabled } from '@/lib/privacy/config'
 import { getConnectApp, type PendingConnect } from '@/lib/connect'
 import { ALLOW_DEMO_APP, answer, clearPending, readPending } from '@/lib/connectWindow'
+import { readContractAssetBalances } from '@/lib/contractAssets'
+import { movableWalletAssets, walletBalanceToOffer, type IssuedWalletAsset } from '@/lib/moveFromWallet'
+import { moveAssetToSpending } from '@/lib/moveToSpending'
 // TODO(#1003): remove platform limitation warning when multi-origin contract ships
 import {
   FIRST_SPEND_LIMITATION_MESSAGE,
@@ -261,6 +264,27 @@ export default function SendPage() {
   const [prices, setPrices]               = useState<Record<string, number | null>>({})
   const { code: currencyCode, rate: fxRate } = useCurrency()
 
+  // Send spends from the G spending account. Money of the same asset held by
+  // the C wallet cannot be paid from here, so it is offered as a move first.
+  // This matters most for a payment another app asked for (Veil Connect),
+  // which opens this screen directly.
+  const [walletHeld, setWalletHeld]   = useState<IssuedWalletAsset[]>([])
+  const [isMoving, setIsMoving]       = useState(false)
+  const [moveError, setMoveError]     = useState<string | null>(null)
+  /** Bumped after a move so the balances below are read again. */
+  const [balancesNonce, setBalancesNonce] = useState(0)
+
+  useEffect(() => {
+    const addr = walletSession.getItem('invisible_wallet_address')
+    if (!addr) return
+    let active = true
+    const wanted = requestedAsset ? [{ ...requestedAsset, balance: '0' }] : []
+    readContractAssetBalances(addr, wanted)
+      .then((held) => { if (active) setWalletHeld(movableWalletAssets(held)) })
+      .catch(() => { /* a failed read offers nothing; it never invents a balance */ })
+    return () => { active = false }
+  }, [requestedAsset, balancesNonce])
+
   useEffect(() => {
     const addr = walletSession.getItem('invisible_wallet_address')
     if (!addr) { router.replace('/lock'); return }
@@ -303,13 +327,37 @@ export default function SendPage() {
         }
       })
       setAssets(list)
-      if (list.length > 0) setSelectedAsset(list[0])
+      // Keep whatever was selected across a reload (after a move); the first
+      // load has nothing selected and takes the first asset.
+      setSelectedAsset((prev) =>
+        list.find((a) => prev && a.code === prev.code && a.issuer === prev.issuer) ?? list[0] ?? null,
+      )
     }).catch(() => {
       const xlm: WalletAsset = { code: 'XLM', issuer: null, contractId: getNativeAssetContractId(), balance: '0' }
       setAssets([xlm])
       setSelectedAsset(xlm)
     })
-  }, [router])
+  }, [router, balancesNonce])
+
+  const walletOffer = walletBalanceToOffer(selectedAsset, walletHeld, amount)
+
+  async function handleMoveFromWallet(asset: IssuedWalletAsset) {
+    const addr = walletSession.getItem('invisible_wallet_address')
+    if (!addr) { router.replace('/lock'); return }
+    setIsMoving(true)
+    setMoveError(null)
+    try {
+      await moveAssetToSpending(asset, addr)
+      setBalancesNonce((n) => n + 1)
+    } catch (err: unknown) {
+      // Closing the passkey prompt moved nothing; the offer simply stays.
+      if (!isPasskeyCancellation(err)) {
+        setMoveError(horizonErrorMessage(err) ?? passkeyErrorMessage(err))
+      }
+    } finally {
+      setIsMoving(false)
+    }
+  }
 
   useEffect(() => { hydrateCurrency() }, [])
   useEffect(() => {
@@ -690,6 +738,30 @@ export default function SendPage() {
               <p role="alert" style={{ fontSize: '0.8125rem', color: 'var(--teal)', lineHeight: 1.5 }}>
                 Payment request refused. {requestError}
               </p>
+            )}
+
+            {walletOffer && (
+              <div className="card" style={{ padding: '0.875rem 1rem' }}>
+                <p style={{ fontSize: '0.8125rem', lineHeight: 1.5, marginBottom: '0.625rem' }}>
+                  You have {walletOffer.balance} {walletOffer.code} in your wallet address. Move it to your spending wallet to pay with it. You will be asked for your passkey.
+                </p>
+                {moveError && (
+                  <p role="alert" style={{ fontSize: '0.75rem', color: 'var(--teal)', lineHeight: 1.5, marginBottom: '0.625rem' }}>
+                    {moveError}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void handleMoveFromWallet(walletOffer)}
+                  disabled={isMoving}
+                  style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
+                >
+                  {isMoving
+                    ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                    : `Move ${walletOffer.balance} ${walletOffer.code}`}
+                </button>
+              </div>
             )}
 
             <div>
