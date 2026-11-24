@@ -5,6 +5,7 @@ import {
   Asset,
   BASE_FEE,
   Contract,
+  Horizon,
   Keypair,
   Operation,
   StrKey,
@@ -19,6 +20,7 @@ import { getNetwork } from './network'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const STROOPS_PER_XLM = 10_000_000n
+export const VAULT_STORAGE_KEY = 'veil_vault_contract'
 
 export interface VaultConfig {
   owner: string
@@ -455,4 +457,15 @@ export async function fetchVaultDetails(contractIdValue: string): Promise<VaultD
     availableXlm: stroopsToXlm(availableStroops),
     withdrawals: withdrawals.sort((left, right) => right.id - left.id),
   }
+}
+
+export async function fetchLatestLedgerTimestamp(): Promise<number> {
+  const server = new Horizon.Server(getNetwork().horizonUrl)
+  const latest = await server.ledgers().order('desc').limit(1).call()
+  const closedAt = latest.records[0]?.closed_at
+  const timestampMs = typeof closedAt === 'string' ? Date.parse(closedAt) : Number.NaN
+  if (!Number.isFinite(timestampMs)) {
+    throw new Error('Could not read the latest ledger close time.')
+  }
+  return Math.floor(timestampMs / 1_000)
 }

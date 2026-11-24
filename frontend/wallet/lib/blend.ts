@@ -1,12 +1,13 @@
 import { inclusionFee } from './fees'
 import {
   Account,
+  Asset,
   BASE_FEE,
   rpc as SorobanRpc,
   TransactionBuilder,
   xdr,
 } from '@stellar/stellar-sdk'
-import { getNetwork } from '@/lib/network'
+import { getNetwork, getUsdcIssuer } from '@/lib/network'
 import {
   PoolV1,
   PoolV2,
@@ -68,11 +69,21 @@ export function configuredPoolIds(): string[] {
   return ids
 }
 
+export type EarnAsset = 'XLM' | 'USDC'
+
+export interface BlendReserve {
+  assetId: string
+  code: EarnAsset
+  /** This reserve's runtime Blend supply APY, or null when Blend has none. */
+  supplyApy: number | null
+  /** This reserve's runtime Blend utilization, between 0 and 1 when available. */
+  utilization: number | null
+}
+
 export interface BlendPool {
   id: string
   name: string
-  supplyApy: number // e.g. 0.042 = 4.2%
-  totalSupply: string
+  reserves: BlendReserve[]
   assets: string[]
 }
 
@@ -92,7 +103,14 @@ export interface BlendPosition {
   accruedInterest: string
 }
 
-/** Load configured Blend pools and their reserve APYs. */
+function earnAssetFor(assetId: string): EarnAsset | null {
+  const network = getNetwork()
+  if (assetId === Asset.native().contractId(network.networkPassphrase)) return 'XLM'
+  if (assetId === new Asset('USDC', getUsdcIssuer()).contractId(network.networkPassphrase)) return 'USDC'
+  return null
+}
+
+/** Load configured Blend pools and each supported reserve's own APY. */
 export async function loadBlendPools(): Promise<BlendPool[]> {
   const poolIds = configuredPoolIds()
   if (poolIds.length === 0) return []
@@ -101,22 +119,25 @@ export async function loadBlendPools(): Promise<BlendPool[]> {
     poolIds.map(async (poolId): Promise<BlendPool | null> => {
       try {
         const pool = await loadPool(poolId)
-        const reserves = [...pool.reserves.values()]
-        const totalSupply = reserves
-          .reduce((acc, reserve) => acc + reserve.totalSupply(), 0n)
-          .toString()
-
-        const avgSupplyApy =
-          reserves.length > 0
-            ? reserves.reduce((acc, reserve) => acc + reserve.estSupplyApy, 0) / reserves.length
-            : 0
+        const reserves = [...pool.reserves.values()].flatMap((reserve): BlendReserve[] => {
+          const code = earnAssetFor(reserve.assetId)
+          if (!code) return []
+          const utilization = reserve.getUtilizationFloat()
+          return [{
+            assetId: reserve.assetId,
+            code,
+            supplyApy: Number.isFinite(reserve.estSupplyApy) ? reserve.estSupplyApy : null,
+            utilization: Number.isFinite(utilization) && utilization >= 0 && utilization <= 1
+              ? utilization
+              : null,
+          }]
+        })
 
         return {
           id: pool.id,
           name: pool.metadata.name || pool.id.slice(0, 8),
-          supplyApy: avgSupplyApy,
-          totalSupply,
-          assets: pool.metadata.reserveList,
+          reserves,
+          assets: reserves.map((reserve) => reserve.assetId),
         }
       } catch (err) {
         console.warn(`[blend] failed loading pool ${poolId}:`, err)

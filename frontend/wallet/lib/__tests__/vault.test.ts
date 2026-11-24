@@ -47,6 +47,7 @@ import {
   cancelVaultWithdrawal,
   executeVaultWithdrawal,
   fetchVaultDetails,
+  fetchLatestLedgerTimestamp,
 } from '../vault'
 import { getNetwork } from '../network'
 
@@ -845,6 +846,7 @@ describe('fetchVaultDetails', () => {
       cancelled: true,
       executed: false,
     })
+
     expect(d.withdrawals[1]).toMatchObject({ id: 1, to: RECIPIENT, amountStroops: 10n * XLM, cancelled: false, executed: false })
     expectNothingSignedOrSent()
   })
@@ -866,5 +868,41 @@ describe('fetchVaultDetails', () => {
     // Breaks: an unlock countdown that is silently wrong.
     vaults.get(VAULT)!.config!.delay_seconds = 2n ** 53n
     await expect(fetchVaultDetails(VAULT)).rejects.toThrow('safe integer')
+  })
+})
+
+describe('fetchLatestLedgerTimestamp', () => {
+  it('uses the latest Horizon ledger close time in seconds without a network call', async () => {
+    const query = {
+      order: jest.fn(),
+      limit: jest.fn(),
+      call: jest.fn().mockResolvedValue({
+        records: [{ closed_at: '2026-01-15T12:00:00Z' }],
+      }),
+    }
+    query.order.mockReturnValue(query)
+    query.limit.mockReturnValue(query)
+    jest.spyOn(sdk.Horizon.Server.prototype, 'ledgers').mockReturnValue(query as never)
+
+    await expect(fetchLatestLedgerTimestamp()).resolves.toBe(
+      Math.floor(Date.parse('2026-01-15T12:00:00Z') / 1_000),
+    )
+    expect(query.order).toHaveBeenCalledWith('desc')
+    expect(query.limit).toHaveBeenCalledWith(1)
+  })
+
+  it('reports an invalid ledger timestamp instead of making a date up', async () => {
+    const query = {
+      order: jest.fn(),
+      limit: jest.fn(),
+      call: jest.fn().mockResolvedValue({ records: [{ closed_at: 'not-a-date' }] }),
+    }
+    query.order.mockReturnValue(query)
+    query.limit.mockReturnValue(query)
+    jest.spyOn(sdk.Horizon.Server.prototype, 'ledgers').mockReturnValue(query as never)
+
+    await expect(fetchLatestLedgerTimestamp()).rejects.toThrow(
+      'Could not read the latest ledger close time.',
+    )
   })
 })

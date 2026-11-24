@@ -3,9 +3,16 @@
 import { useActivityFeed } from '@/lib/activityFeed'
 import { inclusionFee } from '@/lib/fees'
 import { maxSendable as libMaxSendable } from '@/lib/sendable'
+import { formatLocalDateTime, projectedUnlockTimestamp, sendAmountLimitMessage } from '@/lib/savings'
+import {
+  fetchLatestLedgerTimestamp,
+  fetchVaultDetails,
+  VAULT_STORAGE_KEY,
+  type VaultDetails,
+} from '@/lib/vault'
 import { Nav, PageHeader } from '@/components/ui/primitives'
 import { Shield } from 'lucide-react'
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { resolveFederation } from '@/lib/federation'
 
@@ -259,6 +266,9 @@ export default function SendPage() {
   const [selectedAsset, setSelectedAsset] = useState<WalletAsset | null>(null)
   const [showAssets, setShowAssets]       = useState(false)
   const [prices, setPrices]               = useState<Record<string, number | null>>({})
+  const [lockedVault, setLockedVault] = useState<VaultDetails | null>(null)
+  const [lockedVaultLedgerTime, setLockedVaultLedgerTime] = useState<number | null>(null)
+  const [lockedVaultError, setLockedVaultError] = useState<string | null>(null)
   const { code: currencyCode, rate: fxRate } = useCurrency()
 
   useEffect(() => {
@@ -316,6 +326,45 @@ export default function SendPage() {
     if (assets.length === 0) return
     void fetchPrices(assets).then(setPrices)
   }, [assets])
+
+  useEffect(() => {
+    let active = true
+    const contractId = localStorage.getItem(VAULT_STORAGE_KEY)
+    if (!contractId) return
+
+    const signerSecret = walletSession.getItem('veil_signer_secret')
+      || walletLocal.getItem('veil_signer_secret')
+    const signerAddress = signerSecret
+      ? Keypair.fromSecret(signerSecret).publicKey()
+      : walletLocal.getItem('veil_signer_public_key')
+    if (!signerAddress) {
+      setLockedVaultError('Could not identify the vault owner for this wallet.')
+      return
+    }
+
+    fetchVaultDetails(contractId)
+      .then(async (details) => {
+        if (
+          details.config.owner !== signerAddress
+          || details.config.token !== getNativeAssetContractId()
+        ) {
+          throw new Error('The attached vault is not this wallet’s XLM vault.')
+        }
+        if (!active) return
+        setLockedVault(details)
+        try {
+          const ledgerTime = await fetchLatestLedgerTimestamp()
+          if (active) setLockedVaultLedgerTime(ledgerTime)
+        } catch (cause: unknown) {
+          if (active) setLockedVaultError(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) setLockedVaultError(cause instanceof Error ? cause.message : String(cause))
+      })
+
+    return () => { active = false }
+  }, [])
 
   // Select the requested asset by code AND issuer once balances are in. An
   // asset the wallet does not hold yet is still shown — at a zero balance, so
@@ -420,8 +469,47 @@ export default function SendPage() {
     if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) return false
     if (!selectedAsset) return false
     if (lockedAssetMismatch()) return false
+    if (getAmountLimitMessage()) return false
     if (memo.trim() && validateMemo(memo, memoType) !== null) return false
     return true
+  }
+
+  function getLockedVaultSendExplanation(): string {
+    if (!lockedVault) return 'The delay starts when you queue a withdrawal; manage it in Vault.'
+    if (lockedVaultError) return `Vault timing could not be checked: ${lockedVaultError}`
+    const pending = lockedVault.withdrawals
+      .filter((withdrawal) => !withdrawal.cancelled && !withdrawal.executed)
+      .sort((left, right) => left.unlockAt - right.unlockAt)
+    if (pending.length > 0) {
+      const next = pending[0]
+      const destinationCopy = next.to === lockedVault.config.owner
+        ? 'Execution returns those funds to this wallet.'
+        : 'Execution sends those funds to the queued recipient, not this wallet.'
+      return lockedVaultLedgerTime !== null && lockedVaultLedgerTime >= next.unlockAt
+        ? `A queued withdrawal is executable, but its funds remain unavailable to Send until you execute it. ${destinationCopy}`
+        : `${next.amountXlm} XLM is queued and locked until ${formatLocalDateTime(next.unlockAt)}; you must execute it after that time. ${destinationCopy}`
+    }
+    if (lockedVaultLedgerTime !== null) {
+      const projectedUnlockAt = projectedUnlockTimestamp(
+        lockedVaultLedgerTime,
+        lockedVault.config.delaySeconds,
+      )
+      return `If you queue a withdrawal now, earliest reach is ${formatLocalDateTime(projectedUnlockAt)}.`
+    }
+    return 'The delay starts when you queue a withdrawal; manage it in Vault.'
+  }
+
+  function getAmountLimitMessage(): string | null {
+    if (!selectedAsset) return null
+    const isNativeXlm = selectedAsset.code === 'XLM' && selectedAsset.issuer === null
+    const lockedAmount = isNativeXlm ? Number(lockedVault?.reservedXlm ?? 0) : 0
+    return sendAmountLimitMessage({
+      amount: Number(amount),
+      spendable: maxSendable(selectedAsset),
+      lockedAmount,
+      assetCode: selectedAsset.code,
+      lockedExplanation: lockedAmount > 0 ? getLockedVaultSendExplanation() : undefined,
+    })
   }
 
   /**
@@ -437,6 +525,12 @@ export default function SendPage() {
   }
 
   async function handleSend() {
+    const amountLimitMessage = getAmountLimitMessage()
+    if (amountLimitMessage) {
+      setErrorMsg(amountLimitMessage)
+      setStep('form')
+      return
+    }
     beginTx()
     setStep('signing')
     setErrorMsg(null)
@@ -808,6 +902,29 @@ export default function SendPage() {
                     </button>
                   </span>
                 </div>
+                {getAmountLimitMessage() && (
+                  <p
+                    role="alert"
+                    style={{ color: '#e5484d', fontSize: '0.75rem', lineHeight: 1.4, margin: '0.5rem 0 0' }}
+                  >
+                    {getAmountLimitMessage()}
+                  </p>
+                )}
+                {lockedVault && Number(lockedVault.reservedXlm) > 0 && selectedAsset?.code === 'XLM' && !selectedAsset.issuer && (
+                  <p
+                    role="note"
+                    style={{ color: 'rgba(246,247,248,0.55)', fontSize: '0.75rem', lineHeight: 1.4, margin: '0.5rem 0 0' }}
+                  >
+                    {lockedVault.reservedXlm} XLM is queued and locked in your vault and is not included in this spendable balance.{' '}
+                    {getLockedVaultSendExplanation()}{' '}
+                    {' '}<a href="/vault">Manage withdrawals in Vault</a>.
+                  </p>
+                )}
+                {lockedVaultError && !lockedVault && (
+                  <p role="alert" style={{ color: '#e5484d', fontSize: '0.75rem', lineHeight: 1.4, margin: '0.5rem 0 0' }}>
+                    Could not read the attached vault: {lockedVaultError}. Send uses only the currently loaded wallet-account balance.
+                  </p>
+                )}
               </div>
             </div>
 
