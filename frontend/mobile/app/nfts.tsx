@@ -23,7 +23,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   FlatList,
   Image,
   Modal,
@@ -37,6 +36,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FlowHeader } from '../components/FlowHeader';
+import { Skeleton } from '../components/Skeleton';
 import { useTheme } from '../hooks/useTheme';
 import { errorMessage } from '../lib/errorMessage';
 import { loadGallery } from '../lib/nftGallery';
@@ -145,9 +145,24 @@ export default function NFTsScreen() {
   const renderBody = () => {
     if (state.kind === 'loading') {
       return (
-        <View style={styles.center} testID="nft-loading-state">
-          <ActivityIndicator size="large" color={colors.accent} />
-          <Text style={styles.muted}>Loading your NFTs…</Text>
+        // Tiles in the grid's own shape — image over collection, name and
+        // contract — so the grid does not reflow when the items arrive.
+        <View
+          style={styles.skeletonGrid}
+          testID="nft-loading-state"
+          accessibilityState={{ busy: true }}
+          accessibilityLabel="Loading"
+        >
+          {[0, 1, 2, 3].map((i) => (
+            <View key={i} style={styles.skeletonCard}>
+              <Skeleton width="100%" height={148} radius={0} style={styles.skeletonFill} />
+              <View style={styles.cardBody}>
+                <Skeleton width={72} height={10} style={styles.skeletonFill} />
+                <Skeleton width={110} height={14} style={styles.skeletonFill} />
+                <Skeleton width={86} height={11} style={styles.skeletonFill} />
+              </View>
+            </View>
+          ))}
         </View>
       );
     }
@@ -319,6 +334,17 @@ const createStyles = (colors: ThemeColors) =>
     header: { paddingHorizontal: 20, paddingTop: 16 },
     body: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
     center: { alignItems: 'center', gap: 12, paddingVertical: 48 },
+    skeletonGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingBottom: 32 },
+    skeletonCard: {
+      flexBasis: '47%',
+      flexGrow: 1,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      overflow: 'hidden',
+      backgroundColor: colors.surface,
+    },
+    skeletonFill: { backgroundColor: colors.surfaceMd },
     muted: {
       color: colors.textMuted,
       fontFamily: fontFamily.body,
