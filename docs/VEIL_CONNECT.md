@@ -11,8 +11,9 @@ Status: **pilot**. One partner, small amounts, the interface may change.
 | Call | The person sees | The app gets |
 |---|---|---|
 | `connect()` | "Share your wallet address with App?" | `{ address, network }` |
-| `pay({...})` | Who is asking, how much, to which address, then Veil's normal Send screen | `{ hash, reference, network }` |
+| `pay({...})` | Who is asking, how much, to which address, then Veil's normal Send screen | `{ hash, reference, network, from, memo }` |
 | `addMoney()` | "Buy with naira" in Veil | `{ type: 'fund' }` once they are on their way |
+| `cashOut()` | "Cash out" in Veil: their own USDC to their own bank, as naira | `{ type: 'cashout' }` once they are on their way |
 
 Each person has their own wallet and passes Veil's own identity check when
 they first add naira. Veil never holds the app's money, and the app never
@@ -60,14 +61,54 @@ credit anything:
 2. Check the transaction succeeded.
 3. Check it moved the **right asset** (for USDC, the code `USDC` **and** the
    issuer `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`), the
-   **right amount**, **to your address**. A Veil wallet is a smart contract,
-   so the payment shows as an `invoke_host_function` operation and the
-   movement is in its `asset_balance_changes` list.
-4. Accept each hash **once**. Store it with the reference and refuse a repeat.
-5. Check `network` is `mainnet`.
+   **right amount**, **to your address**.
+   - If your address is a `G…` account, look for a `payment` operation and
+     check its `to`, `asset_code`, `asset_issuer` and `amount`.
+   - If your address is a `C…` contract, look for an `invoke_host_function`
+     operation and check its `asset_balance_changes` list.
+   - **Do not require the sender to be the address `connect()` gave you.**
+     That address is the wallet (`C…`). Payments leave from the wallet's
+     spending account, a `G…` address, which is `from` in the result. Match
+     the payment by where it went, not where it came from.
+   - The same transaction can hold a second, smaller payment to another
+     address. That is Veil's fee, paid by the person on top of your amount:
+     you always receive the full amount you asked for. When it is there it
+     comes after your payment, but do not rely on its position or its size.
+     The rate can change, and the fee is left out when it cannot be worked
+     out. Credit the amount of the payment **to your address** and ignore
+     every other operation.
+4. Check the transaction's **memo** is a text memo equal to your reference.
+   Veil writes the reference there, unchanged, so a hash can only be claimed
+   for the order it was paid for. This needs a reference of **28 characters
+   or fewer** (a text memo holds no more). A longer reference is not cut to
+   fit: no memo is written and `memo` in the result is `null`. Keep references
+   short, and keep personal details out of them, because a memo is public.
+5. Accept each hash **once**. Store it with the reference and refuse a repeat.
+6. Check `network` is `mainnet`.
 
-If any check fails, do not credit. The reference is not written on the chain;
-it is how you match the answer to your own order.
+If any check fails, do not credit.
+
+## Paying out to a Veil wallet
+
+To send a person money (a withdrawal from your app), pay the wallet address
+`connect()` gave you. It is a `C…` contract address.
+
+- Send with the USDC token contract's `transfer(from, to, amount)`. On mainnet
+  that contract is `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`
+  (Circle USDC, issuer
+  `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`). A classic
+  `payment` operation cannot pay a `C…` address.
+- Amounts have 7 decimal places: send `amount × 10^7`.
+- The wallet does not approve or accept anything. The transfer lands as soon
+  as your transaction succeeds. It needs no trustline and no XLM to receive,
+  and Veil charges nothing to receive. You pay the network fee.
+- The address never changes. It is fixed when the wallet is made and cannot be
+  moved to another person.
+- One person can make more than one wallet. Pay the address they linked, and
+  let them link again with `connect()` if they change wallets.
+- Receiving does not need the person's passkey. Spending does. A person who
+  loses their passkey with no backup set up in Veil still receives the money
+  but cannot move it.
 
 ## How an app is added
 
