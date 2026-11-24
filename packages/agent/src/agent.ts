@@ -240,6 +240,11 @@ export const TOOL_REGISTRY: VeilTool[] = [
     approval: 'request_user_approval',
     description:
       'Build a Stellar payment transaction to send XLM or tokens. ' +
+      'A bare registered asset code (e.g. "USDC") is accepted — the agent resolves the issuer. ' +
+      'CODE:ISSUER is accepted for unregistered assets. ' +
+      'The recipient must be a G address — C addresses are not supported for payments. ' +
+      'Amount must be a positive number with at most seven decimal places. ' +
+      'Memo is optional, at most 28 bytes. ' +
       'ALWAYS call request_user_approval after building.',
     input_schema: {
       type: 'object' as const,

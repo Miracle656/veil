@@ -294,6 +294,32 @@ describe('a prompt cannot skip approval', () => {
     expect(result.pendingTxSummary).toBeUndefined()
   })
 
+  it('build_payment rejects a C address without building a transaction', async () => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch')
+    const cAddress = 'C' + 'A'.repeat(55)
+    mockBuildPayment.mockImplementationOnce(async () =>
+      "Sending to a Veil wallet address is done from the Send screen. Paste the recipient's G address instead."
+    )
+    const llm = scripted([
+      {
+        text: '',
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'build_payment',
+            input: { to_address: cAddress, asset: 'XLM', amount: 5, wallet_address: FEE_PAYER },
+          },
+        ],
+      },
+      { text: 'done', toolCalls: [] },
+    ])
+    const result = await runAgent('send 5 XLM to ' + cAddress, 'CWALLET', [], FEE_PAYER, undefined, llm)
+    expect(llm.results[0][0].content).toContain('Send screen')
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(result.pendingTxXdr).toBeUndefined()
+    fetchSpy.mockRestore()
+  })
+
   it('the only way a transaction leaves the agent is request_user_approval, and it reports awaiting approval', async () => {
     const llm = scripted([
       {
