@@ -99,6 +99,21 @@ const AMOUNT = /^\d{1,12}(\.\d{1,7})?$/
 const REFERENCE = /^[A-Za-z0-9_-]{1,64}$/
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,64}$/
 
+/** A Stellar text memo holds 28 bytes. A reference is plain ASCII, so 28 characters. */
+export const MEMO_TEXT_MAX = 28
+
+/**
+ * The text memo a payment carries for this reference, or null.
+ *
+ * The reference goes on chain unchanged or not at all. A longer one is never
+ * cut to fit: a shortened reference matches nothing on the app's side and can
+ * collide with another order. The app is told which happened (`memo` in the
+ * result), so it never has to guess.
+ */
+export function referenceMemo(reference: string): string | null {
+  return reference.length <= MEMO_TEXT_MAX ? reference : null
+}
+
 /** The most one request may ask for. A pilot limit, not a law of nature. */
 export const MAX_PAY_AMOUNT = 1000
 
@@ -157,7 +172,9 @@ export type ConnectResult =
   // `from` is the address the money left. It is the wallet's spending account
   // (G…), not the wallet address `connect` shares (C…), so an app that expects
   // the payment to come from the connected address will not find it.
-  | { ok: true; type: 'pay'; hash: string; reference: string; network: string; from: string }
+  // `memo` is the text memo on the payment: the reference, or null when the
+  // reference was too long to carry (see referenceMemo).
+  | { ok: true; type: 'pay'; hash: string; reference: string; network: string; from: string; memo: string | null }
   | { ok: true; type: 'fund' }
   | { ok: true; type: 'cashout' }
   | { ok: false; error: 'cancelled' | 'refused'; reason?: string }
@@ -220,6 +237,13 @@ export function sendPathFor(
     q.set('asset', 'USDC')
     q.set('issuer', usdcIssuer)
     q.set('lock', 'asset')
+  }
+  // The app's reference, written on the payment so its server can tell whose
+  // payment a hash is without trusting the browser that reported it.
+  const memo = referenceMemo(request.reference)
+  if (memo) {
+    q.set('memo', memo)
+    q.set('memo_type', 'text')
   }
   return `/send?${q.toString()}`
 }

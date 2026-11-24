@@ -11,7 +11,7 @@ Status: **pilot**. One partner, small amounts, the interface may change.
 | Call | The person sees | The app gets |
 |---|---|---|
 | `connect()` | "Share your wallet address with App?" | `{ address, network }` |
-| `pay({...})` | Who is asking, how much, to which address, then Veil's normal Send screen | `{ hash, reference, network, from }` |
+| `pay({...})` | Who is asking, how much, to which address, then Veil's normal Send screen | `{ hash, reference, network, from, memo }` |
 | `addMoney()` | "Buy with naira" in Veil | `{ type: 'fund' }` once they are on their way |
 | `cashOut()` | "Cash out" in Veil: their own USDC to their own bank, as naira | `{ type: 'cashout' }` once they are on their way |
 
@@ -71,13 +71,22 @@ credit anything:
      spending account, a `G…` address, which is `from` in the result. Match
      the payment by where it went, not where it came from.
    - The same transaction can hold a second, smaller payment to another
-     address. That is Veil's fee, paid by the person on top of your amount.
-     Ignore operations that are not to you.
-4. Accept each hash **once**. Store it with the reference and refuse a repeat.
-5. Check `network` is `mainnet`.
+     address. That is Veil's fee, paid by the person on top of your amount:
+     you always receive the full amount you asked for. When it is there it
+     comes after your payment, but do not rely on its position or its size.
+     The rate can change, and the fee is left out when it cannot be worked
+     out. Credit the amount of the payment **to your address** and ignore
+     every other operation.
+4. Check the transaction's **memo** is a text memo equal to your reference.
+   Veil writes the reference there, unchanged, so a hash can only be claimed
+   for the order it was paid for. This needs a reference of **28 characters
+   or fewer** (a text memo holds no more). A longer reference is not cut to
+   fit: no memo is written and `memo` in the result is `null`. Keep references
+   short, and keep personal details out of them, because a memo is public.
+5. Accept each hash **once**. Store it with the reference and refuse a repeat.
+6. Check `network` is `mainnet`.
 
-If any check fails, do not credit. The reference is not written on the chain;
-it is how you match the answer to your own order.
+If any check fails, do not credit.
 
 ## Paying out to a Veil wallet
 

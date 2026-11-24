@@ -91,9 +91,11 @@
         return open(appId, { type: 'connect' })
       },
       /**
-       * Resolves with { hash, reference, network, from }. Verify the hash on
-       * your server. `from` is the G… address the money left, which is not the
-       * C… address connect() gives you.
+       * Resolves with { hash, reference, network, from, memo }. Verify the hash
+       * on your server. `from` is the G… address the money left, which is not
+       * the C… address connect() gives you. `memo` is the text memo written on
+       * the payment: your reference when it is 28 characters or fewer, else
+       * null (no memo is written).
        */
       pay: function (payment) {
         payment = payment || {}
