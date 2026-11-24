@@ -22,7 +22,7 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { usePrivacyRecoveryNotice } from '@/hooks/usePrivacyRecoveryNotice'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
-import { calculateAccountReserve, type AccountReserveBreakdown } from '@/lib/reserves'
+import { calculateAccountReserve, spendableNativeXlm, type AccountReserveBreakdown, type HorizonAccountLike } from '@/lib/reserves'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
 import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { isMultisigAvailable } from '@/lib/multisigConfig'
@@ -46,6 +46,14 @@ const network = getNetwork()
 
 import type { WalletAsset } from '@/lib/walletTypes'
 import { mergeAssetBalances, readContractAssetBalances } from '@/lib/contractAssets'
+import {
+  movableWalletAssets,
+  needXlmMessage,
+  receiveReadiness,
+  type IssuedWalletAsset,
+} from '@/lib/moveFromWallet'
+import { buildChangeTrustTx, type HorizonBalanceLike } from '@/lib/trustlines'
+import { loadPayingAccount } from '@/lib/horizonError'
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -96,6 +104,12 @@ function DashboardPageContent() {
   const [isSweeping, setIsSweeping]         = useState(false)
   const [sweepError, setSweepError]         = useState<string | null>(null)
   const [sweepDismissed, setSweepDismissed] = useState(false)
+  // Issued assets (USDC…) sitting in the wallet contract, which the web Send,
+  // Swap and Pay screens cannot spend until they are moved.
+  const [walletHeld, setWalletHeld]         = useState<IssuedWalletAsset[]>([])
+  const [movingAsset, setMovingAsset]       = useState<string | null>(null)
+  const [moveError, setMoveError]           = useState<string | null>(null)
+  const [moveDismissed, setMoveDismissed]   = useState(false)
   const [showConnectDapp, setShowConnectDapp] = useState(false)
   const [connectToast, setConnectToast] = useState<string | null>(null)
   const [sep24Modal, setSep24Modal] = useState<'deposit' | 'withdraw' | null>(null)
@@ -381,6 +395,7 @@ function DashboardPageContent() {
     // contract that actually spends it held nothing — which is exactly what
     // happened the first time somebody tried to buy a name.
     const contractAssets = await readContractAssetBalances(walletAddress, otherAssets)
+    setWalletHeld(movableWalletAssets(contractAssets))
     const totalXlm = (contractXlm + feePayerXlm).toFixed(7)
     const finalAssets: WalletAsset[] = [
       { code: 'XLM', issuer: null, balance: totalXlm },
@@ -626,6 +641,60 @@ function DashboardPageContent() {
     }
   }
 
+  // ── Move an issued asset (USDC…) from C... to the fee-payer ────────────────
+  // Same passkey-authorised transfer as the XLM sweep, with one step XLM does
+  // not need: a G account cannot receive an asset it has no trustline for.
+  const handleMoveAsset = async (asset: IssuedWalletAsset) => {
+    setMovingAsset(`${asset.code}:${asset.issuer}`)
+    setMoveError(null)
+    try {
+      const feePayerKp = getFeePayerKeypair()
+      const horizonServer = new Server(network.horizonUrl)
+      const account = await loadPayingAccount(() => horizonServer.loadAccount(feePayerKp.publicKey()))
+      const readiness = receiveReadiness(
+        account.balances as unknown as HorizonBalanceLike[],
+        spendableNativeXlm(account as unknown as HorizonAccountLike),
+        asset,
+      )
+      // Said before anything is signed: the network would refuse the trustline
+      // anyway, with a message nobody could act on.
+      if (readiness === 'need-xlm') throw new Error(needXlmMessage(asset.code))
+
+      await ensureWalletDeployed(wallet.deploy, walletAddress)
+
+      if (readiness === 'add-trustline') {
+        const trustTx = buildChangeTrustTx({
+          account,
+          networkPassphrase: network.networkPassphrase,
+          code: asset.code,
+          issuer: asset.issuer,
+        })
+        trustTx.sign(feePayerKp)
+        await horizonServer.submitTransaction(trustTx)
+      }
+
+      await sweepContractBalance(
+        walletAddress!,
+        feePayerKp,
+        buildSignAuthEntry(),
+        network.rpcUrl,
+        network.networkPassphrase,
+        { code: asset.code, issuer: asset.issuer },
+      )
+      setMoveDismissed(false)
+      await fetchData()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setMoveError(
+        msg.includes('NotAllowedError') || msg.includes('cancelled')
+          ? 'Passkey verification was cancelled. Please try again.'
+          : msg
+      )
+    } finally {
+      setMovingAsset(null)
+    }
+  }
+
   return (
     <div className="wallet-shell">
 
@@ -802,6 +871,54 @@ function DashboardPageContent() {
           </div>
         )}
 
+
+        {/* ── Move prompt: USDC (or another issued asset) held by the contract ── */}
+        {!loading && walletHeld.length > 0 && !moveDismissed && (
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
+            borderRadius: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
+                Money in your wallet address
+              </p>
+              <button
+                onClick={() => setMoveDismissed(true)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-muted)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              Send, Swap and Pay use your spending wallet. Move this there to use it. You will be asked for your passkey.
+            </p>
+            {moveError && (
+              <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginBottom: '0.625rem' }}>{moveError}</p>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+              {walletHeld.map((asset) => {
+                const key = `${asset.code}:${asset.issuer}`
+                return (
+                  <button
+                    key={key}
+                    className="btn-secondary"
+                    onClick={() => handleMoveAsset(asset)}
+                    disabled={movingAsset !== null}
+                    style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
+                  >
+                    {movingAsset === key
+                      ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                      : `Move ${asset.balance} ${asset.code} to spending wallet`}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* ── Three-column layout: center + right rail ──
             The row container. `.vw-center-col` and `.vw-rail` were written as
