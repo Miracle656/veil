@@ -22,7 +22,7 @@ import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { usePrivacyRecoveryNotice } from '@/hooks/usePrivacyRecoveryNotice'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
 import { fetchPrices } from '@/lib/fetchPrice'
-import { calculateAccountReserve, spendableNativeXlm, type AccountReserveBreakdown, type HorizonAccountLike } from '@/lib/reserves'
+import { calculateAccountReserve, type AccountReserveBreakdown } from '@/lib/reserves'
 import { change24h, historyKey, isComparableTotal, readHistory, recordSnapshot, writeHistory } from '@/lib/balanceHistory'
 import { buildFriendbotUrl, getNativeAssetContractId, getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { isMultisigAvailable } from '@/lib/multisigConfig'
@@ -46,14 +46,8 @@ const network = getNetwork()
 
 import type { WalletAsset } from '@/lib/walletTypes'
 import { mergeAssetBalances, readContractAssetBalances } from '@/lib/contractAssets'
-import {
-  movableWalletAssets,
-  needXlmMessage,
-  receiveReadiness,
-  type IssuedWalletAsset,
-} from '@/lib/moveFromWallet'
-import { buildChangeTrustTx, type HorizonBalanceLike } from '@/lib/trustlines'
-import { loadPayingAccount } from '@/lib/horizonError'
+import { movableWalletAssets, type IssuedWalletAsset } from '@/lib/moveFromWallet'
+import { moveAssetToSpending } from '@/lib/moveToSpending'
 
 // ── Shared types ─────────────────────────────────────────────────────────────
 
@@ -648,39 +642,7 @@ function DashboardPageContent() {
     setMovingAsset(`${asset.code}:${asset.issuer}`)
     setMoveError(null)
     try {
-      const feePayerKp = getFeePayerKeypair()
-      const horizonServer = new Server(network.horizonUrl)
-      const account = await loadPayingAccount(() => horizonServer.loadAccount(feePayerKp.publicKey()))
-      const readiness = receiveReadiness(
-        account.balances as unknown as HorizonBalanceLike[],
-        spendableNativeXlm(account as unknown as HorizonAccountLike),
-        asset,
-      )
-      // Said before anything is signed: the network would refuse the trustline
-      // anyway, with a message nobody could act on.
-      if (readiness === 'need-xlm') throw new Error(needXlmMessage(asset.code))
-
-      await ensureWalletDeployed(wallet.deploy, walletAddress)
-
-      if (readiness === 'add-trustline') {
-        const trustTx = buildChangeTrustTx({
-          account,
-          networkPassphrase: network.networkPassphrase,
-          code: asset.code,
-          issuer: asset.issuer,
-        })
-        trustTx.sign(feePayerKp)
-        await horizonServer.submitTransaction(trustTx)
-      }
-
-      await sweepContractBalance(
-        walletAddress!,
-        feePayerKp,
-        buildSignAuthEntry(),
-        network.rpcUrl,
-        network.networkPassphrase,
-        { code: asset.code, issuer: asset.issuer },
-      )
+      await moveAssetToSpending(asset, walletAddress!, wallet.deploy)
       setMoveDismissed(false)
       await fetchData()
     } catch (err: unknown) {
