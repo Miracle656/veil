@@ -7,6 +7,7 @@ import {
   getConnectApp,
   isAllowedOrigin,
   parseConnectRequest,
+  referenceMemo,
   requestFromMessage,
   sendPathFor,
 } from '../connect'
@@ -168,6 +169,24 @@ describe('the hand-off to the Send screen', () => {
     if (!parsed.ok || parsed.request.type !== 'pay') throw new Error('fixture')
     return parsed.request
   }
+
+  it('writes the reference on the payment as a text memo, unchanged', () => {
+    const q = new URLSearchParams(sendPathFor(request({ reference: 'order_AB-123' }), ISSUER).split('?')[1])
+    expect(q.get('memo')).toBe('order_AB-123')
+    expect(q.get('memo_type')).toBe('text')
+    // 28 characters is the most a text memo holds.
+    const longest = 'a'.repeat(28)
+    expect(referenceMemo(longest)).toBe(longest)
+  })
+
+  it('sends no memo rather than a shortened reference', () => {
+    // A UUID is 36 characters. Cutting it would match nothing on the app's side.
+    const uuid = '3f2b8c1e-9d4a-4b7c-8e21-5a6f0c9d1e2b'
+    expect(referenceMemo(uuid)).toBeNull()
+    const q = new URLSearchParams(sendPathFor(request({ reference: uuid }), ISSUER).split('?')[1])
+    expect(q.get('memo')).toBeNull()
+    expect(q.get('memo_type')).toBeNull()
+  })
 
   it('names USDC by Veil\'s own issuer and locks the asset', () => {
     const q = new URLSearchParams(sendPathFor(request(), ISSUER).split('?')[1])

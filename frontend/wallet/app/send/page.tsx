@@ -37,7 +37,7 @@ import { beginTx, endTx } from '@/lib/txState'
 import { fetchPrices } from '@/lib/fetchPrice'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { isPrivacyEnabled } from '@/lib/privacy/config'
-import { getConnectApp, type PendingConnect } from '@/lib/connect'
+import { getConnectApp, referenceMemo, type PendingConnect } from '@/lib/connect'
 import { ALLOW_DEMO_APP, answer, clearPending, readPending } from '@/lib/connectWindow'
 import { readContractAssetBalances } from '@/lib/contractAssets'
 import { movableWalletAssets, walletBalanceToOffer, type IssuedWalletAsset } from '@/lib/moveFromWallet'
@@ -224,6 +224,8 @@ export default function SendPage() {
     const pending = readPending()
     if (pending?.request.type === 'pay') setConnectPay(pending)
   }, [])
+  const connectMemoLocked =
+    connectPay?.request.type === 'pay' && referenceMemo(connectPay.request.reference) !== null
   const connectAppName = connectPay ? getConnectApp(connectPay.appId, ALLOW_DEMO_APP)?.name ?? null : null
   // Tell the app as soon as the payment is through, so closing this window
   // early does not leave it waiting.
@@ -233,11 +235,14 @@ export default function SendPage() {
     // what the app asked for, say so instead of passing it off as its payment.
     const asked = connectPay.request
     const sentTo = (resolvedAddress ?? recipient).trim()
+    const askedMemo = referenceMemo(asked.reference)
     const matches = sentTo === asked.to
       && Number(amount) === Number(asked.amount)
       && selectedAsset?.code === asked.asset
+      // The reference is how the app's server knows whose payment this is.
+      && (askedMemo === null || (memo.trim() === askedMemo && memoIsText))
     answer(connectPay, matches
-      ? { ok: true, type: 'pay', hash: txHash, reference: asked.reference, network: getNetworkName(), from: paidFrom }
+      ? { ok: true, type: 'pay', hash: txHash, reference: asked.reference, network: getNetworkName(), from: paidFrom, memo: askedMemo }
       : { ok: false, error: 'refused', reason: 'A payment was sent, but not the one that was asked for.' })
     clearPending()
     setConnectTold(true)
@@ -623,6 +628,9 @@ export default function SendPage() {
             nativeToScVal(destination,            { type: 'address' }),
             nativeToScVal(amountStroops,          { type: 'i128' }),
           ))
+          // The memo rides on this path too. It used to be dropped here, so a
+          // payment to a contract address lost the reference it was sent with.
+          .addMemo(memo.trim() ? buildStellarMemo(memo, memoType) ?? Memo.none() : Memo.none())
           .setTimeout(30)
           .build()
 
@@ -992,6 +1000,9 @@ export default function SendPage() {
                 placeholder="Add a note for the recipient"
                 value={memo}
                 onChange={e => setMemo(e.target.value)}
+                // A reference another app put here is how it finds the payment.
+                // Editing it would send money the app could not match.
+                readOnly={connectMemoLocked}
                 aria-invalid={memoFieldError ? true : undefined}
                 aria-describedby={memoFieldError ? 'send-memo-error' : undefined}
               />
