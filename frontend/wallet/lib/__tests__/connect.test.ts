@@ -78,6 +78,14 @@ describe('a request from another app', () => {
     expect(parseConnectRequest({ type: 'fund', id: ID })).toEqual({ ok: true, request: { type: 'fund', id: ID } })
   })
 
+  it('accepts cash out, and carries nothing the app sent with it', () => {
+    // An app opens the screen. The amount and the bank are the person's to
+    // choose in Veil, so anything extra on the request is dropped.
+    expect(
+      parseConnectRequest({ type: 'cashout', id: ID, amount: '500', bank: '058', account: 'x' }),
+    ).toEqual({ ok: true, request: { type: 'cashout', id: ID } })
+  })
+
   it('accepts a payment to an account or a contract', () => {
     expect(parseConnectRequest(pay())).toEqual({
       ok: true,

@@ -90,7 +90,11 @@
       connect: function () {
         return open(appId, { type: 'connect' })
       },
-      /** Resolves with { hash, reference, network }. Verify the hash on your server. */
+      /**
+       * Resolves with { hash, reference, network, from }. Verify the hash on
+       * your server. `from` is the G… address the money left, which is not the
+       * C… address connect() gives you.
+       */
       pay: function (payment) {
         payment = payment || {}
         return open(appId, {
@@ -104,6 +108,14 @@
       /** Opens "Buy with naira" in Veil. Resolves once the user is on their way. */
       addMoney: function () {
         return open(appId, { type: 'fund' })
+      },
+      /**
+       * Opens "Cash out" in Veil, where the person sends their own USDC to
+       * their own bank account as naira. Resolves once they are on their way.
+       * You do not pass an amount or a bank: the person chooses both in Veil.
+       */
+      cashOut: function () {
+        return open(appId, { type: 'cashout' })
       },
     }
   }

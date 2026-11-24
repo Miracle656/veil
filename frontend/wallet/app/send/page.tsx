@@ -211,6 +211,8 @@ export default function SendPage() {
     }
   }, [step])
   const [txHash, setTxHash]           = useState<string | null>(null)
+  /** The address the payment left: the spending account, told to a Veil Connect app. */
+  const [paidFrom, setPaidFrom]       = useState<string | null>(null)
   /**
    * Set when another app opened this window through Veil Connect and asked
    * for this payment. It changes nothing about how the payment is made: it
@@ -226,7 +228,7 @@ export default function SendPage() {
   // Tell the app as soon as the payment is through, so closing this window
   // early does not leave it waiting.
   useEffect(() => {
-    if (step !== 'done' || !txHash || !connectPay || connectPay.request.type !== 'pay' || connectTold) return
+    if (step !== 'done' || !txHash || !paidFrom || !connectPay || connectPay.request.type !== 'pay' || connectTold) return
     // The fields can be edited after the hand-off. If what was sent is not
     // what the app asked for, say so instead of passing it off as its payment.
     const asked = connectPay.request
@@ -235,12 +237,12 @@ export default function SendPage() {
       && Number(amount) === Number(asked.amount)
       && selectedAsset?.code === asked.asset
     answer(connectPay, matches
-      ? { ok: true, type: 'pay', hash: txHash, reference: asked.reference, network: getNetworkName() }
+      ? { ok: true, type: 'pay', hash: txHash, reference: asked.reference, network: getNetworkName(), from: paidFrom }
       : { ok: false, error: 'refused', reason: 'A payment was sent, but not the one that was asked for.' })
     clearPending()
     setConnectTold(true)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, txHash, connectPay, connectTold])
+  }, [step, txHash, paidFrom, connectPay, connectTold])
   const [errorMsg, setErrorMsg]       = useState<string | null>(null)
   const [showPicker, setShowPicker]   = useState(false)
 
@@ -601,6 +603,7 @@ export default function SendPage() {
         const tx = builder.build()
         tx.sign(feePayerKp)
         const result = await horizonServer.submitTransaction(tx)
+        setPaidFrom(feePayerKp.publicKey())
         setTxHash(result.hash)
         // TODO(#1003): remove platform limitation call when multi-origin contract ships
         markFirstSpendCompleted(walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('invisible_wallet_address'))
@@ -644,6 +647,7 @@ export default function SendPage() {
           }
           await new Promise(r => setTimeout(r, 1_000))
         }
+        setPaidFrom(feePayerKp.publicKey())
         setTxHash(sendResult.hash)
         // TODO(#1003): remove platform limitation call when multi-origin contract ships
         markFirstSpendCompleted(walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('invisible_wallet_address'))

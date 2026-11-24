@@ -83,6 +83,9 @@ export type ConnectAsset = 'USDC' | 'XLM'
 export type ConnectRequest =
   | { type: 'connect'; id: string }
   | { type: 'fund'; id: string }
+  // Opens the person's own cash-out to their own bank. It carries no amount
+  // and no bank: an app never moves a person's money to a bank through Veil.
+  | { type: 'cashout'; id: string }
   | { type: 'pay'; id: string; to: string; amount: string; asset: ConnectAsset; reference: string }
 
 export type ParsedRequest =
@@ -116,6 +119,7 @@ export function parseConnectRequest(raw: unknown): ParsedRequest {
 
   if (r.type === 'connect') return { ok: true, request: { type: 'connect', id } }
   if (r.type === 'fund') return { ok: true, request: { type: 'fund', id } }
+  if (r.type === 'cashout') return { ok: true, request: { type: 'cashout', id } }
   if (r.type !== 'pay') return refuse('The request asks for something Veil does not do.')
 
   const { to, amount, reference } = r
@@ -150,8 +154,12 @@ export const CONNECT_VERSION = 1
 
 export type ConnectResult =
   | { ok: true; type: 'connect'; address: string; network: string }
-  | { ok: true; type: 'pay'; hash: string; reference: string; network: string }
+  // `from` is the address the money left. It is the wallet's spending account
+  // (G…), not the wallet address `connect` shares (C…), so an app that expects
+  // the payment to come from the connected address will not find it.
+  | { ok: true; type: 'pay'; hash: string; reference: string; network: string; from: string }
   | { ok: true; type: 'fund' }
+  | { ok: true; type: 'cashout' }
   | { ok: false; error: 'cancelled' | 'refused'; reason?: string }
 
 export function readyMessage() {
