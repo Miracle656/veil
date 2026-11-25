@@ -154,7 +154,10 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0"
+    "@noble/curves": "1.9.7",
+    "@noble/hashes": "1.8.0",
+    "@stellar/stellar-sdk": "^15.1.0",
+    "buffer": "6.0.3"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",
@@ -280,7 +283,7 @@
     {
       "name": "main (React hook + utils)",
       "path": "dist/index.js",
-      "limit": "235 KB"
+      "limit": "256 KB"
     },
     {
       "name": "vanilla",

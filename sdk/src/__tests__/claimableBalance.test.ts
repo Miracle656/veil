@@ -5,7 +5,7 @@ import {
     claimEscrow,
     reclaimEscrow,
 } from '../claimableBalance';
-import { Asset, Claimant } from '@stellar/stellar-sdk';
+import { Asset, Claimant, Networks, TransactionBuilder } from '@stellar/stellar-sdk';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -45,6 +45,8 @@ jest.mock('@stellar/stellar-sdk', () => {
             addOperation: jest.fn().mockReturnThis(),
             setTimeout: jest.fn().mockReturnThis(),
             build: jest.fn().mockReturnValue({
+                getClaimableBalanceId: jest.fn(() => '00000000da0d57da7d4850e7fc10d2a9d0ebc731f7afb40574c03395b17d49149b91f5be'),
+                hash: jest.fn(() => Buffer.alloc(32, 1)),
                 sign: jest.fn(),
                 toEnvelope: jest.fn(),
                 toXDR: jest.fn(() => 'mock-xdr'),
@@ -81,6 +83,7 @@ import { Keypair } from '@stellar/stellar-sdk';
 const SENDER = Keypair.fromSecret('SENDER_SECRET') as unknown as import('@stellar/stellar-sdk').Keypair;
 const CLAIMANT_KP = Keypair.fromSecret('CLAIMANT_SECRET') as unknown as import('@stellar/stellar-sdk').Keypair;
 const BALANCE_ID = '00000000da0d57da7d4850e7fc10d2a9d0ebc731f7afb40574c03395b17d49149b91f5be';
+const TX_HASH = '01'.repeat(32);
 
 const MOCK_ACCOUNT = {
     accountId: () => 'GDYLI7KL5EZXZSXVDMGD56OQG2QVZ5F5TVMUTYS2J6U5DWUXCTC472LU',
@@ -140,10 +143,14 @@ describe('createEscrow()', () => {
         jest.clearAllMocks();
         const { loadAccount, submitTransaction } = getStellarMocks();
         loadAccount.mockResolvedValue(MOCK_ACCOUNT);
-        submitTransaction.mockResolvedValue({ hash: 'mock-tx-hash', balance_id: BALANCE_ID });
+        submitTransaction.mockResolvedValue({
+            hash: TX_HASH,
+            balance_id: BALANCE_ID,
+            fee_charged: '62324',
+        });
     });
 
-    it('returns balanceId + claimLink + expiresAt', async () => {
+    it('returns balanceId + claimLink + expiresAt + txHash', async () => {
         const result = await createEscrow({
             senderKeypair: SENDER,
             recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
@@ -155,6 +162,8 @@ describe('createEscrow()', () => {
         expect(result.balanceId).toBe(BALANCE_ID);
         expect(result.claimLink).toBe(`https://app.useveilapp.xyz/claim/${BALANCE_ID}`);
         expect(result.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+        expect(result.txHash).toBe(TX_HASH);
+        expect(result.feeCharged).toBe('62324');
     });
 
     it('calls submitTransaction once', async () => {
@@ -170,20 +179,86 @@ describe('createEscrow()', () => {
         expect(submitTransaction).toHaveBeenCalledTimes(1);
     });
 
-    it('throws when Horizon response is missing balance_id', async () => {
+    it('uses the mainnet inclusion-fee policy', async () => {
+        await createEscrow({
+            senderKeypair: SENDER,
+            recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
+            amount: '5',
+            asset: Asset.native(),
+            claimDeadlineSeconds: 7200,
+            config: { ...CONFIG, networkPassphrase: Networks.PUBLIC },
+        });
+        expect(TransactionBuilder).toHaveBeenCalledWith(MOCK_ACCOUNT, {
+            fee: '100000',
+            networkPassphrase: Networks.PUBLIC,
+        });
+    });
+
+    it('uses the deterministic balance ID when Horizon omits balance_id', async () => {
         const { submitTransaction } = getStellarMocks();
-        // Horizon returns a response without balance_id (e.g. version mismatch)
-        submitTransaction.mockResolvedValue({ hash: 'tx-hash-no-balance-id' });
-        await expect(
-            createEscrow({
-                senderKeypair: SENDER,
-                recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
-                amount: '10',
-                asset: Asset.native(),
-                claimDeadlineSeconds: 3600,
-                config: CONFIG,
-            })
-        ).rejects.toThrow('missing balance_id');
+        submitTransaction.mockResolvedValue({ hash: TX_HASH });
+        const result = await createEscrow({
+            senderKeypair: SENDER,
+            recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
+            amount: '10',
+            asset: Asset.native(),
+            claimDeadlineSeconds: 3600,
+            config: CONFIG,
+        });
+        expect(result.balanceId).toBe(BALANCE_ID);
+        expect(result.txHash).toBe(TX_HASH);
+    });
+
+    it('preserves the transaction and balance IDs when submission is ambiguous', async () => {
+        const { submitTransaction } = getStellarMocks();
+        submitTransaction.mockRejectedValue(new Error('Horizon timed out'));
+        await expect(createEscrow({
+            senderKeypair: SENDER,
+            recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
+            amount: '10',
+            asset: Asset.native(),
+            claimDeadlineSeconds: 3600,
+            config: CONFIG,
+        })).rejects.toMatchObject({
+            message: 'Horizon timed out',
+            balanceId: BALANCE_ID,
+            txHash: TX_HASH,
+            expiresAt: expect.any(Number),
+        });
+    });
+
+    it('preserves recovery context when a successful response has a different transaction hash', async () => {
+        const { submitTransaction } = getStellarMocks();
+        submitTransaction.mockResolvedValue({ hash: 'ff'.repeat(32) });
+        await expect(createEscrow({
+            senderKeypair: SENDER,
+            recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
+            amount: '10',
+            asset: Asset.native(),
+            claimDeadlineSeconds: 3600,
+            config: CONFIG,
+        })).rejects.toMatchObject({
+            message: expect.stringContaining('different transaction hash'),
+            balanceId: BALANCE_ID,
+            txHash: TX_HASH,
+            expiresAt: expect.any(Number),
+        });
+    });
+
+    it('does not annotate a definitive Horizon rejection as ambiguous', async () => {
+        const { submitTransaction } = getStellarMocks();
+        const error = Object.assign(new Error('transaction rejected'), { response: { status: 400 } });
+        submitTransaction.mockRejectedValue(error);
+        await expect(createEscrow({
+            senderKeypair: SENDER,
+            recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
+            amount: '10',
+            asset: Asset.native(),
+            claimDeadlineSeconds: 3600,
+            config: CONFIG,
+        })).rejects.toBe(error);
+        expect(error).not.toHaveProperty('balanceId');
+        expect(error).not.toHaveProperty('txHash');
     });
 });
 
@@ -192,7 +267,7 @@ describe('claimEscrow()', () => {
         jest.clearAllMocks();
         const { loadAccount, submitTransaction } = getStellarMocks();
         loadAccount.mockResolvedValue(MOCK_ACCOUNT);
-        submitTransaction.mockResolvedValue({ hash: 'claim-tx-hash' });
+        submitTransaction.mockResolvedValue({ hash: TX_HASH, fee_charged: '100' });
     });
 
     it('submits claim operation and returns txHash', async () => {
@@ -201,9 +276,46 @@ describe('claimEscrow()', () => {
             balanceId: BALANCE_ID,
             config: CONFIG,
         });
-        expect(result.txHash).toBe('claim-tx-hash');
+        expect(result.txHash).toBe(TX_HASH);
+        expect(result.feeCharged).toBe('100');
         const { submitTransaction } = getStellarMocks();
         expect(submitTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['without an HTTP status', undefined],
+        ['with HTTP 500', 500],
+    ])('preserves recovery context when claim submission is ambiguous %s', async (_label, status) => {
+        const { submitTransaction } = getStellarMocks();
+        const error = Object.assign(
+            new Error('Horizon unavailable'),
+            status === undefined ? {} : { response: { status } },
+        );
+        submitTransaction.mockRejectedValue(error);
+        await expect(claimEscrow({
+            claimantKeypair: CLAIMANT_KP,
+            balanceId: BALANCE_ID,
+            config: CONFIG,
+        })).rejects.toMatchObject({
+            message: 'Horizon unavailable',
+            balanceId: BALANCE_ID,
+            txHash: TX_HASH,
+        });
+        expect(submitTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves recovery context when a successful response has a different transaction hash', async () => {
+        const { submitTransaction } = getStellarMocks();
+        submitTransaction.mockResolvedValue({ hash: 'ff'.repeat(32) });
+        await expect(claimEscrow({
+            claimantKeypair: CLAIMANT_KP,
+            balanceId: BALANCE_ID,
+            config: CONFIG,
+        })).rejects.toMatchObject({
+            message: expect.stringContaining('different transaction hash'),
+            balanceId: BALANCE_ID,
+            txHash: TX_HASH,
+        });
     });
 });
 
@@ -212,7 +324,7 @@ describe('reclaimEscrow()', () => {
         jest.clearAllMocks();
         const { loadAccount, submitTransaction } = getStellarMocks();
         loadAccount.mockResolvedValue(MOCK_ACCOUNT);
-        submitTransaction.mockResolvedValue({ hash: 'reclaim-tx-hash' });
+        submitTransaction.mockResolvedValue({ hash: TX_HASH, fee_charged: '100' });
     });
 
     it('submits reclaim operation and returns txHash', async () => {
@@ -221,14 +333,42 @@ describe('reclaimEscrow()', () => {
             balanceId: BALANCE_ID,
             config: CONFIG,
         });
-        expect(result.txHash).toBe('reclaim-tx-hash');
+        expect(result.txHash).toBe(TX_HASH);
+        expect(result.feeCharged).toBe('100');
     });
 
     it('error propagates when Horizon returns error', async () => {
         const { submitTransaction } = getStellarMocks();
-        submitTransaction.mockRejectedValue(new Error('Horizon error: claimable balance not yet claimable'));
+        submitTransaction.mockRejectedValue(Object.assign(
+            new Error('Horizon error: claimable balance not yet claimable'),
+            { response: { status: 400 } },
+        ));
         await expect(
             reclaimEscrow({ senderKeypair: SENDER, balanceId: BALANCE_ID, config: CONFIG })
         ).rejects.toThrow('Horizon error');
+    });
+
+    it('preserves the transaction hash when reclaim submission is ambiguous', async () => {
+        const { submitTransaction } = getStellarMocks();
+        submitTransaction.mockRejectedValue(new Error('Horizon timed out'));
+        await expect(reclaimEscrow({
+            senderKeypair: SENDER,
+            balanceId: BALANCE_ID,
+            config: CONFIG,
+        })).rejects.toMatchObject({ balanceId: BALANCE_ID, txHash: TX_HASH });
+    });
+
+    it('preserves recovery context when a successful response has a different transaction hash', async () => {
+        const { submitTransaction } = getStellarMocks();
+        submitTransaction.mockResolvedValue({ hash: 'ff'.repeat(32) });
+        await expect(reclaimEscrow({
+            senderKeypair: SENDER,
+            balanceId: BALANCE_ID,
+            config: CONFIG,
+        })).rejects.toMatchObject({
+            message: expect.stringContaining('different transaction hash'),
+            balanceId: BALANCE_ID,
+            txHash: TX_HASH,
+        });
     });
 });
