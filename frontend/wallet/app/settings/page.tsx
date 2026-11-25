@@ -42,9 +42,9 @@ type Section = 'overview' | 'add-signer' | 'guardian' | 'recovery-backup'
 function GlobeIcon() {
   return (
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
-      <circle cx="12" cy="12" r="9" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" />
-      <ellipse cx="12" cy="12" rx="4" ry="9" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" />
-      <path d="M3 12h18" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="9" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" />
+      <ellipse cx="12" cy="12" rx="4" ry="9" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" />
+      <path d="M3 12h18" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" />
     </svg>
   )
 }
@@ -61,7 +61,7 @@ function ConnectedApps() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.625rem' }}>
         <p style={{
           fontSize: '0.75rem',
-          color: 'rgba(246,247,248,0.4)',
+          color: 'color-mix(in srgb, var(--off-white) 40%, transparent)',
           fontFamily: 'Anton, Impact, sans-serif',
           letterSpacing: '0.06em',
         }}>
@@ -74,7 +74,7 @@ function ConnectedApps() {
               background: 'none',
               border: 'none',
               fontSize: '0.75rem',
-              color: 'rgba(246,247,248,0.4)',
+              color: 'color-mix(in srgb, var(--off-white) 40%, transparent)',
               cursor: 'pointer',
               textDecoration: 'underline',
               padding: 0,
@@ -88,7 +88,7 @@ function ConnectedApps() {
       {/* Empty state */}
       {sessions.length === 0 && (
         <div className="card-md" style={{ textAlign: 'center', padding: '1.5rem' }}>
-          <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.3)' }}>
+          <p style={{ fontSize: '0.875rem', color: 'color-mix(in srgb, var(--off-white) 30%, transparent)' }}>
             No apps connected
           </p>
         </div>
@@ -127,7 +127,7 @@ function ConnectedApps() {
                   <p style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--off-white)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {meta?.name ?? 'Unknown app'}
                   </p>
-                  <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)', fontFamily: 'Inconsolata, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 35%, transparent)', fontFamily: 'Inconsolata, monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {truncatedUrl}
                   </p>
                 </div>
@@ -506,14 +506,14 @@ export default function SettingsPage() {
             <div style={{ marginBottom: '1.75rem' }}>
           <PageHeader eyebrow="Preferences" title="Settings" />
         </div>
-            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '2rem' }}>
+            <p style={{ fontSize: '0.875rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginBottom: '2rem' }}>
               Manage signers, recovery, and wallet settings
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {/* Wallet address */}
               <div className="card">
-                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.625rem' }}>
+                <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.625rem' }}>
                   WALLET
                 </p>
                 <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.875rem', wordBreak: 'break-all', color: 'var(--gold)' }}>
@@ -530,12 +530,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Passkeys</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       View and manage passkeys registered on this wallet
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -549,12 +549,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Spending permissions</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Apps and contracts allowed to move your tokens without asking
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -568,12 +568,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Trustlines &amp; Reserves</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Manage enabled assets, view locked reserves ({TRUSTLINE_RESERVE_COST_XLM} XLM each), and reclaim reserves from empty trustlines
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -602,14 +602,14 @@ export default function SettingsPage() {
                         />
                       )}
                     </div>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       {prfDowngraded
                         ? 'PRF unavailable — using legacy derivation'
                         : 'View active fee-payer address and derivation mode'}
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke={prfDowngraded ? 'rgba(220,38,38,0.5)' : 'rgba(246,247,248,0.3)'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke={prfDowngraded ? 'rgba(220,38,38,0.5)' : 'color-mix(in srgb, var(--off-white) 30%, transparent)'} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -623,12 +623,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Guardian recovery</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Set a trusted account to recover access if you lose your device
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -642,12 +642,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Paper Backup (Recovery Phrase)</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Generate an offline 12-word recovery phrase for emergencies
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -661,12 +661,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Profile & AI</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Name, language, and agent personality
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -680,12 +680,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Agent Settings</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Spending limits and allowed services
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -699,12 +699,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Security &amp; Lock</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Auto-lock the wallet after inactivity
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -718,12 +718,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Privacy</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Error reporting and data preferences
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -737,12 +737,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Address Book</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Save and manage frequently used Stellar addresses
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -758,12 +758,12 @@ export default function SettingsPage() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>DAO Multisig Wallet</p>
-                      <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                      <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                         Configure M-of-N signers, deploy wallet contract, and track pending tx approvals
                       </p>
                     </div>
                     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                      <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                     </svg>
                   </div>
                 </button>
@@ -778,12 +778,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>Bulk Payout</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Pay many recipients from one CSV
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -796,12 +796,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'var(--gold)' }}>Time-Locked Vault</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Protect long-term XLM with queued, cancellable withdrawals
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -815,12 +815,12 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem' }}>About</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Build, network, and contract addresses
                     </p>
                   </div>
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
-                    <path d="M6 3l5 5-5 5" stroke="rgba(246,247,248,0.3)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6 3l5 5-5 5" stroke="color-mix(in srgb, var(--off-white) 30%, transparent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                   </svg>
                 </div>
               </button>
@@ -833,7 +833,7 @@ export default function SettingsPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: 'rgba(220, 38, 38, 0.9)' }}>Danger Zone</p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                       Irreversible actions: account merge and permanent wallet deletion
                     </p>
                   </div>
@@ -845,7 +845,7 @@ export default function SettingsPage() {
 
               {/* Signers list */}
               <div style={{ marginTop: '2rem' }}>
-                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.625rem' }}>
+                <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.625rem' }}>
                   REGISTERED SIGNERS
                 </p>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
@@ -865,7 +865,7 @@ export default function SettingsPage() {
                               </span>
                             )}
                           </div>
-                          <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', marginTop: '0.25rem' }}>
+                          <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginTop: '0.25rem' }}>
                             {truncated}
                           </p>
                         </div>
@@ -873,7 +873,7 @@ export default function SettingsPage() {
                         <button
                           onClick={() => handleRemoveSigner(s.index)}
                           disabled={loading || signers.length <= 1}
-                          style={{ background: 'none', border: 'none', color: signers.length <= 1 ? 'rgba(246,247,248,0.1)' : 'var(--teal)', fontSize: '0.75rem', cursor: signers.length <= 1 ? 'not-allowed' : 'pointer', textDecoration: 'underline' }}
+                          style={{ background: 'none', border: 'none', color: signers.length <= 1 ? 'color-mix(in srgb, var(--off-white) 10%, transparent)' : 'var(--teal)', fontSize: '0.75rem', cursor: signers.length <= 1 ? 'not-allowed' : 'pointer', textDecoration: 'underline' }}
                         >
                           Remove
                         </button>
@@ -895,14 +895,14 @@ export default function SettingsPage() {
             <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '0.75rem' }}>
               Add signer
             </h2>
-            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '2rem', lineHeight: 1.6 }}>
+            <p style={{ fontSize: '0.875rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginBottom: '2rem', lineHeight: 1.6 }}>
               This will prompt a passkey registration on this device. Once confirmed, the new passkey will be added to your wallet on-chain.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {status && (
                 <div className="card-md">
-                  <p style={{ fontSize: '0.875rem', color: status.includes('index') ? 'var(--teal)' : 'rgba(246,247,248,0.6)' }}>
+                  <p style={{ fontSize: '0.875rem', color: status.includes('index') ? 'var(--teal)' : 'var(--text-muted)' }}>
                     {status}
                   </p>
                 </div>
@@ -920,7 +920,7 @@ export default function SettingsPage() {
             <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '0.75rem' }}>
               Guardian recovery
             </h2>
-            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
+            <p style={{ fontSize: '0.875rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
               A guardian is a Stellar account you trust to get you back in after you lose every
               device. Recovery replaces your wallet&apos;s keys after a {Math.round(GUARDIAN_DELAY_SECONDS / 86_400)}-day
               waiting period — a window in which you can cancel it from any signed-in device.
@@ -939,7 +939,7 @@ export default function SettingsPage() {
                   <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'rgb(248,113,113)' }}>
                     Recovery in progress
                   </p>
-                  <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', marginTop: '0.375rem', lineHeight: 1.6 }}>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', marginTop: '0.375rem', lineHeight: 1.6 }}>
                     {pendingRecovery.source === 'guardian'
                       ? 'Started by your guardian.'
                       : 'Started through your recovery servers (the separate 7-day mechanism).'}{' '}
@@ -949,7 +949,7 @@ export default function SettingsPage() {
                     If you did not expect this, cancel it now — completion hands the wallet to the
                     key below.
                   </p>
-                  <p className="mono" style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.45)', marginTop: '0.5rem', wordBreak: 'break-all', userSelect: 'all' }}>
+                  <p className="mono" style={{ fontSize: '0.6875rem', color: 'color-mix(in srgb, var(--off-white) 45%, transparent)', marginTop: '0.5rem', wordBreak: 'break-all', userSelect: 'all' }}>
                     {pendingRecovery.newPublicKeyHex}
                   </p>
                   <div style={{ display: 'flex', gap: '0.625rem', marginTop: '0.75rem', flexWrap: 'wrap' }}>
@@ -967,17 +967,17 @@ export default function SettingsPage() {
 
               {/* Current guardian */}
               <div className="card-md" data-testid="current-guardian">
-                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
+                <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
                   CURRENT GUARDIAN
                 </p>
                 {currentGuardian === undefined ? (
-                  <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)' }}>Checking on-chain…</p>
+                  <p style={{ fontSize: '0.875rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)' }}>Checking on-chain…</p>
                 ) : currentGuardian ? (
                   <p className="mono" style={{ fontSize: '0.75rem', color: 'var(--off-white)', wordBreak: 'break-all', userSelect: 'all' }}>
                     {currentGuardian}
                   </p>
                 ) : (
-                  <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)' }}>
+                  <p style={{ fontSize: '0.875rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)' }}>
                     No guardian set. Without one (or a recovery server, or a backup), losing every
                     device means losing the wallet.
                   </p>
@@ -986,23 +986,23 @@ export default function SettingsPage() {
 
               {/* What the trust means — consequences, not mechanism. */}
               <div className="card-md" data-testid="guardian-powers">
-                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
+                <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
                   WHAT A GUARDIAN CAN DO
                 </p>
                 {GUARDIAN_CAN.map((line) => (
-                  <p key={line} style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', lineHeight: 1.6, marginTop: '0.25rem' }}>
+                  <p key={line} style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.6, marginTop: '0.25rem' }}>
                     • {line}
                   </p>
                 ))}
-                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', margin: '0.75rem 0 0.375rem' }}>
+                <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', margin: '0.75rem 0 0.375rem' }}>
                   WHAT A GUARDIAN CANNOT DO
                 </p>
                 {GUARDIAN_CANNOT.map((line) => (
-                  <p key={line} style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.6)', lineHeight: 1.6, marginTop: '0.25rem' }}>
+                  <p key={line} style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.6, marginTop: '0.25rem' }}>
                     • {line}
                   </p>
                 ))}
-                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.45)', lineHeight: 1.6, marginTop: '0.75rem' }}>
+                <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 45%, transparent)', lineHeight: 1.6, marginTop: '0.75rem' }}>
                   Pick someone who would refuse a stranger&apos;s request — anyone who can convince your
                   guardian can start a takeover, and your only defence is cancelling within the{' '}
                   {Math.round(GUARDIAN_DELAY_SECONDS / 86_400)} days. This is separate from recovery
@@ -1014,7 +1014,7 @@ export default function SettingsPage() {
 
               {/* Nominate / change */}
               <div>
-                <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                <label style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                   {currentGuardian ? 'CHANGE GUARDIAN TO' : 'GUARDIAN STELLAR ADDRESS'}
                 </label>
                 <input
@@ -1030,7 +1030,7 @@ export default function SettingsPage() {
 
               {status && (
                 <div className="card-md">
-                  <p style={{ fontSize: '0.875rem', color: status.includes('success') ? 'var(--teal)' : 'rgba(246,247,248,0.6)' }}>
+                  <p style={{ fontSize: '0.875rem', color: status.includes('success') ? 'var(--teal)' : 'var(--text-muted)' }}>
                     {status}
                   </p>
                 </div>
@@ -1042,10 +1042,10 @@ export default function SettingsPage() {
 
               {/* Acting as someone else's guardian */}
               <div className="card-md" data-testid="act-as-guardian" style={{ marginTop: '1rem' }}>
-                <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
+                <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em', marginBottom: '0.375rem' }}>
                   SOMEONE NOMINATED YOU?
                 </p>
-                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.6, marginBottom: '0.75rem' }}>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '0.75rem' }}>
                   Start a recovery for a wallet that nominated this account
                   {' '}(<span className="mono" style={{ fontSize: '0.6875rem', userSelect: 'all' }}>{(() => { try { return getSignerKeypair().publicKey() } catch { return 'no session key' } })()}</span>)
                   {' '}as its guardian. The owner sends you their wallet address and the new public
@@ -1087,7 +1087,7 @@ export default function SettingsPage() {
             <h2 style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '1.75rem', marginBottom: '0.75rem' }}>
               Paper Backup (Recovery Phrase)
             </h2>
-            <p style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.4)', marginBottom: '2rem', lineHeight: 1.6 }}>
+            <p style={{ fontSize: '0.875rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', marginBottom: '2rem', lineHeight: 1.6 }}>
               Configure a paper backup using a standard BIP-39 12-word recovery phrase.
               This provides a secondary signer to recover your wallet if you lose your device.
             </p>
@@ -1095,7 +1095,7 @@ export default function SettingsPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {status && (
                 <div className="card-md">
-                  <p style={{ fontSize: '0.875rem', color: status.includes('success') || status.includes('successful') ? 'var(--teal)' : 'rgba(246,247,248,0.6)' }}>
+                  <p style={{ fontSize: '0.875rem', color: status.includes('success') || status.includes('successful') ? 'var(--teal)' : 'var(--text-muted)' }}>
                     {status}
                   </p>
                 </div>
@@ -1107,7 +1107,7 @@ export default function SettingsPage() {
                     <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--gold)', marginBottom: '0.5rem' }}>
                       Threat Model & Security Info
                     </p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                       Anyone who has access to your 12-word phrase and your wallet contract address can sign transactions and drain funds.
                       Store the phrase securely offline (e.g., written on paper in a safe).
                     </p>
@@ -1121,21 +1121,21 @@ export default function SettingsPage() {
               {backupStep === 'generated' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                   <div>
-                    <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                    <label style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                       YOUR 12-WORD RECOVERY PHRASE
                     </label>
-                    <div className="card-md" style={{ background: 'rgba(246,247,248,0.03)', border: '1px dashed var(--gold)', padding: '1rem', textAlign: 'center' }}>
+                    <div className="card-md" style={{ background: 'var(--surface)', border: '1px dashed var(--gold)', padding: '1rem', textAlign: 'center' }}>
                       <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '1.05rem', wordSpacing: '0.5em', letterSpacing: '0.03em', color: 'var(--off-white)', lineHeight: 1.8 }}>
                         {backupMnemonic}
                       </p>
                     </div>
-                    <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.5rem', fontStyle: 'italic' }}>
+                    <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 35%, transparent)', marginTop: '0.5rem', fontStyle: 'italic' }}>
                       Write down these 12 words in order and keep them offline.
                     </p>
                   </div>
 
                   <div>
-                    <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                    <label style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                       ENCRYPTION PASSPHRASE
                     </label>
                     <input
@@ -1145,7 +1145,7 @@ export default function SettingsPage() {
                       value={backupPassphrase}
                       onChange={e => setBackupPassphrase(e.target.value)}
                     />
-                    <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.5rem' }}>
+                    <p style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 35%, transparent)', marginTop: '0.5rem' }}>
                       Used to encrypt and store the mnemonic in IndexedDB for easy access on this device.
                     </p>
                   </div>
@@ -1156,7 +1156,7 @@ export default function SettingsPage() {
                     </button>
                     <button
                       className="btn"
-                      style={{ border: '1px solid var(--border-dim)', color: 'rgba(246,247,248,0.6)' }}
+                      style={{ border: '1px solid var(--border-dim)', color: 'var(--text-muted)' }}
                       onClick={() => { setBackupStep('initial'); setBackupMnemonic(''); setBackupPassphrase('') }}
                       disabled={loading}
                     >
@@ -1172,17 +1172,17 @@ export default function SettingsPage() {
                     <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--teal)', marginBottom: '0.25rem' }}>
                       Backup Configured
                     </p>
-                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)' }}>
+                    <p style={{ fontSize: '0.8125rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)' }}>
                       An encrypted backup is stored in IndexedDB, and the derived key is registered as a signer.
                     </p>
                   </div>
 
                   {backupMnemonic ? (
                     <div>
-                      <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                      <label style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                         YOUR RECOVERY PHRASE
                       </label>
-                      <div className="card-md" style={{ background: 'rgba(246,247,248,0.03)', border: '1px dashed var(--teal)', padding: '1rem', textAlign: 'center' }}>
+                      <div className="card-md" style={{ background: 'var(--surface)', border: '1px dashed var(--teal)', padding: '1rem', textAlign: 'center' }}>
                         <p style={{ fontFamily: 'Inconsolata, monospace', fontSize: '1.05rem', wordSpacing: '0.5em', letterSpacing: '0.03em', color: 'var(--off-white)', lineHeight: 1.8 }}>
                           {backupMnemonic}
                         </p>
@@ -1197,7 +1197,7 @@ export default function SettingsPage() {
                     </div>
                   ) : (
                     <div>
-                      <label style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
+                      <label style={{ fontSize: '0.75rem', color: 'color-mix(in srgb, var(--off-white) 40%, transparent)', display: 'block', marginBottom: '0.5rem', fontFamily: 'Anton, Impact, sans-serif', letterSpacing: '0.06em' }}>
                         REVEAL RECOVERY PHRASE
                       </label>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
