@@ -106,8 +106,17 @@ The `WalletError` enum is defined in `contracts/invisible_wallet/src/lib.rs`. Wh
 | 18 | `AllowanceExpired` | The session-key allowance period has ended | Issue a new session key |
 | 19 | `SessionKeyExpired` | The session key's validity window has passed | Issue a new session key |
 | 20 | `SessionKeyAclViolation` | The session key attempted an operation not permitted by its ACL | Use a session key with broader permissions, or use the primary passkey signer |
+| 21 | `SignerAlreadyExists` | `rotate_signer()` (or, on wallets built after the mainnet commit, `add_signer()`) was given a key that is already a registered signer | Use a key that is not registered yet |
+| 22 | `NoRecoveryKeySet` | `request_recovery()` called but no recovery key was registered via `set_recovery_key()` | Register a recovery key first |
+| 23 | `SpendLimitExceeded` | The signer key's rolling 24-hour spend limit would be exceeded | Wait for the window to roll over, raise the cap with `set_key_spend_limit()`, or sign with a key that has no limit |
+| 24 | `InvalidAuthData` | `authenticatorData` is shorter than the 37 bytes of rpIdHash, flags and signCount | Pass the authenticator's `authenticatorData` unmodified |
+| 25 | `UserVerificationRequired` | The authenticator did not set both the User Present and User Verified flags | Request the assertion with `userVerification: 'required'` |
+| 26 | `InvalidCeremonyType` | `clientDataJSON` is not a `webauthn.get` assertion (for example, a registration response) | Sign with `navigator.credentials.get()`, not `create()` |
+| 27 | `NegativeAmount` | A negative amount was presented against an allowance or spend limit | Send a non-negative amount |
 | 28 | `GuardianRecoveryPending` | A guardian recovery (`initiate_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `finalize_recovery()` | Wait for it and call `complete_recovery()`, or cancel it with either cancel function |
 | 29 | `RecoveryKeyRequestPending` | A recovery-key request (`request_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `complete_recovery()` | Wait for it and call `finalize_recovery()`, or cancel it with either cancel function |
+| 30 | `SpendLimitTokenNotAllowed` | Wallets built after the mainnet commit only: a key with spend limits tried to move a token it has no budget for | Set a limit for that token, or sign with a key that has no limits |
+| 31 | `SpendLimitUnsupportedCall` | Wallets built after the mainnet commit only: a key with spend limits made a call whose token movement cannot be determined | Make the call with a key that has no limits |
 
 ---
 

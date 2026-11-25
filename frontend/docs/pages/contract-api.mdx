@@ -1,161 +1,145 @@
 ---
 title: Contract API
-description: Complete reference for all Soroban smart contract functions and types.
+description: Every public function of the Veil wallet and factory contracts, and which of them are live on mainnet.
 ---
 
 import { Callout } from 'nextra/components'
 
 # Contract API
 
-The Veil smart contract (`invisible_wallet`) is a Soroban **custom account contract** that implements `__check_auth` for WebAuthn-based transaction authorization.
+Veil has two Soroban contracts:
 
-**Contract crate:** `invisible-wallet v0.1.0`
-**Soroban SDK:** `v20.0.0`
-**Source:** `contracts/invisible_wallet/src/`
+- **`invisible_wallet`** is the wallet itself. It is a custom account contract: it implements `__check_auth`, so a passkey (WebAuthn, P-256) signature can authorise transactions for it.
+- **`factory`** deploys one wallet per passkey, at an address derived from the passkey's public key.
+
+| | Wallet | Factory |
+|---|---|---|
+| Crate | `invisible-wallet v0.1.0` | `factory v0.1.0` |
+| Source | `contracts/invisible_wallet/src/lib.rs` | `contracts/factory/src/lib.rs` |
+| Soroban SDK | `soroban-sdk = "22.0.0"` | `soroban-sdk = "22.0.0"` |
+| Public functions in source | 29 | 4 |
+| Public functions live on mainnet | 24 | 3 |
 
 ---
 
-## Types
+## Mainnet and source are not the same contract
 
-### `WalletError`
+<Callout type="warning">
+  **The deployed wallet and factory are permanent.** Neither contract has an upgrade entrypoint, so the code running on mainnet will never change. A function marked **Source only** below does not exist on any mainnet wallet and **cannot be added to one**: not by an upgrade, not by the owner, not by Veil. Calling it on a mainnet wallet fails because the function does not exist.
+</Callout>
 
-All public functions return `Result<_, WalletError>`. The variants map to Soroban error codes.
+The mainnet factory and every wallet it deploys were built from one commit. `contracts/deployments.json` records it:
 
-```rust
-#[contracterror]
-pub enum WalletError {
-    AlreadyInitialized        = 1,
-    InvalidSignatureFormat    = 2,
-    SignerNotAuthorized        = 3,
-    InvalidPublicKey           = 4,
-    InvalidSignature           = 5,
-    SignatureVerificationFailed = 6,
-    InvalidChallenge           = 7,
-}
+| | Value |
+|---|---|
+| Source commit | `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2` |
+| Factory contract | `CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK` |
+| Factory WASM SHA-256 | `3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853` |
+| Wallet WASM SHA-256 | `b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5` |
+
+`scripts/verify-deployed-hashes.mjs` checks these hashes against the ledger. Source on `main` has moved on since that commit. A future factory deployed from newer source would serve the newer wallet, but it would be a new contract at a new address. It would not change the wallets that already exist.
+
+### How each entry is marked
+
+Every function below carries one of two labels:
+
+- **Live on mainnet.** The function is a `pub fn` in the contract both at `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2` and on `main`. If its signature or behaviour has changed since, the entry shows the mainnet version too.
+- **Source only (not deployed).** The function exists on `main` but not at `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2`. No mainnet wallet or factory has it.
+
+The labels come from comparing the two versions of each file:
+
+```bash
+git show ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2:contracts/invisible_wallet/src/lib.rs
+git show ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2:contracts/factory/src/lib.rs
 ```
 
-| Code | Variant | Trigger |
-|---|---|---|
-| 1 | `AlreadyInitialized` | `init()` called when a signer already exists |
-| 2 | `InvalidSignatureFormat` | `__check_auth` signature is not a `Vec<Val>` of length 4 |
-| 3 | `SignerNotAuthorized` | Provided public key is not stored in the contract |
-| 4 | `InvalidPublicKey` | Cannot parse the 65-byte SEC1 public key |
-| 5 | `InvalidSignature` | Cannot parse the 64-byte raw signature |
-| 6 | `SignatureVerificationFailed` | P-256 ECDSA verification failed |
-| 7 | `InvalidChallenge` | `base64url(signaturePayload)` not found in `clientDataJSON` |
+The source-only functions are `revoke_allowance`, `get_pending_recovery`, `register_session_key_scoped`, `remove_all_key_spend_limits` and `get_key_spend_limit_tokens` on the wallet, and `set_wasm_hash` on the factory.
+
+### Who can authorise a call
+
+Each entry says who must authorise the call:
+
+- **Wallet owner.** The function calls `env.current_contract_address().require_auth()`. The wallet then authorises itself through `__check_auth`, which in practice means a registered passkey signs the transaction. (A session key or an allowance can also satisfy `__check_auth`, but only for the calls its own limits permit. See [`__check_auth`](#__check_auth).)
+- **Guardian**, **recovery key** or **factory admin.** The function calls `require_auth()` on that stored address.
+- **Anyone.** The function needs no authorisation. Read-only functions are in this group, and so are the two recovery finalisers, which can only take effect once their timelock has passed.
+
+### Errors
+
+Wallet functions fail with a `WalletError` code. The full list of codes, with causes and recovery steps, is on the **[SDK Error Reference](/sdk-errors#contract-error-codes-walleterror)**. This page only names the codes each function can return.
+
+Some failures are host traps, not `WalletError` codes. A failed authorisation, a failed P-256 or ed25519 signature check, and an explicit `panic!` all surface as a host error.
 
 ---
 
-## Functions
+## Wallet contract
 
 ### `init`
 
-Initialize the wallet with a P-256 public key. Can only be called once.
+**Status:** Live on mainnet · **Authorisation:** anyone. The factory calls it in the same transaction that deploys the wallet, so in practice no one else can call it first.
 
 ```rust
 pub fn init(
     env: Env,
     initial_signer: BytesN<65>,
+    rp_id: Bytes,
+    origin: Bytes,
 ) -> Result<(), WalletError>
 ```
 
-**Parameters**
+Stores the first signer at index 0 and sets the nonce to 0. It also stores the WebAuthn relying-party ID and origin, which `__check_auth` checks on every passkey signature. `initial_signer` is an uncompressed P-256 public key (`0x04 || x || y`).
 
-| Name | Type | Description |
-|---|---|---|
-| `initial_signer` | `BytesN<65>` | Uncompressed P-256 public key: `0x04 \|\| x (32B) \|\| y (32B)` |
-
-**Errors**
-- `AlreadyInitialized` — a signer is already stored
-
-**Example (Stellar CLI)**
-```bash
-stellar contract invoke \
-  --id <CONTRACT_ID> \
-  --fn init \
-  -- \
-  --initial_signer <HEX_PUBKEY>
-```
-
----
+**Errors:** `AlreadyInitialized` if the wallet already has a signer.
 
 ### `add_signer`
 
-Add an additional authorized signer. Requires the contract's own authorization (i.e., an existing signer must sign the transaction).
+**Status:** Live on mainnet, but the mainnet signature is different · **Authorisation:** wallet owner
 
 ```rust
-pub fn add_signer(env: Env, new_signer: BytesN<65>)
+// main
+pub fn add_signer(env: Env, new_public_key: BytesN<65>) -> Result<u32, WalletError>
+
+// mainnet (ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2)
+pub fn add_signer(env: Env, new_public_key: BytesN<65>) -> u32
 ```
 
-**Requires:** `env.current_contract_address().require_auth()`
+Adds another passkey public key and returns the index it was given. Indices come from a counter that only goes up, so an index freed by `remove_signer` is never reused.
 
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `new_signer` | `BytesN<65>` | New uncompressed P-256 public key to authorize |
-
----
+**Errors:** on `main`, `SignerAlreadyExists` if the key is already registered. The mainnet version returns a plain `u32` and has no such check, so adding a key twice gives it a second index.
 
 ### `remove_signer`
 
-Remove an authorized signer. Requires contract self-authorization.
+**Status:** Live on mainnet · **Authorisation:** wallet owner
 
 ```rust
-pub fn remove_signer(env: Env, signer: BytesN<65>)
+pub fn remove_signer(env: Env, index: u32) -> Result<(), WalletError>
 ```
 
-**Requires:** `env.current_contract_address().require_auth()`
+Removes the signer at `index`. It refuses to remove the last signer.
 
-<Callout type="warning">
-  Be careful not to remove the last signer — this will lock the contract permanently. Guardian recovery (Phase 5) will provide a safety net.
-</Callout>
+**Errors:** `CannotRemoveLastSigner`, `SignerNotFound`.
 
----
+### `rotate_signer`
 
-### `set_guardian`
-
-Set a recovery/guardian key for account recovery (Phase 5).
+**Status:** Live on mainnet · **Authorisation:** wallet owner
 
 ```rust
-pub fn set_guardian(env: Env, guardian: BytesN<65>)
-```
-
-**Requires:** `env.current_contract_address().require_auth()`
-
----
-
-### `execute`
-
-Invoke a function on another contract after the wallet has authorized the call.
-
-```rust
-pub fn execute(
+pub fn rotate_signer(
     env: Env,
-    target: Address,
-    func: Symbol,
-    args: Vec<Val>,
-)
+    old_public_key: BytesN<65>,
+    new_public_key: BytesN<65>,
+) -> Result<(), WalletError>
 ```
 
-**Requires:** `env.current_contract_address().require_auth()`
+Replaces one signer key with another in a single step, for when a device is replaced. The new key takes the old key's index. The wallet address and its balances do not change.
 
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `target` | `Address` | The contract to call |
-| `func` | `Symbol` | Function name |
-| `args` | `Vec<Val>` | Arguments to pass |
-
----
+**Errors:** `InvalidPublicKey` if the two keys are the same, `SignerAlreadyExists` if `new_public_key` is already registered, `SignerNotFound` if `old_public_key` is not a signer.
 
 ### `__check_auth`
 
-Called automatically by the Soroban runtime for every transaction that requires this wallet's authorization. **Do not call directly.**
+**Status:** Live on mainnet, but spend limits and session keys behave differently there · **Authorisation:** called by the Soroban host, never directly
 
 ```rust
-fn __check_auth(
+pub fn __check_auth(
     env: Env,
     signature_payload: BytesN<32>,
     signature: Val,
@@ -163,67 +147,345 @@ fn __check_auth(
 ) -> Result<(), WalletError>
 ```
 
-**Signature format**
+The host calls this whenever the wallet's authorisation is required. It accepts three kinds of `signature`, tried in this order:
 
-The `signature` argument must be a `Vec<Val>` with exactly 4 elements:
+1. **Allowance.** `signature` is an `Address`. That spender must authorise the call, and every context must be a token `transfer` from this wallet. The amount is taken from the spender's allowance for that token (see `approve`).
+2. **Session key.** `signature` is a `Vec<Val>` of `[key_id: BytesN<32>, ed25519_sig: BytesN<64>, nonce: u64]`. The ed25519 signature must verify against the key's registered public key, the nonce must match, and every context must pass the key's ACL. On success the nonce goes up by one.
+3. **Passkey (WebAuthn).** `signature` is a `Vec<Val>` of `[public_key: BytesN<65>, authenticator_data: Bytes, client_data_json: Bytes, signature: BytesN<64>, nonce: u64]`. The key must be a registered signer and the nonce must match. `clientDataJSON` must be a `webauthn.get` assertion whose challenge is `base64url(signature_payload)`. The authenticator must report user presence and user verification, the RP ID hash and origin must match the stored values, and the P-256 signature must verify. Spend limits are then enforced, and on success the nonce goes up by one.
 
-```
-[0]  BytesN<65>  — Uncompressed P-256 public key (0x04 || x || y)
-[1]  Bytes       — WebAuthn authenticatorData (variable length)
-[2]  Bytes       — WebAuthn clientDataJSON (must contain base64url(payload))
-[3]  BytesN<64>  — Raw ECDSA signature (r || s, 32B each)
-```
+How the two versions differ:
 
-**Verification steps (in order)**
+- **Spend limits.** On `main`, limits are per (key, token). A key with any limit is scoped: moving a token it has no budget for, or making a call whose token movement cannot be read, is refused. On mainnet, a key has one limit, and it is checked against the sum of argument index 2 of every context, whatever token that is.
+- **Session keys.** On `main`, amounts and payees are read per selector, and calls with an unknown selector are refused. On mainnet, the amount is argument index 2 when there is one, and otherwise 0.
 
-1. Decode `signature` as `Vec<Val>`, assert length = 4
-2. Extract and type-check each element
-3. Verify `has_signer(pub_key)` — reject unauthorized keys
-4. Call `auth::verify_webauthn(payload, pub_key, auth_data, client_data_json, sig)`
-   - `challenge_is_present`: find `base64url(payload)` in `clientDataJSON`
-   - Compute `SHA256(authData || SHA256(clientDataJSON))`
-   - Verify P-256 ECDSA signature using `p256::ecdsa::VerifyingKey::verify_prehash`
+**Errors:** `InvalidSignatureFormat`, `SignerNotAuthorized`, `NonceMismatch`, `InvalidCeremonyType`, `InvalidChallenge`, `InvalidAuthData`, `UserVerificationRequired`, `RpIdMismatch`, `OriginMismatch`, `InsufficientAllowance`, `AllowanceExpired`, `NegativeAmount`, `SessionKeyExpired`, `SessionKeyAclViolation`, `SpendLimitExceeded`. Only on `main`: `SpendLimitTokenNotAllowed`, `SpendLimitUnsupportedCall`. A bad P-256 or ed25519 signature is a host trap.
 
----
+### `get_nonce`
 
-## Storage
-
-Defined in `storage.rs`:
+**Status:** Live on mainnet · **Authorisation:** anyone (read-only)
 
 ```rust
-pub fn add_signer(env: &Env, key: &BytesN<65>)
-pub fn remove_signer(env: &Env, key: &BytesN<65>)
-pub fn has_signer(env: &Env, key: &BytesN<65>) -> bool
-pub fn set_guardian(env: &Env, guardian_key: &BytesN<65>)
-pub fn get_guardian(env: &Env) -> Option<BytesN<65>>
+pub fn get_nonce(env: Env) -> u64
 ```
 
-| Function | Storage type | Key |
+Returns the wallet's current nonce. A passkey or session-key signature must carry this value.
+
+### `has_signer`
+
+**Status:** Live on mainnet · **Authorisation:** anyone (read-only)
+
+```rust
+pub fn has_signer(env: Env, key: BytesN<65>) -> bool
+```
+
+Returns whether `key` is a registered signer.
+
+### `get_signers`
+
+**Status:** Live on mainnet · **Authorisation:** anyone (read-only)
+
+```rust
+pub fn get_signers(env: Env) -> Map<u32, BytesN<65>>
+```
+
+Returns every signer, keyed by index. Indices can have gaps after a removal.
+
+### `execute`
+
+**Status:** Live on mainnet · **Authorisation:** wallet owner
+
+```rust
+pub fn execute(env: Env, target: Address, func: Symbol, args: Vec<Val>)
+```
+
+Calls `func` on `target` with `args`, with the wallet as the caller.
+
+**Errors:** none of its own. Any failure in the called contract is passed back up.
+
+### `approve`
+
+**Status:** Live on mainnet, but it behaves differently there · **Authorisation:** wallet owner
+
+```rust
+pub fn approve(
+    env: Env,
+    spender: Address,
+    token: Address,
+    amount: i128,
+    expiry: Option<u64>,
+)
+```
+
+Lets `spender` move up to `amount` of `token` out of the wallet, until `expiry` if one is given. The spender uses this allowance through branch 1 of `__check_auth`. Calling `approve` again replaces the allowance.
+
+- On `main`, `amount = 0` deletes the allowance, and a negative amount panics.
+- On mainnet, any `amount <= 0` panics (`"Amount must be greater than 0"`). A mainnet allowance cannot be revoked by approving zero. Replace it with a small amount, or let it expire.
+
+**Errors:** panics on an invalid amount, as described above.
+
+### `revoke_allowance`
+
+**Status:** Source only (not deployed) · **Authorisation:** wallet owner
+
+```rust
+pub fn revoke_allowance(env: Env, spender: Address, token: Address)
+```
+
+Deletes the allowance for (`spender`, `token`). This is the same as `approve(spender, token, 0, None)` on `main`. Mainnet wallets do not have this function.
+
+### `get_allowance`
+
+**Status:** Live on mainnet · **Authorisation:** anyone (read-only)
+
+```rust
+pub fn get_allowance(env: Env, spender: Address, token: Address) -> Option<storage::Allowance>
+```
+
+Returns the remaining `amount` and the `expiry` of an allowance, or `None` if there is none.
+
+### `set_guardian`
+
+**Status:** Live on mainnet · **Authorisation:** wallet owner
+
+```rust
+pub fn set_guardian(env: Env, guardian: Address)
+```
+
+Sets or replaces the guardian, the address that may start a guardian recovery. Emits a `("guardian", "set")` event.
+
+### `initiate_recovery`
+
+**Status:** Live on mainnet, but its errors are different there · **Authorisation:** guardian
+
+```rust
+pub fn initiate_recovery(env: Env, new_public_key: BytesN<65>) -> Result<(), WalletError>
+```
+
+Starts a guardian recovery that will replace every signer with `new_public_key` after a 3-day timelock (`RECOVERY_DELAY_SECONDS = 259_200`).
+
+**Errors:** `NoGuardianSet`. On `main`, the guardian recovery and the recovery-key recovery share one slot, so the call fails with `GuardianRecoveryPending` or `RecoveryKeyRequestPending` if either is pending. On mainnet the two are separate, and the call fails with `RecoveryAlreadyPending` only if a guardian recovery is already pending.
+
+### `complete_recovery`
+
+**Status:** Live on mainnet, but its errors are different there · **Authorisation:** anyone, once the timelock has passed
+
+```rust
+pub fn complete_recovery(env: Env) -> Result<(), WalletError>
+```
+
+Finishes a guardian recovery. Every signer is replaced by the recovered key at index 0. The guardian, the recovery key, allowances, spend limits and session keys are not touched.
+
+**Errors:** `RecoveryNotPending`, `RecoveryTimelockActive`. Only on `main`: `RecoveryKeyRequestPending`, when the pending recovery belongs to the recovery key.
+
+### `cancel_recovery`
+
+**Status:** Live on mainnet, but it behaves differently there · **Authorisation:** wallet owner
+
+```rust
+pub fn cancel_recovery(env: Env) -> Result<(), WalletError>
+```
+
+Cancels a pending recovery. On `main` it cancels whichever kind is pending, so nothing is left counting down. On mainnet it cancels only a guardian recovery. Use `cancel_recovery_request` for a recovery-key request.
+
+**Errors:** `RecoveryNotPending`.
+
+### `get_pending_recovery`
+
+**Status:** Source only (not deployed) · **Authorisation:** anyone (read-only)
+
+```rust
+pub fn get_pending_recovery(env: Env) -> Option<PendingRecoveryStatus>
+```
+
+Returns the pending recovery, if there is one: which system started it (`Guardian` or `RecoveryKey`), the key it will install, and when it unlocks. Mainnet wallets do not have this function.
+
+### `register_session_key`
+
+**Status:** Live on mainnet · **Authorisation:** wallet owner
+
+```rust
+pub fn register_session_key(
+    env: Env,
+    pubkey: BytesN<32>,
+    key_id: BytesN<32>,
+    target_contract: Address,
+    selector: Symbol,
+    amount_cap: i128,
+    expiry: u64,
+)
+```
+
+Registers an ed25519 session key under `key_id`. The key can authorise calls to `selector` on `target_contract`, up to a total of `amount_cap`, until `expiry`. The ACL is kept in temporary storage, with a TTL that runs to the expiry. On `main` this is the same as `register_session_key_scoped` with no payee list and no per-call maximum.
+
+### `register_session_key_scoped`
+
+**Status:** Source only (not deployed) · **Authorisation:** wallet owner
+
+```rust
+pub fn register_session_key_scoped(
+    env: Env,
+    pubkey: BytesN<32>,
+    key_id: BytesN<32>,
+    target_contract: Address,
+    selector: Symbol,
+    amount_cap: i128,
+    expiry: u64,
+    payees: Vec<Address>,
+    per_call_max: Option<i128>,
+)
+```
+
+Works like `register_session_key`, with two extra limits. If `payees` is not empty, any other recipient is refused, and so is a call with no recipient. If `per_call_max` is set, no single call may spend more than it. Mainnet wallets do not have this function.
+
+### `revoke_session_key`
+
+**Status:** Live on mainnet · **Authorisation:** wallet owner
+
+```rust
+pub fn revoke_session_key(env: Env, key_id: BytesN<32>)
+```
+
+Deletes the session key straight away.
+
+### `set_key_spend_limit`
+
+**Status:** Live on mainnet, but the mainnet signature is different · **Authorisation:** wallet owner
+
+```rust
+// main
+pub fn set_key_spend_limit(env: Env, key_id: BytesN<65>, token: Address, cap: i128)
+
+// mainnet (ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2)
+pub fn set_key_spend_limit(env: Env, key_id: BytesN<65>, cap: i128)
+```
+
+Sets a rolling 24-hour spend cap for a passkey signer, and resets its window. `cap = 0` blocks spending.
+
+- On `main`, the cap is in the base units of `token`. Each (key, token) pair has its own window, and a key with any limit may move only the tokens it has a budget for. A key that has a limit cannot manage limits.
+- On mainnet, a key has one cap, and it is compared with the sum of argument index 2 across every context, whatever the token.
+
+### `remove_key_spend_limit`
+
+**Status:** Live on mainnet, but the mainnet signature is different · **Authorisation:** wallet owner
+
+```rust
+// main
+pub fn remove_key_spend_limit(env: Env, key_id: BytesN<65>, token: Address)
+
+// mainnet (ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2)
+pub fn remove_key_spend_limit(env: Env, key_id: BytesN<65>)
+```
+
+On `main`, removes the key's limit for one token. If that was its only limit, the key is no longer restricted. On mainnet, removes the key's single limit.
+
+### `remove_all_key_spend_limits`
+
+**Status:** Source only (not deployed) · **Authorisation:** wallet owner
+
+```rust
+pub fn remove_all_key_spend_limits(env: Env, key_id: BytesN<65>)
+```
+
+Removes every per-token limit for a key, so it is no longer restricted. Mainnet wallets do not have this function. On mainnet, `remove_key_spend_limit` does the same job, because there is only one limit per key.
+
+### `get_key_spend_limit`
+
+**Status:** Live on mainnet, but the mainnet signature is different · **Authorisation:** anyone (read-only)
+
+```rust
+// main
+pub fn get_key_spend_limit(
+    env: Env,
+    key_id: BytesN<65>,
+    token: Address,
+) -> Option<policies::spend_limit::SpendWindow>
+
+// mainnet (ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2)
+pub fn get_key_spend_limit(env: Env, key_id: BytesN<65>) -> Option<policies::spend_limit::SpendWindow>
+```
+
+Returns the key's `cap`, `window_start` and `window_spent` (for one token, on `main`), or `None` if there is no limit.
+
+### `get_key_spend_limit_tokens`
+
+**Status:** Source only (not deployed) · **Authorisation:** anyone (read-only)
+
+```rust
+pub fn get_key_spend_limit_tokens(env: Env, key_id: BytesN<65>) -> Vec<Address>
+```
+
+Returns the tokens a key has limits for. An empty list means the key is not restricted. Mainnet wallets do not have this function.
+
+### `set_recovery_key`
+
+**Status:** Live on mainnet · **Authorisation:** wallet owner
+
+```rust
+pub fn set_recovery_key(env: Env, key: Address)
+```
+
+Sets or replaces the recovery key, an address (a cold wallet, for example) that may start a recovery-key request. Emits a `("rec_key", "set")` event.
+
+### `request_recovery`
+
+**Status:** Live on mainnet, but its errors are different there · **Authorisation:** recovery key
+
+```rust
+pub fn request_recovery(env: Env, new_signer: BytesN<65>) -> Result<(), WalletError>
+```
+
+Starts a recovery that will replace every signer with `new_signer` after a 7-day timelock (`RECOVERY_KEY_DELAY = 604_800`).
+
+**Errors:** `NoRecoveryKeySet`. On `main`, `RecoveryKeyRequestPending` or `GuardianRecoveryPending` if either recovery is pending. On mainnet, `RecoveryAlreadyPending` only if a recovery-key request is already pending.
+
+### `finalize_recovery`
+
+**Status:** Live on mainnet, but its errors are different there · **Authorisation:** anyone, once the timelock has passed
+
+```rust
+pub fn finalize_recovery(env: Env) -> Result<(), WalletError>
+```
+
+Finishes a recovery-key request. Every signer is replaced by the recovered key at index 0.
+
+**Errors:** `RecoveryNotPending`, `RecoveryTimelockActive`. Only on `main`: `GuardianRecoveryPending`, when the pending recovery belongs to the guardian.
+
+### `cancel_recovery_request`
+
+**Status:** Live on mainnet, but it behaves differently there · **Authorisation:** wallet owner
+
+```rust
+pub fn cancel_recovery_request(env: Env) -> Result<(), WalletError>
+```
+
+On `main` this does exactly what `cancel_recovery` does: it cancels whichever recovery is pending. On mainnet it cancels only a recovery-key request.
+
+**Errors:** `RecoveryNotPending`.
+
+---
+
+## Wallet storage
+
+Defined in `contracts/invisible_wallet/src/storage.rs`, `recovery.rs`, `session_key.rs` and `policies/spend_limit.rs`. These are internal helpers, not entrypoints.
+
+| Data | Storage | Key |
 |---|---|---|
-| `add/remove/has_signer` | Persistent | `DataKey::Signer(pubkey)` |
-| `set/get_guardian` | Instance | `DataKey::Guardian` |
+| Signers, by index | Instance | `DataKey::Signers`, `DataKey::NextSignerIndex` |
+| Nonce | Instance | `DataKey::Nonce` |
+| RP ID and origin | Instance | `DataKey::RpId`, `DataKey::Origin` |
+| Guardian | Persistent | `DataKey::Guardian` |
+| Pending guardian recovery | Persistent | `DataKey::RecoveryPending` |
+| Recovery key | Persistent | `DataKey::RecoveryKey` |
+| Pending recovery-key request | Persistent | `DataKey::RecoveryKeyPending` |
+| Allowances | Persistent | `DataKey::Allowance(AllowanceKey { spender, token })` |
+| Session-key ACLs | Temporary | `SessionDataKey::Acl(key_id)` |
+| Spend limits (`main`) | Persistent | `SpendLimitKey::Limit(SpendLimitScope { key_id, token })`, `SpendLimitKey::Tokens(key_id)` |
 
 ---
 
-## Cargo Dependencies
+## Factory contract
 
-```toml
-[dependencies]
-soroban-sdk = { version = "20.0.0", features = ["alloc"] }
-p256        = { version = "0.13", features = ["ecdsa", "sha2"] }
-sha2        = { version = "0.10", default-features = false }
-```
-
----
-
-## Factory Contract API
-
-**Contract crate:** `factory v0.1.0`
-**Source:** `contracts/factory/src/`
-
-The Factory contract deploys deterministic wallet instances using Soroban's address derivation (`env.deployer().with_address(factory, salt).deploy(wasm_hash)`). It is immutable once initialized and exposes **exactly three entrypoints**:
-
-### `FactoryError`
+The factory deploys each wallet at an address derived from the factory's address and `salt = SHA-256(public_key)`, and calls `init` on it in the same transaction. **On mainnet it has three entrypoints:** `__constructor`, `init` and `deploy`. Source on `main` adds a fourth, `set_wasm_hash`, which is not deployed. The mainnet factory therefore can never change the wallet code it deploys.
 
 ```rust
 #[contracterror]
@@ -237,45 +499,72 @@ pub enum FactoryError {
 
 ### `__constructor`
 
+**Status:** Live on mainnet · **Authorisation:** runs once, as part of the deploy transaction
+
 ```rust
 pub fn __constructor(env: Env, admin: Address)
 ```
 
-Runs atomically during contract creation. Binds the factory `admin` address in storage so it cannot be front-run.
+Stores the factory admin while the contract is being created, so no one can get in before it.
 
 ### `init`
+
+**Status:** Live on mainnet · **Authorisation:** factory admin
 
 ```rust
 pub fn init(env: Env, wasm_hash: BytesN<32>) -> Result<(), FactoryError>
 ```
 
-One-time initialization. Authenticated by the admin (`admin.require_auth()`). Stores the wallet WASM hash. If already initialized, returns `Err(FactoryError::AlreadyInitialized)`.
+Stores the hash of the wallet WASM that `deploy` will install. It can only run once.
 
-<Callout type="info">
-  `storage::set_wasm_hash` in `storage.rs` is an internal storage helper, not a contract entrypoint. There is no entrypoint to alter or update the WASM hash after initialization.
-</Callout>
+**Errors:** `NotInitialized` if no admin is stored, `AlreadyInitialized` if a hash is already stored.
+
+### `set_wasm_hash`
+
+**Status:** Source only (not deployed) · **Authorisation:** factory admin
+
+```rust
+pub fn set_wasm_hash(env: Env, new_hash: BytesN<32>) -> Result<(), FactoryError>
+```
+
+Points future `deploy` calls at a new wallet WASM. It does not change any wallet that already exists, or any wallet address. The mainnet factory does not have this function, so the wallet code it deploys is fixed forever.
+
+**Errors:** `NotInitialized` if no admin is stored or `init` has not run.
 
 ### `deploy`
+
+**Status:** Live on mainnet · **Authorisation:** anyone
 
 ```rust
 pub fn deploy(
     env: Env,
     public_key: BytesN<65>,
-    rp_id: Bytes,
-    origin: Bytes,
+    rp_id: soroban_sdk::Bytes,
+    origin: soroban_sdk::Bytes,
 ) -> Result<Address, FactoryError>
 ```
 
-Deploys a new `invisible_wallet` contract instance for the given P-256 public key.
+Deploys a wallet for `public_key`, calls `init(public_key, rp_id, origin)` on it, and returns its address. The same public key always gives the same address.
 
-- Computes `salt = SHA-256(public_key)`
-- Verifies public key is valid SEC1 uncompressed P-256 point (`0x04 || x || y`)
-- Deploys the wallet contract using the stored WASM hash
-- Invokes `init(public_key, rp_id, origin)` on the newly deployed wallet
-- Returns the deployed wallet `Address`
+**Errors:** `NotInitialized` if no WASM hash is stored, `InvalidPublicKey` if the key is malformed, `AlreadyDeployed` if a wallet already exists for this key.
 
-**Errors:**
-- `NotInitialized` — factory has not been initialized with a WASM hash
-- `InvalidPublicKey` — malformed or non-curve public key
-- `AlreadyDeployed` — a wallet for this public key salt already exists
+The `InvalidPublicKey` check is different in the two versions. On `main`, the key must start with `0x04` and be a point on the P-256 curve. On mainnet, only the `0x04` prefix is checked. The curve check there was compiled into test builds only, so a key that is off the curve gets a wallet, but no signature can ever verify against that key.
 
+---
+
+## Dependencies
+
+Both contracts, on `main` and at the deployed commit, depend on:
+
+```toml
+[dependencies]
+soroban-sdk = "22.0.0"
+```
+
+That is the only runtime dependency in the deployed commit. On `main`, the factory also depends on `p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }` for its on-curve key check (see [`deploy`](#deploy)). The wallet has no other runtime dependency in either version. It verifies P-256 signatures with the host's `secp256r1_verify`.
+
+---
+
+## Keeping this page accurate
+
+`scripts/tests/contract-api-docs.test.mjs` runs as part of `npm run test:scripts`. It reads every public function in both `lib.rs` files and fails if any of them has no heading here, or if a heading has no **Status** line.
