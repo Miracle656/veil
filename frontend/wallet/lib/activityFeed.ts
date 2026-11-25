@@ -51,8 +51,10 @@ export function initActivityFeed(accountId: string): void {
     horizonUrl,
     onEvent(event) {
       const record = toTxRecord(event)
-      if (_records.some(r => r.hash === record.hash)) return
-      _records = [record, ..._records].slice(0, 50)
+      // By row id, not by transaction hash: one transaction can hold a
+      // payment and its fee, and both belong in the list.
+      if (_records.some(r => r.id === record.id)) return
+      _records = [record, ..._records].slice(0, 200)
       notify()
     },
   })
@@ -70,7 +72,10 @@ export function hydrateActivityFeed(records: TxRecord[]): void {
 }
 
 export function appendActivityFeed(newRecords: TxRecord[]): void {
-  const deduped = newRecords.filter(r => !_records.some(existing => existing.hash === r.hash))
+  // A row is a repeat when its id is already here. A row from the indexer
+  // (id `w-…`) is also a repeat when Horizon already gave us that transaction.
+  const deduped = newRecords.filter(r => !_records.some(existing =>
+    existing.id === r.id || (r.id.startsWith('w-') && !!r.hash && existing.hash === r.hash)))
   if (deduped.length === 0) return
   _records = [..._records, ...deduped].sort((a, b) => b.timestamp - a.timestamp)
   notify()

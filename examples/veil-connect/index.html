@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Veil Connect demo</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 560px; margin: 2rem auto; padding: 0 1rem; }
+    button { font: inherit; padding: 0.6rem 1rem; margin: 0.25rem 0.25rem 0.25rem 0; cursor: pointer; }
+    input { font: inherit; padding: 0.4rem; width: 100%; box-sizing: border-box; margin-bottom: 0.5rem; }
+    pre { background: #f3f3f3; padding: 0.75rem; white-space: pre-wrap; word-break: break-all; }
+    label { font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>Veil Connect demo</h1>
+  <p>
+    A stand-in for another app. Serve this folder on <code>http://localhost:5500</code>
+    and run the wallet on <code>http://localhost:3000</code>. The <code>demo</code> app id
+    only works against a local wallet, never the live one.
+  </p>
+
+  <label>Wallet origin</label>
+  <input id="origin" value="http://localhost:3000">
+  <label>App id</label>
+  <input id="app" value="demo">
+
+  <button id="connect">Connect Veil</button>
+  <button id="fund">Add money</button>
+  <button id="cashout">Cash out</button>
+
+  <h2>Pay</h2>
+  <label>To (full Stellar address)</label>
+  <input id="to" placeholder="G… or C…">
+  <label>Amount</label>
+  <input id="amount" value="1">
+  <label>Reference</label>
+  <input id="reference" value="order-0001">
+  <button id="pay">Pay with Veil</button>
+
+  <h2>Result</h2>
+  <pre id="out">Nothing yet.</pre>
+
+  <script>
+    const $ = (id) => document.getElementById(id)
+    const show = (label, value) => { $('out').textContent = label + '\n' + JSON.stringify(value, null, 2) }
+    const fail = (error) => show('Failed', { code: error.code, message: error.message })
+
+    // Load connect.js from the wallet origin typed above, once.
+    let ready = null
+    function veil() {
+      if (!ready) {
+        ready = new Promise((resolve, reject) => {
+          const s = document.createElement('script')
+          s.src = $('origin').value.replace(/\/$/, '') + '/connect.js'
+          s.onload = () => resolve(window.VeilConnect.init({ app: $('app').value }))
+          s.onerror = () => reject(new Error('Could not load connect.js from the wallet origin.'))
+          document.head.appendChild(s)
+        })
+      }
+      return ready
+    }
+    // Load on page open so the click itself opens the window (browsers block
+    // a window opened after waiting for something).
+    let client = null
+    veil().then((c) => { client = c }, fail)
+
+    $('connect').onclick = () => client && client.connect().then((r) => show('Connected', r), fail)
+    $('fund').onclick = () => client && client.addMoney().then((r) => show('Add money opened', r), fail)
+    $('cashout').onclick = () => client && client.cashOut().then((r) => show('Cash out opened', r), fail)
+    $('pay').onclick =() => client && client.pay({
+      to: $('to').value.trim(),
+      amount: $('amount').value.trim(),
+      asset: 'USDC',
+      reference: $('reference').value.trim(),
+    }).then((r) => show('Paid. Now verify the hash on your server.', r), fail)
+  </script>
+</body>
+</html>
