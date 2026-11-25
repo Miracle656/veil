@@ -59,6 +59,11 @@ export default function AboutPage() {
             <p style={{ fontSize: '0.875rem', marginTop: '0.5rem', color: 'var(--off-white)', lineHeight: 1.5 }}>
               Veil is a product of Divinity Labs Limited, a company registered in Nigeria (RC 10031131).
             </p>
+            <p style={{ fontSize: '0.875rem', marginTop: '0.5rem', lineHeight: 1.5 }}>
+              <a href="https://www.useveilapp.xyz/terms" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)' }}>Terms of Service</a>
+              {' · '}
+              <a href="https://www.useveilapp.xyz/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)' }}>Privacy Policy</a>
+            </p>
           </Card>
 
           <div>
