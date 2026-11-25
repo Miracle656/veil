@@ -16,6 +16,11 @@ import { isOfframpAvailable, lastKnownAvailability } from '../../lib/offramp';
 import { ServicesDrawer } from '../../components/ServicesDrawer';
 import { AssetsList } from '../../components/AssetsList';
 import { WalletAddressChip } from '../../components/WalletAddressChip';
+<<<<<<< Updated upstream
+=======
+import { SpendingAccountWarning } from '../../components/SpendingAccountWarning';
+import { RetiredFeePayerBanner } from '../../components/RetiredFeePayerBanner';
+>>>>>>> Stashed changes
 import { fontFamily } from '../../theme/typography';
 import { useTheme } from '../../hooks/useTheme';
 import type { ThemeColors } from '../../lib/theme';
@@ -363,6 +368,14 @@ export default function DashboardTab() {
         reserveReason={reserveReason}
       />
 
+<<<<<<< Updated upstream
+=======
+      {/* Directly under the balance, because it is about whether that balance
+          survives the phone. Renders nothing for a wallet that is not at risk. */}
+      <SpendingAccountWarning />
+      <RetiredFeePayerBanner onClaimed={() => { if (walletAddress) void refreshAll(walletAddress); }} />
+
+>>>>>>> Stashed changes
 
       {/* Cash out is hidden unless the backend answers AND we are on mainnet.
           The Linq key lives on the backend, so without it there is no order to
