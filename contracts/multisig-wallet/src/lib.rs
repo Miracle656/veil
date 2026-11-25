@@ -1,8 +1,30 @@
 //! Multisig wallet contract
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
+    Symbol, Vec,
 };
+
+/// TTL policy for proposals in persistent storage (~30 days, matching factory and veil-names).
+pub const PROPOSAL_TTL_THRESHOLD: u32 = 29 * 17_280;
+pub const PROPOSAL_TTL_EXTEND_TO: u32 = 30 * 17_280;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum MultisigError {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    ThresholdZero = 3,
+    ThresholdTooHigh = 4,
+    DuplicateOwners = 5,
+    NotAnOwner = 6,
+    InvalidAmount = 7,
+    ProposalNotFound = 8,
+    ProposalAlreadyExecuted = 9,
+}
+
+pub use MultisigError as Error;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,6 +46,25 @@ pub enum DataKey {
     Proposal(u64),
 }
 
+fn load_proposal(env: &Env, id: u64) -> Option<Proposal> {
+    let key = DataKey::Proposal(id);
+    let proposal: Option<Proposal> = env.storage().persistent().get(&key);
+    if proposal.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, PROPOSAL_TTL_THRESHOLD, PROPOSAL_TTL_EXTEND_TO);
+    }
+    proposal
+}
+
+fn save_proposal(env: &Env, id: u64, proposal: &Proposal) {
+    let key = DataKey::Proposal(id);
+    env.storage().persistent().set(&key, proposal);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PROPOSAL_TTL_THRESHOLD, PROPOSAL_TTL_EXTEND_TO);
+}
+
 #[contract]
 pub struct MultisigContract;
 
@@ -32,13 +73,23 @@ impl MultisigContract {
     /// Initialize the multisig with a list of owners, threshold `m`, and a token address (e.g. native SAC).
     pub fn initialize(env: Env, owners: Vec<Address>, threshold: u32, token: Address) {
         if env.storage().instance().has(&DataKey::Threshold) {
-            panic!("already initialized");
+            panic_with_error!(&env, MultisigError::AlreadyInitialized);
         }
         if threshold == 0 {
-            panic!("threshold must be greater than 0");
+            panic_with_error!(&env, MultisigError::ThresholdZero);
         }
-        if owners.len() < threshold as u32 {
-            panic!("threshold cannot exceed owners length");
+        if owners.len() < threshold {
+            panic_with_error!(&env, MultisigError::ThresholdTooHigh);
+        }
+
+        // Check for duplicate owners
+        for i in 0..owners.len() {
+            let owner = owners.get(i).unwrap();
+            for j in (i + 1)..owners.len() {
+                if owner == owners.get(j).unwrap() {
+                    panic_with_error!(&env, MultisigError::DuplicateOwners);
+                }
+            }
         }
 
         env.storage().instance().set(&DataKey::Owners, &owners);
@@ -51,7 +102,16 @@ impl MultisigContract {
     pub fn propose_transaction(env: Env, caller: Address, to: Address, amount: i128) -> u64 {
         caller.require_auth();
 
-        let owners: Vec<Address> = env.storage().instance().get(&DataKey::Owners).expect("not initialized");
+        if amount <= 0 {
+            panic_with_error!(&env, MultisigError::InvalidAmount);
+        }
+
+        let owners: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owners)
+            .unwrap_or_else(|| panic_with_error!(&env, MultisigError::NotInitialized));
+
         let mut is_owner = false;
         for owner in owners.iter() {
             if owner == caller {
@@ -60,7 +120,7 @@ impl MultisigContract {
             }
         }
         if !is_owner {
-            panic!("caller is not an owner");
+            panic_with_error!(&env, MultisigError::NotAnOwner);
         }
 
         let mut count: u64 = env.storage().instance().get(&DataKey::ProposalCount).unwrap_or(0);
@@ -75,7 +135,7 @@ impl MultisigContract {
             executed: false,
         };
 
-        env.storage().instance().set(&DataKey::Proposal(count), &proposal);
+        save_proposal(&env, count, &proposal);
 
         env.events().publish(
             (Symbol::new(&env, "propose"), count),
@@ -90,7 +150,12 @@ impl MultisigContract {
         signer.require_auth();
 
         // Check if signer is an owner
-        let owners: Vec<Address> = env.storage().instance().get(&DataKey::Owners).expect("not initialized");
+        let owners: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::Owners)
+            .unwrap_or_else(|| panic_with_error!(&env, MultisigError::NotInitialized));
+
         let mut is_owner = false;
         for owner in owners.iter() {
             if owner == signer {
@@ -99,13 +164,15 @@ impl MultisigContract {
             }
         }
         if !is_owner {
-            panic!("not an owner");
+            panic_with_error!(&env, MultisigError::NotAnOwner);
         }
 
-        // Fetch proposal
-        let mut proposal: Proposal = env.storage().instance().get(&DataKey::Proposal(proposal_id)).expect("proposal not found");
+        // Fetch proposal from persistent storage (with TTL extension)
+        let mut proposal: Proposal = load_proposal(&env, proposal_id)
+            .unwrap_or_else(|| panic_with_error!(&env, MultisigError::ProposalNotFound));
+
         if proposal.executed {
-            panic!("proposal already executed");
+            panic_with_error!(&env, MultisigError::ProposalAlreadyExecuted);
         }
 
         // Check if signer already approved
@@ -126,10 +193,19 @@ impl MultisigContract {
         }
 
         // If threshold met, execute proposal
-        let threshold: u32 = env.storage().instance().get(&DataKey::Threshold).unwrap();
+        let threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Threshold)
+            .unwrap_or_else(|| panic_with_error!(&env, MultisigError::NotInitialized));
+
         if proposal.approvals.len() >= threshold {
             proposal.executed = true;
-            let token_address: Address = env.storage().instance().get(&DataKey::Token).unwrap();
+            let token_address: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Token)
+                .unwrap_or_else(|| panic_with_error!(&env, MultisigError::NotInitialized));
             let token_client = token::Client::new(&env, &token_address);
             token_client.transfer(&env.current_contract_address(), &proposal.to, &proposal.amount);
 
@@ -139,83 +215,37 @@ impl MultisigContract {
             );
         }
 
-        env.storage().instance().set(&DataKey::Proposal(proposal_id), &proposal);
+        save_proposal(&env, proposal_id, &proposal);
     }
 
     /// Query a proposal (to, amount, approvals)
     pub fn get_proposal(env: Env, proposal_id: u64) -> Proposal {
-        env.storage().instance().get(&DataKey::Proposal(proposal_id)).expect("proposal not found")
+        load_proposal(&env, proposal_id)
+            .unwrap_or_else(|| panic_with_error!(&env, MultisigError::ProposalNotFound))
     }
 
     /// Query the configuration
     pub fn get_owners(env: Env) -> Vec<Address> {
-        env.storage().instance().get(&DataKey::Owners).expect("not initialized")
+        env.storage()
+            .instance()
+            .get(&DataKey::Owners)
+            .unwrap_or_else(|| panic_with_error!(&env, MultisigError::NotInitialized))
     }
 
     pub fn get_threshold(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::Threshold).expect("not initialized")
+        env.storage()
+            .instance()
+            .get(&DataKey::Threshold)
+            .unwrap_or_else(|| panic_with_error!(&env, MultisigError::NotInitialized))
     }
 
     pub fn get_proposal_count(env: Env) -> u64 {
-        env.storage().instance().get(&DataKey::ProposalCount).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::ProposalCount)
+            .unwrap_or(0)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{Env, Address, testutils::Address as _};
-
-    #[test]
-    fn test_multisig_flow() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register_contract(None, MultisigContract);
-        let client = MultisigContractClient::new(&env, &contract_id);
-
-        let owner1 = Address::generate(&env);
-        let owner2 = Address::generate(&env);
-        let owner3 = Address::generate(&env);
-
-        let token_admin = Address::generate(&env);
-        let token = env.register_stellar_asset_contract(token_admin.clone());
-        let token_client = token::Client::new(&env, &token);
-
-        // Mint some tokens to the multisig contract so it has funds to transfer
-        let sac_client = token::StellarAssetClient::new(&env, &token);
-        sac_client.mint(&contract_id, &1000);
-
-        let mut owners = Vec::new(&env);
-        owners.push_back(owner1.clone());
-        owners.push_back(owner2.clone());
-        owners.push_back(owner3.clone());
-
-        client.initialize(&owners, &2, &token);
-
-        assert_eq!(client.get_threshold(), 2);
-        assert_eq!(client.get_owners().len(), 3);
-
-        let to = Address::generate(&env);
-        let prop_id = client.propose_transaction(&owner1, &to, &100);
-        assert_eq!(prop_id, 1);
-
-        let proposal = client.get_proposal(&1);
-        assert_eq!(proposal.executed, false);
-        assert_eq!(proposal.approvals.len(), 0);
-
-        client.sign_transaction(&1, &owner1);
-        let proposal = client.get_proposal(&1);
-        assert_eq!(proposal.approvals.len(), 1);
-        assert_eq!(proposal.executed, false);
-
-        client.sign_transaction(&1, &owner2);
-        let proposal = client.get_proposal(&1);
-        assert_eq!(proposal.approvals.len(), 2);
-        assert_eq!(proposal.executed, true);
-
-        // Check that the transfer actually happened
-        assert_eq!(token_client.balance(&to), 100);
-        assert_eq!(token_client.balance(&contract_id), 900);
-    }
-}
+mod test;
