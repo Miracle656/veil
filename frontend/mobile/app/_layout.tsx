@@ -36,6 +36,7 @@ import { WalletProvider } from '../components/WalletProvider';
 import { BootnodeBanner } from '../components/BootnodeBanner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { initSentry } from '../lib/sentry';
+import { useTransitions } from '../lib/transitions';
 
 // Hold the native splash screen until the brand fonts are ready, so the UI
 // never flashes a system font on first paint.
@@ -43,6 +44,7 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const { colors, isDark } = useTheme();
+  const transitions = useTransitions();
   const [fontsLoaded, fontError] = useFonts(fontAssets);
 
   useEffect(() => {
@@ -130,6 +132,7 @@ export default function RootLayout() {
               <Stack
                 screenOptions={{
                   headerShown: false,
+                  animation: transitions.stack,
                   // Painted behind every route, so a screen that is still loading (or
                   // shorter than the viewport) never shows the opposite theme.
                   contentStyle: { backgroundColor: colors.background },
@@ -137,6 +140,8 @@ export default function RootLayout() {
               >
                 {/* Privacy sub-navigator — shield / private-send / unshield. */}
                 <Stack.Screen name="privacy" />
+                <Stack.Screen name="lock" options={{ animation: transitions.cover }} />
+                <Stack.Screen name="offline" options={{ animation: transitions.cover }} />
               </Stack>
               {/* Mounted once at the root so a dApp request is presented for approval
               no matter which screen the user is on. */}
