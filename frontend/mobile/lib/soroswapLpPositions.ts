@@ -9,7 +9,7 @@ import { simulateRead } from './contractInvoke';
 // These are the deployed Soroswap factories in soroswap/core's public
 // mainnet.contracts.json and testnet.contracts.json. Pairs are discovered from
 // each factory at runtime; no position or pair list is bundled here.
-const FACTORY_IDS = {
+export const SOROSWAP_FACTORY_IDS = {
   mainnet: 'CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2',
   testnet: 'CDP3HMUH6SMS3S7NPGNDJLULCOXXEPSHY4JKUKMBNQMATHDHWXRRJTBY',
 } as const;
@@ -19,9 +19,13 @@ const MAX_TOKEN_DECIMALS = 38;
 
 export type LpPosition = {
   pairId: string;
+  tokenAId: string;
+  tokenBId: string;
   tokenA: string;
   tokenB: string;
   lpBalance: string;
+  lpBalanceRaw: string;
+  ownerBalances: { address: string; raw: string }[];
   ownershipPercent: string;
   underlyingA: string;
   underlyingB: string;
@@ -161,7 +165,10 @@ function formatPercent(balance: bigint, supply: bigint): string {
   return (Number(hundredths) / 100).toFixed(2);
 }
 
-async function readPosition(pairId: string, balance: bigint): Promise<LpPosition> {
+async function readPosition(
+  pairId: string,
+  ownerBalances: { address: string; raw: bigint }[],
+): Promise<LpPosition> {
   const [tokenAIdValue, tokenBIdValue, reserveValues, supplyValue, lpDecimalsValue] =
     await Promise.all([
       requiredRead(pairId, 'token_0'),
@@ -179,6 +186,7 @@ async function readPosition(pairId: string, balance: bigint): Promise<LpPosition
     throw readError(pairId, 'pair metadata');
   }
 
+  const balance = ownerBalances.reduce((total, held) => total + held.raw, 0n);
   const supply = integer(supplyValue, pairId, 'total_supply');
   if (supply === 0n || balance > supply) throw readError(pairId, 'total_supply');
   const reserveA = integer(reserveValues[0], pairId, 'get_reserves');
@@ -210,9 +218,13 @@ async function readPosition(pairId: string, balance: bigint): Promise<LpPosition
 
   return {
     pairId,
+    tokenAId: tokenAIdValue,
+    tokenBId: tokenBIdValue,
     tokenA: assetA.symbol,
     tokenB: assetB.symbol,
     lpBalance: formatUnits(balance, lpDecimals),
+    lpBalanceRaw: balance.toString(),
+    ownerBalances: ownerBalances.map(({ address, raw }) => ({ address, raw: raw.toString() })),
     ownershipPercent: formatPercent(balance, supply),
     underlyingA,
     underlyingB,
@@ -227,7 +239,7 @@ async function readPosition(pairId: string, balance: bigint): Promise<LpPosition
  */
 export async function loadSoroswapLpPositions(address: string): Promise<LpPosition[]> {
   const network = getNetwork();
-  const factoryId = FACTORY_IDS[network.name];
+  const factoryId = SOROSWAP_FACTORY_IDS[network.name];
   const count = integer(
     await requiredRead(factoryId, 'all_pairs_length'),
     factoryId,
@@ -260,8 +272,15 @@ export async function loadSoroswapLpPositions(address: string): Promise<LpPositi
         )
       )
     );
-    return { pairId, balance: ownerBalances.reduce((total, held) => total + held, 0n) };
+    return {
+      pairId,
+      ownerBalances: owners.map((address, index) => ({ address, raw: ownerBalances[index]! })),
+    };
   });
-  const held = balances.filter((position) => position.balance > 0n);
-  return mapInBatches(held, ({ pairId, balance }) => readPosition(pairId, balance));
+  const held = balances.filter((position) =>
+    position.ownerBalances.some(({ raw }) => raw > 0n),
+  );
+  return mapInBatches(held, ({ pairId, ownerBalances }) =>
+    readPosition(pairId, ownerBalances),
+  );
 }

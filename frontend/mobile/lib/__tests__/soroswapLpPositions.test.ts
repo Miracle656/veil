@@ -85,9 +85,16 @@ describe('loadSoroswapLpPositions', () => {
     await expect(loadSoroswapLpPositions(WALLET)).resolves.toEqual([
       {
         pairId: PAIR,
+        tokenAId: XLM,
+        tokenBId: USDC,
         tokenA: 'XLM',
         tokenB: 'USDC',
         lpBalance: '25',
+        lpBalanceRaw: '250000000',
+        ownerBalances: [
+          { address: WALLET, raw: '200000000' },
+          { address: FEE_PAYER, raw: '50000000' },
+        ],
         ownershipPercent: '2.50',
         underlyingA: '125',
         underlyingB: '300',
@@ -129,9 +136,13 @@ describe('loadSoroswapLpPositions', () => {
     await expect(loadSoroswapLpPositions(FEE_PAYER)).resolves.toEqual([
       {
         pairId: PAIR,
+        tokenAId: UNKNOWN_TOKEN_A,
+        tokenBId: UNKNOWN_TOKEN_B,
         tokenA: 'FOO',
         tokenB: 'BAR',
         lpBalance: '0.25',
+        lpBalanceRaw: '2500000',
+        ownerBalances: [{ address: FEE_PAYER, raw: '2500000' }],
         ownershipPercent: '25.00',
         underlyingA: '0.625',
         underlyingB: '2.5',
@@ -162,9 +173,13 @@ describe('loadSoroswapLpPositions', () => {
     await expect(loadSoroswapLpPositions(FEE_PAYER)).resolves.toEqual([
       {
         pairId: PAIR,
+        tokenAId: token,
+        tokenBId: USDC,
         tokenA: 'ALPHA',
         tokenB: 'USDC',
         lpBalance: '1',
+        lpBalanceRaw: '10000000',
+        ownerBalances: [{ address: FEE_PAYER, raw: '10000000' }],
         ownershipPercent: '10.00',
         underlyingA: '100',
         underlyingB: '200',
