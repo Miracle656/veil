@@ -124,6 +124,31 @@ describe('collectWalletMetadata', () => {
     const md = collectWalletMetadata()
     expect(JSON.stringify(md)).not.toContain('deadbeef')
   })
+
+  it('explicitly excludes ephemeral stealth keys from backup metadata', () => {
+    seedWallet()
+    const stealthSecret = 'SCZ5TKBNEXAMPLESECRETKEY12345678901234567890123456789012'
+    localStorageMock.setItem(
+      'veil_stealth_pending_sweeps',
+      JSON.stringify([
+        {
+          id: 'stealth_sweep_test_1',
+          oneTimePublicKey: 'GDZX4M24GBL77E6V7TFFWJ6W6O6Q2UPL2H6XGY3BGYUDF63L45WGFK4W',
+          oneTimeSecret: stealthSecret,
+          destinationContractAddress: 'CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA',
+          amount: '10.0',
+          status: 'pending',
+        },
+      ]),
+    )
+
+    const md = collectWalletMetadata()
+    const serialized = JSON.stringify(md)
+
+    expect(serialized).not.toContain(stealthSecret)
+    expect(serialized).not.toContain('veil_stealth_pending_sweeps')
+    expect(serialized).not.toContain('stealth_sweep_test_1')
+  })
 })
 
 // ── round-trip ────────────────────────────────────────────────────────────────

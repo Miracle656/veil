@@ -18,6 +18,7 @@ import { WalletConnectApprovalModal } from '@/components/WalletConnectApprovalMo
 import { DepositModal } from '@/components/DepositModal'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { PrivateBalanceCard } from '@/components/PrivateBalanceCard'
+import { StealthSweepCard } from '@/components/StealthSweepCard'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { usePrivacyRecoveryNotice } from '@/hooks/usePrivacyRecoveryNotice'
 import { ensureFeePayer, isFeePayerPrfDowngrade, getFeePayerDiagnostics } from '@/lib/feePayer'
@@ -947,6 +948,10 @@ function DashboardPageContent() {
           hideAmounts={hideAmounts}
           recoveryWarning={privacyRecoveryUnsupported}
         />
+
+        {/* ── Pending stealth sweeps card: shows incoming transfers held during
+            decorrelation delay, with full linkage disclosure and instant sweep override. */}
+        <StealthSweepCard />
 
         {/* ── Portfolio summary: total value split by cash, lending, invest ── */}
         {(assets.length > 0 || blendPositions.length > 0) && (

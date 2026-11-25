@@ -1,7 +1,7 @@
 # Privacy integration — STRIDE threat model
 
 **Status:** Draft · **Scope:** the Veil/Stellar Private Payments (SPP) integration · **Owner:** privacy wave (V131–V149)
-**Read alongside:** `docs/PRIVACY_COST.md` (costs, "integrate don't build"), `docs/adr/0003-fee-payer-key-from-webauthn-prf.md` (key derivation), the issue batch in `scripts/wave-issues-privacy.md`.
+**Read alongside:** `docs/PRIVACY_COST.md` (costs, "integrate don't build"), `docs/adr/0003-fee-payer-key-from-webauthn-prf.md` (key derivation), `docs/adr/0006-stealth-payments-veil-wallet.md` (stealth payments and wallet sweep linkage), the issue batch in `scripts/wave-issues-privacy.md`.
 
 **Reference conventions.** V-numbers point at the privacy wave issue definitions in [scripts/wave-issues-privacy.md](../scripts/wave-issues-privacy.md). Code references are `path:line` into this repo; `sdk/native/…` paths are upstream SPP code ([NethermindEth/stellar-private-payments](https://github.com/NethermindEth/stellar-private-payments)). Once the wave is published, repoint the V-number links at the GitHub issue URLs.
 

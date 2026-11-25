@@ -12,6 +12,8 @@
  *             signer (the on-chain `add_signer` call is left to the caller).
  *
  * No private key material is ever read into a backup — the SDK guards against it.
+ * Ephemeral stealth spending keys (veil_stealth_pending_sweeps) and one-time
+ * keys are strictly device-local and explicitly excluded from backup envelopes.
  */
 
 import {
