@@ -54,6 +54,13 @@ export default function AboutPage() {
             </p>
           </Card>
 
+          <Card>
+            <Label>Company</Label>
+            <p style={{ fontSize: '0.875rem', marginTop: '0.5rem', color: 'var(--off-white)', lineHeight: 1.5 }}>
+              Veil is a product of Divinity Labs Limited, a company registered in Nigeria (RC 10031131).
+            </p>
+          </Card>
+
           <div>
             <Label className="mb-2 block">Network</Label>
             <Card padded={false}>
