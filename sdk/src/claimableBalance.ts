@@ -1,5 +1,4 @@
 import {
-    Keypair,
     TransactionBuilder,
     BASE_FEE,
     Operation,
@@ -7,7 +6,7 @@ import {
     Claimant,
     Horizon,
 } from '@stellar/stellar-sdk';
-import { resolveSigner, signWith, type SignerInput, type TransactionSigner } from './signer';
+import { resolveSigner, signWith, type TransactionSigner } from './signer';
 
 export type EscrowConfig = {
     /** Stellar Horizon REST API base URL (e.g. "https://horizon-testnet.stellar.org").
@@ -18,9 +17,7 @@ export type EscrowConfig = {
 
 export type CreateEscrowOptions = {
     /** Signs the escrow-creating transaction; the secret stays with the caller. */
-    sender?: TransactionSigner;
-    /** @deprecated Use `sender`. A Keypair puts a secret in the calling process. */
-    senderKeypair?: Keypair;
+    sender: TransactionSigner;
     recipientAddress: string;
     amount: string;
     asset: Asset;
@@ -37,27 +34,17 @@ export type EscrowResult = {
 
 export type ClaimOptions = {
     /** Signs the claim transaction; the secret stays with the caller. */
-    claimant?: TransactionSigner;
-    /** @deprecated Use `claimant`. A Keypair puts a secret in the calling process. */
-    claimantKeypair?: Keypair;
+    claimant: TransactionSigner;
     balanceId: string;
     config: EscrowConfig;
 };
 
 export type ReclaimOptions = {
     /** Signs the reclaim transaction; the secret stays with the caller. */
-    sender?: TransactionSigner;
-    /** @deprecated Use `sender`. A Keypair puts a secret in the calling process. */
-    senderKeypair?: Keypair;
+    sender: TransactionSigner;
     balanceId: string;
     config: EscrowConfig;
 };
-
-function pickSigner(callback: TransactionSigner | undefined, legacy: Keypair | undefined, name: string): SignerInput {
-    const chosen = callback ?? legacy;
-    if (!chosen) throw new Error(`A ${name} signer is required.`);
-    return chosen;
-}
 
 export function buildClaimLink(balanceId: string): string {
     return `https://app.veil.xyz/claim/${balanceId}`;
@@ -97,7 +84,7 @@ export function buildEscrowClaimants(
  */
 export async function createEscrow(options: CreateEscrowOptions): Promise<EscrowResult> {
     const { recipientAddress, amount, asset, claimDeadlineSeconds, config } = options;
-    const signer = resolveSigner(pickSigner(options.sender, options.senderKeypair, 'sender'));
+    const signer = resolveSigner(options.sender);
     const server = new Horizon.Server(config.horizonUrl);
 
     const account = await server.loadAccount(signer.publicKey);
@@ -142,7 +129,7 @@ export async function createEscrow(options: CreateEscrowOptions): Promise<Escrow
  */
 export async function claimEscrow(options: ClaimOptions): Promise<{ txHash: string }> {
     const { balanceId, config } = options;
-    const signer = resolveSigner(pickSigner(options.claimant, options.claimantKeypair, 'claimant'));
+    const signer = resolveSigner(options.claimant);
     const server = new Horizon.Server(config.horizonUrl);
 
     const account = await server.loadAccount(signer.publicKey);
@@ -169,7 +156,7 @@ export async function claimEscrow(options: ClaimOptions): Promise<{ txHash: stri
  */
 export async function reclaimEscrow(options: ReclaimOptions): Promise<{ txHash: string }> {
     const { balanceId, config } = options;
-    const signer = resolveSigner(pickSigner(options.sender, options.senderKeypair, 'sender'));
+    const signer = resolveSigner(options.sender);
     const server = new Horizon.Server(config.horizonUrl);
 
     const account = await server.loadAccount(signer.publicKey);

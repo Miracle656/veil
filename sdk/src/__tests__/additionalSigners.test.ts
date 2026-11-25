@@ -45,6 +45,7 @@ import {
 } from '../additionalSigners'
 import { WEBAUTHN_SIGNATURE_VECTOR_LENGTH, buildWebAuthnSignatureVector } from '../signatureVector'
 import type { StorageAdapter } from '../core'
+import { createKeypairSigner } from '../signer'
 
 // ── RPC + WebAuthn stand-ins ──────────────────────────────────────────────────
 
@@ -88,7 +89,8 @@ const mockAuthenticate = webAuthnProvider.authenticate as jest.Mock
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 const WALLET = StrKey.encodeContract(Buffer.alloc(32, 7))
-const FEE_PAYER = Keypair.random()
+const FEE_PAYER_KP = Keypair.random()
+const FEE_PAYER = createKeypairSigner(FEE_PAYER_KP)
 const WALLET_NONCE = 41n
 
 function p256Key(fill: number): Uint8Array {
@@ -151,7 +153,7 @@ function invokedFunction(tx: Transaction): string {
 /** Wire the RPC stand-in. `signersAfter` is what get_signers returns. */
 function wireServer(opts: { signersAfter?: Uint8Array[]; txStatus?: string } = {}) {
   const sent: Transaction[] = []
-  mockServer.getAccount.mockImplementation(async () => new Account(FEE_PAYER.publicKey(), '100'))
+  mockServer.getAccount.mockImplementation(async () => new Account(FEE_PAYER_KP.publicKey(), '100'))
   mockServer.getLatestLedger.mockResolvedValue({ sequence: 5000 })
   mockServer.simulateTransaction.mockImplementation(async (tx: Transaction) => {
     const fn = invokedFunction(tx)
@@ -346,7 +348,7 @@ describe('registerAdditionalSigner()', () => {
   }
 
   it('adds the signer on chain and leaves the address, credential and fee payer exactly as they were', async () => {
-    const store = memoryStore({ ...PRIMARY_BINDING, veil_signer_secret: FEE_PAYER.secret() })
+    const store = memoryStore({ ...PRIMARY_BINDING, veil_signer_secret: FEE_PAYER_KP.secret() })
     wireServer({ signersAfter: [NEW_KEY] })
     mockCreate.mockResolvedValue(created())
     mockAuthenticate.mockResolvedValue(assertion())
@@ -357,7 +359,7 @@ describe('registerAdditionalSigner()', () => {
 
     expect(result).toEqual(expect.objectContaining({ walletAddress: WALLET, status: 'active', signerIndex: 1 }))
     expect(primarySnapshot(store)).toEqual(PRIMARY_BINDING)
-    expect(store.data.get('veil_signer_secret')).toBe(FEE_PAYER.secret())
+    expect(store.data.get('veil_signer_secret')).toBe(FEE_PAYER_KP.secret())
     expect(wallet.getState().address).toBe(WALLET)
     expect(registerSpy).not.toHaveBeenCalled()
     expect(await readAdditionalSigners(store)).toEqual([
@@ -489,7 +491,7 @@ describe('a simulation that asks for something else', () => {
   /** Let `get_nonce` work normally, then hand back `entry` for the real call. */
   function wireHostileServer(entry: xdr.SorobanAuthorizationEntry) {
     const sent: Transaction[] = []
-    mockServer.getAccount.mockImplementation(async () => new Account(FEE_PAYER.publicKey(), '100'))
+    mockServer.getAccount.mockImplementation(async () => new Account(FEE_PAYER_KP.publicKey(), '100'))
     mockServer.getLatestLedger.mockResolvedValue({ sequence: 5000 })
     mockServer.simulateTransaction.mockImplementation(async (tx: Transaction) => {
       const op = tx.operations[0] as Operation.InvokeHostFunction

@@ -236,14 +236,23 @@ refuses the operation: the SDK call rejects with its error and nothing is
 submitted. The SDK also rejects a signer that returns an envelope for a
 different transaction, or one with no added signature.
 
-### Migrating from a secret or Keypair
+### Secret-free signing and `TransactionSigner`
 
-Passing a secret string or a `Keypair` still works but is **deprecated**: it
-logs a one-time `console.warn` and will be removed in the next major version,
-because it needs a live Stellar secret in your client bundle. `sponsorSecret`
-in the wallet config is likewise deprecated in favour of `sponsorSigner`, and
-the escrow helpers' `senderKeypair` / `claimantKeypair` options in favour of
-`sender` / `claimant`.
+As of v1.0.0, passing raw secret strings or `Keypair` instances directly into the SDK is retired. All signing entry points (`deploy`, `approve`, `addSigner`, `sendPayment`, escrow helpers, etc.) require a `TransactionSigner`.
+
+If you hold a `Keypair` in memory on a secure backend, in test suites, or in CLI scripts, use `createKeypairSigner(keypair)`:
+
+```ts
+import { Keypair } from '@stellar/stellar-sdk';
+import { createKeypairSigner } from 'invisible-wallet-sdk';
+
+const signer = createKeypairSigner(Keypair.fromSecret(secret));
+await wallet.deploy(signer);
+```
+
+For network fee sponsorship, configure `sponsorSigner?: TransactionSigner` in `WalletConfig` (replacing `sponsorSecret`).
+
+For detailed before/after migration examples, see [`docs/MIGRATION_V1_SIGNERS.md`](../docs/MIGRATION_V1_SIGNERS.md).
 
 ## Subpath Exports
 

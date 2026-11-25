@@ -19,6 +19,7 @@ import { spendableNativeXlm, type HorizonAccountLike } from './reserves'
 import { sweepContractBalance } from './sweepContractBalance'
 import { buildChangeTrustTx, type HorizonBalanceLike } from './trustlines'
 import { ensureWalletDeployed, getDeploymentState } from './walletDeployment'
+import type { TransactionSigner } from '@veil/sdk'
 
 export const WALLET_NOT_SET_UP_MESSAGE =
   'Your wallet is not fully set up yet. Open your dashboard once, then try again.'
@@ -33,7 +34,7 @@ export const WALLET_NOT_SET_UP_MESSAGE =
 export async function moveAssetToSpending(
   asset: IssuedWalletAsset,
   walletAddress: string,
-  deploy?: (signerSecret: string) => Promise<unknown>,
+  deploy?: (signer: TransactionSigner) => Promise<unknown>,
 ): Promise<string> {
   const network = getNetwork()
   const feePayerKp = getFeePayerKeypair()

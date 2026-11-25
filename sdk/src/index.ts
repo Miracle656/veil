@@ -64,6 +64,7 @@ export type { AssertionMaterial } from './crypto/assertionKey';
 export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';
+export { createKeypairSigner } from './signer';
 export type { TransactionSigner, SignTransactionContext, SignerInput } from './signer';
 export * from './claimableBalance';
 export * from './network';

@@ -12,6 +12,11 @@ import { computeWalletAddress } from '../utils'
 import { recoverAssertionPublicKeys } from '../crypto/assertionKey'
 import { rpc as SorobanRpc, TransactionBuilder, Keypair } from '@stellar/stellar-sdk'
 
+const mockSigner = (publicKey = 'GPUBKEY') => ({
+  publicKey,
+  signTransaction: jest.fn(async (xdr: string) => xdr),
+})
+
 // ── @stellar/stellar-sdk mock ─────────────────────────────────────────────────
 
 jest.mock('@stellar/stellar-sdk', () => ({
@@ -44,7 +49,12 @@ jest.mock('@stellar/stellar-sdk', () => ({
     },
     Durability: { Persistent: 'persistent', Temporary: 'temporary' },
     assembleTransaction: jest.fn().mockReturnValue({
-      build: jest.fn().mockReturnValue({ sign: jest.fn(), toXDR: jest.fn() }),
+      build: jest.fn().mockReturnValue({
+        sign: jest.fn(),
+        toXDR: jest.fn(() => 'mock-assembled-xdr'),
+        hash: jest.fn(() => Buffer.from('mock-hash')),
+        signatures: [],
+      }),
     }),
   },
   Horizon: {
@@ -75,15 +85,31 @@ jest.mock('@stellar/stellar-sdk', () => ({
     fromSecret: jest.fn().mockReturnValue({ publicKey: () => 'GPUBKEY', secret: () => 'SSECRET' }),
   },
   TransactionBuilder: Object.assign(
-    jest.fn().mockImplementation(() => ({
-      addOperation: jest.fn().mockReturnThis(),
-      setTimeout:   jest.fn().mockReturnThis(),
-      build:        jest.fn().mockReturnValue({ sign: jest.fn(), toXDR: jest.fn() }),
-    })),
+    jest.fn().mockImplementation(() => {
+      const tx = {
+        sign: jest.fn(),
+        toXDR: jest.fn(() => 'mock-tx-xdr'),
+        hash: jest.fn(() => Buffer.from('mock-hash')),
+        signatures: [],
+      }
+      return {
+        addOperation: jest.fn().mockReturnThis(),
+        setTimeout:   jest.fn().mockReturnThis(),
+        build:        jest.fn().mockReturnValue(tx),
+      }
+    }),
     {
+      fromXDR: jest.fn((xdr: string) => ({
+        sign: jest.fn(),
+        toXDR: jest.fn(() => xdr),
+        hash: jest.fn(() => Buffer.from('mock-hash')),
+        signatures: ['sig1'],
+      })),
       buildFeeBumpTransaction: jest.fn().mockReturnValue({
         sign:  jest.fn(),
-        toXDR: jest.fn(),
+        toXDR: jest.fn(() => 'mock-fb-xdr'),
+        hash:  jest.fn(() => Buffer.from('mock-hash')),
+        signatures: [],
       }),
     },
   ),
@@ -652,18 +678,16 @@ describe('useInvisibleWallet', () => {
 
   // ── deploy() ───────────────────────────────────────────────────────────────
 
-  // NOTE: these cases deliberately use the DEPRECATED secret/Keypair inputs to
-  // cover the migration path; the callback path is covered in signer.test.ts.
   describe('deploy()', () => {
     it('builds a single-operation Soroban deploy transaction when sponsored', async () => {
       const { result } = renderHook(() => useInvisibleWallet({
         ...CONFIG,
-        sponsorSecret: 'SSPONSOR',
+        sponsorSigner: mockSigner('GSPONSOR'),
       }))
 
       let deployResult!: Awaited<ReturnType<typeof result.current.deploy>>
       await act(async () => {
-        deployResult = await result.current.deploy('SUSER', new Uint8Array(65).fill(4))
+        deployResult = await result.current.deploy(mockSigner('GUSER'), new Uint8Array(65).fill(4))
       })
 
       const txBuilderMock = TransactionBuilder as unknown as jest.Mock
@@ -756,11 +780,11 @@ describe('useInvisibleWallet', () => {
       const { result } = renderHook(() => useInvisibleWallet(CONFIG))
       await act(async () => {}) // flush mount effect so the stored address is picked up
 
-      const keypair = Keypair.fromSecret('SUSER')
+      const signer = mockSigner('GUSER')
 
       let rotateResult!: Awaited<ReturnType<typeof result.current.rotateSigner>>
       await act(async () => {
-        rotateResult = await result.current.rotateSigner(keypair as any, 'new-device')
+        rotateResult = await result.current.rotateSigner(signer, 'new-device')
       })
 
       // A brand-new WebAuthn credential was registered.
@@ -782,9 +806,9 @@ describe('useInvisibleWallet', () => {
       const { result } = renderHook(() => useInvisibleWallet(CONFIG))
       await act(async () => {})
 
-      const keypair = Keypair.fromSecret('SUSER')
+      const signer = mockSigner('GUSER')
       await expect(
-        act(async () => { await result.current.rotateSigner(keypair as any) })
+        act(async () => { await result.current.rotateSigner(signer) })
       ).rejects.toThrow(/No existing public key/)
     })
   })
@@ -828,7 +852,7 @@ describe('useInvisibleWallet', () => {
 
       await act(async () => {
         await expect(
-          result.current.addSigner(Keypair.fromSecret('SSECRET'), new Uint8Array(65).fill(4))
+          result.current.addSigner(mockSigner(), new Uint8Array(65).fill(4))
         ).rejects.toThrow('did not ask for authorisation')
       })
       expect(sendTransaction).not.toHaveBeenCalled()
@@ -840,7 +864,7 @@ describe('useInvisibleWallet', () => {
 
       await act(async () => {
         await expect(
-          result.current.addSigner(Keypair.fromSecret('SSECRET'), new Uint8Array(32))
+          result.current.addSigner(mockSigner(), new Uint8Array(32))
         ).rejects.toThrow('newPublicKeyBytes must be exactly 65 bytes')
       })
     })
@@ -851,7 +875,7 @@ describe('useInvisibleWallet', () => {
 
       await act(async () => {
         await expect(
-          result.current.addSigner(Keypair.fromSecret('SSECRET'), new Uint8Array(65))
+          result.current.addSigner(mockSigner(), new Uint8Array(65))
         ).rejects.toThrow('No wallet address')
       })
     })
@@ -873,7 +897,7 @@ describe('useInvisibleWallet', () => {
 
       await act(async () => {
         await expect(
-          result.current.removeSigner(Keypair.fromSecret('SSECRET'), 1)
+          result.current.removeSigner(mockSigner(), 1)
         ).rejects.toThrow('did not ask for authorisation')
       })
       expect(sendTransaction).not.toHaveBeenCalled()
@@ -885,7 +909,7 @@ describe('useInvisibleWallet', () => {
 
       await act(async () => {
         await expect(
-          result.current.removeSigner(Keypair.fromSecret('SSECRET'), 0)
+          result.current.removeSigner(mockSigner(), 0)
         ).rejects.toThrow('No wallet address')
       })
     })

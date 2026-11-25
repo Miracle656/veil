@@ -23,6 +23,7 @@ Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: tr
 Object.assign(globalThis, { TextEncoder, TextDecoder })
 
 import { Horizon, Keypair, rpc as SorobanRpc, StrKey } from '@stellar/stellar-sdk'
+import type { TransactionSigner } from '@veil/sdk'
 
 import { peekFeePayerKeypair } from '../feePayer'
 import {
@@ -45,7 +46,7 @@ const CONTRACT_ID = StrKey.encodeContract(Buffer.alloc(32))
 const mockPeekFeePayerKeypair = peekFeePayerKeypair as jest.MockedFunction<typeof peekFeePayerKeypair>
 
 let feePayer: Keypair
-let deploy: jest.Mock<Promise<unknown>, [string]>
+let deploy: jest.Mock<Promise<unknown>, [TransactionSigner]>
 let loadAccount: jest.SpyInstance
 let getContractData: jest.SpyInstance
 
@@ -244,7 +245,7 @@ describe('ensureWalletDeployed', () => {
       expect(spendingAddress).toHaveLength(56)
       expect((err as WalletNotActivatedError).spendingAddress).toBe(spendingAddress)
       expect((err as WalletNotActivatedError).message).toContain(spendingAddress)
-      expect(deploy).toHaveBeenCalledWith(feePayer.secret())
+      expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ publicKey: feePayer.publicKey() }))
     },
   )
 
@@ -281,10 +282,10 @@ describe('ensureWalletDeployed retry safety', () => {
     await expect(ensureWalletDeployed(deploy, CONTRACT_ID)).resolves.toBeUndefined()
 
     expect(deploy).toHaveBeenCalledTimes(2)
-    const [firstSecret] = deploy.mock.calls[0]
-    const [secondSecret] = deploy.mock.calls[1]
-    expect(secondSecret).toBe(firstSecret)
-    expect(secondSecret).toBe(feePayer.secret())
+    const [firstSigner] = deploy.mock.calls[0]
+    const [secondSigner] = deploy.mock.calls[1]
+    expect(secondSigner.publicKey).toBe(firstSigner.publicKey)
+    expect(secondSigner.publicKey).toBe(feePayer.publicKey())
   })
 
   // Breaks: a deploy that actually landed is submitted again, and the factory's duplicate refusal becomes a permanent error for a live wallet.
@@ -316,6 +317,6 @@ describe('ensureWalletDeployed retry safety', () => {
     getContractData.mockRejectedValue(new Error('fetch failed'))
 
     await expect(ensureWalletDeployed(deploy, CONTRACT_ID)).resolves.toBeUndefined()
-    expect(deploy).toHaveBeenCalledWith(feePayer.secret())
+    expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ publicKey: feePayer.publicKey() }))
   })
 })

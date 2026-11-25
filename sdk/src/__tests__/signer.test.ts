@@ -15,7 +15,7 @@ import {
   type Transaction,
 } from '@stellar/stellar-sdk';
 import { signForSubmission } from '../core';
-import { _resetSignerDeprecationWarnings, type TransactionSigner } from '../signer';
+import { createKeypairSigner, _resetSignerDeprecationWarnings, type TransactionSigner } from '../signer';
 
 const PASSPHRASE = Networks.TESTNET;
 const config = (extra: object = {}) =>
@@ -102,26 +102,27 @@ describe('TransactionSigner callback path', () => {
   });
 });
 
-describe('deprecated Keypair / secret inputs', () => {
-  beforeEach(() => {
-    _resetSignerDeprecationWarnings();
-  });
-
-  it('still sign, and warn once about the deprecation', async () => {
+  it('createKeypairSigner wraps a Keypair in a valid TransactionSigner', async () => {
     const kp = Keypair.random();
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const signer = createKeypairSigner(kp);
+    expect(signer.publicKey).toBe(kp.publicKey());
+    const tx = buildTx(kp.publicKey());
+    const signed = (await signForSubmission(tx, signer, config())) as Transaction;
+    expect(signed.signatures).toHaveLength(1);
+    expect(kp.verify(signed.hash(), signed.signatures[0].signature())).toBe(true);
+  });
+});
 
-    const a = (await signForSubmission(buildTx(kp.publicKey()), kp, config())) as Transaction;
-    const b = (await signForSubmission(buildTx(kp.publicKey()), kp, config())) as Transaction;
-    const c = (await signForSubmission(buildTx(kp.publicKey()), kp.secret(), config())) as Transaction;
+describe('retired Keypair / secret inputs', () => {
+  it('rejects raw Keypair and secret strings with a descriptive error', async () => {
+    const kp = Keypair.random();
+    const tx = buildTx(kp.publicKey());
 
-    expect(kp.verify(a.hash(), a.signatures[0].signature())).toBe(true);
-    expect(b.signatures).toHaveLength(1);
-    expect(c.signatures).toHaveLength(1);
-    const messages = warn.mock.calls.map((c) => String(c[0]));
-    expect(messages.filter((m) => m.includes('Keypair'))).toHaveLength(1); // once, not per call
-    expect(messages.filter((m) => m.includes('secret string'))).toHaveLength(1);
-    expect(messages[0]).toMatch(/deprecated/);
-    warn.mockRestore();
+    await expect(signForSubmission(tx, kp as any, config())).rejects.toThrow(
+      /Expected a TransactionSigner/,
+    );
+    await expect(signForSubmission(tx, kp.secret() as any, config())).rejects.toThrow(
+      /Expected a TransactionSigner/,
+    );
   });
 });

@@ -57,6 +57,7 @@ exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
   "createBackup: function(arity: 3)",
   "createBatches: function(arity: 1)",
   "createEscrow: function(arity: 1)",
+  "createKeypairSigner: function(arity: 1)",
   "createLocalCipher: function(arity: 1)",
   "createNamespacedStorage: function(arity: 1)",
   "createNamespacedStorageAdapter: function(arity: 1)",

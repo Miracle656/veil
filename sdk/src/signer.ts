@@ -38,41 +38,41 @@ export interface TransactionSigner {
 /**
  * What a signing parameter accepts.
  *
- * `Keypair` and `string` (a secret) are the original shapes and still work, but
- * are **deprecated**: passing one means a live secret is in the calling process,
- * and the SDK logs a one-time warning. Use a {@link TransactionSigner}.
+ * Only {@link TransactionSigner} is accepted. Secret-bearing inputs (`Keypair`
+ * and secret strings) were deprecated and are removed in v1.0.0.
  */
-export type SignerInput =
-    | TransactionSigner
-    /** @deprecated Pass a {@link TransactionSigner}; a Keypair puts a secret in the client bundle. */
-    | Keypair
-    /** @deprecated Pass a {@link TransactionSigner}; a secret string puts a secret in the client bundle. */
-    | string;
+export type SignerInput = TransactionSigner;
 
-const warned = new Set<string>();
-
-function warnLegacy(kind: 'secret string' | 'Keypair'): void {
-    if (warned.has(kind)) return;
-    warned.add(kind);
-    // eslint-disable-next-line no-console
-    console.warn(
-        `[invisible-wallet-sdk] Passing a ${kind} as a signer is deprecated and will be removed in the next major ` +
-        'version: it requires a live Stellar secret in your client bundle. Pass a TransactionSigner ' +
-        '({ publicKey, signTransaction(xdr, { networkPassphrase }) }) that signs where the key lives.',
-    );
+/**
+ * Adapter that creates a {@link TransactionSigner} backed by an in-memory `Keypair`.
+ *
+ * Useful for backend services, test harnesses, or CLI scripts where the keypair
+ * is already held in memory and signing can happen locally.
+ */
+export function createKeypairSigner(keypair: Keypair): TransactionSigner {
+    return {
+        publicKey: keypair.publicKey(),
+        signTransaction(xdr: string, context: SignTransactionContext): string {
+            const tx = TransactionBuilder.fromXDR(xdr, context.networkPassphrase);
+            tx.sign(keypair);
+            return tx.toXDR();
+        },
+    };
 }
 
-/** Test hook: forget which deprecation warnings were already shown. */
+/** Test hook: retained for backwards-compatibility. */
 export function _resetSignerDeprecationWarnings(): void {
-    warned.clear();
+    // Deprecation warnings are no longer emitted now that overloads are retired.
 }
 
-/** A resolved signer: the callback shape, or a legacy in-process keypair. */
-export type ResolvedSigner =
-    | { kind: 'callback'; publicKey: string; signer: TransactionSigner }
-    | { kind: 'legacy'; publicKey: string; keypair: Keypair };
+/** A resolved signer: the callback shape. */
+export type ResolvedSigner = {
+    kind: 'callback';
+    publicKey: string;
+    signer: TransactionSigner;
+};
 
-function isCallbackSigner(input: SignerInput): input is TransactionSigner {
+function isCallbackSigner(input: unknown): input is TransactionSigner {
     return (
         typeof input === 'object' &&
         input !== null &&
@@ -81,19 +81,15 @@ function isCallbackSigner(input: SignerInput): input is TransactionSigner {
     );
 }
 
-/** Normalise any accepted signer input; warns once for the deprecated shapes. */
+/** Normalise any accepted signer input. */
 export function resolveSigner(input: SignerInput): ResolvedSigner {
     if (isCallbackSigner(input)) {
         return { kind: 'callback', publicKey: input.publicKey, signer: input };
     }
-    if (typeof input === 'string') {
-        warnLegacy('secret string');
-        const keypair = Keypair.fromSecret(input);
-        return { kind: 'legacy', publicKey: keypair.publicKey(), keypair };
-    }
-    warnLegacy('Keypair');
-    const keypair = input as Keypair;
-    return { kind: 'legacy', publicKey: keypair.publicKey(), keypair };
+    throw new TypeError(
+        'Expected a TransactionSigner ({ publicKey, signTransaction }). ' +
+        'Secret strings and Keypairs are no longer supported as of v1.0.0; use createKeypairSigner(keypair) if holding a Keypair in a secure environment.',
+    );
 }
 
 /**
@@ -107,11 +103,6 @@ export async function signWith<T extends Transaction | FeeBumpTransaction>(
     resolved: ResolvedSigner,
     networkPassphrase: string,
 ): Promise<T> {
-    if (resolved.kind === 'legacy') {
-        tx.sign(resolved.keypair);
-        return tx;
-    }
-
     const signedXdr = await resolved.signer.signTransaction(tx.toXDR(), { networkPassphrase });
     if (typeof signedXdr !== 'string' || signedXdr.length === 0) {
         throw new Error('The signer did not return a signed transaction envelope.');

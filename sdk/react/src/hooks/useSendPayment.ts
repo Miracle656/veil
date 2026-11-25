@@ -8,8 +8,7 @@ import { useVeilContext } from '../context';
 export interface SendPaymentInput {
   /**
    * Signer for the account that pays transaction fees: a `TransactionSigner`
-   * whose `signTransaction` runs where the key lives. A secret string or
-   * Keypair is still accepted but deprecated.
+   * whose `signTransaction` runs where the key lives.
    */
   feePayer: SignerInput;
   /** Recipient address */
