@@ -214,6 +214,16 @@ export const TOOL_REGISTRY: VeilTool[] = [
     },
   },
   {
+    name: 'get_blend_positions',
+    screen: 'Earn screen',
+    kind: 'read',
+    description:
+      'Read the connected wallet’s current Blend lending positions. Report each asset and current supplied value. ' +
+      'If no positions exist, say nothing is supplied yet. If the pool could not be reached, say the position data is unavailable. ' +
+      'The original principal is not recorded, so do not claim an earned amount or project future earnings. This tool is read-only.',
+    input_schema: { type: 'object' as const, properties: {} },
+  },
+  {
     name: 'open_swap',
     screen: 'Swap screen',
     kind: 'prepare',
@@ -352,7 +362,8 @@ RULES:
 12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.
 13. CAPABILITY BOUNDARY: Only claim actions or data available through the registered capabilities above. If a request is outside them, plainly say what you cannot do from this chat and direct the user to the most relevant screen named above. Do not claim that screen supports an action unless its registered capability says so; if no screen applies, say so instead of inventing one.
 14. DATA BOUNDARY: Never estimate or infer a requested number. get_wallet_balance and get_transfer_history provide Stellar data only; get_price provides current Stellar market data only. If the requested chain or figure has no available data source, say "I cannot see that data here" and do not give a guessed or approximate number. If a registered tool reports that data is unavailable, treat that as unavailable — do not fill the gap from memory.
-15. For a cash-out, use get_offramp_rate first. If unavailable, say it is unavailable; do not blame the user or estimate a rate. If available, call prepare_cash_out with only the requested naira amount. Never select or verify a bank account, request or repeat an account number in chat, create a payout order, or send a deposit. Tell the user the Cash Out screen will collect and verify their bank account before order creation. An unverified account must be verified on that screen, not by you.`
+15. For a cash-out, use get_offramp_rate first. If unavailable, say it is unavailable; do not blame the user or estimate a rate. If available, call prepare_cash_out with only the requested naira amount. Never select or verify a bank account, request or repeat an account number in chat, create a payout order, or send a deposit. Tell the user the Cash Out screen will collect and verify their bank account before order creation. An unverified account must be verified on that screen, not by you.
+16. For questions about Blend, lending pools, supplied assets, or earnings, ALWAYS call get_blend_positions. Report its current value only; original principal is not recorded, so do not claim earnings or project future returns. If the tool reports unavailable, say so plainly. This tool is read-only.`
 }
 
 /**
@@ -426,6 +437,13 @@ export interface CashOutIntent {
 /** Assets the apps' Swap screens offer. */
 const SWAP_CODES = new Set(['XLM', 'USDC', 'EURC', 'AQUA'])
 
+function formatStroops(value: string): string {
+  const amount = BigInt(value)
+  const whole = amount / 10_000_000n
+  const fraction = (amount % 10_000_000n).toString().padStart(7, '0').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole.toString()
+}
+
 /**
  * Run a single agent turn. Used internally by both the server and createVeilAgent.
  */
@@ -439,6 +457,10 @@ export async function runAgent(
   llm: LlmProvider,
   /** Service URLs — if not provided, falls back to process.env. */
   urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string },
+  blendPositionSnapshot?: {
+    status: 'available' | 'unavailable'
+    positions: Array<{ poolId: string; asset: string; code: 'XLM' | 'USDC' | null; deposited: string; bTokenBalance: string }>
+  },
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
@@ -532,6 +554,23 @@ export async function runAgent(
 
   async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
+      case 'get_blend_positions': {
+        if (!blendPositionSnapshot || blendPositionSnapshot.status === 'unavailable') {
+          return JSON.stringify({ status: 'unavailable', message: 'Blend position data is currently unavailable.' })
+        }
+        if (blendPositionSnapshot.positions.length === 0) {
+          return JSON.stringify({ status: 'available', positions: [], message: 'Nothing is supplied yet.' })
+        }
+        return JSON.stringify({
+          status: 'available',
+          positions: blendPositionSnapshot.positions.map((position) => ({
+            asset: position.code ?? position.asset,
+            currentValue: formatStroops(position.deposited),
+            poolId: position.poolId,
+          })),
+          earnings: 'Unknown: the original principal is not recorded.',
+        })
+      }
       case 'get_trending_activity': {
         try {
           return JSON.stringify(await getTrendingActivity(lensUrl))

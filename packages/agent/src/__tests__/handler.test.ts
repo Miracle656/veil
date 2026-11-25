@@ -52,6 +52,14 @@ describe('parseChatRequest', () => {
     expect(r.ok && r.value.profile?.name?.length).toBe(80)
     expect(r.ok && (r.value.profile as Record<string, unknown>).extra).toBeUndefined()
   })
+
+  it('accepts a bounded Blend position snapshot and drops malformed snapshots', () => {
+    const snapshot = { status: 'available', positions: [{ poolId: 'CPOOL', asset: 'CUSDC', code: 'USDC', deposited: '123', bTokenBalance: '100' }] }
+    const parsed = parseChatRequest(body({ blendPositionSnapshot: snapshot }))
+    expect(parsed.ok && parsed.value.blendPositionSnapshot).toEqual(snapshot)
+    const invalid = parseChatRequest(body({ blendPositionSnapshot: { status: 'available', positions: [{ ...snapshot.positions[0], deposited: '1.2' }] } }))
+    expect(invalid.ok && invalid.value.blendPositionSnapshot).toBeUndefined()
+  })
 })
 
 describe('createRateLimiter', () => {
