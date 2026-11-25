@@ -1,0 +1,15 @@
+module.exports = {
+  etc: {},
+  getPublicKey: () => Buffer.alloc(32),
+  getPublicKeyAsync: async () => Buffer.alloc(32),
+  hash: () => Buffer.alloc(64),
+  hashes: {},
+  keygen: () => Buffer.alloc(32),
+  keygenAsync: async () => Buffer.alloc(32),
+  Point: {},
+  sign: () => Buffer.alloc(64),
+  signAsync: async () => Buffer.alloc(64),
+  utils: {},
+  verify: () => true,
+  verifyAsync: async () => true,
+}

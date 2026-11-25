@@ -36,6 +36,16 @@ const config = {
     // The ONE dApp allow-list — mobile's module, imported by the web wallet
     // (see dappParity.test.ts, which pins this mapping to the real file).
     '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',
+    // Stub ESM-only packages used by nested @blend-capital dependencies
+    '^uint8array-extras$': '<rootDir>/lib/__mocks__/uint8array-extras.js',
+    '^@noble/ed25519$':    '<rootDir>/lib/__mocks__/@noble/ed25519.js',
+    // Pin @noble/hashes to top-level CJS copy so nested @blend-capital dependencies resolve to CommonJS
+    '^@noble/hashes/(.*)$': '<rootDir>/node_modules/@noble/hashes/$1',
+    '^@noble/hashes$':      '<rootDir>/node_modules/@noble/hashes',
+    // Redirect @blend-capital/blend-sdk's nested stellar-sdk to the wallet's top-level
+    // stellar-sdk so nested ESM-only dependencies do not break Jest CommonJS resolution.
+    '^@blend-capital/blend-sdk/node_modules/@stellar/stellar-sdk$': '<rootDir>/node_modules/@stellar/stellar-sdk',
+    '^@blend-capital/blend-sdk/node_modules/@stellar/stellar-sdk/(.*)$': '<rootDir>/node_modules/@stellar/stellar-sdk/$1',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [
