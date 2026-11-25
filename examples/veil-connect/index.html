@@ -27,6 +27,7 @@
 
   <button id="connect">Connect Veil</button>
   <button id="fund">Add money</button>
+  <button id="cashout">Cash out</button>
 
   <h2>Pay</h2>
   <label>To (full Stellar address)</label>
@@ -66,6 +67,7 @@
 
     $('connect').onclick = () => client && client.connect().then((r) => show('Connected', r), fail)
     $('fund').onclick = () => client && client.addMoney().then((r) => show('Add money opened', r), fail)
+    $('cashout').onclick = () => client && client.cashOut().then((r) => show('Cash out opened', r), fail)
     $('pay').onclick = () => client && client.pay({
       to: $('to').value.trim(),
       amount: $('amount').value.trim(),

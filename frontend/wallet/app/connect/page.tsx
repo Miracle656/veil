@@ -12,6 +12,7 @@
  *   connect — share this wallet's address with the app
  *   pay     — hand a payment to the normal Send screen, already filled in
  *   fund    — open "Buy with naira"
+ *   cashout — open the person's own "Cash out" to their bank
  *
  * A user with no wallet in this browser is sent to create one (or to unlock),
  * and components/ConnectResume.tsx brings them back here afterwards.
@@ -176,6 +177,13 @@ function Connect() {
     router.push('/buy-ngn')
   }, [pending, router])
 
+  const cashOut = useCallback(() => {
+    if (!pending) return
+    answer(pending, { ok: true, type: 'cashout' })
+    clearPending()
+    router.push('/cashout')
+  }, [pending, router])
+
   // ── What to show ──────────────────────────────────────────────────────────
 
   if (finished) return <Shell><Title>{finished}</Title></Shell>
@@ -245,6 +253,19 @@ function Connect() {
           Pay naira by bank transfer and it arrives in your wallet as XLM. You can swap it to USDC in Veil.
         </p>
         <button className="btn-gold" onClick={addMoney}>Buy with naira</button>
+        <button className="btn-ghost" onClick={cancel}>Cancel</button>
+      </Shell>
+    )
+  }
+
+  if (request.type === 'cashout') {
+    return (
+      <Shell>
+        <Title>Cash out to your bank</Title>
+        <p style={{ opacity: 0.8 }}>
+          Send USDC from your Veil wallet to your own bank account as naira. You choose the amount and the bank here in Veil. {app.name} does not see your bank details.
+        </p>
+        <button className="btn-gold" onClick={cashOut}>Cash out</button>
         <button className="btn-ghost" onClick={cancel}>Cancel</button>
       </Shell>
     )

@@ -217,6 +217,15 @@ export default function OnboardingPage() {
               <button id="onboarding-recover" className="btn-ghost" onClick={() => router.push('/recover')}>
                 Recover existing wallet
               </button>
+              <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.5)', textAlign: 'center', marginTop: '0.5rem', lineHeight: 1.5 }}>
+                By creating or recovering a wallet you agree to our{' '}
+                {/* Underlined: a link told apart from its sentence by colour alone
+                    fails the accessibility audit, and is invisible to anyone
+                    who cannot see the gold. */}
+                <a href="https://www.useveilapp.xyz/terms" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)', textDecoration: 'underline' }}>Terms</a>
+                {' '}and{' '}
+                <a href="https://www.useveilapp.xyz/privacy" target="_blank" rel="noreferrer" style={{ color: 'var(--gold)', textDecoration: 'underline' }}>Privacy Policy</a>.
+              </p>
               {error && (
                 <p style={{ fontSize: '0.8125rem', color: 'var(--teal)', textAlign: 'center', marginTop: '0.5rem' }}>
                   {error}
