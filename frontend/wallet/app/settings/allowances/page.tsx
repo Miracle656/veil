@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair, StrKey } from '@stellar/stellar-sdk'
 import { ChevronLeft, ShieldAlert } from 'lucide-react'
-import { useInvisibleWallet } from '@veil/sdk'
+import { useInvisibleWallet, createKeypairSigner, type TransactionSigner } from '@veil/sdk'
 import { getNetwork, walletConfig } from '@/lib/network'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
@@ -91,10 +91,10 @@ export default function AllowancesPage() {
     load(addr)
   }, [router, load])
 
-  function signer(): Keypair {
+  function signer(): TransactionSigner {
     const secret = walletSession.getItem('veil_signer_secret')
     if (!secret) throw new Error('No signer key in session')
-    return Keypair.fromSecret(secret)
+    return createKeypairSigner(Keypair.fromSecret(secret))
   }
 
   async function replaceAllowance(a: Allowance, replacement: Replacement, done: string) {

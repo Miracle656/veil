@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { ChevronLeft, KeyRound, Plus, Trash2 } from 'lucide-react'
-import { useInvisibleWallet, type SignerInfo } from '@veil/sdk'
+import { useInvisibleWallet, createKeypairSigner, type SignerInfo } from '@veil/sdk'
 import { walletConfig } from '@/lib/network'
 import { ensureWalletDeployed, getDeploymentState } from '@/lib/walletDeployment'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
@@ -77,13 +77,13 @@ export default function PasskeysPage() {
     setLoading(true)
     setStatus(null)
     try {
-      const signerKeypair = getSignerKeypair()
+      const signer = createKeypairSigner(getSignerKeypair())
       // add_signer is answered by the contract, so it has to exist first.
       await ensureWalletDeployed(wallet.deploy, walletSession.getItem('invisible_wallet_address'))
       // Never register() here: it rewrites this browser's wallet address and
       // credential, rebinding it to a new, empty wallet and fee payer.
       // registerAdditionalSigner() adds a second key and leaves those alone.
-      const res = await wallet.registerAdditionalSigner(signerKeypair)
+      const res = await wallet.registerAdditionalSigner(signer)
       setStatus(
         res.status === 'active'
           ? { text: `New passkey added at index ${res.signerIndex}. Your wallet address is unchanged.`, ok: true }
@@ -102,9 +102,9 @@ export default function PasskeysPage() {
     setLoading(true)
     setStatus(null)
     try {
-      const signerKeypair = getSignerKeypair()
+      const signer = createKeypairSigner(getSignerKeypair())
       await ensureWalletDeployed(wallet.deploy, walletSession.getItem('invisible_wallet_address'))
-      await wallet.removeSigner(signerKeypair, index)
+      await wallet.removeSigner(signer, index)
       setStatus({ text: `Passkey #${index} removed`, ok: true })
       await fetchSigners()
     } catch (err: unknown) {

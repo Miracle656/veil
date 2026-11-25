@@ -34,6 +34,28 @@ jest.mock('@stellar/stellar-sdk', () => {
         submitTransaction: mockSubmitTransactionFn,
     }));
 
+    const mockBuiltTx = {
+        sign: jest.fn(),
+        toEnvelope: jest.fn(),
+        toXDR: jest.fn(() => 'mock-xdr'),
+        hash: jest.fn(() => Buffer.from('mock-hash')),
+        signatures: [] as any[],
+    };
+
+    const MockTxBuilder = Object.assign(
+        jest.fn().mockImplementation(() => ({
+            addOperation: jest.fn().mockReturnThis(),
+            setTimeout: jest.fn().mockReturnThis(),
+            build: jest.fn().mockReturnValue(mockBuiltTx),
+        })),
+        {
+            fromXDR: jest.fn(() => ({
+                ...mockBuiltTx,
+                signatures: ['mock-signature'],
+            })),
+        }
+    );
+
     return {
         ...actual,
         Keypair: MockKeypair,
@@ -41,15 +63,7 @@ jest.mock('@stellar/stellar-sdk', () => {
             ...actual.Horizon,
             Server: MockServer,
         },
-        TransactionBuilder: jest.fn().mockImplementation(() => ({
-            addOperation: jest.fn().mockReturnThis(),
-            setTimeout: jest.fn().mockReturnThis(),
-            build: jest.fn().mockReturnValue({
-                sign: jest.fn(),
-                toEnvelope: jest.fn(),
-                toXDR: jest.fn(() => 'mock-xdr'),
-            }),
-        })),
+        TransactionBuilder: MockTxBuilder,
         Operation: {
             ...actual.Operation,
             createClaimableBalance: jest.fn(() => ({ type: 'createClaimableBalance' })),
@@ -77,10 +91,21 @@ const CONFIG = {
 
 // Import Keypair from the mock
 import { Keypair } from '@stellar/stellar-sdk';
+import type { TransactionSigner } from '../signer';
 
 const SENDER = Keypair.fromSecret('SENDER_SECRET') as unknown as import('@stellar/stellar-sdk').Keypair;
 const CLAIMANT_KP = Keypair.fromSecret('CLAIMANT_SECRET') as unknown as import('@stellar/stellar-sdk').Keypair;
 const BALANCE_ID = '00000000da0d57da7d4850e7fc10d2a9d0ebc731f7afb40574c03395b17d49149b91f5be';
+
+const SENDER_SIGNER: TransactionSigner = {
+    publicKey: SENDER.publicKey(),
+    signTransaction: jest.fn(async (xdr) => xdr),
+};
+
+const CLAIMANT_SIGNER: TransactionSigner = {
+    publicKey: CLAIMANT_KP.publicKey(),
+    signTransaction: jest.fn(async (xdr) => xdr),
+};
 
 const MOCK_ACCOUNT = {
     accountId: () => 'GDYLI7KL5EZXZSXVDMGD56OQG2QVZ5F5TVMUTYS2J6U5DWUXCTC472LU',
@@ -145,7 +170,7 @@ describe('createEscrow()', () => {
 
     it('returns balanceId + claimLink + expiresAt', async () => {
         const result = await createEscrow({
-            senderKeypair: SENDER,
+            sender: SENDER_SIGNER,
             recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
             amount: '10',
             asset: Asset.native(),
@@ -160,7 +185,7 @@ describe('createEscrow()', () => {
     it('calls submitTransaction once', async () => {
         const { submitTransaction } = getStellarMocks();
         await createEscrow({
-            senderKeypair: SENDER,
+            sender: SENDER_SIGNER,
             recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
             amount: '5',
             asset: Asset.native(),
@@ -176,7 +201,7 @@ describe('createEscrow()', () => {
         submitTransaction.mockResolvedValue({ hash: 'tx-hash-no-balance-id' });
         await expect(
             createEscrow({
-                senderKeypair: SENDER,
+                sender: SENDER_SIGNER,
                 recipientAddress: 'GB5WLPFRSD2PQRQ37MP45JSUXA4BFLAHDZ3CSTIGXR4C7GOYHU3MZE2D',
                 amount: '10',
                 asset: Asset.native(),
@@ -197,7 +222,7 @@ describe('claimEscrow()', () => {
 
     it('submits claim operation and returns txHash', async () => {
         const result = await claimEscrow({
-            claimantKeypair: CLAIMANT_KP,
+            claimant: CLAIMANT_SIGNER,
             balanceId: BALANCE_ID,
             config: CONFIG,
         });
@@ -217,7 +242,7 @@ describe('reclaimEscrow()', () => {
 
     it('submits reclaim operation and returns txHash', async () => {
         const result = await reclaimEscrow({
-            senderKeypair: SENDER,
+            sender: SENDER_SIGNER,
             balanceId: BALANCE_ID,
             config: CONFIG,
         });
@@ -228,7 +253,7 @@ describe('reclaimEscrow()', () => {
         const { submitTransaction } = getStellarMocks();
         submitTransaction.mockRejectedValue(new Error('Horizon error: claimable balance not yet claimable'));
         await expect(
-            reclaimEscrow({ senderKeypair: SENDER, balanceId: BALANCE_ID, config: CONFIG })
+            reclaimEscrow({ sender: SENDER_SIGNER, balanceId: BALANCE_ID, config: CONFIG })
         ).rejects.toThrow('Horizon error');
     });
 });

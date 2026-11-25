@@ -15,6 +15,7 @@
  */
 
 import { Horizon, rpc as SorobanRpc, xdr } from '@stellar/stellar-sdk'
+import { createKeypairSigner, type TransactionSigner } from '@veil/sdk'
 
 import { getNetwork } from './network'
 import { peekFeePayerKeypair } from './feePayer'
@@ -96,7 +97,7 @@ export async function getDeploymentState(address: string | null): Promise<Deploy
  * throws), so calling this when the state is merely `unknown` is safe.
  */
 export async function ensureWalletDeployed(
-  deploy: (signerSecret: string) => Promise<unknown>,
+  deploy: (signer: TransactionSigner) => Promise<unknown>,
   address: string | null,
 ): Promise<void> {
   if (!address) throw new Error('No wallet address in this session. Unlock the wallet again.')
@@ -116,7 +117,7 @@ export async function ensureWalletDeployed(
   }
 
   try {
-    await deploy(feePayer.secret())
+    await deploy(createKeypairSigner(feePayer))
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/insufficient|underfunded|balance|txInsufficientFee/i.test(message)) {

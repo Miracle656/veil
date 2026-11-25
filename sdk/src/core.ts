@@ -141,11 +141,6 @@ export type WalletConfig = {
      * stays wherever the application keeps it (typically a backend).
      */
     sponsorSigner?: TransactionSigner;
-    /**
-     * @deprecated Use {@link WalletConfig.sponsorSigner}. A sponsor secret in the
-     * client config means a funded account's key ships in your bundle.
-     */
-    sponsorSecret?: string;
     /** Base fee used by the outer fee-bump transaction. Defaults to BASE_FEE. */
     feeBumpBaseFee?: string;
 };
@@ -636,7 +631,7 @@ async function waitForTransaction(
 
 function resolveSponsor(config: WalletConfig): ResolvedSigner | null {
     if (config.sponsorSigner) return resolveSigner(config.sponsorSigner);
-    return config.sponsorSecret ? resolveSigner(config.sponsorSecret) : null;
+    return null;
 }
 
 /**

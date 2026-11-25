@@ -1,4 +1,5 @@
 import { Keypair } from '@stellar/stellar-sdk'
+import { createKeypairSigner, type TransactionSigner } from '@veil/sdk'
 import { deriveFeePayerSeedFromPrf, evaluateFeePayerPrf, type PrfEvaluator } from '@veil/prf'
 
 import { deriveFeePayerKeypair } from './deriveFeePayer'
@@ -125,6 +126,12 @@ export function peekFeePayerKeypair(): Keypair | null {
   } catch {
     return null
   }
+}
+
+/** The established fee-payer TransactionSigner, or null. Sync, no prompt. */
+export function peekFeePayerSigner(): TransactionSigner | null {
+  const kp = peekFeePayerKeypair()
+  return kp ? createKeypairSigner(kp) : null
 }
 
 /**
