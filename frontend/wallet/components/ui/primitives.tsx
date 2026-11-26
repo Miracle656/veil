@@ -86,14 +86,54 @@ export function Row({
   )
 }
 
-const TOKEN_LOGOS: Record<string, string> = {
+// Every asset in the registry that has a real mark. The three that were
+// missing (EURC, AQUA, USDT0) shipped in the mobile bundle and were never
+// copied here, so a holder of any of them got the lettered gold fallback —
+// a USDT0 balance read as a generic "U" next to real XLM and USDC logos.
+export const TOKEN_LOGOS: Record<string, string> = {
   XLM: '/tokens/xlm.png',
   USDC: '/tokens/usdc.png',
+  EURC: '/tokens/eurc.png',
+  AQUA: '/tokens/aqua.png',
+  // USDT0's mark is a square on #00805F rather than a circle with
+  // transparency. The disc clips it, so it lands as a green circle.
+  USDT0: '/tokens/usdt0.png',
+}
+
+/**
+ * USDY's mark, transcribed from Ondo's SVG rather than rasterised.
+ *
+ * Two shapes — a navy disc and one path — so it stays sharp at every size the
+ * app asks for and costs nothing to download. The mobile app draws the same
+ * geometry; keep the two in step.
+ */
+/** Codes drawn as vector rather than from /public/tokens. */
+export const VECTOR_TOKEN_MARKS = ['USDY'] as const
+
+function UsdyMark({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 800 800" aria-hidden="true">
+      <circle cx={400} cy={400} r={400} fill="#122A5F" />
+      <path
+        fillRule="evenodd"
+        clipRule="evenodd"
+        fill="#FFFFFF"
+        d="M620 400C620 278.497 521.502 180 400 180V100C420.71 100 440.931 102.099 460.46 106.095C597.165 134.069 700 255.025 700 400C700 565.685 565.685 700 400 700C269.378 700 158.254 616.519 117.07 500H203.988C240.402 571.234 314.506 620 400 620C521.502 620 620 521.503 620 400ZM134.602 260C184.902 355.156 284.878 420 400 420V340C301.404 340 217.956 275.14 189.997 185.76C167.921 207.402 149.176 232.429 134.602 260ZM223.837 157.143C240.953 238.734 313.322 300 400 300C455.229 300 500 344.772 500 400C500 455.229 455.229 500 400 500H250.311C282.601 548.239 337.592 580 400 580C499.411 580 580 499.411 580 400C580 300.589 499.411 220 400 220C344.772 220 300 175.228 300 120V117.071C272.56 126.769 246.953 140.346 223.837 157.143Z"
+      />
+    </svg>
+  )
 }
 
 /** Circular token mark with a branded image or a token-code fallback. */
 export function TokenIcon({ code, size = 32 }: { code: string; size?: number }) {
   const normalized = code.toUpperCase()
+  if (normalized === 'USDY') {
+    return (
+      <div className="rounded-full overflow-hidden shrink-0 flex items-center justify-center" style={{ width: size, height: size }}>
+        <UsdyMark size={size} />
+      </div>
+    )
+  }
   const src = TOKEN_LOGOS[normalized]
   if (src) {
     return (

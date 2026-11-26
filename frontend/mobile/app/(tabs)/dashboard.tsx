@@ -39,6 +39,7 @@ import { loadHoldings } from '../../lib/holdings';
 import { ensureBreadcrumbs } from '../../lib/walletBreadcrumbs';
 import { ensureCorrectWalletAddress } from '../../lib/walletRepair';
 import { useNetwork } from '../../hooks/useNetwork';
+import { recheckPendingBillOrders } from '../../lib/billOrders';
 
 /** Shorten a Stellar address for the header chip: `GDKF…9QX3`. */
 function shortAddress(addr: string): string {
@@ -176,6 +177,9 @@ export default function DashboardTab() {
         // Keep the last known total; the XLM figure still renders meanwhile.
       }
       try {
+        // Re-check any pending bill orders on open/refresh so orders resolve
+        void recheckPendingBillOrders().catch(() => undefined);
+
         // Merge, don't replace: this runs every 15s, and any single source
         // blinking (rate-limited RPC, slow Horizon page) would otherwise blank
         // the feed until the next poll refilled it.
@@ -395,9 +399,16 @@ export default function DashboardTab() {
       {/* Activity feed — 3 most recent, full history on the transactions page */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Collectibles</Text>
-        <Pressable onPress={() => router.push('/nfts')} hitSlop={8} accessibilityRole="button">
-          <Text style={styles.sectionLink}>View NFTs →</Text>
-        </Pressable>
+        <View style={styles.sectionLinks}>
+          {/* The shop and the shelf are different places, so they are different
+              links: one buys a Veil-ian, the other shows what is already held. */}
+          <Pressable onPress={() => router.push('/veil-ians')} hitSlop={8} accessibilityRole="button">
+            <Text style={styles.sectionLink}>Veil-ians →</Text>
+          </Pressable>
+          <Pressable onPress={() => router.push('/nfts')} hitSlop={8} accessibilityRole="button">
+            <Text style={styles.sectionLink}>Yours →</Text>
+          </Pressable>
+        </View>
       </View>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Activity</Text>
@@ -447,6 +458,7 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 11,
   },
+  sectionLinks: { flexDirection: 'row', gap: 18 },
   sectionLink: {
     color: colors.gold,
     fontSize: 12,

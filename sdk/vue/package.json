@@ -5,7 +5,7 @@
   "private": true,
   "sideEffects": false,
   "main": "../dist/vue/index.js",
-  "module": "../dist/vue/index.js",
+  "module": "../dist/esm/vue/index.js",
   "types": "../dist/vue/index.d.ts",
   "peerDependencies": {
     "vue": "^3.0.0"
