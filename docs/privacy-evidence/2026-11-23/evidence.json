@@ -1,0 +1,205 @@
+{
+  "issue": 1203,
+  "startedAt": "2026-11-23T20:38:36.379Z",
+  "status": "completed",
+  "scope": "Browser SDK integration with disposable testnet signers; does not exercise Veil passkey onboarding or PRF recovery",
+  "upstreamCommit": "0ac6da3e171308533b1873155f167a01b69b3aaf",
+  "artifactId": 14831881878,
+  "artifactSha256": "4055905225a56d2b7522a1e3054241e0f3ecec6d523b2730025f58ce2389c298",
+  "packageSha256": "16216bf58241d128997b482a2753b4904fe62d0d68f91902288dca4c27bf565b",
+  "circuitLockSha256": "35c36f4d0f7055514156b67df9995cb9550e5f380e9a84d85dddb457d17b241e",
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org/",
+  "pool": "CBKLEZ3T7EFGQS3OFB4KGAAKEZ3KF2YJTWBOXWKUIKTIFWJ56UF6SNKI",
+  "sender": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+  "recipient": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+  "events": [
+    {
+      "at": "2026-11-23T20:39:29.819Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "initialize",
+      "result": {
+        "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+        "pool": "CBKLEZ3T7EFGQS3OFB4KGAAKEZ3KF2YJTWBOXWKUIKTIFWJ56UF6SNKI"
+      }
+    },
+    {
+      "at": "2026-11-23T20:40:12.004Z",
+      "address": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+      "action": "initialize",
+      "result": {
+        "address": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+        "pool": "CBKLEZ3T7EFGQS3OFB4KGAAKEZ3KF2YJTWBOXWKUIKTIFWJ56UF6SNKI"
+      }
+    },
+    {
+      "at": "2026-11-23T20:40:26.159Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "signed-transaction",
+      "hash": "ff7159b90d7dc936ead1e723bdd3ebedde8d38a62704e8b59f90bcb8342a88f9"
+    },
+    {
+      "at": "2026-11-23T20:40:33.631Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "register",
+      "result": {
+        "hashes": [
+          "ff7159b90d7dc936ead1e723bdd3ebedde8d38a62704e8b59f90bcb8342a88f9"
+        ],
+        "registered": true
+      }
+    },
+    {
+      "at": "2026-11-23T20:40:37.022Z",
+      "address": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+      "action": "signed-transaction",
+      "hash": "48b41ee1c472e3983568886d00ff4e88af63f7e92f61f01afb1cc9d01bf84bbb"
+    },
+    {
+      "at": "2026-11-23T20:40:47.977Z",
+      "address": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+      "action": "register",
+      "result": {
+        "hashes": [
+          "48b41ee1c472e3983568886d00ff4e88af63f7e92f61f01afb1cc9d01bf84bbb"
+        ],
+        "registered": true
+      }
+    },
+    {
+      "at": "2026-11-23T20:41:13.181Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "signed-transaction",
+      "hash": "c6cc681762db0b3ea5a718c72c8e8baefac2470ca523877f56f9864d62afaa2e"
+    },
+    {
+      "at": "2026-11-23T20:41:17.595Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "pool-result",
+      "result": {
+        "status": "ok",
+        "hashes": [
+          "c6cc681762db0b3ea5a718c72c8e8baefac2470ca523877f56f9864d62afaa2e"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-23T20:41:17.605Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "shield",
+      "result": {
+        "status": "ok",
+        "hashes": [
+          "c6cc681762db0b3ea5a718c72c8e8baefac2470ca523877f56f9864d62afaa2e"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-23T20:42:00.232Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "signed-transaction",
+      "hash": "7012b2f06d5c468e76b20a4aea78f52b4b1c9daab78b884ed33c55844b247f03"
+    },
+    {
+      "at": "2026-11-23T20:42:03.448Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "pool-result",
+      "result": {
+        "status": "ok",
+        "hashes": [
+          "7012b2f06d5c468e76b20a4aea78f52b4b1c9daab78b884ed33c55844b247f03"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-23T20:42:03.746Z",
+      "address": "GD2UDLEXIGUESBGTF2PBWPY3RM74JSBZZSLE66XD75UO667YFI3G6HVB",
+      "action": "send",
+      "result": {
+        "status": "ok",
+        "hashes": [
+          "7012b2f06d5c468e76b20a4aea78f52b4b1c9daab78b884ed33c55844b247f03"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-23T20:42:48.367Z",
+      "address": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+      "action": "signed-transaction",
+      "hash": "501c745abdc814a95efa84eee72e1913ad6fb7babb5875e641e4ef751c238559"
+    },
+    {
+      "at": "2026-11-23T20:42:52.674Z",
+      "address": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+      "action": "pool-result",
+      "result": {
+        "status": "ok",
+        "hashes": [
+          "501c745abdc814a95efa84eee72e1913ad6fb7babb5875e641e4ef751c238559"
+        ]
+      }
+    },
+    {
+      "at": "2026-11-23T20:42:52.777Z",
+      "address": "GASFWVTYUWHTE5IZP4UKZAMKCILVVPU4KDVTPYOVBR4RKVGT2LRWNOCZ",
+      "action": "unshield",
+      "result": {
+        "status": "ok",
+        "hashes": [
+          "501c745abdc814a95efa84eee72e1913ad6fb7babb5875e641e4ef751c238559"
+        ]
+      }
+    }
+  ],
+  "transactions": [
+    {
+      "hash": "ff7159b90d7dc936ead1e723bdd3ebedde8d38a62704e8b59f90bcb8342a88f9",
+      "status": "SUCCESS",
+      "ledger": 5888558,
+      "createdAt": "1795466432"
+    },
+    {
+      "hash": "48b41ee1c472e3983568886d00ff4e88af63f7e92f61f01afb1cc9d01bf84bbb",
+      "status": "SUCCESS",
+      "ledger": 5888561,
+      "createdAt": "1795466447"
+    },
+    {
+      "hash": "c6cc681762db0b3ea5a718c72c8e8baefac2470ca523877f56f9864d62afaa2e",
+      "status": "SUCCESS",
+      "ledger": 5888568,
+      "createdAt": "1795466482"
+    },
+    {
+      "hash": "7012b2f06d5c468e76b20a4aea78f52b4b1c9daab78b884ed33c55844b247f03",
+      "status": "SUCCESS",
+      "ledger": 5888577,
+      "createdAt": "1795466527"
+    },
+    {
+      "hash": "501c745abdc814a95efa84eee72e1913ad6fb7babb5875e641e4ef751c238559",
+      "status": "SUCCESS",
+      "ledger": 5888587,
+      "createdAt": "1795466577"
+    }
+  ],
+  "browserVersion": "156.0.8078.4",
+  "nodeVersion": "v22.16.0",
+  "initialPublicBalances": {
+    "sender": "10000.0000000",
+    "recipient": "10000.0000000"
+  },
+  "afterShield": {
+    "senderPrivate": "50000000"
+  },
+  "afterSend": {
+    "senderPrivate": "29000000",
+    "recipientPrivate": "20000000"
+  },
+  "afterUnshield": {
+    "recipientPrivate": "9000000",
+    "recipientPublicBefore": "9999.8599611",
+    "recipientPublicAfter": "10000.0746364"
+  },
+  "finishedAt": "2026-11-23T20:43:00.431Z"
+}
