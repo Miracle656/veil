@@ -1,8 +1,10 @@
 import { describe, it, expect, jest } from '@jest/globals'
-import { runAgent } from '../agent.js'
+import { runAgent, fetchHistory } from '../agent.js'
 import type { LlmProvider, LlmTurn, ToolSpec } from '../llm.js'
 
 const INVEST_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+const TEST_ADDRESS = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
+const COUNTERPARTY_ADDRESS = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 
 /**
  * The agent loop, against a scripted provider — no model, no key, no network.
@@ -363,5 +365,232 @@ describe('runAgent', () => {
     const result = await runAgent('swap xlm to usdc', wallet, [], undefined, undefined, llm)
     expect(result.swapIntent).toEqual({ from: 'XLM', to: 'USDC' })
     expect(result.response).toMatch(/Swap screen/)
+  })
+
+  it('history helper returns operations from Horizon operations feed', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        _embedded: {
+          records: [
+            {
+              id: 'op_101',
+              type: 'invoke_host_function',
+              created_at: '2026-11-24T10:00:00Z',
+              asset_balance_changes: [
+                {
+                  type: 'transfer',
+                  asset_type: 'credit_alphanum4',
+                  asset_code: 'USDC',
+                  asset_issuer: INVEST_ISSUER,
+                  from: TEST_ADDRESS,
+                  to: COUNTERPARTY_ADDRESS,
+                  amount: '42.5000000',
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    } as Response)
+
+    try {
+      const output = await fetchHistory(TEST_ADDRESS, 10, 'mainnet', {
+        horizonUrl: 'https://horizon.stellar.org',
+      })
+      expect(output).toContain('Sent')
+      expect(output).toContain('42.5000000')
+      expect(output).toContain('USDC')
+      expect(fetchMock).toHaveBeenCalled()
+      const calledUrl = fetchMock.mock.calls[0][0] as string
+      expect(calledUrl).toContain('/accounts/' + TEST_ADDRESS + '/operations')
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('history helper returns indexer transfers when indexer answers', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
+      const urlStr = String(url)
+      if (urlStr.includes('/operations')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ _embedded: { records: [] } }),
+        } as Response
+      }
+      if (urlStr.includes('/transfers/address/')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            hasMore: false,
+            nextCursor: null,
+            limit: 10,
+            offset: 0,
+            transfers: [
+              {
+                id: 1,
+                eventType: 'transfer',
+                fromAddress: COUNTERPARTY_ADDRESS,
+                toAddress: TEST_ADDRESS,
+                amount: '100',
+                ledger: 12345,
+                ledgerClosedAt: '2026-11-24T10:00:00Z',
+                txHash: '0xabc123',
+                contractId: 'C123',
+              },
+            ],
+          }),
+        } as Response
+      }
+      return { ok: false, status: 404 } as Response
+    })
+
+    try {
+      const output = await fetchHistory(TEST_ADDRESS, 10, 'mainnet', {
+        wraithUrl: 'https://wraith.test',
+        horizonUrl: 'https://horizon.stellar.org',
+      })
+      expect(output).toContain('Received')
+      expect(output).toContain('100')
+      expect(fetchMock).toHaveBeenCalled()
+      const wraithCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/transfers/address/'))
+      expect(String(wraithCall?.[0])).toContain('network=mainnet')
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('/history 5000 is clamped to 50', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ _embedded: { records: [] } }),
+    } as Response)
+
+    try {
+      const llm = scripted([])
+      await runAgent('/history 5000', wallet, [], TEST_ADDRESS, undefined, llm, {
+        horizonUrl: 'https://horizon.stellar.org',
+      })
+      expect(fetchMock).toHaveBeenCalled()
+      const calledUrl = String(fetchMock.mock.calls[0][0])
+      expect(calledUrl).toContain('limit=50')
+      expect(calledUrl).not.toContain('limit=5000')
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('/history -1 is clamped to 1', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ _embedded: { records: [] } }),
+    } as Response)
+
+    try {
+      const llm = scripted([])
+      await runAgent('/history -1', wallet, [], TEST_ADDRESS, undefined, llm, {
+        horizonUrl: 'https://horizon.stellar.org',
+      })
+      expect(fetchMock).toHaveBeenCalled()
+      const calledUrl = String(fetchMock.mock.calls[0][0])
+      expect(calledUrl).toContain('limit=1')
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('a failed Horizon read is reported as a failed read', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Horizon offline'))
+
+    try {
+      const output = await fetchHistory(TEST_ADDRESS, 10, 'mainnet', {
+        horizonUrl: 'https://horizon.stellar.org',
+      })
+      expect(output).toContain('could not be read')
+      expect(output).not.toContain("You don't have any recent transactions")
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('a failed indexer read is reported as a failed read', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (url: any) => {
+      const urlStr = String(url)
+      if (urlStr.includes('/operations')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ _embedded: { records: [] } }),
+        } as Response
+      }
+      throw new Error('Wraith indexer timeout')
+    })
+
+    try {
+      const output = await fetchHistory(TEST_ADDRESS, 10, 'mainnet', {
+        wraithUrl: 'https://wraith.test',
+        horizonUrl: 'https://horizon.stellar.org',
+      })
+      expect(output).toContain('could not be read')
+      expect(output).not.toContain("You don't have any recent transactions")
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('get_transfer_history with valid address succeeds', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        _embedded: {
+          records: [
+            {
+              id: 'op_payment_1',
+              type: 'payment',
+              created_at: '2026-11-24T11:00:00Z',
+              from: COUNTERPARTY_ADDRESS,
+              to: TEST_ADDRESS,
+              amount: '75.0000000',
+              asset_type: 'native',
+            },
+          ],
+        },
+      }),
+    } as Response)
+
+    try {
+      const llm = scripted([
+        {
+          text: '',
+          toolCalls: [
+            {
+              id: 'th1',
+              name: 'get_transfer_history',
+              input: { address: TEST_ADDRESS, direction: 'both', limit: 10 },
+            },
+          ],
+        },
+        { text: 'Here is your history.', toolCalls: [] },
+      ])
+
+      const result = await runAgent('show my transfer history', wallet, [], TEST_ADDRESS, undefined, llm, {
+        horizonUrl: 'https://horizon.stellar.org',
+      })
+
+      const toolResult = llm.results[0][0].content
+      expect(toolResult).toContain('Received')
+      expect(toolResult).toContain('75.0000000')
+      expect(toolResult).toContain('XLM')
+      expect(toolResult).toContain(COUNTERPARTY_ADDRESS)
+      expect(result.response).toBe('Here is your history.')
+    } finally {
+      fetchMock.mockRestore()
+    }
   })
 })

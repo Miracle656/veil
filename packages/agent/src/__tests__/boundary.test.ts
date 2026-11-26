@@ -329,4 +329,28 @@ describe('a prompt cannot skip approval', () => {
     for (const r of llm.results[0]) expect(r.content).toContain('Unknown tool')
     expect(result.pendingTxXdr).toBeUndefined()
   })
+
+  it('get_transfer_history rejects an invalid address', async () => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch')
+    const llm = scripted([
+      {
+        text: '',
+        toolCalls: [
+          {
+            id: 'c1',
+            name: 'get_transfer_history',
+            input: { address: 'not-a-valid-stellar-address', direction: 'both', limit: 10 },
+          },
+        ],
+      },
+      { text: 'done', toolCalls: [] },
+    ])
+
+    await runAgent('history', 'CWALLET', [], FEE_PAYER, undefined, llm)
+    const toolResult = llm.results[0][0].content
+
+    expect(toolResult).toMatch(/error|invalid/i)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    fetchSpy.mockRestore()
+  })
 })

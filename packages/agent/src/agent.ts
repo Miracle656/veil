@@ -363,14 +363,271 @@ RULES:
  * Wraith now just means no Soroban transfers in the answer, and Horizon still
  * supplies classic payments.
  */
-async function fetchWraith(baseUrl: string, path: string): Promise<unknown[]> {
+async function fetchWraith(baseUrl: string, path: string, network?: string): Promise<unknown[]> {
   if (!baseUrl) return []
-  const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}`, {
+  const separator = path.includes('?') ? '&' : '?'
+  const query = network && !path.includes('network=') ? `${separator}network=${encodeURIComponent(network)}` : ''
+  const res = await fetch(`${baseUrl.replace(/\/+$/, '')}${path}${query}`, {
     signal: AbortSignal.timeout(15_000),
   })
-  if (!res.ok) return []
-  const body = await res.json()
-  return Array.isArray(body) ? body : []
+  if (!res.ok) {
+    throw new Error(`Wraith indexer returned HTTP ${res.status}`)
+  }
+  const body = (await res.json()) as { transfers?: unknown[] } | null
+  return Array.isArray(body?.transfers) ? body.transfers : []
+}
+
+interface BalanceChange {
+  asset_type?: string
+  asset_code?: string
+  asset_issuer?: string
+  type?: string
+  from?: string
+  to?: string
+  amount?: string
+}
+
+interface HorizonOperationRecord {
+  id?: string
+  type?: string
+  created_at?: string
+  transaction_hash?: string
+  source_account?: string
+  asset_balance_changes?: BalanceChange[]
+  from?: string
+  to?: string
+  amount?: string
+  asset_type?: string
+  asset_code?: string
+  asset_issuer?: string
+  funder?: string
+  account?: string
+  starting_balance?: string
+  source_amount?: string
+  source_asset_type?: string
+  source_asset_code?: string
+  source_asset_issuer?: string
+}
+
+interface IndexerTransfer {
+  id?: number | string
+  eventType?: string
+  fromAddress?: string | null
+  toAddress?: string | null
+  amount?: string
+  ledger?: number
+  ledgerClosedAt?: string
+  txHash?: string
+  contractId?: string
+  asset?: string
+}
+
+interface FormattedActivity {
+  direction: string
+  amount: string
+  asset: string
+  counterparty: string
+  date: string
+}
+
+function formatAsset(type?: string, code?: string, issuer?: string): string {
+  if (type === 'native' || (!type && !code) || code === 'XLM') return 'XLM'
+  const assetCode = code ?? 'Unknown'
+  return issuer ? `${assetCode} (${issuer})` : assetCode
+}
+
+function parseHorizonOperation(op: HorizonOperationRecord, targetAddr: string): FormattedActivity | null {
+  const normTarget = targetAddr.toUpperCase()
+  const date = op.created_at ?? 'unknown'
+
+  if (op.type === 'invoke_host_function') {
+    const changes = op.asset_balance_changes ?? []
+    const sent = changes.filter(
+      (c) => c.from && c.from.toUpperCase() === normTarget && !(c.to && c.to.toUpperCase() === normTarget),
+    )
+    const received = changes.filter(
+      (c) => c.to && c.to.toUpperCase() === normTarget && !(c.from && c.from.toUpperCase() === normTarget),
+    )
+
+    if (sent.length > 0 && received.length > 0) {
+      const s = sent[0]
+      const r = received[received.length - 1]
+      return {
+        direction: 'Swapped',
+        amount: s.amount ?? '0',
+        asset: formatAsset(s.asset_type, s.asset_code, s.asset_issuer),
+        counterparty: r.from ?? s.to ?? 'unknown',
+        date,
+      }
+    }
+    if (sent.length > 0) {
+      const c = sent[0]
+      return {
+        direction: 'Sent',
+        amount: c.amount ?? '0',
+        asset: formatAsset(c.asset_type, c.asset_code, c.asset_issuer),
+        counterparty: c.to ?? 'unknown',
+        date,
+      }
+    }
+    if (received.length > 0) {
+      const c = received[0]
+      return {
+        direction: 'Received',
+        amount: c.amount ?? '0',
+        asset: formatAsset(c.asset_type, c.asset_code, c.asset_issuer),
+        counterparty: c.from ?? 'unknown',
+        date,
+      }
+    }
+    return null
+  }
+
+  if (op.type === 'payment') {
+    const isSent = (op.from ?? '').toUpperCase() === normTarget
+    return {
+      direction: isSent ? 'Sent' : 'Received',
+      amount: op.amount ?? '0',
+      asset: formatAsset(op.asset_type, op.asset_code, op.asset_issuer),
+      counterparty: isSent ? (op.to ?? 'unknown') : (op.from ?? 'unknown'),
+      date,
+    }
+  }
+
+  if (op.type === 'create_account') {
+    const isSent = (op.funder ?? '').toUpperCase() === normTarget
+    return {
+      direction: isSent ? 'Sent' : 'Received',
+      amount: op.starting_balance ?? '0',
+      asset: 'XLM',
+      counterparty: isSent ? (op.account ?? 'unknown') : (op.funder ?? 'unknown'),
+      date,
+    }
+  }
+
+  if (op.type && op.type.startsWith('path_payment')) {
+    const isSent = (op.from ?? '').toUpperCase() === normTarget
+    return {
+      direction: isSent ? 'Sent' : 'Received',
+      amount: isSent ? (op.source_amount ?? op.amount ?? '0') : (op.amount ?? '0'),
+      asset: isSent
+        ? formatAsset(op.source_asset_type, op.source_asset_code, op.source_asset_issuer)
+        : formatAsset(op.asset_type, op.asset_code, op.asset_issuer),
+      counterparty: isSent ? (op.to ?? 'unknown') : (op.from ?? 'unknown'),
+      date,
+    }
+  }
+
+  return null
+}
+
+function parseWraithTransfer(tx: IndexerTransfer, targetAddr: string): FormattedActivity {
+  const normTarget = targetAddr.toUpperCase()
+  const isSent = (tx.fromAddress ?? '').toUpperCase() === normTarget
+  const asset = tx.asset ?? (tx.contractId ? `Token (${tx.contractId})` : 'XLM')
+  const date = tx.ledgerClosedAt ?? 'unknown'
+  return {
+    direction: isSent ? 'Sent' : 'Received',
+    amount: tx.amount ?? '0',
+    asset,
+    counterparty: isSent ? (tx.toAddress ?? 'unknown') : (tx.fromAddress ?? 'unknown'),
+    date,
+  }
+}
+
+/**
+ * Shared helper to fetch and format transaction history from Horizon operations feed
+ * and Wraith indexer transfers.
+ */
+export async function fetchHistory(
+  address: string,
+  count: number,
+  network: string,
+  urls?: { wraithUrl?: string; horizonUrl?: string },
+): Promise<string> {
+  if (!address || typeof address !== 'string' || !StrKey.isValidEd25519PublicKey(address)) {
+    return 'Error: Invalid Stellar address.'
+  }
+
+  const parsedCount = typeof count === 'number' && !isNaN(count) ? count : 10
+  const clampedCount = Math.min(50, Math.max(1, parsedCount))
+
+  const horizonBase = (urls?.horizonUrl ?? HORIZON_URL).replace(/\/+$/, '')
+  const wraithBase = urls?.wraithUrl?.trim() ?? ''
+
+  const [horizonResult, wraithResult] = await Promise.allSettled([
+    fetch(`${horizonBase}/accounts/${address}/operations?limit=${clampedCount}&order=desc`, {
+      signal: AbortSignal.timeout(15_000),
+    }).then(async (res) => {
+      if (!res.ok) throw new Error(`Horizon returned ${res.status}`)
+      return res.json()
+    }),
+    wraithBase
+      ? fetchWraith(wraithBase, `/transfers/address/${address}?direction=both&limit=${clampedCount}`, network)
+      : Promise.resolve([]),
+  ])
+
+  const horizonFailed = horizonResult.status === 'rejected'
+  const wraithFailed = wraithBase ? wraithResult.status === 'rejected' : false
+
+  const operations: FormattedActivity[] = []
+  if (horizonResult.status === 'fulfilled') {
+    const rawOps =
+      (horizonResult.value as { _embedded?: { records?: HorizonOperationRecord[] } })?._embedded?.records ?? []
+    for (const op of rawOps) {
+      const parsed = parseHorizonOperation(op, address)
+      if (parsed) operations.push(parsed)
+      if (operations.length >= clampedCount) break
+    }
+  }
+
+  const transfers: FormattedActivity[] = []
+  if (wraithResult.status === 'fulfilled') {
+    const rawTransfers = (wraithResult.value as IndexerTransfer[]) ?? []
+    for (const t of rawTransfers) {
+      transfers.push(parseWraithTransfer(t, address))
+      if (transfers.length >= clampedCount) break
+    }
+  }
+
+  const outputParts: string[] = []
+
+  if (horizonFailed) {
+    outputParts.push('History could not be read from Horizon.')
+  }
+  if (wraithFailed) {
+    outputParts.push('History could not be read from Wraith.')
+  }
+
+  if (operations.length > 0) {
+    outputParts.push(
+      `**Operations:**\n` +
+        operations
+          .map(
+            (op) =>
+              `- **${op.direction}**: ${op.amount} ${op.asset} (${op.direction === 'Sent' ? 'to' : 'from'} ${op.counterparty}) on ${op.date}`,
+          )
+          .join('\n'),
+    )
+  }
+
+  if (transfers.length > 0) {
+    outputParts.push(
+      `**Transfers:**\n` +
+        transfers
+          .map(
+            (tx) =>
+              `- **${tx.direction}**: ${tx.amount} ${tx.asset} (${tx.direction === 'Sent' ? 'to' : 'from'} ${tx.counterparty}) on ${tx.date}`,
+          )
+          .join('\n'),
+    )
+  }
+
+  if (outputParts.length === 0) {
+    return "You don't have any recent transactions."
+  }
+
+  return outputParts.join('\n\n')
 }
 
 /**
@@ -438,7 +695,7 @@ export async function runAgent(
   /** The model provider (see llm.ts). Reuse one per process. */
   llm: LlmProvider,
   /** Service URLs — if not provided, falls back to process.env. */
-  urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string },
+  urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string; network?: string },
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
@@ -478,55 +735,19 @@ export async function runAgent(
   ).trim()
   const horizonUrl = urls?.horizonUrl ?? HORIZON_URL
   const lensUrl = urls?.lensUrl ?? process.env.LENS_URL?.trim() ?? 'https://lens-ldtu.onrender.com'
+  const network = urls?.network ?? NETWORK
 
   // ── SLASH COMMAND INTERCEPTION ─────────────────────────────────────────────
   const trimmedMessage = userMessage.trim();
   if (trimmedMessage.startsWith('/history')) {
-    const parts = trimmedMessage.split(' ');
-    const parsedCount = parts.length > 1 ? parseInt(parts[1], 10) : 10;
-    const count = isNaN(parsedCount) ? 10 : parsedCount;
+    const parts = trimmedMessage.split(/\s+/);
+    const parsed = parts.length > 1 ? parseInt(parts[1], 10) : 10;
+    const parsedCount = isNaN(parsed) ? 10 : parsed;
+    const count = Math.min(50, Math.max(1, parsedCount));
     const targetAddress = feePayerAddress ?? walletAddress;
 
-    try {
-      const [wraithResult, horizonResult] = await Promise.allSettled([
-        fetchWraith(wraithUrl, `/transfers/address/${targetAddress}?direction=both&limit=${count}`),
-        fetch(`${horizonUrl}/accounts/${targetAddress}/payments?limit=${count}&order=desc`)
-          .then((r) => r.json()),
-      ]);
-
-      const sorobanTransfers: any[] = wraithResult.status === 'fulfilled' ? (wraithResult.value as any[]) ?? [] : [];
-      const classicPayments = horizonResult.status === 'fulfilled'
-        ? (horizonResult.value as any)?._embedded?.records ?? []
-        : [];
-
-      if ((!sorobanTransfers || sorobanTransfers.length === 0) && (!classicPayments || classicPayments.length === 0)) {
-        return { response: "You don't have any recent transactions." };
-      }
-
-      let responseText = `Here are your last ${count} transactions:\n\n`;
-      
-      if (sorobanTransfers && sorobanTransfers.length > 0) {
-        responseText += `**Soroban Transfers:**\n`;
-        sorobanTransfers.slice(0, count).forEach((tx: any) => {
-          responseText += `- **${tx.type || 'Transfer'}**: ${tx.amount || '0'} ${tx.asset || ''} (Hash: \`${tx.hash || tx.transaction_hash}\`)\n`;
-        });
-        responseText += `\n`;
-      }
-
-      if (classicPayments && classicPayments.length > 0) {
-        responseText += `**Classic Payments:**\n`;
-        classicPayments.slice(0, count).forEach((tx: any) => {
-          const amount = tx.amount || tx.starting_balance || "0";
-          const asset = tx.asset_type === 'native' ? 'XLM' : (tx.asset_code || 'Unknown');
-          responseText += `- **${tx.type}**: ${amount} ${asset} (Hash: \`${tx.transaction_hash}\`)\n`;
-        });
-      }
-
-      return { response: redactBankAccountNumbers(responseText.trim()) };
-    } catch (error) {
-      console.error("History fetch failed:", error);
-      return { response: "I couldn't fetch your transaction history at the moment. The Wraith indexer might be temporarily unavailable." };
-    }
+    const historyText = await fetchHistory(targetAddress, count, network, { wraithUrl, horizonUrl });
+    return { response: redactBankAccountNumbers(historyText.trim()) };
   }
   // ───────────────────────────────────────────────────────────────────────────
 
@@ -662,24 +883,12 @@ export async function runAgent(
       }
 
       case 'get_transfer_history': {
-        const limit = (input.limit as number | undefined) ?? 10
-        const horizonAddr = feePayerAddress ?? (input.address as string)
+        const rawLimit = typeof input.limit === 'number' ? input.limit : parseInt(String(input.limit ?? 10), 10)
+        const parsedLimit = isNaN(rawLimit) ? 10 : rawLimit
+        const limit = Math.min(50, Math.max(1, parsedLimit))
+        const addr = (input.address as string) || (feePayerAddress ?? walletAddress)
 
-        const [wraithResult, horizonResult] = await Promise.allSettled([
-          fetchWraith(
-            wraithUrl,
-            `/transfers/address/${input.address}?direction=${input.direction}&limit=${limit}`,
-          ),
-          fetch(`${horizonUrl}/accounts/${horizonAddr}/payments?limit=${limit}&order=desc`)
-            .then(r => r.json()),
-        ])
-
-        const sorobanTransfers = wraithResult.status === 'fulfilled' ? wraithResult.value : []
-        const classicPayments = horizonResult.status === 'fulfilled'
-          ? (horizonResult.value as any)?._embedded?.records ?? []
-          : []
-
-        return JSON.stringify({ sorobanTransfers, classicPayments })
+        return await fetchHistory(addr, limit, network, { wraithUrl, horizonUrl })
       }
 
       case 'get_wallet_balance': {
