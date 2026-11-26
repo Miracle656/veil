@@ -184,6 +184,16 @@ export default function AgentScreen() {
         return;
       }
 
+      if (reply.nairaIntent) {
+        appendMessage({
+          id: nextMessageId('naira'),
+          kind: 'naira',
+          text: reply.response,
+          intent: reply.nairaIntent,
+        });
+        return;
+      }
+
       if (!reply.pendingTxXdr) {
         appendMessage({ id: nextMessageId('agent'), kind: 'agent', text: reply.response });
         return;
@@ -577,6 +587,16 @@ function MessageRow({
           </View>
         </View>
       );
+
+    case 'naira':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <NairaHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
   }
 }
 
@@ -630,6 +650,7 @@ label="Open Earn Section"
   );
 }
 
+<<<<<<< HEAD
 /** Carries only the amount and rate; bank details remain on the Cash Out screen. */
 function CashOutHandoff({ intent }: { intent: import('../../lib/agentMessages').CashOutIntent }) {
   const router = useRouter();
@@ -641,6 +662,74 @@ function CashOutHandoff({ intent }: { intent: import('../../lib/agentMessages').
           setCashOutHandoff(intent);
           router.push('/cash-out');
         }}
+      />
+    </View>
+  );
+}
+
+/**
+ * Naira hand-off for airtime, bills, buy-with-naira, or verification.
+ */
+function NairaHandoff({ intent }: { intent: import('../../lib/agentMessages').NairaIntent }) {
+  const router = useRouter();
+  if (intent.kind === 'verify') {
+    return (
+      <View style={{ marginTop: 10 }}>
+        <Button
+          label="Open Verification"
+          onPress={() => router.push('/settings/profile')}
+        />
+      </View>
+    );
+  }
+  if (intent.kind === 'buy_naira') {
+    return (
+      <View style={{ marginTop: 10 }}>
+        <Button
+          label={`Buy ${intent.asset} with ₦${intent.amount.toLocaleString()}`}
+          onPress={() =>
+            router.push({
+              pathname: '/buy',
+              params: { amount: String(intent.amount), asset: intent.asset },
+            })
+          }
+        />
+      </View>
+    );
+  }
+  if (intent.kind === 'airtime') {
+    return (
+      <View style={{ marginTop: 10 }}>
+        <Button
+          label={`Confirm Airtime · ₦${intent.amount.toLocaleString()} to ${intent.phone}`}
+          onPress={() =>
+            router.push({
+              pathname: '/pay',
+              params: {
+                amount: String(intent.amount),
+                to: intent.phone,
+                memo: `Airtime ${intent.network ?? ''}`.trim(),
+              },
+            })
+          }
+        />
+      </View>
+    );
+  }
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Button
+        label={`Confirm ${intent.service} · ₦${intent.amount.toLocaleString()}`}
+        onPress={() =>
+          router.push({
+            pathname: '/pay',
+            params: {
+              amount: String(intent.amount),
+              to: intent.customerId ?? '',
+              memo: `Bill: ${intent.service}`,
+            },
+          })
+        }
       />
     </View>
   );

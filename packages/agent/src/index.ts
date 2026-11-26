@@ -29,9 +29,26 @@ export {
   type ChatOptions,
   type InvestIntent,
   type SwapIntent,
+  type NairaIntent,
   type UserProfile,
   type VeilAgent,
 } from './agent.js'
+
+export {
+  getNairaServices,
+  getVerificationStatus,
+  isNairaServiceAvailable,
+  isValidNigerianPhone,
+  normalizeNigerianPhone,
+  configureNairaServices,
+  resetNairaServicesConfig,
+  setCustomVerificationResolver,
+  sanitizeVerification,
+  sanitizeNINString,
+  NAIRA_SERVICE_LIMITS,
+  type NairaServiceId,
+  type NairaServiceInfo,
+} from './naira.js'
 
 export {
   ASSET_REGISTRY,
