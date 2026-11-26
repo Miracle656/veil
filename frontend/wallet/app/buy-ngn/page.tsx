@@ -48,7 +48,9 @@ import {
   XLM_KEPT_BACK,
   convertPath,
   loadBuyWant,
+  onrampStage,
   rememberBuyWant,
+  type OnrampStage,
   type BuyWant,
 } from '@/lib/nairaBuy'
 import {
@@ -96,6 +98,10 @@ export default function BuyWithNairaPage() {
   const [error, setError] = useState<string | null>(null)
   const [secondsLeft, setSecondsLeft] = useState(0)
   const [convert, setConvert] = useState<Convert>({ state: 'idle' })
+  // What the payment service last said about this order, and when we asked.
+  const [payStatus, setPayStatus] = useState('pending')
+  const [checkedAt, setCheckedAt] = useState<number | null>(null)
+  const [checking, setChecking] = useState(false)
   /** One swap per order, whatever React does with the effect below. */
   const convertStarted = useRef(false)
 
@@ -188,23 +194,36 @@ export default function BuyWithNairaPage() {
     return () => clearInterval(id)
   }, [order])
 
-  // Poll until Linq says the naira landed and the crypto went out.
+  // Ask the payment service where the order is. Used by the timer below and
+  // by the "Check now" button, so the person is never left guessing.
+  const checkOrder = useCallback(async () => {
+    if (!order || !customerRef) return
+    setChecking(true)
+    try {
+      const s = await getOnrampStatus(customerRef, order.orderId)
+      setPayStatus(s.status)
+      setCheckedAt(Date.now())
+      if (onrampStage(s.status, 1) === 'done') {
+        // Settled: the account must not be offered again.
+        forgetOnrampOrder()
+        setStep('done')
+      }
+    } catch {
+      // A failed check is not a failed order. Keep the last answer and try again.
+    } finally {
+      setChecking(false)
+    }
+  }, [order, customerRef])
+
+  // Poll until the service says the naira landed and the crypto went out.
   useEffect(() => {
     if (!order || !customerRef || step !== 'pay') return
-    const id = setInterval(() => {
-      void getOnrampStatus(customerRef, order.orderId)
-        .then((s) => {
-          if (/complete|success|settled|paid/i.test(s.status)) {
-            // Settled: the account must not be offered again.
-            forgetOnrampOrder()
-            setStep('done')
-          }
-        })
-        // A failed poll is not a failed order — say nothing and poll again.
-        .catch(() => undefined)
-    }, 10_000)
+    void checkOrder()
+    const id = setInterval(() => void checkOrder(), 10_000)
     return () => clearInterval(id)
-  }, [order, customerRef, step])
+  }, [order, customerRef, step, checkOrder])
+
+  const stage: OnrampStage = step === 'done' ? 'done' : onrampStage(payStatus, secondsLeft)
 
   const amountNgn = Number(ngn.replace(/[^\d.]/g, ''))
   const estimated = rate && amountNgn > 0 ? amountNgn / rate : null
@@ -376,9 +395,47 @@ export default function BuyWithNairaPage() {
           </Card>
         )}
 
+        {step === 'pay' && order && (
+          <Card>
+            <SectionLabel>Status</SectionLabel>
+            <Progress stage={stage} wantsUsdc={want === 'usdc'} convert={convert.state} />
+            <p
+              role="status"
+              className={`text-[13px] leading-relaxed mt-4 mb-2 ${
+                stage === 'failed' || stage === 'expired' ? 'text-[rgba(220,38,38,0.9)]' : 'text-white/60'
+              }`}
+            >
+              {stage === 'waiting' &&
+                'Waiting for your transfer. This page checks every 10 seconds and updates by itself. You can leave and come back.'}
+              {stage === 'received' && 'Your naira has arrived. Your crypto is being sent now.'}
+              {stage === 'failed' &&
+                'The payment service says this order did not go through. If money left your bank, keep the reference below.'}
+              {stage === 'expired' &&
+                'The time to pay ran out and no transfer was seen. If you did send money, keep the reference below.'}
+            </p>
+            <Detail label="Order reference" value={order.orderId} mono />
+            <div className="flex items-center justify-between gap-4 mt-4">
+              <span className="text-[12px] text-white/40">
+                {checkedAt ? `Last checked ${new Date(checkedAt).toLocaleTimeString()}` : 'Checking…'}
+              </span>
+              <button
+                type="button"
+                disabled={checking}
+                onClick={() => void checkOrder()}
+                className="text-[13px] text-gold underline disabled:opacity-50"
+              >
+                {checking ? 'Checking…' : 'Check now'}
+              </button>
+            </div>
+          </Card>
+        )}
+
         {step === 'done' && (
           <Card>
             <p className="text-[15px] font-semibold text-off-white mb-2">Crypto on its way</p>
+            <div className="mb-4">
+              <Progress stage="done" wantsUsdc={want === 'usdc'} convert={convert.state} />
+            </div>
             <p className="text-[13px] leading-relaxed text-white/55 mb-5">
               Your naira landed and the payout has been sent to your wallet.
             </p>
@@ -425,6 +482,58 @@ export default function BuyWithNairaPage() {
         )}
       </div>
     </>
+  )
+}
+
+/**
+ * The order as a short list of steps, so the person can see where it is:
+ * what is finished, what is happening now and what is still to come.
+ */
+function Progress({
+  stage,
+  wantsUsdc,
+  convert,
+}: {
+  stage: OnrampStage
+  wantsUsdc: boolean
+  convert: Convert['state']
+}) {
+  const paid = stage === 'received' || stage === 'done'
+  const delivered = stage === 'done'
+  const steps: { label: string; state: 'done' | 'now' | 'todo' | 'stopped' }[] = [
+    {
+      label: 'You send the naira',
+      state: paid ? 'done' : stage === 'failed' || stage === 'expired' ? 'stopped' : 'now',
+    },
+    { label: 'Naira received', state: delivered ? 'done' : paid ? 'now' : 'todo' },
+    { label: 'XLM sent to your wallet', state: delivered ? 'done' : 'todo' },
+  ]
+  if (wantsUsdc) {
+    steps.push({
+      label: 'Swapped to USDC',
+      state:
+        convert === 'done' ? 'done' : convert === 'working' ? 'now' : convert === 'failed' ? 'stopped' : 'todo',
+    })
+  }
+  const note = { done: ' · done', now: ' · in progress', stopped: ' · stopped', todo: '' }
+  const dot = {
+    done: 'bg-gold',
+    now: 'bg-gold animate-pulse',
+    stopped: 'bg-[rgba(220,38,38,0.9)]',
+    todo: 'bg-white/15',
+  }
+  return (
+    <ol className="mt-4 flex flex-col gap-[10px]">
+      {steps.map((s) => (
+        <li key={s.label} className="flex items-center gap-3 text-[13px]">
+          <span aria-hidden="true" className={`inline-block w-[10px] h-[10px] rounded-full shrink-0 ${dot[s.state]}`} />
+          <span className={s.state === 'todo' ? 'text-white/40' : 'text-off-white'}>
+            {s.label}
+            <span className="text-white/40">{note[s.state]}</span>
+          </span>
+        </li>
+      ))}
+    </ol>
   )
 }
 
