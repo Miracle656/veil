@@ -1,0 +1,106 @@
+<svg width="1500" height="500" viewBox="0 0 1500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+
+    <linearGradient id="gBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#111111"/>
+      <stop offset="100%" stop-color="#080808"/>
+    </linearGradient>
+
+    <linearGradient id="gMark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#FFE566"/>
+      <stop offset="50%"  stop-color="#FDDA24"/>
+      <stop offset="100%" stop-color="#B89000"/>
+    </linearGradient>
+
+    <linearGradient id="gText" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#FFE566"/>
+      <stop offset="50%"  stop-color="#FDDA24"/>
+      <stop offset="100%" stop-color="#C4A200"/>
+    </linearGradient>
+
+    <!-- wide ambient glow centred on the mark -->
+    <radialGradient id="gGlow" cx="50%" cy="50%" r="35%">
+      <stop offset="0%"   stop-color="#FDDA24" stop-opacity="0.09"/>
+      <stop offset="100%" stop-color="#FDDA24" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="markGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Anton&amp;display=swap');
+    </style>
+
+  </defs>
+
+  <!-- background -->
+  <rect width="1500" height="500" fill="url(#gBg)"/>
+  <rect width="1500" height="500" fill="url(#gGlow)"/>
+
+  <!-- subtle horizontal rule top + bottom -->
+  <line x1="0" y1="1"   x2="1500" y2="1"   stroke="#FDDA24" stroke-width="1" opacity="0.08"/>
+  <line x1="0" y1="499" x2="1500" y2="499" stroke="#FDDA24" stroke-width="1" opacity="0.08"/>
+
+  <!-- ── V mark — left of centre ──────────────────────────────────── -->
+  <g transform="translate(620, 250)" filter="url(#markGlow)">
+
+    <!-- outer V -->
+    <path d="M-70 -105 L0 115 L70 -105"
+          fill="none"
+          stroke="url(#gMark)"
+          stroke-width="11"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- inner ghost V -->
+    <path d="M-42 -105 L0 70 L42 -105"
+          fill="none"
+          stroke="#FDDA24"
+          stroke-width="3.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          opacity="0.28"/>
+
+    <!-- veil bar -->
+    <line x1="-57" y1="-20" x2="57" y2="-20"
+          stroke="#FDDA24" stroke-width="2"
+          stroke-linecap="round" opacity="0.2"/>
+
+    <!-- apex dot -->
+    <circle cx="0" cy="115" r="5.5" fill="#FDDA24" opacity="0.6"/>
+
+  </g>
+
+  <!-- ── Wordmark ──────────────────────────────────────────────────── -->
+  <text
+    x="714"
+    y="290"
+    font-family="'Anton', 'Impact', 'Arial Black', sans-serif"
+    font-size="148"
+    font-weight="400"
+    letter-spacing="18"
+    fill="url(#gText)"
+  >VEIL</text>
+
+  <!-- baseline rule under wordmark -->
+  <line x1="714" y1="314" x2="1130" y2="314"
+        stroke="#FDDA24" stroke-width="1.5" opacity="0.2"/>
+
+  <!-- tagline -->
+  <text
+    x="716"
+    y="352"
+    font-family="'Anton', 'Impact', 'Arial Black', sans-serif"
+    font-size="22"
+    font-weight="400"
+    letter-spacing="6"
+    fill="#FDDA24"
+    opacity="0.45"
+  >INVISIBLE WALLET LAYER FOR STELLAR</text>
+
+</svg>

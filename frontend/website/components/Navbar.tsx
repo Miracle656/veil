@@ -9,7 +9,7 @@ const NAV_LINKS = [
   { label: 'How It Works', href: '#how-it-works' },
   { label: 'Features',     href: '#features' },
   { label: 'Roadmap',      href: '#roadmap' },
-  { label: 'Docs',         href: 'https://veil-2ap8.vercel.app' },
+  { label: 'Docs',         href: 'https://docs.useveilapp.xyz' },
 ]
 
 export default function Navbar() {
@@ -75,7 +75,7 @@ export default function Navbar() {
             <GithubIcon size={15} />
             GitHub
           </a>
-          <a href="https://veil-2ap8.vercel.app" className="btn-primary !py-2 !px-4 text-sm">
+          <a href="https://docs.useveilapp.xyz" className="btn-primary !py-2 !px-4 text-sm">
             Get Started
           </a>
         </div>
@@ -122,7 +122,7 @@ export default function Navbar() {
                 </a>
               ))}
               <div className="pt-2 flex flex-col gap-2">
-                <a href="https://veil-2ap8.vercel.app" className="btn-primary text-center justify-center">
+                <a href="https://docs.useveilapp.xyz" className="btn-primary text-center justify-center">
                   Get Started
                 </a>
               </div>

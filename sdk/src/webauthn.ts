@@ -14,6 +14,11 @@ function b64urlToUint8Array(b64: string): Uint8Array {
     return Uint8Array.from(raw, c => c.charCodeAt(0));
 }
 
+function b64urlToArrayBuffer(b64: string): ArrayBuffer {
+    const bytes = b64urlToUint8Array(b64);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -59,6 +64,26 @@ export interface WebAuthnAssertResult {
     clientDataJSON: Uint8Array;
     /** Raw P-256 ECDSA signature: r ‖ s (64 bytes, low-S normalised). */
     signature: Uint8Array;
+    /**
+     * Uncompressed P-256 public key (65 bytes: 0x04 ‖ x ‖ y) if — and only if —
+     * this platform chose to surface it.
+     *
+     * Expect `null`. The WebAuthn spec defines `getPublicKey()` on the
+     * *attestation* (registration) response; the assertion response has no such
+     * method, so browsers generally have nothing to report here and
+     * `react-native-passkey` never does (see `webauthn.native.ts`, whose
+     * `authenticate()` returns only authData / clientDataJSON / signature).
+     *
+     * This is not a limitation the SDK depends on: a caller that needs the
+     * signing key derives it from the signature with
+     * `recoverAssertionPublicKeys()` in `crypto/assertionKey.ts`, which works
+     * wherever the three fields above exist. Treat any value here as a hint that
+     * can save that recovery a step — never as a prerequisite.
+     *
+     * Optional because the React Native provider omits the property outright
+     * rather than returning null. Read it as "a key, if this platform bothered".
+     */
+    publicKeyBytes?: Uint8Array | null;
 }
 
 export interface WebAuthnProvider {
@@ -74,6 +99,14 @@ export interface WebAuthnProvider {
          * decide (typically a device-bound platform passkey).
          */
         authenticatorAttachment?: AuthenticatorAttachment;
+        /**
+         * Credential ids already registered for this wallet (e.g. its existing
+         * platform passkey and/or portable signer). Forwarded to
+         * `excludeCredentials` so an authenticator that already holds one of
+         * these refuses the request instead of silently replacing the
+         * existing resident credential (same rp.id + user.id).
+         */
+        excludeCredentials?: { id: string; transports?: string[] }[];
     }): Promise<WebAuthnCreateResult>;
 
     authenticate(options: {
@@ -92,7 +125,7 @@ export interface WebAuthnProvider {
 // ── Browser implementation ────────────────────────────────────────────────────
 
 export const webAuthnProvider: WebAuthnProvider = {
-    async create({ challenge, rpId, rpName, userId, userName, authenticatorAttachment }) {
+    async create({ challenge, rpId, rpName, userId, userName, authenticatorAttachment, excludeCredentials }) {
         // Slice to ensure a plain ArrayBuffer (Uint8Array.buffer may be SharedArrayBuffer)
         const challengeBuf = challenge.buffer.slice(
             challenge.byteOffset, challenge.byteOffset + challenge.byteLength
@@ -112,11 +145,25 @@ export const webAuthnProvider: WebAuthnProvider = {
                 user: { id: userIdBuf, name: userName, displayName: userName },
                 pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
                 timeout: 60_000,
+                ...(excludeCredentials && excludeCredentials.length
+                    ? {
+                        excludeCredentials: excludeCredentials.map(({ id, transports }) => ({
+                            id:   b64urlToArrayBuffer(id),
+                            type: 'public-key' as const,
+                            ...(transports && transports.length ? { transports: transports as AuthenticatorTransport[] } : {}),
+                        })),
+                    }
+                    : {}),
                 authenticatorSelection: {
                     residentKey: roaming ? 'required' : 'preferred',
                     userVerification: 'required',
                     ...(authenticatorAttachment ? { authenticatorAttachment } : {}),
                 },
+                // Enable the PRF extension at enrolment so this credential can
+                // later derive the passkey-bound fee-payer seed (ADR 0003).
+                // Authenticators without PRF simply ignore this — the credential
+                // still works and the wallet falls back to legacy derivation.
+                extensions: { prf: {} } as AuthenticationExtensionsClientInputs,
             },
         }) as PublicKeyCredential;
 
@@ -164,10 +211,40 @@ export const webAuthnProvider: WebAuthnProvider = {
         if (!assertion) throw new Error('Authentication was cancelled');
 
         const response = assertion.response as AuthenticatorAssertionResponse;
+        // Probe for a public key on the assertion response, and report what we get.
+        // Per spec an assertion carries no key — `getPublicKey()` is defined on the
+        // attestation response — so this normally leaves `publicKeyBytes` null, and
+        // that is fine: login() recovers the key from the signature instead
+        // (crypto/assertionKey.ts). A platform that does expose the key here just
+        // saves the SDK one on-chain check.
+        let publicKeyBytes: Uint8Array | null = null;
+        // Not in the standard TS DOM typings, and not on the spec's assertion
+        // response; probed defensively because a handful of environments expose it
+        // anyway. Nothing may assume it is there.
+        const resp = response as any;
+        if (typeof resp.getPublicKey === 'function') {
+            try {
+                const spkiBuffer: ArrayBuffer | null = resp.getPublicKey();
+                if (spkiBuffer) {
+                    const cryptoKey = await crypto.subtle.importKey(
+                        'spki', spkiBuffer,
+                        { name: 'ECDSA', namedCurve: 'P-256' },
+                        true, ['verify']
+                    );
+                    const rawBuffer = await crypto.subtle.exportKey('raw', cryptoKey);
+                    publicKeyBytes = new Uint8Array(rawBuffer);
+                }
+            } catch {
+                // Some platforms do not support SPKI export on assertion
+                // responses — this is expected, not an error.
+            }
+        }
+
         return {
             authData:       new Uint8Array(response.authenticatorData),
             clientDataJSON: new Uint8Array(response.clientDataJSON),
             signature:      derToRawSignature(response.signature),
+            publicKeyBytes,
         };
     },
 };

@@ -1,8 +1,8 @@
 # Veil Mobile
 
-Expo (expo-router + TypeScript) mobile app for Veil. This is the bootable shell —
-a single placeholder home route (`app/index.tsx`) proving the toolchain runs. No
-wallet logic or SDK is wired up yet.
+Expo (expo-router + TypeScript) mobile app for Veil. The screens are still
+placeholders — no wallet SDK is wired up yet — but the routes exist so deep
+links have somewhere to land.
 
 ## Getting started
 
@@ -43,6 +43,25 @@ matching the web wallet's standalone `useTheme`. New screens should style from
 `ThemeColors` roles rather than literal hex values, so light mode cannot be
 forgotten.
 
+## App lock
+
+`/settings/security` controls the lock policy: how long the app may sit idle
+before it locks (5 / 15 / 30 minutes, or never) and whether unlocking must
+present a biometric factor. The timeout is stored under the same
+`veil_idle_lock_minutes` key the web wallet uses, so the choice carries between
+clients.
+
+`lib/appLock.ts` holds both the policy and `createIdleWatcher`, the countdown the
+lock screen (backlog #28) wires to. Changing the timeout applies immediately —
+watchers subscribe to the settings store and reschedule, including shortening a
+countdown that is already past its new deadline.
+
+Two things differ from the web wallet's `lib/idle-lock.ts`. Activity is reported
+explicitly through `noteActivity()`, since React Native has no global
+mouse/keyboard stream. And backgrounding is not treated as activity: JS timers
+do not run reliably while the app is away, so the watcher records when it left
+the foreground and locks on return if the idle period already elapsed.
+
 ## Encrypted backups
 
 `/settings/backup` exports the wallet's non-secret state — address, signer public
@@ -60,6 +79,122 @@ rejects the metadata before encryption if it finds a secret-looking field.
 Every field of the envelope is authenticated. A backup opened with the wrong
 passphrase, or altered by so much as a bit, fails with `BackupTamperError` and
 changes nothing on the device — there is no partial restore.
+## Agent chat
+
+`/agent` is the mobile client for the Claude-powered assistant in
+`packages/agent`. It speaks the same WebSocket protocol as the web wallet's
+`/agent` page — `chat` and `clear_history` out, `thinking` / `response` /
+`error` / `history_cleared` back — and shares its storage keys, so the profile
+you set up in the browser carries over.
+
+Point it at a server with `EXPO_PUBLIC_AGENT_WS_URL` (defaults to
+`ws://localhost:3001`).
+
+The transport lives in `lib/agentSocket.ts`, separated from the screen because a
+phone's socket drops constantly — backgrounding the app is enough. It reconnects
+with jittered exponential backoff, queues anything composed while offline and
+flushes it on reconnect, and tracks in-flight requests: the agent server keeps no
+outbox, so a reply interrupted by a drop is gone, and the screen says so instead
+of spinning forever. Every external dependency (socket constructor, timers,
+jitter) is injectable, which is how the reconnect paths are tested.
+
+## Recovery (SEP-30)
+
+`/recover` is the way back in after losing the device that held the wallet's
+passkey. There is no seed phrase, so nothing on a new device can authorize a
+signer change on its own — the SEP-30 recovery servers registered while the wallet
+was healthy do it instead:
+
+```bash
+# frontend/mobile/.env.local
+EXPO_PUBLIC_RECOVERY_SERVERS=https://recovery.example.com,https://recovery2.example.com
+EXPO_PUBLIC_RECOVERY_KEY_ADDRESS=G...   # only for the multi-server case, see below
+```
+
+The screen walks four steps: confirm the wallet address (read on-chain, so a wrong
+address fails immediately), contact each recovery server, create a fresh passkey on
+this device, and finalize once the contract's timelock expires.
+
+On-chain this is the wallet contract's two-step rotation. `request_recovery` is
+authorized by the wallet's recovery-key address and starts a 7-day timelock;
+`finalize_recovery` is permissionless afterwards and installs the new signer. Both
+transactions are sourced from the recovery-key address, so the servers' envelope
+signatures are what satisfy the contract's `require_auth`. With one server that
+address is simply the signer it contributes, discovered from the server itself;
+with several it is the multisig account they are all signers on, which
+`EXPO_PUBLIC_RECOVERY_KEY_ADDRESS` names.
+
+The wait is the safety property, not an inconvenience: it is the window in which an
+owner who still holds their key can cancel a recovery they did not start. The
+pending recovery — including the new credential — is persisted to `AsyncStorage`
+so the user can close the app and come back, and the new passkey is only written to
+the keychain as this device's wallet credential after the contract confirms the
+rotation.
+
+SEP-10 authentication is out of scope here, as it is in `sdk/src/recovery`: each
+server's session token is pasted into the screen and kept in memory only.
+## Agent
+
+`/agent` is the chat surface for the Claude-powered agent in `packages/agent`. Point
+it at the service before running:
+
+```bash
+# frontend/mobile/.env.local
+EXPO_PUBLIC_AGENT_WS_URL=ws://localhost:3001
+```
+
+The agent can read, explain, and propose — it cannot move funds. Each message type
+renders differently: prose from the agent (with `**bold**` and `` `code` `` shown as
+styled text, never as interpreted markup), the user's own messages, service errors,
+app notices, and transaction proposals.
+
+A proposal is decoded from its XDR here, so the amounts and destinations on screen
+come from the transaction itself; the agent's own summary is shown beneath them,
+labelled as the agent's words. An operation the app cannot describe is called out
+rather than passed over, and a proposal whose XDR will not decode cannot be
+approved at all.
+
+Approving requires the device passkey. The prompt is over the transaction's own
+hash, so the biometric is bound to the transaction being approved; only after it
+clears is the fee-payer key read from the keychain and the transaction signed and
+submitted. Dismissing the prompt is a decline, not an error. A transaction sourced
+from any account other than this wallet's fee payer is refused before the prompt
+is ever raised.
+
+## SPP native module
+
+`modules/spp-native/` is the native boundary to Nethermind/SDF's
+`stellar-private-payments` SDK: SPP's note model, transaction graph and sync
+state, exposed to JS through uniffi and an Expo Android module. **Proving is
+not wired through it yet** — `prove`/`verify` fail closed until callers send
+the SDK's own `TransactParams` witness and the pool's published circuit
+artifacts reach its `CircuitStore` on the device. Veil owns no SPP circuit,
+setup or verifier, so that is a prerequisite, not a TODO. The module's own
+[README](modules/spp-native/README.md) has the build wiring and the full
+blocker list.
+
+The app treats the module as optional everywhere. `lib/sppProver.ts` loads
+it with `requireOptionalNativeModule` and returns typed `E_UNAVAILABLE`
+errors when the binary does not carry it, so a build without the module
+still launches — the same contract the background task follows with
+`expo-background-task`. Screens that need a proof still use the WASM path,
+and `lib/privacy.ts` keeps refusing to shield, send or unshield with
+`ENGINE_PENDING_MESSAGE`.
+
+`/privacy/benchmark` (from Settings → Privacy) calls the real module and times
+whatever it returns, which today is the `prover` refusal. That is the input
+the native-vs-WASM decision record still needs; the fixture lives in
+`lib/sppBenchmark.ts` alone, since the Rust-side twin left with the deleted
+local circuit.
+
+## Branded assets
+
+`assets/images/` holds the app icon, Android adaptive icon layers (foreground /
+background / monochrome), splash image, and web favicon — near-black
+(`#0F0F0F`) background, gold (`#FDDA24`) fingerprint mark and "VEIL" wordmark,
+matching `frontend/wallet/components/VeilLogo.tsx`. Wired in `app.json`'s
+`icon`, `android.adaptiveIcon`, `web.favicon`, and the `expo-splash-screen`
+plugin config.
 
 ## Structure
 
@@ -82,9 +217,21 @@ changes nothing on the device — there is no partial restore.
 - `hooks/useWalletConnect.ts` — React binding over the WalletConnect store.
 - `lib/walletConnect.ts` — WalletConnect client, pairing, sessions and signing.
 - `lib/walletConnectHelpers.ts` — pure parsing/validation helpers (unit-tested).
+- `app/recover.tsx` — SEP-30 recovery screen.
+- `lib/recovery.ts` — SEP-30 client, recovery transactions, pending-recovery state (unit-tested).
+- `app/agent.tsx` — agent chat, with passkey-gated transaction proposals.
+- `lib/agentMessages.ts` — agent frame parsing and transaction review (unit-tested).
 - `lib/passkey.ts` — device passkey signer for dApp requests.
 - `lib/webauthn.ts` — WebAuthn encoding and DER signature conversion (unit-tested).
 - `lib/polyfills.ts` — React Native shims WalletConnect and the Stellar SDK need.
+- `app/dapps.tsx` — the dApp directory; the only way into the in-app browser.
+- `app/dapp.tsx` — the browser shell: allow-list gate, origin chrome, injected provider, approval queue.
+- `lib/dappAllowlist.ts` — the origins Veil will load, with their display names.
+- `lib/dappNavigation.ts` — pure navigation/popup decisions for that shell (unit-tested).
+- `lib/dappProvider.ts` — the SEP-43 script injected into the page, plus the request envelope it speaks (unit-tested).
+- `lib/dappProviderBridge.ts` — the app side of that envelope: origin checks, approval, signing, replies (unit-tested).
+- `lib/transactionRequestDetails.ts` — decodes a transaction or auth entry far enough to show it honestly (unit-tested).
+- `components/DappApprovalModal.tsx` — the sheet that answers a provider request.
 
 Native `ios/` and `android/` folders are generated on demand (via prebuild/EAS) and
 are gitignored, along with `node_modules/` and `.expo/`.
@@ -224,3 +371,148 @@ Passkeys need platform association before they resolve on a device: an
 `associatedDomains` entry (`webcredentials:<rp-id>`) for iOS and a matching
 `assetlinks.json` on the domain for Android. `EXPO_PUBLIC_PASSKEY_RP_ID` must be
 the same relying-party id the wallet's passkey was registered against.
+
+## The dApp browser provider
+
+`app/dapp.tsx` loads one allow-listed origin at a time, and a dApp in that page
+finds a wallet the way it does anywhere else: `window.freighterApi`, plus
+`window.veil` as the same object. The script in `lib/dappProvider.ts` is injected
+before the page's own scripts run, and it installs itself only when the document's
+origin is exactly the origin the user granted — a page the WebView lands on that
+is not the approved one gets no provider at all, and an iframe never gets one.
+
+The surface follows SEP-0043 rather than a private shape, because that is the
+standard the wallet contract already speaks through WalletConnect: `getAddress`,
+`getNetwork`, `signTransaction(xdr, opts)` and `signAuthEntry(authEntry, opts)`
+map onto the same signing code paths `lib/walletConnect.ts` uses today.
+`isApproved`, `connect()` and `request({ method: … })` answer the Freighter-style
+discovery every dApp tries first, and `getAddresses` is the plural form of the
+same disclosure. A call that fails rejects its promise with the SEP-43 error
+object rather than resolving it, because every dApp around it reads a resolved
+value as a signature it got.
+`signMessage` deliberately returns the SEP-43 "invalid request" error: Veil's
+signed-message format embeds the passkey credential id, and nothing about the
+credential may be reachable from the page.
+
+Every call becomes one `postMessage` envelope, answered by
+`lib/dappProviderBridge.ts`, and the bridge checks the origin again per message
+using the frame URL the WebView reports — the page's own claim about who it is
+counts for nothing. Address disclosure needs the `address_disclosure` grant and
+asks for it once per site. Signing needs `transaction_signing` and asks **every
+single time**, even for a site that already holds the grant: a remembered grant
+means the site may ask, never that it may sign. What the sheet shows is the dApp's
+directory name and its real origin, and the request decoded by
+`lib/transactionRequestDetails.ts` — contract address in full, function name,
+amount and destination for a payment. A request that cannot be decoded is labelled
+as such and never presented as safe. Closing the browser, navigating away, or
+having a navigation blocked all decline whatever is still queued, so no page keeps
+a promise hanging.
+
+Two things the provider will not do, on purpose:
+
+- It signs a transaction but never submits one. `opts.submit` is refused, as are a
+  `networkPassphrase` that is not the network this wallet is on, an `opts.address`
+  naming a wallet other than the one on this device, a fee-bump envelope, a
+  multi-operation envelope, and any operation that is not a single
+  `invokeHostFunction` call. A transaction whose source is a contract wallet other
+  than this device's is refused outright rather than merely labelled. A dApp that
+  needs any of that can still have the wallet sign the authorization entry and
+  assemble the result itself.
+- Nothing secret ever enters the message. The page sees an address, a network
+  name, and signed XDR. The fee-payer seed, the passkey credential id, and the
+  DER-to-raw signature work all stay on the app side of the bridge, and the reply
+  is injected as one escaped JSON string.
+
+`signAuthEntry` accepts both shapes in the wild: SEP-43's single base64 entry and
+Freighter's array. Each entry is validated on its own (it must carry a
+`sorobanCredentialsAddress` credential for this device's wallet address), one
+sheet is shown per call, and every entry in an accepted batch is signed with the
+same ceremony `signXdrPayload` uses, because the contract's `__check_auth` cannot
+tell the two doors apart.
+
+## Deep linking
+
+Three URL families open the app, and all three resolve to the same in-app routes:
+
+| Incoming URL | Resolves to |
+| --- | --- |
+| `veil://pay?to=G…&amount=10` | `/pay` → `/send`, prefilled |
+| `https://app.veil.xyz/receive` | `/receive` |
+| `web+stellar:pay?destination=G…&amount=10` | `/pay`, raw URI preserved as `uri` |
+| anything else | `/` |
+
+`app/+native-intent.ts` is called by expo-router for every inbound link, on a
+cold start (`initial: true`) and on a warm resume (`initial: false`) alike, which
+is what makes the two behave identically. It delegates to `resolveDeepLink()` in
+`lib/deepLinks.ts`.
+
+Inbound links are untrusted — any app, web page, or QR code can send one — so the
+resolver matches a fixed allowlist of routes and copies only the query parameters
+each route declares. Foreign hosts, unknown schemes, unknown paths, and
+over-long URLs all fall back to `/` instead of navigating.
+
+Full SEP-7 validation (address checksums, amount ranges, hostile callbacks) is
+the job of the handler in backlog #38. `sdk/src/sep7.ts` already implements it
+for the web wallet; the raw URI is forwarded to `/pay` as `uri` so that handler
+can parse the original request unmodified.
+
+### Testing links locally
+
+The schemes are only registered in a dev-client or standalone build — deep links
+do not reach the app through Expo Go.
+
+```bash
+# Android (emulator or device)
+adb shell am start -W -a android.intent.action.VIEW \
+  -d "veil://pay?to=GABC&amount=10" xyz.veil.wallet
+adb shell am start -W -a android.intent.action.VIEW \
+  -d "https://app.veil.xyz/receive" xyz.veil.wallet
+
+# iOS simulator
+xcrun simctl openurl booted "veil://pay?to=GABC&amount=10"
+xcrun simctl openurl booted "https://app.veil.xyz/receive"
+```
+
+Run each command twice: once with the app force-quit (cold start) and once with
+it backgrounded (warm resume). Both must land on the same screen.
+
+### Universal / app link setup
+
+Two verification files are served by the wallet web app from
+`frontend/wallet/public/.well-known/`. Both currently carry placeholders that
+must be replaced before a store build, or the platforms will silently keep
+opening links in the browser:
+
+- `apple-app-site-association` — replace `APPLE_TEAM_ID` with the Apple Developer
+  Team ID that signs `xyz.veil.wallet`. The file must be served over HTTPS as
+  `application/json`, with no redirect and no `.json` extension.
+- `assetlinks.json` — replace `ANDROID_RELEASE_CERT_SHA256_FINGERPRINT` with the
+  SHA-256 fingerprint of the release signing certificate
+  (`keytool -list -v -keystore <keystore> -alias <alias>`). Add the Play App
+  Signing fingerprint too if the app is distributed through Google Play.
+
+`frontend/wallet/next.config.js` pins the `Content-Type` on both files. After
+deploying, verify with Apple's CDN
+(`https://app-site-association.cdn-apple.com/a/v1/app.veil.xyz`) and Google's
+[Digital Asset Links API](https://developers.google.com/digital-asset-links/tools/generator).
+## Multisig
+
+`/multisig` connects to a deployed M-of-N wallet
+(`contracts/multisig-wallet`) and runs the full lifecycle: an owner raises a
+transfer, owners approve it, and the approval that reaches the threshold
+executes it.
+
+There is no Execute button, because the contract has no `execute` entry point —
+`sign_transaction` performs the transfer in the same invocation that reaches the
+threshold. The screen names that approval for what it is ("Approve and execute")
+rather than implying a separate step that does not exist.
+
+Deployment stays on the desktop wizard; the contract address is stored under the
+same `veil_multisig_contract` key the web wallet uses. Point the screen at a
+network with `EXPO_PUBLIC_SOROBAN_RPC_URL` and `EXPO_PUBLIC_NETWORK_PASSPHRASE`
+(defaults to Soroban testnet).
+
+`lib/multisig.ts` holds the rules the screen applies before touching the chain —
+amount conversion, owner and duplicate-approval checks, and whether the next
+approval is the deciding one — so a rejection arrives immediately instead of as
+a contract panic after a fee.

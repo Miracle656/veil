@@ -9,7 +9,8 @@
         "outDir": "./dist",
         "declaration": true,
         "jsx": "react-jsx",
-        "lib": ["es2020", "dom", "dom.iterable"]
+        "lib": ["es2020", "dom", "dom.iterable"],
+        "experimentalDecorators": true
     },
     "include": [
         "src/**/*",

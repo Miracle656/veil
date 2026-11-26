@@ -1,3 +1,4 @@
+import { inclusionFee } from './fees'
 import {
   Account,
   Address,
@@ -15,6 +16,7 @@ import {
 } from '@stellar/stellar-sdk'
 
 import { getNetwork } from './network'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const STROOPS_PER_XLM = 10_000_000n
 
@@ -83,8 +85,8 @@ function getSigner(secret?: string): Keypair {
   const stored = typeof window === 'undefined'
     ? null
     : (
-      sessionStorage.getItem('veil_signer_secret')
-      || localStorage.getItem('veil_signer_secret')
+      walletSession.getItem('veil_signer_secret')
+      || walletLocal.getItem('veil_signer_secret')
     )
   const resolved = secret?.trim() || stored
 
@@ -172,7 +174,7 @@ async function submitOperation(
   const server = new SorobanRpc.Server(network.rpcUrl)
   const account = await server.getAccount(signer.publicKey())
   const transaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(operation)
@@ -207,7 +209,7 @@ async function simulateCall(
   const server = new SorobanRpc.Server(network.rpcUrl)
   const account = new Account(Keypair.random().publicKey(), '0')
   const transaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(contract.call(method, ...args))
@@ -256,11 +258,13 @@ export async function deployAndInitializeVault(params: {
   const salt = crypto.getRandomValues(new Uint8Array(32))
 
   const deployTransaction = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee: inclusionFee(),
     networkPassphrase: network.networkPassphrase,
   })
     .addOperation(Operation.createCustomContract({
-      address: signer.publicKey() as unknown as Address,
+      // An Address, not the G... string: the SDK calls toScAddress() on it, and
+      // the string used to make every vault creation throw.
+      address: new Address(signer.publicKey()),
       wasmHash: Buffer.from(getVaultWasmHash(), 'hex'),
       salt: Buffer.from(salt),
     }))
@@ -302,14 +306,36 @@ export async function depositToVault(params: {
   const network = getNetwork()
   const signer = getSigner(params.signerSecret)
   const contractId = validateStellarAddress(params.contractId)
-  const token = new Contract(Asset.native().contractId(network.networkPassphrase))
+  const amountStroops = xlmToStroops(params.amountXlm)
+  // A deposit is a plain token transfer, so nothing on chain stops it landing
+  // somewhere that is not a vault. Check the target first: a G... account has
+  // no timelock at all, an uninitialised contract can be initialised by anyone
+  // (who then owns the deposit), a vault for another token can never pay XLM
+  // back out, and a vault owned by another key cannot be withdrawn by this one.
+  if (!StrKey.isValidContract(contractId)) {
+    throw new Error('A vault address starts with C. Deposits only go to a vault contract.')
+  }
+  const nativeToken = Asset.native().contractId(network.networkPassphrase)
+  let rawConfig: Record<string, unknown>
+  try {
+    rawConfig = await simulateCall(new Contract(contractId), 'get_config') as Record<string, unknown>
+  } catch {
+    throw new Error('That address is not an initialised vault. Nothing was sent.')
+  }
+  if (String(rawConfig?.token) !== nativeToken) {
+    throw new Error('That vault does not hold XLM, so XLM sent to it could never be withdrawn. Nothing was sent.')
+  }
+  if (String(rawConfig?.owner) !== signer.publicKey()) {
+    throw new Error('That vault belongs to a different key, so this wallet could not withdraw from it. Nothing was sent.')
+  }
+  const token = new Contract(nativeToken)
 
   return submitOperation(
     token.call(
       'transfer',
       nativeToScVal(signer.publicKey(), { type: 'address' }),
       nativeToScVal(contractId, { type: 'address' }),
-      nativeToScVal(xlmToStroops(params.amountXlm), { type: 'i128' }),
+      nativeToScVal(amountStroops, { type: 'i128' }),
     ),
     signer,
   )

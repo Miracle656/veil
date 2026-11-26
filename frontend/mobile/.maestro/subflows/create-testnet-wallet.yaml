@@ -1,0 +1,38 @@
+appId: xyz.veil.wallet
+---
+# Create a real testnet wallet through the onboarding UI and end on the
+# dashboard with the first-run tutorial dismissed. Assumes
+# `launch-fresh.yaml` already ran (i.e. the app is on the welcome screen).
+#
+# Creation goes through the keypair path (`create-wallet-button`), not the
+# passkey one: the passkey ceremony needs an enrolled biometric, which no
+# emulator has — that is why `passkey-smoke.yaml` is device-tagged. The
+# keypair path persists a real, signable account (address + secret in
+# secure storage), which is what makes the dashboard reachable afterwards:
+# `app/index.tsx` only routes to `/dashboard` once a signer exists, and
+# `/dashboard` is not deep-linkable (lib/deepLinks.ts forwards only
+# pay/send/receive/create-wallet).
+#
+# The friendbot funding round-trip is the slow part; the wait on
+# `create-wallet-address` allows for it. A failed funding still renders the
+# card (with a "Friendbot was busy" note), so the flow tests the routing,
+# not the faucet.
+- tapOn:
+    id: "welcome-create"
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-screen"
+    timeout: 20000
+- tapOn:
+    id: "create-wallet-button"
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-address"
+    timeout: 90000
+- tapOn:
+    id: "create-wallet-continue-button"
+- runFlow: skip-tutorial.yaml
+- extendedWaitUntil:
+    visible:
+      id: "dashboard-screen"
+    timeout: 20000

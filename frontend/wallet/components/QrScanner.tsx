@@ -1,6 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+
+import { parseQrValue } from '@/lib/sep7'
 
 interface QrScannerProps {
   onScan: (address: string) => void
@@ -20,6 +23,11 @@ declare const BarcodeDetector: {
 
 export function isValidStellarAddress(addr: string): boolean {
   return (addr.startsWith('G') || addr.startsWith('C')) && addr.length === 56
+}
+
+export function isRecognizedQrValue(raw: string): boolean {
+  const trimmed = raw.trim()
+  return isValidStellarAddress(trimmed) || parseQrValue(trimmed) !== null
 }
 
 export function QrScanner({ onScan, onClose }: QrScannerProps) {
@@ -65,11 +73,11 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
           try {
             const codes = await detector.detect(video)
             for (const code of codes) {
-              const addr = code.rawValue.trim()
-              if (isValidStellarAddress(addr)) {
-                setAnnouncement(`QR code recognized. Address: ${addr}`)
+              const val = code.rawValue.trim()
+              if (isRecognizedQrValue(val)) {
+                setAnnouncement('QR code recognized.')
                 stop()
-                onScan(addr)
+                onScan(val)
                 return
               }
             }
@@ -90,25 +98,32 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
     return stop
   }, [onScan])
 
+  useEffect(() => {
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previous }
+  }, [])
+
   function handleManualSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const addr = manualAddress.trim()
-    if (!isValidStellarAddress(addr)) {
-      setManualError('Enter a valid Stellar address (G... or C..., 56 characters).')
+    const val = manualAddress.trim()
+    if (!isRecognizedQrValue(val)) {
+      setManualError('Enter a valid Stellar address (G... or C..., 56 characters) or SEP-7 URI.')
       return
     }
     setManualError(null)
-    onScan(addr)
+    onScan(val)
   }
 
-  return (
+  const dialog = (
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Scan or enter recipient address"
       style={{
-        position: 'fixed', inset: 0, zIndex: 50,
-        background: 'rgba(15,15,15,0.95)',
+        position: 'fixed', inset: 0, zIndex: 200,
+        background: 'rgba(15,15,15,0.92)',
+        backdropFilter: 'blur(10px)',
         display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center',
         padding: '1.5rem',
@@ -127,7 +142,14 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
         {announcement}
       </div>
 
-      <div style={{ width: '100%', maxWidth: 360 }}>
+      <div style={{
+        width: '100%',
+        maxWidth: 360,
+        background: 'var(--near-black)',
+        border: '1px solid var(--border-dim)',
+        borderRadius: 24,
+        padding: '1.25rem 1.25rem 1.5rem',
+      }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <span style={{
@@ -186,7 +208,7 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
             marginTop: '0.875rem', fontSize: '0.75rem',
             color: 'rgba(246,247,248,0.35)', textAlign: 'center',
           }}>
-            Point camera at a Stellar address QR code (G... or C...)
+            Point camera at a Stellar address QR code (G... or C...) or payment request
           </p>
         )}
 
@@ -267,6 +289,9 @@ export function QrScanner({ onScan, onClose }: QrScannerProps) {
       </div>
     </div>
   )
+
+  if (typeof document === 'undefined') return null
+  return createPortal(dialog, document.body)
 }
 
 type Corner = 'topLeft' | 'topRight' | 'bottomLeft' | 'bottomRight'

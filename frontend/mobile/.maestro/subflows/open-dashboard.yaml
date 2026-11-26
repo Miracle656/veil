@@ -1,0 +1,10 @@
+appId: xyz.veil.wallet
+---
+# Reach the dashboard from a wiped install.
+#
+# There is no shortcut any more, and none is needed: registration persists a
+# real wallet, so the dashboard is reached the way a user reaches it — onboard,
+# then Continue. (The previous route here deep-linked `/send` purely because it
+# mounted the tab navigator; Send is a root push route now, and `/dashboard` is
+# not in the deep-link forward list, so neither path exists.)
+- runFlow: create-testnet-wallet.yaml

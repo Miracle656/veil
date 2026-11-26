@@ -1,0 +1,76 @@
+appId: xyz.veil.wallet
+name: Deep links
+tags:
+  - core
+  - deeplink
+env:
+  RECIPIENT: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+---
+# On-device counterpart to the unit tests in lib/__tests__/deepLinks.test.ts:
+# those prove the resolver returns the right route, this proves the app actually
+# lands there — from both launch paths, which is the acceptance criterion the
+# resolver alone cannot demonstrate.
+- runFlow: ../subflows/launch-fresh.yaml
+
+# ── Warm resume ───────────────────────────────────────────────────────────────
+# The app is already running when each link arrives.
+- openLink: "veil://pay?to=${RECIPIENT}&amount=7.25"
+- extendedWaitUntil:
+    visible:
+      id: "send-screen"
+    timeout: 20000
+- assertVisible: ${RECIPIENT}
+- assertVisible: "7.25"
+
+- openLink: "veil://receive"
+- extendedWaitUntil:
+    visible:
+      id: "receive-screen"
+    timeout: 20000
+
+# ── Cold start ────────────────────────────────────────────────────────────────
+# Same links, but the process is dead when they arrive.
+- stopApp
+- openLink: "veil://pay?to=${RECIPIENT}&amount=7.25"
+- extendedWaitUntil:
+    visible:
+      id: "send-screen"
+    timeout: 30000
+- assertVisible: ${RECIPIENT}
+- assertVisible: "7.25"
+
+- stopApp
+- openLink: "veil://create-wallet"
+- extendedWaitUntil:
+    visible:
+      id: "create-wallet-screen"
+    timeout: 30000
+
+# ── SEP-7 payment request ─────────────────────────────────────────────────────
+# `web+stellar:pay` resolves onto the same send form. Validating the URI itself
+# is backlog #38's job; what matters here is that the scheme is registered
+# natively and routed.
+- stopApp
+- openLink: "web+stellar:pay?destination=${RECIPIENT}&amount=3.5"
+- extendedWaitUntil:
+    visible:
+      id: "send-screen"
+    timeout: 30000
+- assertVisible: ${RECIPIENT}
+- assertVisible: "3.5"
+
+# ── Unrecognised links fall back home ─────────────────────────────────────────
+# An unknown path must not leave the app on a blank or wrong screen. The
+# resolver returns `/`, and the entry router takes it from there — with no
+# wallet and no `veil_seen_welcome`, that is the welcome screen.
+- launchApp:
+    clearState: true
+- stopApp
+- openLink: "veil://not-a-real-screen"
+- runFlow: ../subflows/dismiss-offline.yaml
+- extendedWaitUntil:
+    visible:
+      id: "welcome-screen"
+    timeout: 30000
+- assertNotVisible:
+    id: "send-screen"

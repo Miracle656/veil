@@ -1,201 +1,508 @@
-import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect, useRouter } from 'expo-router';
 
-import { AddressChip, Card, Screen } from "../../components/ui";
-import { colors } from "../../theme/colors";
-import { fontFamily, typography } from "../../theme/typography";
+import { useTheme } from '../../hooks/useTheme';
+import { useCurrency } from '../../hooks/useCurrency';
+import { CURRENCIES, CURRENCY_CODES } from '../../lib/currency';
+import type { ThemeColors, ThemePreference } from '../../lib/theme';
+import { fontFamily } from '../../theme/typography';
+import {
+  getNetwork,
+  getNetworkName,
+  setNetwork,
+  subscribeToNetwork,
+  type VeilNetworkName,
+} from '../../lib/network';
+import { ConfirmModal } from '../../components/ConfirmModal';
+import { NoticeModal } from '../../components/NoticeModal';
+import { getWalletAddress, hasUsableWallet } from '../../lib/walletStore';
+import { getFeePayerAddress } from '../../lib/activity';
+import { fundWithFriendbot } from '../../lib/classicWallet';
+import {
+  getNotifIncoming,
+  getNotifOutgoing,
+  isNotifPrefsHydrated,
+  subscribeToNotifPrefs,
+  setNotifIncoming,
+  setNotifOutgoing,
+} from '../../lib/notificationPrefs';
+import { requestNotificationPermissions } from '../../lib/notifications';
+import { TRUSTLINE_RESERVE_COST_XLM } from '../../lib/reserves';
+import { walletKind } from '../../lib/secretExport';
 
-type SettingsRow = { key: string; title: string; subtitle: string };
-type SettingsGroup = { heading: string; rows: SettingsRow[] };
+type Row = {
+  key: string;
+  title: string;
+  subtitle: string;
+  value?: string;
+  onPress: () => void;
+  /** Render a Switch on the right instead of value/chevron. */
+  switch?: { value: boolean; onChange: (v: boolean) => void };
+};
 
-const SAMPLE_ADDRESS = "GA3DHM4WL2VXPHR7NQKPZ7XK9FQJ2ULTQ6ZT4W2M5N6Q7RSTUVWXK9FQ";
-
-/**
- * Grouped settings sections, ported from the web wallet's settings page
- * (`frontend/wallet/app/settings/page.tsx`). Later settings issues fill each
- * section with real controls.
- */
-const GROUPS: SettingsGroup[] = [
-  {
-    heading: "SECURITY",
-    rows: [
-      { key: "passkeys", title: "Passkeys", subtitle: "Manage passkeys registered on this wallet" },
-      {
-        key: "guardian",
-        title: "Guardian recovery",
-        subtitle: "Set a trusted account to recover access if you lose your device",
-      },
-      {
-        key: "backup",
-        title: "Paper backup",
-        subtitle: "Generate an offline 12-word recovery phrase",
-      },
-      { key: "lock", title: "Security & lock", subtitle: "Auto-lock the wallet after inactivity" },
-    ],
-  },
-  {
-    heading: "PREFERENCES",
-    rows: [
-      { key: "profile", title: "Profile & AI", subtitle: "Name, language, and agent personality" },
-      { key: "agent", title: "Agent settings", subtitle: "Spending limits and allowed services" },
-      { key: "privacy", title: "Privacy", subtitle: "Error reporting and data preferences" },
-    ],
-  },
-  {
-    heading: "GENERAL",
-    rows: [
-      { key: "contacts", title: "Address book", subtitle: "Saved recipients and labels" },
-      { key: "about", title: "About", subtitle: "Version, licenses, and support" },
-    ],
-  },
+/** The three appearance choices, in the order they are offered. */
+const THEME_OPTIONS: { value: ThemePreference; label: string; glyph: string }[] = [
+  { value: 'system', label: 'Follow device', glyph: '◐' },
+  { value: 'light', label: 'Light', glyph: '☀' },
+  { value: 'dark', label: 'Dark', glyph: '☾' },
 ];
 
 export default function SettingsScreen() {
-  // In-page navigation, mirroring the web page's section state: the shell shows
-  // the grouped overview, and selecting a row opens that section's detail.
-  const [active, setActive] = useState<SettingsRow | null>(null);
+  const router = useRouter();
+  const { colors, isDark, preference, systemTheme, select: selectTheme } = useTheme();
+  const { currency, meta, select } = useCurrency();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
-  if (active) {
-    return (
-      <Screen>
-        <ScrollView contentContainerStyle={styles.content}>
+  const [currencyPickerOpen, setCurrencyPickerOpen] = useState(false);
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+
+  // Which wallet this network actually holds, re-read whenever the tab is
+  // focused — a wallet can be created or reset while the tab sits mounted, and
+  // a stale value would either hide the reveal entry from a keypair wallet or,
+  // worse, show it on a smart wallet that has no secret to reveal.
+  const [storedAddress, setStoredAddress] = useState<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void getWalletAddress()
+        .then((value) => {
+          if (active) setStoredAddress(value);
+        })
+        .catch(() => {
+          // Unreadable keystore: show nothing rather than offer a reveal the
+          // screen could not honour. The screen itself re-reads and refuses.
+          if (active) setStoredAddress(null);
+        });
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
+
+  const appearance: Row[] = [
+    {
+      key: 'theme',
+      title: 'Appearance',
+      subtitle: 'Light, dark, or follow your device',
+      // On 'system', show what it currently resolves to as well — "System"
+      // alone leaves the user guessing which one they are actually looking at.
+      value:
+        preference === 'system'
+          ? `System · ${systemTheme === 'dark' ? 'Dark' : 'Light'}`
+          : preference === 'dark'
+            ? 'Dark'
+            : 'Light',
+      onPress: () => setThemePickerOpen(true),
+    },
+    {
+      key: 'currency',
+      title: 'Display currency',
+      subtitle: 'Tap your balance card to flip between crypto and this',
+      value: `${meta.symbol} ${currency}`,
+      onPress: () => setCurrencyPickerOpen(true),
+    },
+  ];
+
+  // A classic keypair wallet exists precisely because this device could not
+  // make a passkey, and its signing key lives in one place only — this phone's
+  // keychain. The encrypted backup cannot carry it by design, so without a way
+  // to take it off the device on purpose, losing the phone loses the wallet.
+  // A smart wallet is never offered this: its key was created inside a passkey
+  // and never left it, and the signer secret it does store is the fee-payer,
+  // not the wallet. `lib/secretExport.ts` re-checks all of this behind the row.
+  const revealRow: Row[] =
+    walletKind(storedAddress) === 'keypair'
+      ? [
+          {
+            key: 'reveal-secret',
+            title: 'Reveal secret key',
+            subtitle: 'This wallet’s key exists only on this device',
+            onPress: () => router.push('/settings/reveal-secret'),
+          },
+        ]
+      : [];
+
+  const security: Row[] = [
+    { key: 'passkeys', title: 'Passkeys', subtitle: 'Devices registered on this wallet', onPress: () => router.push('/settings/passkeys') },
+    { key: 'recovery-coverage', title: 'Recovery coverage', subtitle: 'See which ways can restore this wallet', onPress: () => router.push('/settings/recovery') },
+    { key: 'recovery', title: 'Recovery servers', subtitle: 'Trusted servers to recover access', onPress: () => router.push('/recover') },
+    ...revealRow,
+    { key: 'lock', title: 'Security & lock', subtitle: 'Auto-lock after inactivity', onPress: () => router.push('/settings/security') },
+    { key: 'privacy', title: 'Privacy', subtitle: 'Private payments and crash reporting', onPress: () => router.push('/settings/privacy') },
+    { key: 'dapps', title: 'Connected dApps', subtitle: 'Sites with permission, and revoke them', onPress: () => router.push('/settings/permissions') },
+    // Reset lives on its own screen now, reachable on BOTH networks. It used to
+    // sit in the testnet-only Developer group, which left a mainnet user (real
+    // funds) with no supported way to start over. The danger screen owns the
+    // typed confirmation and the backup-first path.
+    { key: 'danger', title: 'Danger zone', subtitle: 'Reset this device’s wallet', onPress: () => router.push('/settings/danger') },
+  ];
+
+  // Live notification preferences.
+  const notifIncoming = useSyncExternalStore(subscribeToNotifPrefs, getNotifIncoming, getNotifIncoming);
+  const notifOutgoing = useSyncExternalStore(subscribeToNotifPrefs, getNotifOutgoing, getNotifOutgoing);
+
+  const notifications: Row[] = [
+    {
+      key: 'notif-incoming',
+      title: 'Incoming transfers',
+      subtitle: 'Notify when you receive a payment',
+      onPress: () => {
+        void requestNotificationPermissions().then((granted) => {
+          if (!granted) {
+            setNotice({ title: 'Notifications off', message: 'Enable notifications in your device settings to receive alerts.', tone: 'neutral' });
+          } else {
+            void setNotifIncoming(!notifIncoming);
+          }
+        });
+      },
+      switch: { value: notifIncoming, onChange: (v) => {
+        void requestNotificationPermissions().then((granted) => {
+          if (!granted) {
+            setNotice({ title: 'Notifications off', message: 'Enable notifications in your device settings to receive alerts.', tone: 'neutral' });
+          } else {
+            void setNotifIncoming(v);
+          }
+        });
+      } },
+    },
+    {
+      key: 'notif-outgoing',
+      title: 'Outgoing confirmations',
+      subtitle: 'Notify when a sent transaction confirms',
+      onPress: () => void setNotifOutgoing(!notifOutgoing),
+      switch: { value: notifOutgoing, onChange: (v) => void setNotifOutgoing(v) },
+    },
+  ];
+
+  // Live network name (re-renders when the override changes).
+  const networkName = useSyncExternalStore(subscribeToNetwork, getNetworkName, getNetworkName);
+  const onTestnet = networkName === 'testnet';
+
+  // Which network the user is being asked to switch to, or null when the
+  // sheet is closed. A themed sheet rather than Alert.alert: switching to
+  // mainnet puts real money at risk, and that warning deserves to look like
+  // part of the wallet rather than a grey OS box.
+  const [pendingNetwork, setPendingNetwork] = useState<VeilNetworkName | null>(null);
+  const [switchedTo, setSwitchedTo] = useState<VeilNetworkName | null>(null);
+  const [switchedHasWallet, setSwitchedHasWallet] = useState(true);
+
+  const handleNetworkToggle = (toMainnet: boolean) => {
+    setPendingNetwork(toMainnet ? 'mainnet' : 'testnet');
+  };
+
+  const confirmNetworkSwitch = () => {
+    const target = pendingNetwork;
+    setPendingNetwork(null);
+    if (!target) return;
+    void setNetwork(target).then(async () => {
+      // Wallets are namespaced per network (lib/walletStore.ts) so a reset on
+      // one can never destroy the other. The cost is that a switch can land on
+      // a network with no wallet at all, and saying nothing here meant the user
+      // discovered it later, mid-send, as "No passkey found on this device".
+      // Uses the same readiness test the spend path enforces, so this cannot
+      // quietly pass while a swap still fails.
+      setSwitchedHasWallet(await hasUsableWallet());
+      setSwitchedTo(target);
+    });
+  };
+
+  const general: Row[] = [
+    {
+      key: 'network',
+      title: 'Mainnet',
+      subtitle: onTestnet ? 'Off — using Stellar testnet (test funds)' : 'On — REAL funds on Stellar mainnet',
+      onPress: () => handleNetworkToggle(onTestnet),
+      switch: { value: !onTestnet, onChange: (v) => handleNetworkToggle(v) },
+    },
+    { key: 'fee-payer', title: 'Fee payer', subtitle: 'The account that pays network fees, and its balance', onPress: () => router.push('/settings/fee-payer') },
+    { key: 'veil-name', title: 'Veil name', subtitle: 'Get paid by name instead of a 56-character address', onPress: () => router.push('/names') },
+    { key: 'veil-ians', title: 'Veil-ians', subtitle: 'Twenty veiled figures, 5 USDC each, for name holders', onPress: () => router.push('/veil-ians') },
+    { key: 'dapps', title: 'Discover dApps', subtitle: 'Browse the Stellar apps Veil can open', onPress: () => router.push('/dapps') },
+    { key: 'trustlines', title: 'Trustlines & reserves', subtitle: `Manage enabled assets and reclaim locked reserves (${TRUSTLINE_RESERVE_COST_XLM} XLM each)`, onPress: () => router.push('/assets') },
+    { key: 'multisig', title: 'Multisig', subtitle: 'View signers and approval threshold', onPress: () => router.push('/multisig') },
+    { key: 'contacts', title: 'Address book', subtitle: 'Saved recipients and labels', onPress: () => router.push('/contacts') },
+    // Plain path, no params: the name lives in AsyncStorage, and a route
+    // parameter would carry it in a URL other apps can read.
+    { key: 'profile', title: 'Profile & AI', subtitle: 'Name, language, and agent personality', onPress: () => router.push('/settings/profile') },
+    // The written boundary for the voice surface (#846). A talking wallet makes
+    // people assume it can pay; this is where they check, and what they find.
+    { key: 'voice', title: 'Voice & assistants', subtitle: 'What the assistant can and can never do', onPress: () => router.push('/settings/voice') },
+    { key: 'about', title: 'About', subtitle: 'Version, updates, licences and support', onPress: () => router.push('/settings/about') },
+  ];
+  // NoticeModal rather than Alert.alert: these report an outcome, and the
+  // platform dialog renders "Funded" and "Funding failed" identically.
+  const [notice, setNotice] = useState<
+    { title: string; message: string; tone: 'neutral' | 'success' | 'error' } | null
+  >(null);
+
+  const fundTestXlm = async () => {
+    const address = await getWalletAddress();
+    if (!address) {
+      setNotice({ title: 'No wallet', message: 'Create a wallet first.', tone: 'error' });
+      return;
+    }
+    const network = getNetwork();
+    if (network.name !== 'testnet' || !network.friendbotUrl) {
+      setNotice({
+        title: 'Unavailable on mainnet',
+        message: 'Friendbot is testnet only. Send real XLM to fund accounts on mainnet.',
+        tone: 'error',
+      });
+      return;
+    }
+    // Smart (C…) wallet: fund BOTH sides — the fee-payer G-account (classic
+    // spends + fees) and the contract itself (Friendbot supports contract
+    // addresses via SAC transfer; contract funds exercise __check_auth).
+    if (address.startsWith('C')) {
+      const feePayer = await getFeePayerAddress();
+      if (!feePayer) {
+        setNotice({
+          title: 'No fee-payer key',
+          message: 'This wallet has no fee-payer key on the device.',
+          tone: 'error',
+        });
+        return;
+      }
+      const [fpOk, cOk] = await Promise.all([fundWithFriendbot(feePayer), fundWithFriendbot(address)]);
+      setNotice({
+        title: fpOk || cOk ? 'Funded' : 'Funding failed',
+        tone: fpOk && cOk ? 'success' : fpOk || cOk ? 'neutral' : 'error',
+        message:
+          fpOk && cOk
+            ? 'Test XLM sent to your fee-payer and your smart wallet.'
+            : fpOk
+              ? 'Fee-payer funded; the smart wallet top-up was rejected (it may be rate-limited).'
+              : cOk
+                ? 'Smart wallet funded; the fee-payer top-up was rejected (it may be rate-limited).'
+                : 'Friendbot rejected both requests. Try again in a moment.',
+      });
+      return;
+    }
+    const ok = await fundWithFriendbot(address);
+    setNotice({
+      title: ok ? 'Funded' : 'Funding failed',
+      tone: ok ? 'success' : 'error',
+      message: ok
+        ? `Test XLM is on its way to ${address.slice(0, 4)}…${address.slice(-4)}.`
+        : 'Friendbot rejected the request. Try again in a moment.',
+    });
+  };
+
+  const developer: Row[] = [
+    // Endpoints, factory contract and per-network config warnings. Diagnostic
+    // rather than everyday: the Mainnet switch above is how you actually change
+    // network, and this is where you look when it does not behave.
+    { key: 'network-details', title: 'Network details', subtitle: 'Endpoints and contract configuration', onPress: () => router.push('/settings/network') },
+    { key: 'prover-spike', title: 'Prover spike', subtitle: 'Compare the SPP WebView and native simulation harnesses', onPress: () => router.push('/prover-spike') },
+    {
+      key: 'fund',
+      title: 'Fund test XLM',
+      subtitle: onTestnet
+        ? 'Top up this wallet from Friendbot'
+        : 'Unavailable on mainnet — Friendbot is testnet only',
+      value: 'Testnet',
+      onPress: fundTestXlm,
+    },
+  ];
+
+  const group = (heading: string, rows: Row[]) => (
+    <View style={styles.group}>
+      <Text style={styles.groupHeading}>{heading}</Text>
+      <View style={styles.card}>
+        {rows.map((row, i) => (
           <Pressable
-            onPress={() => setActive(null)}
+            key={row.key}
+            onPress={row.onPress}
             accessibilityRole="button"
-            style={styles.back}
+            style={({ pressed }) => [styles.row, i > 0 && styles.rowDivider, pressed && styles.pressed]}
           >
-            <Text style={styles.backText}>‹ Settings</Text>
+            <View style={styles.rowText}>
+              <Text style={styles.rowTitle}>{row.title}</Text>
+              <Text style={styles.rowSubtitle}>{row.subtitle}</Text>
+            </View>
+            {row.switch ? (
+              <Switch
+                value={row.switch.value}
+                onValueChange={row.switch.onChange}
+                trackColor={{ false: colors.surfaceMd, true: 'rgba(253,218,36,0.45)' }}
+                thumbColor={row.switch.value ? colors.accent : colors.textFaint}
+              />
+            ) : (
+              <>
+                {row.value ? <Text style={styles.rowValue}>{row.value}</Text> : null}
+                <Text style={styles.chevron}>›</Text>
+              </>
+            )}
           </Pressable>
-          <Text style={[typography.heading, styles.title]}>{active.title}</Text>
-          <Card variant="md" style={styles.placeholder}>
-            <Text style={styles.placeholderText}>
-              This section is configured in a later update.
-            </Text>
-          </Card>
-        </ScrollView>
-      </Screen>
-    );
-  }
+        ))}
+      </View>
+    </View>
+  );
 
   return (
-    <Screen>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={[typography.heading, styles.title]}>Settings</Text>
-        <Text style={styles.subtitle}>Manage signers, recovery, and wallet preferences</Text>
+    <SafeAreaView style={styles.screen} edges={['top']} testID="settings-screen">
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+        <Text style={styles.title}>Settings</Text>
 
-        <Card style={styles.walletCard}>
-          <Text style={styles.walletLabel}>WALLET</Text>
-          <AddressChip address={SAMPLE_ADDRESS} />
-        </Card>
-
-        {GROUPS.map((group) => (
-          <View key={group.heading} style={styles.group}>
-            <Text style={styles.groupHeading}>{group.heading}</Text>
-            <Card style={styles.groupCard}>
-              {group.rows.map((row, i) => (
-                <Pressable
-                  key={row.key}
-                  onPress={() => setActive(row)}
-                  accessibilityRole="button"
-                  style={[styles.row, i > 0 && styles.rowDivider]}
-                >
-                  <View style={styles.rowText}>
-                    <Text style={styles.rowTitle}>{row.title}</Text>
-                    <Text style={styles.rowSubtitle}>{row.subtitle}</Text>
-                  </View>
-                  <Text style={styles.chevron}>›</Text>
-                </Pressable>
-              ))}
-            </Card>
-          </View>
-        ))}
+        {group('Appearance', appearance)}
+        {group('Notifications', notifications)}
+        {group('Security', security)}
+        {group('General', general)}
+        {onTestnet && group('Developer', developer)}
       </ScrollView>
-    </Screen>
+
+      <Modal visible={currencyPickerOpen} transparent animationType="fade" onRequestClose={() => setCurrencyPickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setCurrencyPickerOpen(false)}>
+          <Pressable style={[styles.sheet, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }]} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.sheetTitle}>Display currency</Text>
+            {CURRENCY_CODES.map((code) => {
+              const c = CURRENCIES[code];
+              const selected = code === currency;
+              return (
+                <Pressable
+                  key={code}
+                  onPress={() => { select(code); setCurrencyPickerOpen(false); }}
+                  style={({ pressed }) => [styles.sheetRow, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.sheetSymbol, selected && styles.sheetSelected]}>{c.symbol}</Text>
+                  <Text style={[styles.sheetName, selected && styles.sheetSelected]}>{c.label}</Text>
+                  <Text style={styles.sheetCode}>{selected ? '✓' : code}</Text>
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={themePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setThemePickerOpen(false)}
+      >
+        <Pressable style={styles.backdrop} onPress={() => setThemePickerOpen(false)}>
+          <Pressable
+            style={[styles.sheet, { backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={styles.sheetTitle}>Appearance</Text>
+            {THEME_OPTIONS.map((option) => {
+              const selected = option.value === preference;
+              return (
+                <Pressable
+                  key={option.value}
+                  onPress={() => {
+                    selectTheme(option.value);
+                    setThemePickerOpen(false);
+                  }}
+                  style={({ pressed }) => [styles.sheetRow, pressed && styles.pressed]}
+                >
+                  <Text style={[styles.sheetSymbol, selected && styles.sheetSelected]}>
+                    {option.glyph}
+                  </Text>
+                  <Text style={[styles.sheetName, selected && styles.sheetSelected]}>
+                    {option.label}
+                  </Text>
+                  <Text style={styles.sheetCode}>{selected ? '✓' : ''}</Text>
+                </Pressable>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Network switch confirmation. Mainnet is styled destructive because it
+          moves the wallet onto real funds — the one setting here that can cost
+          the user money if tapped by accident. */}
+      <ConfirmModal
+        isOpen={pendingNetwork !== null}
+        title={pendingNetwork === 'mainnet' ? 'Switch to Mainnet?' : 'Switch to Testnet?'}
+        message={
+          pendingNetwork === 'mainnet'
+            ? 'Mainnet uses REAL funds. Your wallet, balances and history are separate per network, so this is a different wallet — not the same one on another chain.'
+            : 'Back to test funds. Your mainnet wallet and its balances are kept, and switching back restores them.'
+        }
+        confirmLabel="Switch"
+        destructive={pendingNetwork === 'mainnet'}
+        onConfirm={confirmNetworkSwitch}
+        onCancel={() => setPendingNetwork(null)}
+      />
+
+      {/*
+        The launch-time gate in app/index.tsx sends a wallet-less device to
+        /welcome, but it only runs at launch — switching network in-app left the
+        user on a dashboard for a wallet that does not exist, and the first sign
+        of it was a failed spend ("No passkey found on this device").
+
+        So the switch itself offers the way out: when the new network has no
+        wallet, confirming goes to wallet creation instead of dismissing.
+      */}
+      <NoticeModal
+        isOpen={notice !== null}
+        title={notice?.title ?? ''}
+        message={notice?.message ?? ''}
+        tone={notice?.tone ?? 'neutral'}
+        onClose={() => setNotice(null)}
+      />
+
+      <ConfirmModal
+        isOpen={switchedTo !== null}
+        title={switchedHasWallet ? 'Network switched' : `No wallet on ${switchedTo}`}
+        message={
+          switchedHasWallet
+            ? `You are now on ${switchedTo}. Fully close and reopen the app so every connection picks up the new network.`
+            : `You are now on ${switchedTo}, and this device has no ${switchedTo} wallet yet — each network keeps its own, so a reset on one can never touch the other. Create one to send, swap or earn here. Your other wallets are unaffected.`
+        }
+        confirmLabel={switchedHasWallet ? 'Got it' : 'Create wallet'}
+        cancelLabel={switchedHasWallet ? 'Close' : 'Not now'}
+        onConfirm={() => {
+          const needsWallet = !switchedHasWallet;
+          setSwitchedTo(null);
+          if (needsWallet) router.push('/create-wallet');
+        }}
+        onCancel={() => setSwitchedTo(null)}
+      />
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  content: {
-    gap: 16,
-    paddingVertical: 24,
-  },
-  title: {
-    color: colors.offWhite,
-  },
-  subtitle: {
-    fontFamily: fontFamily.body,
-    fontSize: 14,
-    color: colors.textMuted,
-    marginTop: -8,
-  },
-  walletCard: {
-    padding: 16,
-    gap: 10,
-  },
-  walletLabel: {
-    fontFamily: fontFamily.accent,
-    fontSize: 12,
-    letterSpacing: 1,
-    color: "rgba(246,247,248,0.4)",
-  },
-  group: {
-    gap: 8,
-  },
-  groupHeading: {
-    fontFamily: fontFamily.accent,
-    fontSize: 12,
-    letterSpacing: 1,
-    color: colors.textMuted,
-    marginLeft: 4,
-  },
-  groupCard: {
-    padding: 0,
-  },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
-  },
-  rowDivider: {
-    borderTopWidth: 1,
-    borderTopColor: colors.borderDim,
-  },
-  rowText: {
-    flex: 1,
-  },
-  rowTitle: {
-    fontFamily: fontFamily.bodyMedium,
-    fontSize: 15,
-    color: colors.offWhite,
-  },
-  rowSubtitle: {
-    fontFamily: fontFamily.body,
-    fontSize: 13,
-    lineHeight: 18,
-    color: "rgba(246,247,248,0.4)",
-    marginTop: 3,
-  },
-  chevron: {
-    fontSize: 20,
-    color: "rgba(246,247,248,0.3)",
-  },
-  back: {
-    alignSelf: "flex-start",
-    paddingVertical: 4,
-  },
-  backText: {
-    fontFamily: fontFamily.bodyMedium,
-    fontSize: 15,
-    color: colors.gold,
-  },
-  placeholder: {
-    padding: 20,
-  },
-  placeholderText: {
-    fontFamily: fontFamily.body,
-    fontSize: 14,
-    color: colors.textMuted,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: colors.background },
+    content: { padding: 20, paddingBottom: 130, gap: 20 },
+    title: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 28, marginTop: 8 },
+    group: { gap: 8 },
+    groupHeading: {
+      color: colors.label,
+      fontFamily: fontFamily.accent,
+      fontSize: 11,
+      letterSpacing: 1,
+      textTransform: 'uppercase',
+      marginLeft: 4,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      overflow: 'hidden',
+    },
+    row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 16, paddingHorizontal: 16 },
+    rowDivider: { borderTopWidth: 1, borderTopColor: colors.border },
+    rowText: { flex: 1 },
+    rowTitle: { color: colors.textPrimary, fontFamily: fontFamily.bodyMedium, fontSize: 15 },
+    rowSubtitle: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 12, lineHeight: 17, marginTop: 3 },
+    rowValue: { color: colors.accent, fontFamily: fontFamily.bodyMedium, fontSize: 14 },
+    chevron: { color: colors.textFaint, fontSize: 20 },
+    pressed: { opacity: 0.6 },
+    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+    sheet: { backgroundColor: colors.surfaceMd, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 40 },
+    sheetTitle: { color: colors.textFaint, fontFamily: fontFamily.bodySemiBold, fontSize: 11, letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 },
+    sheetRow: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 14 },
+    sheetSymbol: { color: colors.textSecondary, fontFamily: fontFamily.bodySemiBold, fontSize: 16, width: 28 },
+    sheetName: { flex: 1, color: colors.textPrimary, fontFamily: fontFamily.body, fontSize: 15 },
+    sheetCode: { color: colors.textFaint, fontFamily: fontFamily.address, fontSize: 13 },
+    sheetSelected: { color: colors.accent },
+  });

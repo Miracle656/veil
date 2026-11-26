@@ -1,0 +1,110 @@
+name: Deployed contract hashes
+
+# Checks that the contracts actually running on mainnet are the ones recorded in
+# contracts/deployments.json, by reading the ledger (#1186): the factory's own
+# executable hash, a SHA-256 recomputed from its on-chain bytecode, and the wallet
+# WASM hash stored in the factory. It also checks that expected-hashes.json at the
+# recorded source commit lists both, tying the deployment to a reproducible build.
+#
+# Whether the current source builds to contracts/expected-hashes.json is a
+# different question, answered on every PR by reproducible-build.yml. This one
+# needs a live RPC, so it runs weekly and on demand, never on the PR path: a
+# third-party RPC being down must not turn a contributor's PR red.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      rpc_url:
+        description: 'Soroban RPC URL (blank = rpc_url from contracts/deployments.json)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify-deployed:
+    name: Verify mainnet contracts against contracts/deployments.json
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # Full history: the source-commit check reads expected-hashes.json at the
+      # commit recorded in deployments.json.
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+
+      # The verifier imports @stellar/stellar-sdk, a root dependency.
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Verify deployed hashes
+        id: verify
+        env:
+          RPC_URL: ${{ inputs.rpc_url }}
+        run: |
+          set -o pipefail
+          ARGS=()
+          if [ -n "$RPC_URL" ]; then
+            ARGS+=(--rpc-url "$RPC_URL")
+          fi
+          set +e
+          node scripts/verify-deployed-hashes.mjs "${ARGS[@]}" 2>&1 | tee report.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+        shell: bash
+
+      - name: Publish step summary
+        if: always()
+        run: |
+          {
+            echo "## Deployed contract hashes"
+            echo ""
+            echo '```'
+            if [ -f report.txt ]; then cat report.txt; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+        shell: bash
+
+      # Exit 1 is a real mismatch; exit 2 means the RPC was unreachable, which is
+      # not a deployment problem and does not get an issue.
+      - name: Open or update alert issue on scheduled mismatch
+        if: failure() && github.event_name == 'schedule' && steps.verify.outputs.code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "The scheduled deployed-hash check found mainnet disagreeing with \`contracts/deployments.json\`."
+            echo ""
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo '```'
+            cat report.txt
+            echo '```'
+          } > issue.md
+
+          EXISTING=$(gh issue list --state open --label "area:ci" \
+            --search "Deployed contract hashes do not match in:title" \
+            --json number --jq '.[0].number // empty')
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create \
+              --title "[ALERT] Deployed contract hashes do not match contracts/deployments.json" \
+              --body-file issue.md \
+              --label "area:ci"
+          else
+            gh issue comment "$EXISTING" --body-file issue.md
+          fi
+        shell: bash

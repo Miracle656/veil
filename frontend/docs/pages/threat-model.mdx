@@ -8,7 +8,7 @@ import { Callout } from 'nextra/components'
 # Threat Model
 
 This document describes the threat boundary, attacker model, trust assumptions, and residual risks for Veil in STRIDE format.
-It is intended for security reviewers, auditors, and operators evaluating Veil for production use.
+It is intended for security reviewers, auditors, and operators evaluating Veil for production use as part of the SCF tranche-2 security deliverable.
 
 <Callout type="warning">
   Veil has **not** undergone a formal third-party security audit. The mitigations below represent
@@ -28,6 +28,8 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | **Malicious co-signer** | An `add_signer` transaction the user was tricked into approving | Exfiltrate funds after gaining on-chain signer status |
 | **Malicious smart contract** | Invoke Veil wallet via cross-contract call | Trigger an authorised action without the user's knowledge |
 | **Insider / supply-chain** | Compromise of an npm package or GitHub Actions runner | Inject malicious SDK code or steal CI secrets |
+| **RPC relay abuser** | Direct HTTP access to public `/api/rpc/mainnet` proxy | Drain metered mainnet RPC quota or execute unauthorized RPC methods |
+| **Cross-network attacker / state poisoner** | Client-side origin storage manipulation across network switches | Corrupt or clobber mainnet contract credentials using testnet states |
 | **Quantum adversary** *(future)* | Break P-256 ECDSA offline | Recover signing key from on-chain public key |
 
 ---
@@ -42,6 +44,7 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | S-2 | Phishing site harvests a passkey assertion for the real origin | WebAuthn / browser | WebAuthn origin binding — `clientDataJSON.origin` is set by the authenticator and cannot be spoofed by a relying party | ✅ By spec |
 | S-3 | Cloud-passkey sync compromise — attacker restores credential on a new device | Passkey sync provider | Passkey private key is stored in the secure enclave; cloud sync stores an encrypted blob that requires re-authentication on the new device | ⚠️ Trust in sync provider |
 | S-4 | Malicious anchor impersonates a legitimate issuer | Asset trust line | Veil does not auto-establish trust lines; user must approve `change_trust` via biometric | ✅ Implemented |
+| S-5 | Cross-network wallet identity spoofing (testnet credentials bleeding into mainnet) | `walletStorage` / `network.ts` | Namespaced storage slots (`_mainnet` suffix for mainnet, isolated reads/writes) prevent testnet credentials or addresses from being used on mainnet transactions (#628) | ✅ Implemented |
 
 ### Tampering
 
@@ -51,6 +54,8 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | T-2 | Attacker tampers with `clientDataJSON` or `authData` in transit | WebAuthn pipeline | Both fields are included in the ECDSA message hash (`SHA256(authData ‖ SHA256(clientDataJSON))`); tampering invalidates the signature | ✅ Implemented |
 | T-3 | SDK is tampered in a supply-chain attack | npm package | `package-lock.json` pins exact versions; Dependabot keeps dependencies updated; GitGuardian scans for secret leaks | ⚠️ No sub-resource integrity yet |
 | T-4 | Wraith indexer serves tampered transfer history | Horizon data | UI uses Horizon as a secondary source; discrepancies can be surfaced; full Horizon verification is planned | ⚠️ Partial |
+| T-5 | Passkey registration overwrites an existing resident key without `excludeCredentials` | `sdk/src/core.ts` | Registration populates `excludeCredentials` via `collectKnownCredentials(store)` to prevent authenticators from overwriting existing resident keys for the same RP ID (#627) | ✅ Implemented |
+| T-6 | Accidental destruction of mainnet wallet during testnet "Reset wallet" | `clearActiveNetworkWallet` | Reset operation explicitly removes only the keys corresponding to the active network slot (`clearActiveNetworkWallet()`), preserving the other network's state (#628) | ✅ Implemented |
 
 ### Repudiation
 
@@ -64,9 +69,10 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | # | Threat | Component | Mitigation | Status |
 |---|---|---|---|---|
 | I-1 | Private key exfiltration via JavaScript | Secure enclave | WebAuthn `create()` returns only the public key; the private key never leaves the hardware enclave | ✅ By spec |
-| I-2 | `localStorage` credential ID exposure (same-origin XSS) | SDK | `credential_id` in `localStorage` reveals which passkey is registered; does not expose the private key | ⚠️ Switch to IndexedDB + encryption in production |
+| I-2 | `localStorage` credential ID exposure (same-origin XSS) | SDK / Storage | `credential_id` in `localStorage` reveals which passkey is registered; does not expose private key. PRF-derived fee-payer seeds are kept in `sessionStorage` and memory only, cleared on lock (#629) | ⚠️ Switch to IndexedDB + encryption in production |
 | I-3 | Stellar public key linkage (address reuse) | Blockchain | Stellar public keys are permanently visible on-chain; multi-account rotation is not yet supported | ⚠️ Residual risk |
 | I-4 | Agent conversation history in memory | Agent server | Chat history is held in-process memory only; no persistence layer for conversations | ✅ No DB persistence |
+| I-5 | Metered upstream RPC key leakage in proxy error responses | RPC Proxy | `app/api/rpc/mainnet/route.ts` strips the upstream URL and key on failure, returning sanitized 502/503 responses without echoing provider credentials | ✅ Implemented |
 
 ### Denial of Service
 
@@ -76,6 +82,8 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | D-2 | Drain fee-payer `G…` account (HKDF-derived) | Fee-payer account | Fee-payer is only used for fee bump; wallet funds are held separately in the `C…` contract account | ✅ By design |
 | D-3 | Remove the last signer, locking the wallet | `remove_signer` | Phase 5 guardian recovery allows a pre-registered guardian to restore access; UI warns when removing the last signer | ✅ Guardian recovery |
 | D-4 | DoS Lens price oracle | Lens service | x402 micropayment gate rate-limits free callers; Render horizontal scaling available | ⚠️ Basic rate limiting only |
+| D-5 | Mainnet RPC open relay quota exhaustion (arbitrary RPC flooding) | `app/api/rpc/mainnet/route.ts` | Same-origin proxy enforces a strict 11-method JSON-RPC allow-list, rejecting unapproved calls with 403, preventing open relay exploitation against metered accounts | ✅ Implemented |
+| D-6 | Device portability loss / passkey restore without contract address `C…` | Passkey recovery & SDK | Passkey sync restores WebAuthn credentials across devices but does not carry contract addresses. Re-discovery requires deterministic salt resolution, manual address input, or indexer lookup (#626) | ⚠️ Partial / Address entry required |
 
 ### Elevation of Privilege
 
@@ -84,8 +92,9 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | E-1 | Rogue signer added without user consent | `add_signer` | `add_signer` requires a valid WebAuthn signature from an existing registered signer | ✅ Implemented |
 | E-2 | Cross-contract re-entrancy (malicious contract calls Veil) | `__check_auth` | Soroban's `require_auth` model prevents re-entrancy; each auth entry is bound to a specific invocation | ✅ By Soroban design |
 | E-3 | Replay of an old valid WebAuthn assertion | `__check_auth` | `signature_payload` is derived from the Soroban auth entry hash, which is unique per ledger sequence; Soroban ledger sequences prevent replay at the network level | ✅ Implemented |
-| E-4 | CI runner compromise exposes `NEXT_PUBLIC_*` env vars | GitHub Actions | `NEXT_PUBLIC_*` values are public testnet addresses (browser-exposed by design); no mainnet secrets in CI | ✅ Testnet only |
+| E-4 | Exposure of metered `MAINNET_RPC_URL` secret | Deployment Env & CI | `MAINNET_RPC_URL` is a metered, paid RPC credential kept strictly in server-side deployment environment variables (never `NEXT_PUBLIC_*`). In CI/CD, secret isolation and mock RPC providers prevent quota consumption during automated test runs | ✅ Server-only env isolation |
 | E-5 | Guardians recover to a key they control | Guardian recovery | 3-day timelock on `complete_recovery`; user can cancel during the window; guardian's own key must authorise | ⚠️ Timelock relies on user monitoring |
+| E-6 | Silent fee-payer derivation mode downgrade (PRF → legacy) | `frontend/wallet/lib/feePayer.ts` | Derivation mode (`prf-raw`, `prf-hkdf`, or `legacy`) is pinned in `veil_feepayer_mode` on wallet setup; PRF seeds remain in session memory only, and `FeePayerDiagnostics` exposes candidate probes to prevent unexpected `G…` address shifts or silent security downgrades (#629) | ✅ Implemented |
 
 ---
 
@@ -100,6 +109,7 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | **`p256` and `sha2` Rust crates are correct** | Widely used, audited crates; Rust memory safety eliminates most implementation bugs | Signature forgery or hash collision |
 | **Soroban VM is deterministic and isolated** | Soroban design guarantee; each contract execution is sandboxed | Arbitrary code execution inside the VM |
 | **Vercel and Render supply-chain integrity** | Build artefacts served from Vercel CDN; Render container images | Malicious injection at deploy time |
+| **Mainnet RPC provider maintains availability and integrity** | Upstream provider executes read/write RPC requests honestly | Stale state, delayed transaction submission, or false fee estimations |
 
 ---
 
@@ -108,12 +118,14 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 | Risk | Likelihood | Impact | Accepted Until |
 |---|---|---|---|
 | No formal security audit | Medium | High | Pre-mainnet audit scheduled |
-| `localStorage` credential ID (same-origin XSS readable) | Low | Low | Production SDK hardening |
+| `localStorage` credential ID (same-origin XSS readable) | Low | Low | Production SDK hardening (PRF seed is already session-only) |
 | No RP ID / origin verification in contract (Phase 4 planned) | Low | High | Phase 4 — store `rpIdHash` at `init()` |
 | No per-signer nonce (sequence replay across forks) | Very Low | Medium | Phase 5 — on-chain nonce |
 | Quantum adversary breaking P-256 | Very Low (10+ yr) | Critical | Post-quantum: replace P-256 with ML-DSA when Soroban supports it |
 | Passkey sync provider compromise | Very Low | High | Hardware key option (FIDO2 security key) as alternative authenticator |
 | Malicious anchor issuing fraudulent assets | Low | Medium | UI shows asset issuer; user must approve trust lines explicitly |
+| Cross-device contract address re-discovery | Medium | Low | Indexer-based contract address recovery (#626) |
+| Metered RPC proxy quota exhaustion | Medium | Medium | Ingress IP rate limiting and quota monitoring (#631) |
 
 ---
 
@@ -121,7 +133,7 @@ It is intended for security reviewers, auditors, and operators evaluating Veil f
 
 This threat model covers:
 
-- **In scope:** Soroban smart contract (`invisible_wallet`, `factory`), browser SDK (`invisible-wallet-sdk`), wallet PWA (`frontend/wallet`), AI agent (`packages/agent`), Lens price oracle, Wraith transfer indexer, docs site (`frontend/docs`), CI/CD pipeline.
+- **In scope:** Soroban smart contract (`invisible_wallet`, `factory`), browser SDK (`invisible-wallet-sdk`), wallet PWA (`frontend/wallet`), AI agent (`packages/agent`), Lens price oracle, Wraith transfer indexer, docs site (`frontend/docs`), mainnet RPC proxy (`app/api/rpc/mainnet`), and CI/CD secret boundaries.
 - **Out of scope:** Stellar network consensus layer, browser/OS vendor implementations of WebAuthn, Render/Vercel hosting infrastructure internals.
 
 ---
@@ -135,3 +147,7 @@ This threat model covers:
 - [Veil Security page](/security)
 - [ADR-0001: Two-account model](https://github.com/Miracle656/veil/blob/main/docs/adr/0001-two-account-model.md)
 - [ADR-0002: WebAuthn signature verification](https://github.com/Miracle656/veil/blob/main/docs/adr/0002-webauthn-signature-verification.md)
+- [ADR-0003: Fee-Payer Derivation Modes & Diagnostics](https://github.com/Miracle656/veil/blob/main/docs/adr/0003-fee-payer-derivation.md)
+- [SCF Tranche-2 Production Monitoring Plan (#631)](https://github.com/Miracle656/veil/issues/631)
+- [Per-Network Storage Namespacing (#628)](https://github.com/Miracle656/veil/issues/628)
+- [Passkey Registration Credential Collision Protection (#627)](https://github.com/Miracle656/veil/issues/627)

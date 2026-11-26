@@ -1,0 +1,608 @@
+import { Keypair } from '@stellar/stellar-sdk'
+import { deriveFeePayerSeedFromPrf, evaluateFeePayerPrf, type PrfEvaluator } from '@veil/prf'
+
+import { deriveFeePayerKeypair } from './deriveFeePayer'
+import { getNetwork } from './network'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
+
+/**
+ * Single accessor for the fee-payer (sponsor) key — the one place the rest of
+ * the app reads it from (ADR 0003). Two derivation modes, pinned per wallet:
+ *
+ *  - **prf** — the seed is derived from a WebAuthn PRF output, so it is
+ *    passkey-bound (only an authenticator holding the credential can produce it)
+ *    and the plaintext seed is kept in `sessionStorage` only, never
+ *    `localStorage`. This fixes C2 (was derived from the non-secret credential
+ *    ID) and C3 (was persisted in plaintext across sessions), and makes the
+ *    inactivity lock meaningful — the seed is gone once the tab closes / locks.
+ *
+ *  - **legacy** — today's behaviour: seed = HKDF(credentialId), persisted in
+ *    `localStorage`. Used for wallets created before this change and as the
+ *    fallback when the authenticator does not support PRF, so no device is ever
+ *    bricked (the fallback preserves the exact prior behaviour).
+ *
+ * The mode is decided once, at first establishment, and pinned in
+ * `veil_feepayer_mode` so a wallet's fee-payer address never changes mid-life:
+ * a wallet with an already-persisted secret stays legacy; a brand-new wallet
+ * tries PRF and pins whichever mode actually worked.
+ */
+
+const KEY_ID = 'invisible_wallet_key_id'
+const SECRET = 'veil_signer_secret'
+const PUBKEY = 'veil_signer_public_key'
+const MODE = 'veil_feepayer_mode'
+const DIAGNOSTICS = 'veil_feepayer_diagnostics'
+
+/**
+ * How the fee-payer seed is produced.
+ *
+ *  - **prf-raw**   PRF output used directly as the Ed25519 seed. This is what
+ *                  the MOBILE app does, so it is the interoperable variant and
+ *                  the default for new wallets.
+ *  - **prf-hkdf**  PRF output run through HKDF first. What the web wallet used
+ *                  to do unconditionally — kept so wallets already pinned that
+ *                  way keep their existing G-address.
+ *  - **legacy**    HKDF over the (non-secret) credential ID. Pre-PRF wallets.
+ *                  Preserved when probed on-chain as existing and funded so
+ *                  pre-existing wallets are not stranded.
+ *  - **random**    Secure random keypair (Keypair.random()), used for new wallets
+ *                  when the authenticator gives no PRF output. The key is never
+ *                  derived from public data, matching mobile's fallback.
+ */
+export type FeePayerMode = 'prf-raw' | 'prf-hkdf' | 'legacy' | 'random'
+
+/** Outcome of one candidate's on-chain existence probe (see {@link pickFundedCandidate}). */
+export type FeePayerProbeStatus = 'exists' | 'not-found' | 'network-error' | 'not-probed'
+
+/** One derivation candidate considered while establishing the fee-payer, and what the probe found. */
+export type FeePayerCandidateResult = {
+  mode: FeePayerMode
+  publicKey: string
+  status: FeePayerProbeStatus
+}
+
+/**
+ * A record of how the active fee-payer was chosen, kept so Settings can show
+ * "which G… am I paying from and why" without a debugger (issue #629), and so
+ * a user can copy it verbatim into a bug report.
+ */
+export type FeePayerDiagnostics = {
+  /** ISO timestamp of when this record was captured. */
+  at: string
+  /** Whether a PRF ceremony was attempted this run (skipped for an already-pinned legacy wallet). */
+  prfAttempted: boolean
+  /** Outcome of the PRF ceremony, when attempted; null when not attempted. */
+  prfOutcome: 'success' | 'unavailable' | 'error' | null
+  /** Error message from the PRF ceremony, when prfOutcome === 'error'. */
+  prfError?: string
+  /** Whether the Horizon existence probe actually ran (skipped once the mode is pinned). */
+  probed: boolean
+  /** Every derivation candidate considered, and its probe result. */
+  candidates: FeePayerCandidateResult[]
+  /** The derivation mode ultimately selected. */
+  chosenMode: FeePayerMode
+  /** The public key ultimately selected. */
+  chosenPublicKey: string
+}
+
+// Session-scoped, in-memory cache. For the PRF mode this (plus sessionStorage)
+// is the ONLY place the seed lives — it is re-derived via a passkey assertion
+// when the session is cold. Cleared on lock via clearFeePayer().
+let cached: Keypair | null = null
+let cachedDiagnostics: FeePayerDiagnostics | null = null
+
+function hasWindow(): boolean {
+  return typeof window !== 'undefined'
+}
+
+/** The pinned derivation mode for this wallet, or null if not yet established. */
+export function getFeePayerMode(): FeePayerMode | null {
+  if (!hasWindow()) return null
+  const m = localStorage.getItem(MODE)
+  // 'prf' is what older builds wrote, and it meant the HKDF variant.
+  if (m === 'prf') return 'prf-hkdf'
+  return m === 'prf-raw' || m === 'prf-hkdf' || m === 'legacy' || m === 'random' ? m : null
+}
+
+/**
+ * Synchronous read of the established fee-payer secret for this session, without
+ * triggering a passkey prompt. Returns the in-memory cache first, then the
+ * session/local persisted secret (legacy). Callers that only need to *use* an
+ * already-established key (the common case, mid-session) use this.
+ */
+export function peekFeePayerSecret(): string | null {
+  if (cached) return cached.secret()
+  if (!hasWindow()) return null
+  return walletSession.getItem(SECRET) || walletLocal.getItem(SECRET)
+}
+
+/** Convenience: the established fee-payer Keypair, or null. Sync, no prompt. */
+export function peekFeePayerKeypair(): Keypair | null {
+  const secret = peekFeePayerSecret()
+  if (!secret) return null
+  try {
+    return Keypair.fromSecret(secret)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The diagnostic record from the last time {@link ensureFeePayer} ran in this
+ * session — which candidates were derived, which existed on-chain, and whether
+ * a PRF ceremony was attempted/failed. Falls back to the persisted copy in
+ * sessionStorage so a Settings page opened after the establishing call (e.g. a
+ * fresh render of the same tab) can still show it. Returns null before
+ * {@link ensureFeePayer} has run at least once this session.
+ */
+export function getFeePayerDiagnostics(): FeePayerDiagnostics | null {
+  if (cachedDiagnostics) return cachedDiagnostics
+  if (!hasWindow()) return null
+  const raw = walletSession.getItem(DIAGNOSTICS)
+  if (!raw) return null
+  try {
+    return JSON.parse(raw) as FeePayerDiagnostics
+  } catch {
+    return null
+  }
+}
+
+/**
+ * True when the active fee-payer is a silent PRF→legacy downgrade: a PRF
+ * ceremony was attempted but did not produce a usable key, and legacy is what
+ * ended up chosen. A wallet in this state will NOT reproduce the same
+ * fee-payer address on a PRF-capable device (issue #629).
+ */
+export function isFeePayerPrfDowngrade(diagnostics: FeePayerDiagnostics | null = getFeePayerDiagnostics()): boolean {
+  if (!diagnostics) return false
+  return diagnostics.prfAttempted && diagnostics.prfOutcome !== 'success' && (diagnostics.chosenMode === 'legacy' || diagnostics.chosenMode === 'random')
+}
+
+/** Render a diagnostics record as plain text suitable for pasting into a bug report. */
+export function formatFeePayerDiagnostics(diagnostics: FeePayerDiagnostics): string {
+  const lines = [
+    `Veil fee-payer diagnostics — ${diagnostics.at}`,
+    `Chosen: ${diagnostics.chosenMode} (${diagnostics.chosenPublicKey})`,
+    `PRF: ${diagnostics.prfAttempted ? diagnostics.prfOutcome ?? 'unknown' : 'not attempted'}${diagnostics.prfError ? ` — ${diagnostics.prfError}` : ''}`,
+    `Probe: ${diagnostics.probed ? 'ran' : 'skipped (mode already pinned)'}`,
+    'Candidates:',
+    ...diagnostics.candidates.map((c) => `  - ${c.mode}: ${c.publicKey} [${c.status}]`),
+  ]
+  return lines.join('\n')
+}
+
+/**
+ * Establish the fee-payer for this session, deriving it if necessary. Idempotent
+ * and memoised — the interactive PRF assertion runs at most once per cold
+ * session. Call this at session entry points (wallet create, recover, unlock,
+ * dashboard mount) so later synchronous {@link peekFeePayerSecret} reads succeed.
+ *
+ * On any PRF failure (unsupported authenticator, cancelled ceremony, error) it
+ * falls back to the legacy credential-ID derivation, so it never leaves the
+ * caller without a key on a device that worked before.
+ *
+ * @param evaluator injectable PRF ceremony, for tests / non-browser platforms.
+ */
+export async function ensureFeePayer(
+  evaluator?: PrfEvaluator,
+  options: {
+    /**
+     * True when this call is not the result of a tap: a page loading, an
+     * effect running. Mobile browsers refuse a passkey prompt then, so a
+     * failure says nothing about the passkey, and a passive call must never
+     * answer it by creating a key. It returns null and leaves the tap-driven
+     * "Set up fee-payer" to ask properly.
+     */
+    passive?: boolean
+  } = {},
+): Promise<Keypair | null> {
+  if (cached) return cached
+  if (!hasWindow()) return null
+
+  const pinned = getFeePayerMode()
+  const existing = peekFeePayerSecret()
+
+  // Fast path: the session already holds a secret under a pinned mode → reuse it
+  // with no prompt. Still records a diagnostics entry (unless one from a fuller
+  // run already exists this session) so Settings has something to show even
+  // though no new derivation/probe happened.
+  if (existing && pinned) {
+    cached = Keypair.fromSecret(existing)
+    if (!getFeePayerDiagnostics()) {
+      setDiagnostics({
+        at: new Date().toISOString(),
+        prfAttempted: false,
+        prfOutcome: null,
+        probed: false,
+        candidates: [{ mode: pinned, publicKey: cached.publicKey(), status: 'not-probed' }],
+        chosenMode: pinned,
+        chosenPublicKey: cached.publicKey(),
+      })
+    }
+    return cached
+  }
+
+  const credentialId = walletLocal.getItem(KEY_ID)
+  if (!credentialId) {
+    // No passkey registered yet — best-effort from any persisted secret.
+    cached = existing ? Keypair.fromSecret(existing) : null
+    return cached
+  }
+
+  // A persisted secret with no pinned mode is a wallet from before modes
+  // existed: it is legacy by definition, and its G-address may be funded. Treat
+  // it as pinned so no PRF ceremony runs and the address cannot move.
+  const effectiveMode: FeePayerMode | null = pinned ?? (existing ? 'legacy' : null)
+
+  const candidates: Array<{ mode: FeePayerMode; kp: Keypair }> = []
+
+  let prfAttempted = false
+  let prfOutcome: FeePayerDiagnostics['prfOutcome'] = null
+  let prfError: string | undefined
+
+  if (effectiveMode !== 'legacy' && effectiveMode !== 'random') {
+    prfAttempted = true
+    try {
+      const prf = await evaluateFeePayerPrf(credentialId, undefined, evaluator)
+      if (prf && prf.length >= 32) {
+        // Mobile uses the PRF output directly; the web used to HKDF it. Same
+        // passkey, same PRF output, different seed — which is why a wallet
+        // created on the phone resolved to a different (unfunded) G-address
+        // here. Both are derived so whichever one actually exists can win.
+        candidates.push({ mode: 'prf-raw', kp: Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32))) })
+        const hkdf = await deriveFeePayerSeedFromPrf(prf)
+        candidates.push({ mode: 'prf-hkdf', kp: Keypair.fromRawEd25519Seed(Buffer.from(hkdf)) })
+        prfOutcome = 'success'
+      } else {
+        // Authenticator did not surface a PRF result — unsupported, not an error.
+        prfOutcome = 'unavailable'
+      }
+    } catch (err) {
+      // PRF cancelled/unsupported → probe legacy candidate below in case an
+      // existing funded legacy account exists on-chain.
+      prfOutcome = 'error'
+      prfError = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  // Include the legacy candidate so existing wallets funded under the credential-ID
+  // scheme are discovered on-chain and not stranded.
+  candidates.push({ mode: 'legacy', kp: await deriveFeePayerKeypair(credentialId) })
+
+  // If the wallet was pinned, honour that exactly — moving a funded account
+  // because a probe failed would be worse than a failed probe.
+  let chosen: { mode: FeePayerMode; kp: Keypair }
+  let probed = false
+  let probeResults: FeePayerCandidateResult[] | null = null
+
+  if (effectiveMode) {
+    if (effectiveMode === 'random' && existing) {
+      chosen = { mode: 'random', kp: Keypair.fromSecret(existing) }
+    } else {
+      const pinnedCandidate = candidates.find((c) => c.mode === effectiveMode)
+      if (!pinnedCandidate) {
+        // The wallet is pinned to a key that could not be produced this time:
+        // the passkey prompt was blocked or dismissed, or a random key is no
+        // longer in storage. This used to fall through to `candidates[0]`,
+        // which is the legacy key, and then PIN it. So one blocked prompt
+        // moved the wallet to a different, empty address for good, and the
+        // money stayed on the real one. iOS Safari blocks every passkey prompt
+        // that does not come from a tap, and this runs on page load, so it hit
+        // iPhone users within hours of creating a wallet (2026-11-19).
+        //
+        // No key is better than the wrong key. Nothing is pinned and nothing
+        // is stored; the caller shows "Set up fee-payer", and the tap that
+        // follows is a gesture the browser will allow.
+        return null
+      }
+      chosen = pinnedCandidate
+    }
+  } else {
+    probed = true
+    const picked = await pickFundedCandidate(candidates)
+    probeResults = picked.results
+    if (picked.chosen) {
+      // An existing funded account was found on-chain (e.g. legacy or PRF variant).
+      // Honour the existing account so no user funds or trustlines are stranded.
+      chosen = picked.chosen
+    } else {
+      // Genuinely new wallet (none of the candidate accounts exist on-chain).
+      // If PRF succeeded, default to prf-raw (passkey-bound).
+      // If PRF failed or was unsupported, do NOT derive a spending key from the
+      // public credential ID. Generate a fresh random keypair instead (matching mobile).
+      const prfCandidate = candidates.find((c) => c.mode === 'prf-raw' || c.mode === 'prf-hkdf')
+      if (prfCandidate) {
+        chosen = prfCandidate
+      } else if (prfOutcome === 'error' && options.passive) {
+        // The passkey was asked while the page was loading and the browser
+        // refused, as iOS Safari always does without a tap. That says nothing
+        // about whether this passkey can do PRF, so it is not a reason to give
+        // the wallet a random key that lives only in this browser's storage.
+        // Leave it unset; the "Set up fee-payer" tap asks again properly.
+        return null
+      } else {
+        chosen = { mode: 'random', kp: Keypair.random() }
+      }
+    }
+  }
+
+  cached = chosen.kp
+  localStorage.setItem(MODE, chosen.mode)
+  walletSession.setItem(SECRET, chosen.kp.secret())
+  walletSession.setItem(PUBKEY, chosen.kp.publicKey())
+  // Only the legacy and random variants cannot be re-derived purely from the passkey,
+  // so they are persisted in localStorage; PRF seeds stay session-scoped (ADR 0003, C3).
+  if (chosen.mode === 'legacy' || chosen.mode === 'random') {
+    walletLocal.setItem(SECRET, chosen.kp.secret())
+    walletLocal.setItem(PUBKEY, chosen.kp.publicKey())
+  }
+
+  const finalCandidates: FeePayerCandidateResult[] = probeResults
+    ?? candidates.map((c) => ({ mode: c.mode, publicKey: c.kp.publicKey(), status: 'not-probed' as const }))
+  if (chosen.mode === 'random' && !finalCandidates.some((c) => c.mode === 'random')) {
+    finalCandidates.push({ mode: 'random', publicKey: chosen.kp.publicKey(), status: 'not-probed' })
+  }
+
+  setDiagnostics({
+    at: new Date().toISOString(),
+    prfAttempted,
+    prfOutcome,
+    prfError,
+    probed,
+    candidates: finalCandidates,
+    chosenMode: chosen.mode,
+    chosenPublicKey: chosen.kp.publicKey(),
+  })
+
+  return chosen.kp
+}
+
+/** What a retry did, or why it could not. */
+export type PrfRetryResult =
+  | {
+      ok: true
+      mode: 'prf-raw' | 'prf-hkdf'
+      publicKey: string
+      previousPublicKey: string
+      /** True when the adopted account already existed on chain: an account that was found, not made. */
+      foundOnChain?: boolean
+    }
+  | { ok: false; reason: 'already-prf' | 'no-passkey' | 'cancelled' | 'unsupported' | 'funded' | 'network'; message: string; detail?: string }
+
+/**
+ * Derive the fee payer from the passkey again, after a ceremony that did not
+ * produce a PRF output the first time.
+ *
+ * `ensureFeePayer` cannot do this on its own. Once a wallet is pinned to
+ * `random` it never asks the authenticator again (by design — re-deriving
+ * silently would move the address out from under a funded account), so a
+ * person who dismissed the passkey sheet once is pinned to a key no other
+ * device can reproduce, with no way back. That is what this is for, and it is
+ * deliberately only reachable from a button: iOS and Android both require a
+ * user gesture for WebAuthn, and a ceremony started from a mount effect fails
+ * with exactly the `NotAllowedError` that creates this state.
+ *
+ * The refusal that matters is `funded`. If the current fee payer holds
+ * anything, adopting the derived key would overwrite the only copy of the
+ * secret that can reach it — the account is not passkey-derived, which is
+ * the whole problem — and the balance would be beyond reach of every future
+ * install. So the move is offered only on an empty account, and refused
+ * otherwise rather than done and reported.
+ */
+export async function retryPrfFeePayer(evaluator?: PrfEvaluator): Promise<PrfRetryResult> {
+  if (!hasWindow()) return { ok: false, reason: 'network', message: 'Not available here.' }
+
+  const pinned = getFeePayerMode()
+  if (pinned === 'prf-raw' || pinned === 'prf-hkdf') {
+    return { ok: false, reason: 'already-prf', message: 'This wallet already derives its fee payer from your passkey.' }
+  }
+
+  const credentialId = walletLocal.getItem(KEY_ID)
+  if (!credentialId) {
+    return { ok: false, reason: 'no-passkey', message: 'No passkey is registered in this browser.' }
+  }
+
+  const existing = peekFeePayerSecret()
+  if (!existing) {
+    return { ok: false, reason: 'no-passkey', message: 'There is no fee payer on this device to replace.' }
+  }
+  const current = Keypair.fromSecret(existing)
+
+  // Ask the authenticator. A dismissed sheet lands here as an error, and is
+  // reported as a cancellation rather than as "this device cannot do PRF" —
+  // the two need different answers from the person reading it.
+  let prf: Uint8Array | null = null
+  try {
+    prf = await evaluateFeePayerPrf(credentialId, undefined, evaluator)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const cancelled = err instanceof Error && (err.name === 'NotAllowedError' || err.name === 'AbortError')
+    return {
+      ok: false,
+      reason: cancelled ? 'cancelled' : 'unsupported',
+      message: cancelled
+        ? 'The passkey prompt was dismissed, so nothing changed. Tap again and complete it.'
+        : 'This authenticator did not return a PRF result, so the fee payer cannot be derived from it.',
+      detail: message,
+    }
+  }
+  if (!prf || prf.length < 32) {
+    return {
+      ok: false,
+      reason: 'unsupported',
+      message: 'This authenticator does not support the PRF extension, so the fee payer cannot be derived from it.',
+    }
+  }
+
+  // The passkey makes two possible keys, one for each way this wallet has ever
+  // turned a PRF output into a seed. Which one a given wallet uses is not
+  // something to guess: the ledger knows which account exists.
+  const rawKey = Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32)))
+  const hkdfKey = Keypair.fromRawEd25519Seed(Buffer.from(await deriveFeePayerSeedFromPrf(prf)))
+  for (const [mode, key] of [['prf-raw', rawKey], ['prf-hkdf', hkdfKey]] as const) {
+    if (key.publicKey() === current.publicKey()) {
+      // Nothing to move; just record the mode so the ceremony is not repeated.
+      localStorage.setItem(MODE, mode)
+      return { ok: true, mode, publicKey: key.publicKey(), previousPublicKey: current.publicKey() }
+    }
+  }
+
+  const { horizonUrl } = getNetwork()
+  /** true: exists. false: Horizon says there is no such account. null: could not tell. */
+  const exists = async (publicKey: string): Promise<boolean | null> => {
+    try {
+      const res = await fetch(`${horizonUrl}/accounts/${publicKey}`)
+      if (res.status === 404) return false
+      return res.ok ? true : null
+    } catch {
+      return null
+    }
+  }
+
+  // Refuse rather than strand. An account that does not exist on chain holds
+  // nothing, and is the only case where swapping the key costs nothing.
+  // Unknown must count as funded: the answer decides whether a key that may
+  // control money is overwritten.
+  const currentExists = await exists(current.publicKey())
+  if (currentExists === null) {
+    return { ok: false, reason: 'network', message: 'Could not reach the network to check the current fee payer. Nothing was changed.' }
+  }
+
+  if (currentExists) {
+    return {
+      ok: false,
+      reason: 'funded',
+      message:
+        'The current fee payer exists on chain, so replacing its key here would put whatever it holds beyond reach. '
+        + 'Move its balance out first, then try again.',
+      detail: current.publicKey(),
+    }
+  }
+
+  // The current account is empty. If the passkey already has an account on
+  // chain, that is this wallet's real spending account and the one to go back
+  // to: a wallet pushed onto another address by a blocked passkey prompt left
+  // its money there (2026-11-19, iOS Safari). With neither on chain this is a
+  // wallet that never had one, and prf-raw is the default.
+  const rawExists = await exists(rawKey.publicKey())
+  const hkdfExists = rawExists === true ? false : await exists(hkdfKey.publicKey())
+  if (rawExists === null || hkdfExists === null) {
+    return { ok: false, reason: 'network', message: 'Could not reach the network to look for your spending account. Nothing was changed.' }
+  }
+  const adoptedMode: 'prf-raw' | 'prf-hkdf' = !rawExists && hkdfExists ? 'prf-hkdf' : 'prf-raw'
+  const derived = adoptedMode === 'prf-hkdf' ? hkdfKey : rawKey
+  const foundOnChain = rawExists || hkdfExists
+
+  cached = derived
+  localStorage.setItem(MODE, adoptedMode)
+  walletSession.setItem(SECRET, derived.secret())
+  walletSession.setItem(PUBKEY, derived.publicKey())
+  // A PRF seed is re-derivable from the passkey, so it must not be left in
+  // localStorage the way the random key it replaces was (ADR 0003, C3).
+  walletLocal.removeItem(SECRET)
+  walletLocal.removeItem(PUBKEY)
+
+  setDiagnostics({
+    at: new Date().toISOString(),
+    prfAttempted: true,
+    prfOutcome: 'success',
+    probed: true,
+    candidates: [
+      { mode: pinned ?? 'random', publicKey: current.publicKey(), status: 'not-found' },
+      { mode: 'prf-raw', publicKey: rawKey.publicKey(), status: rawExists ? 'exists' : 'not-found' },
+      {
+        mode: 'prf-hkdf',
+        publicKey: hkdfKey.publicKey(),
+        status: rawExists ? 'not-probed' : hkdfExists ? 'exists' : 'not-found',
+      },
+    ],
+    chosenMode: adoptedMode,
+    chosenPublicKey: derived.publicKey(),
+  })
+
+  return {
+    ok: true,
+    mode: adoptedMode,
+    publicKey: derived.publicKey(),
+    previousPublicKey: current.publicKey(),
+    foundOnChain,
+  }
+}
+
+/** Cache + persist a diagnostics record (sessionStorage — metadata only, no secret). */
+function setDiagnostics(diagnostics: FeePayerDiagnostics): void {
+  cachedDiagnostics = diagnostics
+  walletSession.setItem(DIAGNOSTICS, JSON.stringify(diagnostics))
+}
+
+/**
+ * Pick the candidate whose account already exists on-chain.
+ *
+ * The variants are all deterministic, so the only question is which one this
+ * wallet was actually created with — and the ledger already knows. Probing beats
+ * guessing: guessing wrong strands the user on an unfunded fee-payer with no
+ * error message and no way to pay the fee that would fix it.
+ *
+ * Stops at the first hit — the remaining candidates are recorded as
+ * `not-probed` rather than checked, so a genuinely new wallet still only costs
+ * up to 3 requests. Returns a null `chosen` when none exist (a genuinely new
+ * wallet), leaving the caller to take the first candidate — prf-raw, which is
+ * what mobile produces, so a wallet created here stays recoverable there.
+ */
+async function pickFundedCandidate(
+  candidates: Array<{ mode: FeePayerMode; kp: Keypair }>,
+): Promise<{ chosen: { mode: FeePayerMode; kp: Keypair } | null; results: FeePayerCandidateResult[] }> {
+  const { horizonUrl } = getNetwork()
+  const results: FeePayerCandidateResult[] = []
+  let chosen: { mode: FeePayerMode; kp: Keypair } | null = null
+
+  for (const candidate of candidates) {
+    if (chosen) {
+      results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'not-probed' })
+      continue
+    }
+    try {
+      const res = await fetch(`${horizonUrl}/accounts/${candidate.kp.publicKey()}`)
+      if (res.ok) {
+        results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'exists' })
+        chosen = candidate
+      } else {
+        results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'not-found' })
+      }
+    } catch {
+      // Network trouble — try the next rather than claiming this one is absent.
+      results.push({ mode: candidate.mode, publicKey: candidate.kp.publicKey(), status: 'network-error' })
+    }
+  }
+  return { chosen, results }
+}
+
+/**
+ * Drop the in-memory + session copies of the fee-payer (call on inactivity
+ * lock). For a PRF-mode wallet nothing recoverable remains afterwards — the seed
+ * is re-derived from the passkey on the next {@link ensureFeePayer}. Legacy
+ * and random fallback wallets still have their seed in localStorage, so unlock
+ * restores it without a prompt.
+ */
+export function clearFeePayer(): void {
+  cached = null
+  if (!hasWindow()) return
+  walletSession.removeItem(SECRET)
+  walletSession.removeItem(PUBKEY)
+}
+
+/**
+ * Full teardown (logout / wipe): drop every copy of the fee-payer, including the
+ * pinned mode and the legacy localStorage seed.
+ */
+export function resetFeePayer(): void {
+  cached = null
+  cachedDiagnostics = null
+  if (!hasWindow()) return
+  walletSession.removeItem(SECRET)
+  walletSession.removeItem(PUBKEY)
+  walletSession.removeItem(DIAGNOSTICS)
+  walletLocal.removeItem(SECRET)
+  walletLocal.removeItem(PUBKEY)
+  localStorage.removeItem(MODE)
+}

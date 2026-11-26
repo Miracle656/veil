@@ -76,21 +76,31 @@ That hash is what the factory stores during `init`.
 
 ## 3. Deploy the factory contract
 
-Deploy the compiled factory Wasm:
+Deploy the compiled factory Wasm. The factory has a constructor that fixes the
+**admin** atomically as part of this deploy transaction; only that admin can
+later call `init`. Pass the deployer's own address as the admin:
 
 ```bash
+DEPLOYER_ADDRESS=$(stellar keys address "$DEPLOYER_ALIAS")
+
 FACTORY_CONTRACT_ID=$(stellar contract deploy \
   --rpc-url "$MAINNET_RPC_URL" \
   --network-passphrase "$NETWORK_PASSPHRASE" \
   --source-account "$DEPLOYER_ALIAS" \
-  --wasm contracts/factory/target/wasm32-unknown-unknown/release/factory.wasm)
+  --wasm contracts/factory/target/wasm32-unknown-unknown/release/factory.wasm \
+  -- --admin "$DEPLOYER_ADDRESS")
 
 echo "$FACTORY_CONTRACT_ID"
 ```
 
 ## 4. Initialize the factory with the wallet Wasm hash
 
-Call the factory's `init` entrypoint with the uploaded wallet Wasm hash:
+Call the factory's `init` entrypoint with the uploaded wallet Wasm hash. `init`
+now **requires the admin's authorization** (the admin fixed in the constructor
+above), so it must be signed by `$DEPLOYER_ALIAS`. This is what closes the
+front-run race: between the deploy and this call, no other party can initialize
+the factory with a wasm hash of their own, because they cannot produce the
+admin's signature.
 
 ```bash
 stellar contract invoke \

@@ -11,7 +11,8 @@ The build is pinned along every axis that can affect the output bytes:
 - **Toolchain** — `contracts/rust-toolchain.toml` pins Rust to `1.85.0`.
 - **Dependencies** — `contracts/Cargo.lock` is built with `--locked`.
 - **Environment & paths** — the build runs inside the
-  `rust:1.85.0-bookworm` Docker image with the repository mounted at a fixed
+  `rust:1.85.0-bookworm@sha256:0ff31c9ffa641a62e48d543fb00b4960955ea375f40776f40f585b89e654cc5e`
+  Docker image (pinned by immutable digest) with the repository mounted at a fixed
   path (`/work`) and a fixed `CARGO_HOME`, so the absolute paths `rustc` embeds
   are identical on every machine, including CI.
 
@@ -53,7 +54,9 @@ git add contracts/expected-hashes.json
 The [`reproducible-build`](../.github/workflows/reproducible-build.yml) workflow
 runs on every push and pull request to `main`. It:
 
-1. Builds and verifies the WASM hashes against the committed values — failing
-   the job on any drift.
-2. Builds a second time and asserts the two runs produce identical hashes,
-   proving the build is deterministic.
+1. Builds and verifies the WASM hashes against the committed values in a container
+   pinned by digest — failing the job on any drift.
+2. Performs an independent second build starting from a clean checkout with an
+   empty `target/` directory and asserts both runs produce identical hashes.
+3. Records the resulting WASM hashes in the GitHub Actions job summary for
+   reviewer inspection.

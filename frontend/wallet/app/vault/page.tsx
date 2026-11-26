@@ -5,9 +5,10 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { useRouter } from 'next/navigation'
 
 import { ThemeToggle } from '@/components/ThemeToggle'
-import { VeilLogo } from '@/components/VeilLogo'
+import { VeilMark } from '@/components/ui/VeilMark'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { PasskeyCeremonyError, isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { beginTx, endTx } from '@/lib/txState'
 import {
   cancelVaultWithdrawal,
@@ -19,14 +20,15 @@ import {
   type VaultDetails,
   type VaultWithdrawal,
 } from '@/lib/vault'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const VAULT_STORAGE_KEY = 'veil_vault_contract'
 
 type DelayUnit = 'hours' | 'days'
 
 function getStoredSignerSecret(): string | null {
-  return sessionStorage.getItem('veil_signer_secret')
-    || localStorage.getItem('veil_signer_secret')
+  return walletSession.getItem('veil_signer_secret')
+    || walletLocal.getItem('veil_signer_secret')
 }
 
 function formatDelay(seconds: number): string {
@@ -86,7 +88,7 @@ export default function VaultPage() {
   const [withdrawalAmount, setWithdrawalAmount] = useState('')
 
   useEffect(() => {
-    const walletAddress = sessionStorage.getItem('invisible_wallet_address')
+    const walletAddress = walletSession.getItem('invisible_wallet_address')
     if (!walletAddress) {
       router.replace('/lock')
       return
@@ -138,7 +140,7 @@ export default function VaultPage() {
   const isOwner = !!details && details.config.owner === activeSigner
 
   async function confirmOwnerAction(): Promise<void> {
-    const keyId = localStorage.getItem('invisible_wallet_key_id')
+    const keyId = walletLocal.getItem('invisible_wallet_key_id')
     if (keyId && keyId !== 'recovery') {
       await requirePasskey()
     }
@@ -160,12 +162,13 @@ export default function VaultPage() {
       await loadDetails()
       return true
     } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message : String(cause)
-      setError(
-        message.includes('NotAllowedError')
-          ? 'Passkey verification was cancelled.'
-          : message,
-      )
+      // A dismissed prompt is not a vault failure: leave the screen as it was.
+      if (isPasskeyCancellation(cause)) {
+        setError(null)
+        return false
+      }
+      const message = cause instanceof PasskeyCeremonyError ? cause.message : cause instanceof Error ? cause.message : String(cause)
+      setError(message)
       return false
     } finally {
       setAction(null)
@@ -254,7 +257,7 @@ export default function VaultPage() {
           </svg>
           Dashboard
         </button>
-        <VeilLogo size={22} />
+        <VeilMark size={22} />
         <ThemeToggle />
       </nav>
 
@@ -435,7 +438,7 @@ export default function VaultPage() {
                     />
                   </div>
                   <button
-                    className="btn-gold"
+                    className="btn-secondary"
                     type="submit"
                     disabled={
                       action !== null
@@ -523,7 +526,7 @@ export default function VaultPage() {
                             </button>
                             {ready && (
                               <button
-                                className="btn-gold"
+                                className="btn-secondary"
                                 disabled={action !== null}
                                 onClick={() => runAction(
                                   `execute-${withdrawal.id}`,

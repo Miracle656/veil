@@ -1,13 +1,17 @@
 import { useMutation, useQueryClient, UseMutationResult } from '@tanstack/react-query';
-import type { Keypair } from '@stellar/stellar-sdk';
+import type { SignerInput } from '../../../src/signer';
 import { useVeilContext } from '../context';
 
 /**
  * Input parameters for sending a payment
  */
 export interface SendPaymentInput {
-  /** Fee payer secret key or Keypair used to pay transaction fees. */
-  feePayer: string | Keypair;
+  /**
+   * Signer for the account that pays transaction fees: a `TransactionSigner`
+   * whose `signTransaction` runs where the key lives. A secret string or
+   * Keypair is still accepted but deprecated.
+   */
+  feePayer: SignerInput;
   /** Recipient address */
   to: string;
   /** Amount to send */
@@ -45,7 +49,7 @@ export function useSendPayment(): UseMutationResult<SendPaymentData, Error, Send
         throw new Error('Wallet send capability is not available');
       }
       if (!input.feePayer) {
-        throw new Error('Fee payer secret or Keypair is required to send payment');
+        throw new Error('A fee payer signer is required to send payment');
       }
 
       return wallet.sendPayment(

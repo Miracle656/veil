@@ -1,0 +1,2519 @@
+/**
+ * Framework-agnostic wallet core.
+ *
+ * Every piece of wallet behaviour — passkey registration, contract deployment,
+ * Soroban authorization signing, payments, multi-signer and guardian recovery —
+ * lives here as a plain class with no framework imports. The React hook
+ * (`useInvisibleWallet`) and the Vue composable (`invisible-wallet-sdk/vue`)
+ * are thin reactive wrappers over this one implementation, so the two adapters
+ * stay in lockstep by construction rather than by discipline.
+ *
+ * State changes are published through {@link InvisibleWalletCore.subscribe},
+ * which is shaped for React's `useSyncExternalStore` and just as usable from a
+ * Vue `ref` or any other observer.
+ */
+
+import {
+    Account,
+    Address,
+    Asset,
+    Contract,
+    Keypair,
+    Memo,
+    Operation,
+    type Transaction,
+    type FeeBumpTransaction,
+    rpc as SorobanRpc,
+    Horizon,
+    TransactionBuilder,
+    BASE_FEE,
+    xdr,
+    nativeToScVal,
+    scValToNative,
+    Networks,
+    hash as stellarHash,
+} from '@stellar/stellar-sdk';
+
+const HorizonServer = Horizon.Server;
+import {
+    bufferToHex,
+    hexToUint8Array,
+    computeWalletAddress,
+} from './utils';
+import { webAuthnProvider } from './webauthn';
+import { encodeApproveArgs } from './allowance';
+import { assertionPublicKeyCandidates } from './crypto/assertionKey';
+import { TransactionOutbox, type ReplayOptions, type ReplayResult } from './outbox';
+import { verifyAttestation, AttestationError, type AttestationPolicy } from './webauthn/attestation';
+import { createLocalCipher, type LocalCipher } from './crypto/prf';
+import { assertEntryAuthorized, cappedExpiration, hostFunctionCalls } from './authEntryGuard';
+import { resolveSigner, signWith, type ResolvedSigner, type SignerInput, type TransactionSigner } from './signer';
+import {
+    deriveCounterfactualAddress as _deriveCounterfactualAddress,
+    type CounterfactualAddress,
+} from './counterfactual';
+import { createSep43Wallet, type Sep43Wallet } from './sep43';
+import { signMessage } from './signMessage';
+import { buildWebAuthnSignatureVector } from './signatureVector';
+import {
+    forgetAdditionalSigner,
+    guardPrimaryBinding,
+    readAdditionalSigners,
+    saveAdditionalSigner,
+    type AdditionalSigner,
+    type AdditionalSignerStatus,
+} from './additionalSigners';
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Minimal key–value storage interface compatible with both localStorage (web)
+ * and async stores like AsyncStorage (React Native).
+ *
+ * Pass a custom adapter via WalletConfig.storage to override the default
+ * (localStorage on web, no-op if localStorage is unavailable).
+ */
+export type StorageAdapter = {
+    getItem(key: string): string | null | Promise<string | null>;
+    setItem(key: string, value: string): void | Promise<void>;
+    removeItem?(key: string): void | Promise<void>;
+};
+
+/**
+ * Configuration passed when creating a wallet.
+ * Keeping these at wallet level (rather than per-method) lets the caller set them
+ * once and have every method — deploy, sign, etc. — share the same network context.
+ */
+export type WalletConfig = {
+    /** The factory contract's Stellar strkey (e.g. "CABC..."). */
+    factoryAddress: string;
+    /** Stellar Horizon-compatible RPC endpoint (e.g. "https://soroban-testnet.stellar.org"). */
+    rpcUrl: string;
+    /** Stellar network passphrase. Use Networks.TESTNET or Networks.PUBLIC. */
+    networkPassphrase: string;
+    /** The WebAuthn relying party ID (e.g. "localhost"). Required for React Native. */
+    rpId?: string;
+    /** The WebAuthn origin (e.g. "https://veil.app"). Required for React Native. */
+    origin?: string;
+    /**
+     * Optional storage adapter for persisting wallet credentials.
+     * Defaults to localStorage on web. Pass AsyncStorage (or a compatible adapter)
+     * when running in React Native.
+     *
+     * Read once, when the wallet is created: a later config update keeps the
+     * adapter the wallet already owns, so its offline outbox stays intact.
+     *
+     * @example
+     * // React Native with @react-native-async-storage/async-storage:
+     * import AsyncStorage from '@react-native-async-storage/async-storage';
+     * const config = { ..., storage: AsyncStorage };
+     */
+    storage?: StorageAdapter;
+    /**
+     * When true (default), transactions persisted in the offline outbox are
+     * replayed automatically whenever the browser fires an `online` event.
+     * Set to false to drive replay manually via {@link InvisibleWalletActions.replayOutbox}.
+     * Has no effect outside a DOM environment (e.g. React Native).
+     */
+    autoReplayOnReconnect?: boolean;
+    /**
+     * Optional WebAuthn attestation policy, run during register(). When set, the
+     * attestation statement returned by the authenticator is parsed and verified,
+     * and this policy decides whether to accept the credential (e.g. require a
+     * verified hardware authenticator, or gate on AAGUID). Returning false — or
+     * throwing — from the policy aborts registration.
+     *
+     * @example
+     * const config = { ..., attestationPolicy: (info) =>
+     *   info.verified && ALLOWED_AAGUIDS.has(info.aaguid) };
+     */
+    attestationPolicy?: AttestationPolicy;
+    /**
+     * When an attestationPolicy is set but the platform did not surface the raw
+     * attestationObject (so it cannot be verified), abort registration if this is
+     * true (default false — proceed without verification).
+     */
+    requireAttestation?: boolean;
+    /**
+     * Optional signer for the account that sponsors network fees. When set,
+     * mutating transactions are submitted as fee-bump envelopes paid by this
+     * account. The SDK hands the fee-bump XDR to `signTransaction`; the secret
+     * stays wherever the application keeps it (typically a backend).
+     */
+    sponsorSigner?: TransactionSigner;
+    /**
+     * @deprecated Use {@link WalletConfig.sponsorSigner}. A sponsor secret in the
+     * client config means a funded account's key ships in your bundle.
+     */
+    sponsorSecret?: string;
+    /** Base fee used by the outer fee-bump transaction. Defaults to BASE_FEE. */
+    feeBumpBaseFee?: string;
+};
+
+/**
+ * The four pieces the contract's __check_auth needs to verify a WebAuthn assertion.
+ */
+export type WebAuthnSignature = {
+    /** Uncompressed P-256 public key: 0x04 x y (65 bytes) */
+    publicKey: Uint8Array;
+    /** Raw authenticatorData bytes from the WebAuthn assertion response */
+    authData: Uint8Array;
+    /** Raw clientDataJSON bytes */
+    clientDataJSON: Uint8Array;
+    /** Raw P-256 ECDSA signature: r s (64 bytes) */
+    signature: Uint8Array;
+};
+
+/**
+ * Where the WebAuthn credential lives.
+ *
+ * - `platform`       — a device-bound passkey (Touch ID, Windows Hello, …).
+ * - `cross-platform` — a roaming/portable FIDO2 security key (YubiKey, etc.)
+ *                      that can sign from any device it is plugged into.
+ */
+export type AuthenticatorAttachment = 'platform' | 'cross-platform';
+
+/** Optional knobs for register(). */
+export type RegisterOptions = {
+    /**
+     * Request a specific authenticator type. Pass `cross-platform` to enrol a
+     * roaming FIDO2 security key as a portable signer rather than a device-bound
+     * platform passkey. Defaults to letting the platform decide.
+     */
+    authenticatorAttachment?: AuthenticatorAttachment;
+};
+
+/**
+ * Options for the login() method.
+ *
+ * On a device with no prior local state, pass a credentialId (base64url) so
+ * the SDK can derive the deterministic wallet address from the passkey.
+ * Alternatively, pass a walletAddress directly to skip derivation and only
+ * verify on-chain existence.
+ */
+export type LoginOptions = {
+    /**
+     * Base64url-encoded credential ID of the passkey to authenticate with.
+     * When provided (and no local address is stored), the SDK triggers a
+     * WebAuthn assertion, extracts the P-256 public key, derives the
+     * deterministic wallet address, and verifies it exists on-chain.
+     */
+    credentialId?: string;
+    /**
+     * Known wallet contract address ("C..."). When provided, skips
+     * credential-based derivation and verifies on-chain existence directly.
+     */
+    walletAddress?: string;
+};
+
+/**
+ * A roaming (cross-platform) credential, persisted independently of platform
+ * passkeys so it can be identified and used as a portable signer across devices.
+ */
+export type PortableSigner = {
+    /** Base64url-encoded credential ID of the roaming key. */
+    credentialId: string;
+    /** Hex-encoded uncompressed P-256 public key (65 bytes). */
+    publicKey: string;
+    /** Always `cross-platform` for a portable signer. */
+    authenticatorAttachment: 'cross-platform';
+    /** Transport hints (usb/nfc/ble/hybrid) used to prompt for the key. */
+    transports: string[];
+};
+
+/** Result returned by a successful register() call. */
+export type RegisterResult = {
+    /** The deterministically computed contract address of the new wallet ("C..."). */
+    walletAddress: string;
+    /** The uncompressed P-256 public key bytes (65 bytes). */
+    publicKeyBytes: Uint8Array;
+    /** The authenticator type the credential was created with, when reported. */
+    authenticatorAttachment?: AuthenticatorAttachment;
+    /**
+     * True when the credential is a roaming FIDO2 security key persisted as a
+     * portable signer (independent of platform passkeys). Optional so existing
+     * callers that don't enrol roaming keys remain source-compatible.
+     */
+    isPortableSigner?: boolean;
+};
+
+/** Result returned by a successful deploy() call. */
+export type DeployResult = {
+    /** The on-chain contract address of the deployed wallet ("C..."). */
+    walletAddress: string;
+    /**
+     * True if the wallet was already deployed before this call.
+     * When true, no transaction was submitted.
+     */
+    alreadyDeployed: boolean;
+};
+
+/** Result returned by a successful addSigner() call. */
+export type AddSignerResult = {
+    /** The index of the newly added signer in the wallet's signer list. */
+    signerIndex: number;
+};
+
+/** Optional knobs for registerAdditionalSigner(). */
+export type RegisterAdditionalSignerOptions = {
+    /** Display name for the new credential in the passkey manager. */
+    username?: string;
+    /** Ask for a roaming key (`cross-platform`) or this device (`platform`). */
+    authenticatorAttachment?: AuthenticatorAttachment;
+};
+
+/** Result returned by registerAdditionalSigner(). */
+export type RegisterAdditionalSignerResult = {
+    /** The wallet the signer was added to — the same address as before the call. */
+    walletAddress: string;
+    /** Base64url id of the new credential. */
+    credentialId: string;
+    /** The new credential's uncompressed P-256 public key (65 bytes). */
+    publicKeyBytes: Uint8Array;
+    /**
+     * `active` once the key is confirmed in the on-chain signer list;
+     * `pending` when the transaction succeeded but the list did not show it yet.
+     */
+    status: AdditionalSignerStatus;
+    /** Slot in the contract's signer map, when confirmed. */
+    signerIndex?: number;
+};
+
+/** Result returned by a successful rotateSigner() call. */
+export type RotateSignerResult = {
+    /** The previous (rotated-out) P-256 public key bytes (65 bytes). */
+    oldPublicKeyBytes: Uint8Array;
+    /** The newly registered P-256 public key bytes (65 bytes). */
+    newPublicKeyBytes: Uint8Array;
+    /**
+     * The wallet's contract address — unchanged by the rotation. Returned so
+     * callers can assert that the address (and therefore balances) is preserved.
+     */
+    walletAddress: string;
+};
+
+/** Result returned by getSigners(). */
+export type SignerInfo = {
+    /** The index of the signer in the wallet's signer list. */
+    index: number;
+    /** The hex-encoded P-256 public key of the signer. */
+    publicKey: string;
+};
+
+/** Result returned by a successful initiateRecovery() call. */
+export type InitiateRecoveryResult = {
+    /** Unix timestamp (seconds) after which completeRecovery() can be called. */
+    unlockTime: number;
+};
+
+// ── Recovery Errors ───────────────────────────────────────────────────────────
+
+/** Thrown when completeRecovery() is called before the timelock has expired. */
+export class RecoveryTimelockActive extends Error {
+    constructor(public readonly unlockTime: number) {
+        super(`Recovery timelock active until ${unlockTime}`);
+        this.name = 'RecoveryTimelockActive';
+    }
+}
+
+/** Thrown when recovery methods are called but no guardian has been set. */
+export class NoGuardianSet extends Error {
+    constructor() {
+        super('No guardian set on this wallet');
+        this.name = 'NoGuardianSet';
+    }
+}
+
+/** Thrown when completeRecovery() is called but no recovery is in progress. */
+export class RecoveryNotPending extends Error {
+    constructor() {
+        super('No recovery is currently pending');
+        this.name = 'RecoveryNotPending';
+    }
+}
+
+// ── Public surface ────────────────────────────────────────────────────────────
+
+/**
+ * The observable half of a wallet: everything an adapter mirrors into its own
+ * reactive primitives (React state, Vue refs, a store, …).
+ */
+export type WalletState = {
+    /** Soroban contract address of the deployed wallet, or null if not yet registered. */
+    address: string | null;
+    /** True if the wallet contract has been confirmed to exist on-chain. */
+    isDeployed: boolean;
+    /** True while any wallet operation is in flight. */
+    isPending: boolean;
+    /** Message of the most recent failure, or null. */
+    error: string | null;
+};
+
+/**
+ * The callable half of a wallet. Adapters spread this beside their own reactive
+ * state, so a method added to the core reaches React and Vue at the same time.
+ */
+export type InvisibleWalletActions = {
+    /**
+     * Create a new WebAuthn credential and compute the deterministic wallet address.
+     *
+     * Pass `{ authenticatorAttachment: 'cross-platform' }` to enrol a roaming
+     * FIDO2 security key (YubiKey, etc.) as a portable signer that can sign from
+     * any device the key is plugged into. The roaming credential is persisted
+     * independently of platform passkeys — see {@link getPortableSigner}.
+     */
+    register: (username?: string, options?: RegisterOptions) => Promise<RegisterResult>;
+    /**
+     * Deploy the user's wallet contract on-chain via the factory.
+     *
+     * Reads the P-256 public key stored by a prior register() call and submits
+     * a Soroban transaction to the factory contract. If the wallet is already
+     * deployed, returns the existing address without submitting a new transaction.
+     *
+     * @param signer         A {@link TransactionSigner} for the account that pays
+     *                       the transaction fee. Separate from the passkey — pays
+     *                       fees only, does not control the wallet. The SDK hands it
+     *                       the transaction XDR; the secret stays with the caller.
+     *                       (A Keypair or secret string is still accepted but
+     *                       deprecated.)
+     * @param publicKeyBytes Optional override for the P-256 public key. Defaults to
+     *                       the key stored in storage by register().
+     * @returns The deployed wallet's contract address and whether it was already live.
+     */
+    deploy: (signer: SignerInput, publicKeyBytes?: Uint8Array) => Promise<DeployResult>;
+    /**
+     * Sign a Soroban authorization entry using the stored passkey.
+     *
+     * @param signaturePayload  The 32-byte payload from the Soroban SorobanAuthorizationEntry.
+     */
+    signAuthEntry: (signaturePayload: Uint8Array) => Promise<WebAuthnSignature | null>;
+    /**
+     * Standard SEP-43 wallet interface.
+     * Conforms to Stellar's standard web wallet API (SEP-0043).
+     */
+    getSep43Wallet: () => Sep43Wallet;
+    /** Derive the counterfactual wallet address for a given P-256 public key before deployment. */
+    deriveCounterfactualAddress: (publicKeyBytes: Uint8Array) => CounterfactualAddress;
+    /**
+     * Return the roaming FIDO2 credential persisted as a portable signer, or null
+     * if the active credential is a device-bound platform passkey. Stored under a
+     * dedicated key so it is identified independently of platform passkeys.
+     */
+    getPortableSigner: () => Promise<PortableSigner | null>;
+    /**
+     * Restore an existing wallet session, or discover one from a passkey.
+     *
+     * On a device with stored state the previous behaviour is preserved: the
+     * address is read from local storage and verified on-chain.
+     *
+     * When no address is stored (fresh device / cleared data), callers can
+     * pass `{ credentialId }` so the SDK derives the deterministic wallet
+     * address from the passkey public key, or `{ walletAddress }` to verify
+     * a known address directly.
+     *
+     * @param options  Optional credential ID or wallet address for cross-device login.
+     */
+    login: (options?: LoginOptions) => Promise<{ walletAddress: string } | null>;
+    /**
+     * Read the wallet contract's current nonce without submitting a transaction.
+     * Uses `server.simulateTransaction` to invoke `get_nonce` in read-only mode.
+     *
+     * @returns The current nonce as a bigint.
+     */
+    getNonce: () => Promise<bigint>;
+    /**
+     * Register an additional P-256 public key as a valid signer on the wallet contract.
+     * Follows the simulate → build → sign → submit → poll pattern.
+     *
+     * @param signer    A TransactionSigner for the account that pays the fee (a Keypair is deprecated).
+     * @param newPublicKeyBytes The uncompressed P-256 public key (65 bytes) to add.
+     * @returns The index of the newly added signer.
+     */
+    addSigner: (signer: SignerInput, newPublicKeyBytes: Uint8Array) => Promise<AddSignerResult>;
+    /**
+     * Add a SECOND passkey to the existing wallet — another device or a security
+     * key — without touching this device's binding.
+     *
+     * This is not register(). It creates a credential under a fresh WebAuthn user
+     * handle (so no authenticator can treat it as a replacement for the primary
+     * passkey), records it under its own storage key, and submits
+     * `add_signer` authorised by the PRIMARY passkey. The wallet address, the
+     * primary credential and the fee payer are never written; the storage view
+     * it uses throws if anything tries.
+     *
+     * Two user gestures: creating the new credential, then approving with the
+     * existing one.
+     *
+     * The wallet contract stores a single WebAuthn origin, so the new passkey can
+     * sign only from the same app or site the wallet was deployed for.
+     *
+     * @param signer   A TransactionSigner for the account that pays the fee.
+     * @param options  Optional display name / authenticator attachment.
+     */
+    registerAdditionalSigner: (signer: SignerInput, options?: RegisterAdditionalSignerOptions) => Promise<RegisterAdditionalSignerResult>;
+    /** The additional passkeys recorded on this device (not the primary one). */
+    getAdditionalSigners: () => Promise<AdditionalSigner[]>;
+    /**
+     * Remove a signer from the wallet contract by index.
+     * Follows the simulate → build → sign → submit → poll pattern.
+     *
+     * @param signer A TransactionSigner for the account that pays the fee (a Keypair is deprecated).
+     * @param signerIndex   The index of the signer to remove.
+     */
+    removeSigner: (signer: SignerInput, signerIndex: number) => Promise<void>;
+    /**
+     * Rotate the wallet's passkey signer without redeploying — the device-loss
+     * recovery flow. Registers a brand-new WebAuthn credential, then calls the
+     * contract's `rotate_signer(old_key, new_key)` entrypoint, authorizing the
+     * swap with the **current** passkey (an interactive assertion). The wallet
+     * address and balances are preserved; afterwards the new credential becomes
+     * the active signer in storage.
+     *
+     * Two user gestures are involved: creating the new credential, and signing
+     * the rotation with the existing one.
+     *
+     * @param signer A TransactionSigner for the account that pays the fee (a Keypair is deprecated).
+     *                      Separate from the passkey — pays fees only.
+     * @param username      Optional display name for the new credential.
+     * @param options       Optional WebAuthn options for the new credential
+     *                      (e.g. `authenticatorAttachment`).
+     * @returns The old/new public keys and the unchanged wallet address.
+     */
+    rotateSigner: (signer: SignerInput, username?: string, options?: RegisterOptions) => Promise<RotateSignerResult>;
+    /**
+     * Fetch the list of all registered signers from the wallet contract.
+     *
+     * @returns Array of SignerInfo objects containing index and hex public key.
+     */
+    getSigners: () => Promise<SignerInfo[]>;
+    /**
+     * Set a guardian address that can initiate key recovery for this wallet.
+     * Requires WebAuthn authentication — builds an auth entry, signs it with the
+     * stored passkey, and submits the transaction.
+     *
+     * @param signer   A TransactionSigner for the account that pays the fee (a Keypair is deprecated).
+     * @param guardianAddress Stellar address (G...) of the guardian account.
+     */
+    setGuardian: (signer: SignerInput, guardianAddress: string) => Promise<void>;
+    /**
+     * Initiate guardian-based key recovery. Replaces the wallet's signer after
+     * a timelock expires. Signed using the guardian's regular Stellar keypair.
+     *
+     * @param signer  A TransactionSigner for the guardian's account (a Keypair is deprecated).
+     * @param newPublicKeyBytes Uncompressed P-256 public key (65 bytes) of the new signer.
+     * @returns The unix timestamp after which completeRecovery() can be called.
+     * @throws {NoGuardianSet} If no guardian has been configured.
+     */
+    initiateRecovery: (signer: SignerInput, newPublicKeyBytes: Uint8Array) => Promise<InitiateRecoveryResult>;
+    /**
+     * Complete a pending guardian recovery after the timelock has expired.
+     * This is a permissionless call — any Stellar keypair can submit it.
+     *
+     * @param signer Any TransactionSigner to pay the transaction fee (a Keypair is deprecated).
+     * @throws {RecoveryTimelockActive} If the timelock has not yet expired.
+     * @throws {RecoveryNotPending}     If no recovery is in progress.
+     */
+    completeRecovery: (signer: SignerInput) => Promise<void>;
+    /**
+     * Set a spending limit for a specific token and spender.
+     * Requires WebAuthn authentication.
+     *
+     * @param signer A TransactionSigner for the account that pays the fee (a Keypair is deprecated).
+     * @param spender       Stellar address of the spender.
+     * @param token         Stellar address of the token contract.
+     * @param amount        Maximum amount the spender is allowed to spend.
+     * @param expiry        Optional Unix timestamp (seconds) when the allowance expires.
+     *                      `approve` replaces the stored expiry as well as the amount:
+     *                      omitting it makes the allowance permanent.
+     */
+    approve: (signer: SignerInput, spender: string, token: string, amount: number | bigint, expiry?: number | bigint) => Promise<void>;
+    /**
+     * Get the current on-chain balance of this wallet from a token contract.
+     * @param token Optional token contract address. Defaults to native XLM.
+     */
+    getBalance: (token?: string) => Promise<{ address: string; amount: bigint; assetCode: string }>;
+    /**
+     * Send a payment from this wallet contract using a fee payer.
+     * @param signer A TransactionSigner for the account that pays fees (a Keypair or secret string is deprecated).
+     * @param to Recipient address.
+     * @param amount Amount in contract units (stroops for native XLM).
+     * @param token Optional token contract address. Defaults to native XLM.
+     * @param memo Optional transaction memo.
+     */
+    sendPayment: (
+        signer: SignerInput,
+        to: string,
+        amount: number | bigint,
+        token?: string,
+        memo?: string,
+    ) => Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }>;
+    /**
+     * Get the current allowance for a spender and token.
+     *
+     * @param spender       Stellar address of the spender.
+     * @param token         Stellar address of the token contract.
+     * @returns Object with amount and expiry, or null if no allowance exists.
+     */
+    getAllowance: (spender: string, token: string) => Promise<{ amount: number; expiry: number | undefined } | null>;
+    /**
+     * The durable offline transaction outbox. Record a signed transaction here
+     * (via {@link TransactionOutbox.enqueue}) before submitting it so it can be
+     * replayed if the network call is lost. Persists through the configured
+     * StorageAdapter, so queued transactions survive a reload.
+     */
+    outbox: TransactionOutbox;
+    /**
+     * Replay any transactions still queued in the offline outbox against the
+     * network. Safe to call repeatedly — already-confirmed transactions are
+     * deduped by hash and never resubmitted (at-most-once).
+     *
+     * @returns A summary of which queued transactions confirmed, failed, were
+     *          already on-chain, or remain pending.
+     */
+    replayOutbox: (opts?: ReplayOptions) => Promise<ReplayResult>;
+    /**
+     * Encrypt local app data (cached metadata, backup blobs, …) with a symmetric
+     * key derived from the user's passkey via the WebAuthn PRF extension.
+     *
+     * The first call runs an interactive PRF assertion (the same passkey gesture
+     * as signing) and caches the derived key for the session. The key is stable
+     * across sessions for the same credential, so ciphertext written in one
+     * session decrypts in the next. When PRF is unsupported, falls back to a
+     * random key persisted in the configured storage adapter — see
+     * {@link encryptionMode}.
+     *
+     * @param plaintext UTF-8 string or raw bytes to encrypt.
+     * @returns Base64 ciphertext (iv ‖ ciphertext), unreadable without the passkey.
+     */
+    encryptLocal: (plaintext: string | Uint8Array) => Promise<string>;
+    /**
+     * Decrypt a payload previously produced by {@link encryptLocal}.
+     * @returns The decoded UTF-8 plaintext.
+     */
+    decryptLocal: (payload: string) => Promise<string>;
+    /**
+     * Resolve which key-derivation path local encryption uses for the current
+     * credential: 'prf' (passkey-bound) or 'fallback' (local random key, not
+     * bound to the passkey). Useful to warn users on the weaker fallback path.
+     */
+    encryptionMode: () => Promise<'prf' | 'fallback'>;
+};
+
+/** The full wallet surface returned by the React hook and the Vue composable. */
+export type InvisibleWallet = WalletState & InvisibleWalletActions;
+
+/** Notified with the new state whenever any of the four fields changes. */
+export type WalletStateListener = (state: WalletState) => void;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const POLL_INTERVAL_MS  = 1_000;
+const POLL_MAX_ATTEMPTS = 30;
+
+/** Storage key holding the roaming (cross-platform) credential as a portable signer. */
+const PORTABLE_SIGNER_KEY = 'invisible_wallet_portable_signer';
+
+/** Storage key holding this wallet's persisted WebAuthn user.id (hex-encoded). */
+const USER_ID_KEY = 'invisible_wallet_user_id';
+
+/**
+ * Poll server.getTransaction(hash) until the transaction leaves NOT_FOUND,
+ * then return the final result. Throws if it fails or we exceed the attempt limit.
+ */
+async function waitForTransaction(
+    server: SorobanRpc.Server,
+    hash: string
+): Promise<SorobanRpc.Api.GetTransactionResponse> {
+    for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
+        const result = await server.getTransaction(hash);
+        if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
+            return result;
+        }
+        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    throw new Error(`Transaction ${hash} not confirmed after ${POLL_MAX_ATTEMPTS} attempts`);
+}
+
+function resolveSponsor(config: WalletConfig): ResolvedSigner | null {
+    if (config.sponsorSigner) return resolveSigner(config.sponsorSigner);
+    return config.sponsorSecret ? resolveSigner(config.sponsorSecret) : null;
+}
+
+/**
+ * Sign `tx` as `signer` (a callback signer, or a deprecated Keypair/secret) and,
+ * when a sponsor is configured, wrap it in a fee-bump signed by the sponsor.
+ */
+export async function signForSubmission(
+    tx: Transaction,
+    signer: SignerInput,
+    config: WalletConfig,
+    extraInnerSigners: Keypair[] = []
+): Promise<Transaction | FeeBumpTransaction> {
+    const resolved = resolveSigner(signer);
+    const signed = await signWith(tx, resolved, config.networkPassphrase);
+    for (const extraSigner of extraInnerSigners) {
+        if (extraSigner.publicKey() !== resolved.publicKey) {
+            signed.sign(extraSigner);
+        }
+    }
+
+    const sponsor = resolveSponsor(config);
+    if (!sponsor) return signed;
+
+    const feeBump = TransactionBuilder.buildFeeBumpTransaction(
+        sponsor.publicKey,
+        config.feeBumpBaseFee ?? BASE_FEE,
+        signed,
+        config.networkPassphrase
+    );
+    return signWith(feeBump, sponsor, config.networkPassphrase);
+}
+
+/** Build a storage adapter from the config, defaulting to localStorage on web. */
+function resolveStorage(storage?: StorageAdapter): StorageAdapter {
+    if (storage) return storage;
+    if (typeof localStorage !== 'undefined') {
+        return {
+            getItem:    (k) => localStorage.getItem(k),
+            setItem:    (k, v) => localStorage.setItem(k, v),
+            removeItem: (k) => localStorage.removeItem(k),
+        };
+    }
+    return { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+}
+
+/**
+ * True when a storage call actually handed back a promise.
+ *
+ * `StorageAdapter` permits either, and the difference is load-bearing in
+ * exactly one place: the path from a click to `navigator.credentials.create()`.
+ * Safari will not carry transient user activation across awaits that a
+ * localStorage-backed store never needed, and refuses the ceremony with
+ * `NotAllowedError` — the same error it raises when somebody dismisses the
+ * prompt, which is why this cost a day to find. Chromium is more forgiving,
+ * so the symptom was "Safari fails, Chrome works".
+ *
+ * The helpers below therefore stay synchronous when the store is synchronous,
+ * and only return a promise when they genuinely have to. An async store
+ * (AsyncStorage on React Native) behaves exactly as before; mobile does not
+ * run this ceremony in a browser, so the gesture rule does not apply there.
+ */
+function isThenable<T>(value: unknown): value is PromiseLike<T> {
+    return typeof (value as PromiseLike<T> | null | undefined)?.then === 'function';
+}
+
+function parsePortableSigner(raw: string | null): PortableSigner | null {
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as PortableSigner;
+        if (parsed && parsed.authenticatorAttachment === 'cross-platform' && parsed.credentialId) {
+            return { ...parsed, transports: parsed.transports ?? [] };
+        }
+        return null;
+    } catch {
+        return null;
+    }
+}
+
+/** Read and parse the persisted portable-signer record, or null if none/invalid. */
+function readPortableSigner(
+    store: StorageAdapter
+): PortableSigner | null | Promise<PortableSigner | null> {
+    const raw = store.getItem(PORTABLE_SIGNER_KEY);
+    return isThenable<string | null>(raw)
+        ? raw.then(parsePortableSigner)
+        : parsePortableSigner(raw);
+}
+
+/**
+ * Resolve this wallet's WebAuthn user.id, generating and persisting a random
+ * one on first use. Kept independent of any caller-supplied display name so
+ * two different people who happen to choose the same username never collide
+ * on the same authenticator.
+ */
+function resolveUserId(store: StorageAdapter): Uint8Array | Promise<Uint8Array> {
+    const mint = (): Uint8Array | Promise<Uint8Array> => {
+        const fresh = crypto.getRandomValues(new Uint8Array(16));
+        const written = store.setItem(USER_ID_KEY, bufferToHex(fresh));
+        return isThenable<void>(written) ? written.then(() => fresh) : fresh;
+    };
+    const existing = store.getItem(USER_ID_KEY);
+    if (isThenable<string | null>(existing)) {
+        return existing.then((value) => (value ? hexToUint8Array(value) : mint()));
+    }
+    return existing ? hexToUint8Array(existing) : mint();
+}
+
+/**
+ * Credential ids already known for this wallet (its platform passkey and/or
+ * portable signer), to pass as excludeCredentials on the next registration so
+ * an authenticator that already holds one of them refuses the request rather
+ * than silently replacing the existing resident credential.
+ */
+type KnownCredential = { id: string; transports?: string[] };
+
+function buildKnownCredentials(
+    keyId: string | null,
+    portable: PortableSigner | null,
+): KnownCredential[] {
+    const known = new Map<string, string[] | undefined>();
+    if (keyId) known.set(keyId, undefined);
+    if (portable) known.set(portable.credentialId, portable.transports);
+    return Array.from(known, ([id, transports]) => ({ id, transports }));
+}
+
+function collectKnownCredentials(
+    store: StorageAdapter
+): KnownCredential[] | Promise<KnownCredential[]> {
+    const keyId = store.getItem('invisible_wallet_key_id');
+    const portable = readPortableSigner(store);
+    if (isThenable(keyId) || isThenable(portable)) {
+        return Promise.all([keyId, portable]).then(([k, p]) =>
+            buildKnownCredentials(k ?? null, p ?? null),
+        );
+    }
+    return buildKnownCredentials(keyId as string | null, portable as PortableSigner | null);
+}
+
+// ── Core ──────────────────────────────────────────────────────────────────────
+
+/**
+ * A passkey wallet, independent of any UI framework.
+ *
+ * Methods are bound instance fields, so they survive being destructured or
+ * handed to a template as callbacks. Use {@link actions} to spread the whole
+ * callable surface into an adapter's return value.
+ */
+export class InvisibleWalletCore {
+    /** Every wallet action, pre-bound, for adapters to spread beside their state. */
+    readonly actions: InvisibleWalletActions;
+
+    private config: WalletConfig;
+    private readonly store: StorageAdapter;
+    private readonly outbox: TransactionOutbox;
+    private readonly listeners = new Set<WalletStateListener>();
+
+    /**
+     * The PRF-derived cipher, cached so the interactive assertion runs at most
+     * once per session.
+     */
+    private cipher: LocalCipher | null = null;
+
+    private state: WalletState = {
+        address:    null,
+        isDeployed: false,
+        isPending:  false,
+        error:      null,
+    };
+
+    constructor(config: WalletConfig) {
+        this.config = config;
+        this.store  = resolveStorage(config.storage);
+        this.outbox = new TransactionOutbox(this.store);
+
+        this.actions = {
+            register:                    this.register,
+            deploy:                      this.deploy,
+            signAuthEntry:               this.signAuthEntry,
+            deriveCounterfactualAddress: this.deriveCounterfactualAddress,
+            getPortableSigner:           this.getPortableSigner,
+            login:                       this.login,
+            getNonce:                    this.getNonce,
+            addSigner:                   this.addSigner,
+            registerAdditionalSigner:    this.registerAdditionalSigner,
+            getAdditionalSigners:        this.getAdditionalSigners,
+            removeSigner:                this.removeSigner,
+            rotateSigner:                this.rotateSigner,
+            getSigners:                  this.getSigners,
+            setGuardian:                 this.setGuardian,
+            initiateRecovery:            this.initiateRecovery,
+            completeRecovery:            this.completeRecovery,
+            approve:                     this.approve,
+            getAllowance:                this.getAllowance,
+            getBalance:                  this.getBalance,
+            sendPayment:                 this.sendPayment,
+            outbox:                      this.outbox,
+            replayOutbox:                this.replayOutbox,
+            encryptLocal:                this.encryptLocal,
+            decryptLocal:                this.decryptLocal,
+            encryptionMode:              this.encryptionMode,
+            getSep43Wallet:              this.getSep43Wallet,
+        };
+    }
+
+    // ── State ─────────────────────────────────────────────────────────────────
+
+    /**
+     * The current state. Referentially stable until something actually changes,
+     * which is what React's `useSyncExternalStore` requires of a snapshot.
+     */
+    getState = (): WalletState => this.state;
+
+    /** Observe state changes. Returns the unsubscribe function. */
+    subscribe = (listener: WalletStateListener): (() => void) => {
+        this.listeners.add(listener);
+        return () => { this.listeners.delete(listener); };
+    };
+
+    /**
+     * Adopt a new config. The storage adapter is deliberately not swapped — the
+     * outbox and the PRF cipher are bound to the store this wallet was created
+     * with. Create a new wallet to move to different storage.
+     */
+    setConfig = (config: WalletConfig): void => {
+        this.config = config;
+    };
+
+    /**
+     * Restore the wallet address persisted by a previous session. Adapters call
+     * this once they are on the client (React `useEffect`, Vue `onMounted`), so
+     * nothing touches storage during server rendering.
+     *
+     * Supports both synchronous (localStorage) and asynchronous (AsyncStorage)
+     * adapters.
+     */
+    hydrate = (): void => {
+        const maybeStored = this.store.getItem('invisible_wallet_address');
+        if (maybeStored && typeof (maybeStored as Promise<unknown>).then === 'function') {
+            void (maybeStored as Promise<string | null>).then((v) => { if (v) this.setAddress(v); });
+        } else {
+            const stored = maybeStored as string | null;
+            if (stored) this.setAddress(stored);
+        }
+    };
+
+    /**
+     * Replay the offline outbox whenever connectivity returns, unless the config
+     * opted out. Returns the teardown function; a no-op outside the browser.
+     */
+    watchConnectivity = (): (() => void) => {
+        if (this.config.autoReplayOnReconnect === false) return () => {};
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return () => {};
+        const onOnline = () => { void this.replayOutbox().catch(() => { /* surfaced via per-entry status */ }); };
+        window.addEventListener('online', onOnline);
+        return () => window.removeEventListener('online', onOnline);
+    };
+
+    /** Publish a state change, skipping no-op writes so observers stay quiet. */
+    private patch(changes: Partial<WalletState>): void {
+        const next = { ...this.state, ...changes };
+        if (
+            next.address    === this.state.address &&
+            next.isDeployed === this.state.isDeployed &&
+            next.isPending  === this.state.isPending &&
+            next.error      === this.state.error
+        ) return;
+
+        this.state = next;
+        for (const listener of this.listeners) listener(next);
+    }
+
+    private setAddress(address: string | null)  { this.patch({ address }); }
+    private setIsDeployed(isDeployed: boolean)  { this.patch({ isDeployed }); }
+    private setIsPending(isPending: boolean)    { this.patch({ isPending }); }
+    private setError(error: string | null)      { this.patch({ error }); }
+
+    /** The wallet address, or an explanatory throw when there is none yet. */
+    private requireAddress(): string {
+        const { address } = this.state;
+        if (!address) throw new Error('No wallet address. Call register() or login() first.');
+        return address;
+    }
+
+    /** The relying party ID, falling back to the current page on the web. */
+    private resolveRpId(): string {
+        return this.config.rpId ?? (typeof window !== 'undefined' ? window.location.hostname : 'localhost');
+    }
+
+    // ── register ──────────────────────────────────────────────────────────────
+
+    register = async (username?: string, options?: RegisterOptions): Promise<RegisterResult> => {
+        const { factoryAddress, networkPassphrase } = this.config;
+        const store = this.store;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const challenge = crypto.getRandomValues(new Uint8Array(32));
+            const normalizedUsername = username ? username.normalize('NFC') : undefined;
+            const name   = normalizedUsername || 'Veil User';
+            // Both of these stay synchronous on a localStorage-backed store, and
+            // are only awaited when the adapter genuinely returned a promise.
+            // An unconditional `await` here — even on an already-resolved value
+            // — is enough for Safari to drop the user activation and refuse the
+            // ceremony below. See isThenable.
+            const pendingUserId = resolveUserId(store);
+            const userId = isThenable<Uint8Array>(pendingUserId)
+                ? await pendingUserId
+                : pendingUserId;
+
+            const resolvedRpId = this.resolveRpId();
+
+            // Guard against an authenticator silently replacing an existing
+            // resident credential for this wallet (matching rp.id + user.id).
+            const pendingKnown = collectKnownCredentials(store);
+            const excludeCredentials = isThenable<KnownCredential[]>(pendingKnown)
+                ? await pendingKnown
+                : pendingKnown;
+
+            const { credentialId, publicKeyBytes, attestationObject, clientDataJSON, authenticatorAttachment, transports } = await webAuthnProvider.create({
+                challenge,
+                rpId:     resolvedRpId,
+                rpName:   'Invisible Wallet',
+                userId,
+                userName: name,
+                authenticatorAttachment: options?.authenticatorAttachment,
+                excludeCredentials,
+            });
+
+            // Optional attestation verification — enforce authenticator policy.
+            if (this.config.attestationPolicy) {
+                if (attestationObject && clientDataJSON) {
+                    await verifyAttestation({
+                        attestationObject,
+                        clientDataJSON,
+                        policy: this.config.attestationPolicy,
+                    });
+                } else if (this.config.requireAttestation) {
+                    throw new AttestationError(
+                        'Attestation required but the platform did not expose an attestationObject.'
+                    );
+                }
+            }
+
+            const publicKeyHex  = bufferToHex(publicKeyBytes);
+            const walletAddress = computeWalletAddress(factoryAddress, publicKeyBytes, networkPassphrase);
+
+            // Treat the credential as a portable signer when either the caller asked
+            // for a roaming key or the platform reported a cross-platform attachment.
+            const resolvedAttachment = authenticatorAttachment ?? options?.authenticatorAttachment;
+            const isPortableSigner = resolvedAttachment === 'cross-platform';
+
+            await store.setItem('invisible_wallet_address',    walletAddress);
+            await store.setItem('invisible_wallet_key_id',     credentialId);
+            await store.setItem('invisible_wallet_public_key', publicKeyHex);
+
+            if (isPortableSigner) {
+                // Persist the roaming credential under its own key so it is stored and
+                // identified independently of platform passkeys, and so signAuthEntry
+                // can replay its transports when signing from another device.
+                const portable: PortableSigner = {
+                    credentialId,
+                    publicKey: publicKeyHex,
+                    authenticatorAttachment: 'cross-platform',
+                    transports: transports ?? [],
+                };
+                await store.setItem(PORTABLE_SIGNER_KEY, JSON.stringify(portable));
+            } else if (store.removeItem) {
+                // Clear any stale portable-signer record from a previous roaming enrolment.
+                await store.removeItem(PORTABLE_SIGNER_KEY);
+            }
+
+            this.setAddress(walletAddress);
+            this.setIsDeployed(false);
+
+            return { walletAddress, publicKeyBytes, authenticatorAttachment: resolvedAttachment, isPortableSigner };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── deriveCounterfactualAddress ───────────────────────────────────────────
+
+    deriveCounterfactualAddress = (publicKeyBytes: Uint8Array): CounterfactualAddress => {
+        const { factoryAddress, networkPassphrase } = this.config;
+        return _deriveCounterfactualAddress(publicKeyBytes, { factoryAddress, networkPassphrase });
+    };
+
+    // ── getPortableSigner ─────────────────────────────────────────────────────
+
+    getPortableSigner = async (): Promise<PortableSigner | null> => {
+        return readPortableSigner(this.store);
+    };
+
+    // ── deploy ────────────────────────────────────────────────────────────────
+
+    deploy = async (
+        signer: SignerInput,
+        publicKeyBytes?: Uint8Array
+    ): Promise<DeployResult> => {
+        const { factoryAddress, rpcUrl, networkPassphrase, origin } = this.config;
+        const store = this.store;
+
+        this.setIsPending(true);
+        this.setError(null);
+        let walletAddress: string | undefined;
+        try {
+            let pubKeyBytes = publicKeyBytes;
+            if (!pubKeyBytes) {
+                const hex = await store.getItem('invisible_wallet_public_key');
+                if (!hex) throw new Error(
+                    'No public key found. Call register() first, or pass publicKeyBytes explicitly.'
+                );
+                pubKeyBytes = hexToUint8Array(hex);
+            }
+
+            walletAddress = computeWalletAddress(factoryAddress, pubKeyBytes, networkPassphrase);
+
+            const server = new SorobanRpc.Server(rpcUrl);
+
+            const horizonUrl = networkPassphrase === Networks.TESTNET
+                ? 'https://horizon-testnet.stellar.org'
+                : 'https://horizon.stellar.org';
+            const horizon = new HorizonServer(horizonUrl);
+            const sourceAccount = await horizon.loadAccount(resolveSigner(signer).publicKey);
+            const factory = new Contract(factoryAddress);
+
+            const resolvedRpId   = this.resolveRpId();
+            const resolvedOrigin = origin ?? (typeof window !== 'undefined' ? window.location.origin : `https://${resolvedRpId}`);
+
+            const rpIdBytes   = new TextEncoder().encode(resolvedRpId);
+            const originBytes = new TextEncoder().encode(resolvedOrigin);
+
+            const txBuilder = new TransactionBuilder(sourceAccount, {
+                // Mainnet surge-prices Soroban inclusion; the minimum bid gets the
+                // deploy stuck until it expires. Overbidding is safe — the ledger
+                // charges the effective rate, not the bid.
+                fee: networkPassphrase === Networks.PUBLIC ? '1000000' : BASE_FEE,
+                networkPassphrase,
+            });
+
+            txBuilder.addOperation(
+                factory.call(
+                    'deploy',
+                    nativeToScVal(pubKeyBytes,  { type: 'bytes' }),
+                    nativeToScVal(rpIdBytes,    { type: 'bytes' }),
+                    nativeToScVal(originBytes,  { type: 'bytes' }),
+                )
+            );
+
+            const tx = txBuilder.setTimeout(30).build();
+
+            // Decode the envelope here before asking the RPC to.
+            //
+            // "Could not unmarshal transaction" is returned for an empty
+            // parameter, for something that is not base64, and for base64 that
+            // is not an envelope — so it cannot distinguish a server-side
+            // problem from a transaction this device encoded wrongly. XDR is
+            // built through `Buffer.toString('base64')`, which is a polyfill on
+            // React Native rather than a built-in, and one that emits the wrong
+            // alphabet or drops padding produces a string of entirely plausible
+            // length that no decoder accepts.
+            // A diagnostic must never become the failure it was added to explain,
+            // so anything unexpected here is skipped rather than thrown on.
+            const encoded: string = typeof tx.toXDR === 'function' ? (tx.toXDR() ?? '') : '';
+            if (encoded.length > 0) {
+                try {
+                    TransactionBuilder.fromXDR(encoded, networkPassphrase);
+                } catch (cause) {
+                    throw new Error(
+                        `Deploy: this device produced a transaction it cannot read back ` +
+                        `(${encoded.length} characters). The XDR encoding is broken in this ` +
+                        `build, so the network would reject it too. Cause: ` +
+                        `${cause instanceof Error ? cause.message : String(cause)}`
+                    );
+                }
+            }
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                let host = 'unknown host';
+                try { host = new URL(rpcUrl).host; } catch { host = rpcUrl ? 'unparseable URL' : 'no RPC URL configured'; }
+                throw new Error(
+                    `Deploy failed to simulate: ${sim.error} ` +
+                    `(factory ${factoryAddress.slice(0, 8)}…, via ${host}, ` +
+                    `${encoded.length || 'unknown'}-character envelope)`
+                );
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+            const submissionTx = await signForSubmission(assembled, signer, this.config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+            this.setAddress(walletAddress);
+            this.setIsDeployed(true);
+            await store.setItem('invisible_wallet_address', walletAddress);
+            return { walletAddress, alreadyDeployed: false };
+
+        } catch (err: unknown) {
+            let message: string;
+            if (err instanceof Error) {
+                message = err.message;
+            } else {
+                try { message = JSON.stringify(err); } catch { message = String(err); }
+            }
+            if (message.toLowerCase().includes('alreadydeployed') || message.toLowerCase().includes('already_deployed')) {
+                this.setAddress(walletAddress!);
+                this.setIsDeployed(true);
+                await store.setItem('invisible_wallet_address', walletAddress!);
+                return { walletAddress: walletAddress!, alreadyDeployed: true };
+            }
+            this.setError(message);
+            throw new Error(message);
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── login ─────────────────────────────────────────────────────────────────
+
+    login = async (options?: LoginOptions): Promise<{ walletAddress: string } | null> => {
+        const { factoryAddress, rpcUrl, networkPassphrase } = this.config;
+        const store = this.store;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const server = new SorobanRpc.Server(rpcUrl);
+
+            // ── Path 1: local storage has an address (original behaviour) ──────
+            let candidateAddress = await store.getItem('invisible_wallet_address');
+
+            // ── Path 2: caller supplied a known wallet address ────────────────
+            if (!candidateAddress && options?.walletAddress) {
+                candidateAddress = options.walletAddress;
+            }
+
+            // Addresses to verify on-chain below. Paths 1 and 2 know exactly one;
+            // path 3 can only produce candidates.
+            const addressesToCheck: string[] = candidateAddress ? [candidateAddress] : [];
+
+            // ── Path 3: derive address from a passkey credential ──────────────
+            if (!candidateAddress && options?.credentialId) {
+                const resolvedRpId = this.resolveRpId();
+                const portable = await readPortableSigner(store);
+
+                // Trigger a WebAuthn assertion so the user authenticates with
+                // their passkey.
+                const challengeU8 = crypto.getRandomValues(new Uint8Array(32));
+                const assertResult = await webAuthnProvider.authenticate({
+                    challenge: challengeU8.buffer.slice(
+                        challengeU8.byteOffset, challengeU8.byteOffset + challengeU8.byteLength
+                    ) as ArrayBuffer,
+                    credentialId: options.credentialId,
+                    rpId: resolvedRpId,
+                    transports: portable?.transports,
+                });
+
+                // An assertion carries a signature, not a key. The WebAuthn spec
+                // puts `getPublicKey()` on the *attestation* response only, and
+                // `react-native-passkey`'s authenticate() returns nothing but
+                // authData / clientDataJSON / signature — so the signing key is
+                // recovered from the signature (SEC1 ECDSA recovery) instead of
+                // read off the response. See sdk/src/crypto/assertionKey.ts.
+                //
+                // Recovery cannot pin the key to one: an assertion signature is
+                // raw r ‖ s with no recovery id, so two keys verify it and both
+                // are returned. That is why every address below is verified
+                // on-chain rather than taken on faith — the same check paths 1
+                // and 2 already go through, on Web and on React Native alike.
+                for (const publicKeyBytes of assertionPublicKeyCandidates(assertResult)) {
+                    addressesToCheck.push(
+                        computeWalletAddress(factoryAddress, publicKeyBytes, networkPassphrase)
+                    );
+                }
+            }
+
+            // ── Verify on-chain ──────────────────────────────────────────────
+            if (!addressesToCheck.length) {
+                this.setError(
+                    'No wallet found. Please register first, or pass a ' +
+                    'credentialId / walletAddress to login().'
+                );
+                return null;
+            }
+
+            for (const addressToCheck of addressesToCheck) {
+                try {
+                    await server.getContractData(
+                        addressToCheck,
+                        xdr.ScVal.scvLedgerKeyContractInstance(),
+                        SorobanRpc.Durability.Persistent
+                    );
+
+                    // Persist for subsequent calls on this device.
+                    await store.setItem('invisible_wallet_address', addressToCheck);
+                    this.setAddress(addressToCheck);
+                    this.setIsDeployed(true);
+                    return { walletAddress: addressToCheck };
+                } catch (e: unknown) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    if (msg.toLowerCase().includes('not found')) {
+                        // A recovered candidate that is not deployed is expected —
+                        // roughly half of them never are. Try the next candidate
+                        // before concluding the wallet itself is missing.
+                        continue;
+                    }
+                    throw e;
+                }
+            }
+
+            this.setError('Wallet not yet deployed. Call deploy() to create it on-chain.');
+            this.setAddress(null);
+            this.setIsDeployed(false);
+            return null;
+        } catch (err: unknown) {
+            this.setError(err instanceof Error ? err.message : String(err));
+            return null;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── signAuthEntry ─────────────────────────────────────────────────────────
+
+    signAuthEntry = async (
+        signaturePayload: Uint8Array
+    ): Promise<WebAuthnSignature | null> => {
+        const { rpId } = this.config;
+        const store = this.store;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const keyId        = await store.getItem('invisible_wallet_key_id');
+            const publicKeyHex = await store.getItem('invisible_wallet_public_key');
+            if (!keyId)        throw new Error('No key ID found. Please register first.');
+            if (!publicKeyHex) throw new Error('No public key found. Please register first.');
+
+            if (signaturePayload.length !== 32) {
+                throw new Error('signaturePayload must be exactly 32 bytes');
+            }
+
+            const challenge = signaturePayload.buffer.slice(
+                signaturePayload.byteOffset,
+                signaturePayload.byteOffset + signaturePayload.byteLength
+            ) as ArrayBuffer;
+
+            // For a roaming key, forward the stored transports so the assertion can
+            // prompt for the security key over USB/NFC/BLE on any device.
+            const portable = await readPortableSigner(store);
+
+            const { authData, clientDataJSON, signature } = await webAuthnProvider.authenticate({
+                challenge,
+                credentialId: keyId,
+                rpId,
+                transports: portable?.transports,
+            });
+
+            const publicKeyBytes = hexToUint8Array(publicKeyHex);
+
+            return { publicKey: publicKeyBytes, authData, clientDataJSON, signature };
+
+        } catch (err: unknown) {
+            this.setError(err instanceof Error ? err.message : String(err));
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    /**
+     * Sign every address-credential auth entry produced by a simulation with the
+     * stored passkey, rewriting each entry's signature in place.
+     *
+     * Shared by every passkey-gated call (addSigner, removeSigner, setGuardian,
+     * rotateSigner, approve, sendPayment) so the Soroban authorization payload is
+     * derived — and bound to the WebAuthn challenge — in exactly one place.
+     *
+     * Each credential is the five-element vector `__check_auth` requires (see
+     * {@link buildWebAuthnSignatureVector}), ending in the wallet's current nonce.
+     * Recording-mode simulation hands back entries that expire at ledger 0, which
+     * the host reads as already expired, so those get a real expiry; the same
+     * value goes into the signed preimage and the attached credential.
+     *
+     * `simulated` is the transaction that produced `sim`, and is what every entry
+     * is checked against: the simulation arrives from the network, so it says what
+     * an RPC claims the call needs rather than what the caller asked for. An entry
+     * is signed only when it authorises this wallet to make a call this
+     * transaction contains, and its expiry is capped. See
+     * {@link assertEntryAuthorized} for why the transaction cannot vouch for the
+     * entry on its own.
+     */
+    private async authorizeEntries(
+        sim: SorobanRpc.Api.SimulateTransactionSuccessResponse,
+        server: SorobanRpc.Server,
+        simulated: Transaction,
+    ): Promise<void> {
+        const authEntries = sim.result?.auth;
+        if (!authEntries) return;
+
+        const walletAddress = this.requireAddress();
+        const allowed = hostFunctionCalls(simulated);
+
+        // stellarHash is a synchronous SHA-256 — avoids crypto.subtle (unavailable on some RN setups)
+        const networkIdBytes = new Uint8Array(
+            (stellarHash as (input: Buffer) => Buffer)(Buffer.from(this.config.networkPassphrase))
+        );
+
+        // Read lazily: a simulation with no address credentials signs nothing and
+        // needs neither a nonce nor a ledger.
+        const nonces = new Map<string, bigint>();
+        let latestLedger: number | undefined;
+
+        for (const parsed of authEntries) {
+            const cred = parsed.credentials();
+            if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+                continue;
+            }
+
+            // Before the passkey, not after: a refusal here must cost the user
+            // nothing and must never reach a prompt they would have to read to
+            // understand. Throws AuthEntryRejected.
+            assertEntryAuthorized(parsed, { walletAddress, allowed });
+
+            const addrCred = cred.address();
+            const contractAddress = Address.fromScAddress(addrCred.address()).toString();
+            let nonce = nonces.get(contractAddress);
+            if (nonce === undefined) {
+                nonce = await this.readWalletNonce(server, contractAddress);
+                nonces.set(contractAddress, nonce);
+            }
+
+            latestLedger ??= (await server.getLatestLedger()).sequence;
+            const expiration = cappedExpiration(addrCred.signatureExpirationLedger(), latestLedger);
+
+            const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
+                new xdr.HashIdPreimageSorobanAuthorization({
+                    networkId: Buffer.from(networkIdBytes),
+                    nonce: addrCred.nonce(),
+                    invocation: parsed.rootInvocation(),
+                    signatureExpirationLedger: expiration,
+                })
+            );
+            const payloadHash = new Uint8Array(
+                (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR()))
+            );
+
+            const webAuthnSig = await this.signAuthEntry(payloadHash);
+            if (!webAuthnSig) throw new Error('WebAuthn signing was cancelled');
+
+            parsed.credentials(
+                xdr.SorobanCredentials.sorobanCredentialsAddress(
+                    new xdr.SorobanAddressCredentials({
+                        address: addrCred.address(),
+                        nonce: addrCred.nonce(),
+                        signatureExpirationLedger: expiration,
+                        signature: buildWebAuthnSignatureVector(webAuthnSig, nonce),
+                    })
+                )
+            );
+        }
+    }
+
+    /**
+     * The wallet contract's replay nonce, read with a simulated `get_nonce`.
+     *
+     * Throws rather than guessing: a missing nonce produces a credential the
+     * contract rejects outright, and a wrong one fails `NonceMismatch`.
+     */
+    private async readWalletNonce(server: SorobanRpc.Server, contractAddress: string): Promise<bigint> {
+        const tx = new TransactionBuilder(new Account(Keypair.random().publicKey(), '0'), {
+            fee: BASE_FEE,
+            networkPassphrase: this.config.networkPassphrase,
+        })
+            .addOperation(new Contract(contractAddress).call('get_nonce'))
+            .setTimeout(30)
+            .build();
+
+        const sim = await server.simulateTransaction(tx);
+        if (SorobanRpc.Api.isSimulationError(sim)) {
+            throw new Error(`Could not read the wallet nonce: ${sim.error}`);
+        }
+        const retval = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result?.retval;
+        return retval ? BigInt(scValToNative(retval) as bigint | number) : 0n;
+    }
+
+    /**
+     * Submit a call the wallet contract authorises on ITSELF
+     * (`current_contract_address().require_auth()`), with the stored passkey.
+     *
+     * The order matters and is the one the mobile wallet proved on mainnet:
+     * simulate in recording mode to learn the auth entries, sign them, rebuild
+     * the transaction carrying the signed entries, then re-simulate in enforce
+     * mode so the footprint covers the storage `__check_auth` reads. Assembling
+     * the recording-mode simulation instead leaves those reads out.
+     *
+     * `onSubmitted` fires once the network has accepted the transaction, which
+     * is the line between "definitely did not happen" and "may have happened".
+     */
+    private async submitSelfAuthorizedCall(
+        signer: SignerInput,
+        operation: xdr.Operation,
+        onSubmitted?: () => void,
+    ): Promise<SorobanRpc.Api.GetTransactionResponse> {
+        const { rpcUrl, networkPassphrase } = this.config;
+        const server = new SorobanRpc.Server(rpcUrl);
+        const feePayer = resolveSigner(signer).publicKey;
+
+        const recording = new TransactionBuilder(await server.getAccount(feePayer), {
+            fee: BASE_FEE,
+            networkPassphrase,
+        })
+            .addOperation(operation)
+            .setTimeout(30)
+            .build();
+
+        const sim = await server.simulateTransaction(recording);
+        if (SorobanRpc.Api.isSimulationError(sim)) {
+            throw new Error(`Simulation failed: ${sim.error}`);
+        }
+        const success = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse;
+        const authEntries = success.result?.auth ?? [];
+        if (authEntries.length === 0) {
+            throw new Error('The wallet contract did not ask for authorisation; refusing to submit an unsigned change.');
+        }
+        await this.authorizeEntries(success, server, recording);
+
+        const invoke = recording.operations[0] as Operation.InvokeHostFunction;
+        const signed = new TransactionBuilder(await server.getAccount(feePayer), {
+            fee: BASE_FEE,
+            networkPassphrase,
+        })
+            .addOperation(
+                Operation.invokeHostFunction({
+                    func: invoke.func,
+                    auth: authEntries,
+                    source: invoke.source,
+                })
+            )
+            .setTimeout(30)
+            .build();
+
+        const enforce = await server.simulateTransaction(signed);
+        if (SorobanRpc.Api.isSimulationError(enforce)) {
+            throw new Error(`Simulation failed: ${enforce.error}`);
+        }
+
+        const assembled = SorobanRpc.assembleTransaction(signed, enforce).build();
+        const submissionTx = await signForSubmission(assembled, signer, this.config);
+
+        const sendResult = await server.sendTransaction(submissionTx);
+        if (sendResult.status === 'ERROR') {
+            throw new Error(
+                `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+            );
+        }
+        onSubmitted?.();
+
+        const txResult = await waitForTransaction(server, sendResult.hash);
+        if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+            throw new Error(`Transaction failed with status: ${txResult.status}`);
+        }
+        return txResult;
+    }
+
+    // ── getNonce ──────────────────────────────────────────────────────────────
+
+    getNonce = async (): Promise<bigint> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+
+            const dummyKeypair = Keypair.random();
+            const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(walletContract.call('get_nonce'))
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+            if (!result) throw new Error('Simulation returned no result');
+
+            const nonce = scValToNative(result.retval) as bigint;
+            return nonce;
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── addSigner ─────────────────────────────────────────────────────────────
+
+    addSigner = async (
+        signer: SignerInput,
+        newPublicKeyBytes: Uint8Array
+    ): Promise<AddSignerResult> => {
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            return await this.submitAddSigner(signer, newPublicKeyBytes);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    /**
+     * `add_signer(new_public_key)`, authorised by the stored (primary) passkey.
+     * The contract requires the wallet's own authorisation for this call, so a
+     * fee-payer signature alone is not enough — that is the other half of why
+     * `addSigner` could never succeed before.
+     */
+    private async submitAddSigner(
+        signer: SignerInput,
+        newPublicKeyBytes: Uint8Array,
+        onSubmitted?: () => void,
+    ): Promise<AddSignerResult> {
+        const address = this.requireAddress();
+        if (newPublicKeyBytes.length !== 65) {
+            throw new Error('newPublicKeyBytes must be exactly 65 bytes (uncompressed P-256)');
+        }
+
+        const operation = new Contract(address).call(
+            'add_signer',
+            nativeToScVal(newPublicKeyBytes, { type: 'bytes' })
+        );
+        const txResult = await this.submitSelfAuthorizedCall(signer, operation, onSubmitted);
+
+        let signerIndex = 0;
+        if ('returnValue' in txResult && txResult.returnValue) {
+            try {
+                signerIndex = Number(scValToNative(txResult.returnValue));
+            } catch {
+                // Contract may not return an index — default to 0
+            }
+        }
+        return { signerIndex };
+    }
+
+    // ── registerAdditionalSigner ──────────────────────────────────────────────
+
+    registerAdditionalSigner = async (
+        signer: SignerInput,
+        options?: RegisterAdditionalSignerOptions,
+    ): Promise<RegisterAdditionalSignerResult> => {
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const walletAddress = this.requireAddress();
+
+            // Every write below goes through this view, which throws on the
+            // primary-binding keys. register() is never called on this path.
+            const store = guardPrimaryBinding(this.store);
+
+            const primaryBefore = await this.readPrimaryBinding();
+            if (!primaryBefore.credentialId || !primaryBefore.publicKey) {
+                throw new Error(
+                    'This device has no primary passkey for the wallet, so it cannot authorise a new signer.'
+                );
+            }
+
+            // Exclude every credential this wallet already knows, so an
+            // authenticator that holds one refuses instead of minting a duplicate.
+            const saved = await readAdditionalSigners(store);
+            const excludeCredentials = [
+                ...(await collectKnownCredentials(this.store)),
+                ...saved.map((s) => ({ id: s.credentialId, transports: s.transports })),
+            ];
+
+            // A FRESH user handle. The stored one belongs to the primary passkey,
+            // and a provider that already holds rp.id + user.id overwrites that
+            // credential on the authenticator — replacing the first device.
+            const userId = crypto.getRandomValues(new Uint8Array(16));
+            const name = options?.username?.normalize('NFC') || 'Veil additional passkey';
+
+            const created = await webAuthnProvider.create({
+                challenge: crypto.getRandomValues(new Uint8Array(32)),
+                rpId:      this.resolveRpId(),
+                rpName:    'Invisible Wallet',
+                userId,
+                userName:  name,
+                authenticatorAttachment: options?.authenticatorAttachment,
+                excludeCredentials,
+            });
+
+            if (this.config.attestationPolicy) {
+                if (created.attestationObject && created.clientDataJSON) {
+                    await verifyAttestation({
+                        attestationObject: created.attestationObject,
+                        clientDataJSON:    created.clientDataJSON,
+                        policy:            this.config.attestationPolicy,
+                    });
+                } else if (this.config.requireAttestation) {
+                    throw new AttestationError(
+                        'Attestation required but the platform did not expose an attestationObject.'
+                    );
+                }
+            }
+
+            const publicKeyHex = bufferToHex(created.publicKeyBytes).toLowerCase();
+            const pending: AdditionalSigner = {
+                credentialId: created.credentialId,
+                publicKey:    publicKeyHex,
+                status:       'pending',
+                ...(created.transports?.length ? { transports: created.transports } : {}),
+                addedAt:      new Date().toISOString(),
+            };
+            // Saved BEFORE submission: once add_signer may have landed, losing
+            // track of the credential would leave an unknown key on the wallet.
+            await saveAdditionalSigner(store, pending, primaryBefore);
+
+            let submitted = false;
+            let signerIndex: number;
+            try {
+                ({ signerIndex } = await this.submitAddSigner(
+                    signer,
+                    created.publicKeyBytes,
+                    () => { submitted = true; },
+                ));
+            } catch (err) {
+                // Never reached the network: it definitely did not happen, so the
+                // record would only describe a key that is not a signer.
+                if (!submitted) await forgetAdditionalSigner(store, created.credentialId);
+                throw err;
+            }
+
+            await this.assertPrimaryUnchanged(primaryBefore);
+
+            const onChain = await this.readSignerList(walletAddress);
+            const match = onChain.find((s) => s.publicKey.toLowerCase() === publicKeyHex);
+            if (!match) {
+                return { walletAddress, credentialId: created.credentialId, publicKeyBytes: created.publicKeyBytes, status: 'pending' };
+            }
+            signerIndex = match.index;
+            await saveAdditionalSigner(store, { ...pending, status: 'active', signerIndex }, primaryBefore);
+
+            return {
+                walletAddress,
+                credentialId:   created.credentialId,
+                publicKeyBytes: created.publicKeyBytes,
+                status:         'active',
+                signerIndex,
+            };
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── getAdditionalSigners ──────────────────────────────────────────────────
+
+    getAdditionalSigners = async (): Promise<AdditionalSigner[]> => readAdditionalSigners(this.store);
+
+    private async readPrimaryBinding(): Promise<{ credentialId: string | null; publicKey: string | null; address: string | null }> {
+        const [credentialId, publicKey, address] = await Promise.all([
+            this.store.getItem('invisible_wallet_key_id'),
+            this.store.getItem('invisible_wallet_public_key'),
+            this.store.getItem('invisible_wallet_address'),
+        ]);
+        return { credentialId: credentialId ?? null, publicKey: publicKey ?? null, address: address ?? null };
+    }
+
+    /** Belt and braces behind the storage guard: the binding must read back identical. */
+    private async assertPrimaryUnchanged(before: { credentialId: string | null; publicKey: string | null; address: string | null }): Promise<void> {
+        const after = await this.readPrimaryBinding();
+        if (after.credentialId !== before.credentialId || after.publicKey !== before.publicKey || after.address !== before.address) {
+            throw new Error('The primary wallet binding changed while adding a signer. Stop and check this wallet before spending.');
+        }
+    }
+
+    // ── getSigners ────────────────────────────────────────────────────────────
+
+    getSigners = async (): Promise<SignerInfo[]> => {
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            return await this.readSignerList(this.requireAddress());
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    /** `get_signers`, simulated — no keys, no prompt, no state changes. */
+    private async readSignerList(address: string): Promise<SignerInfo[]> {
+        const { rpcUrl, networkPassphrase } = this.config;
+        const server = new SorobanRpc.Server(rpcUrl);
+        const walletContract = new Contract(address);
+
+        const dummyKeypair = Keypair.random();
+        const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
+
+        const tx = new TransactionBuilder(sourceAccount, {
+            fee: BASE_FEE,
+            networkPassphrase,
+        })
+            .addOperation(walletContract.call('get_signers'))
+            .setTimeout(30)
+            .build();
+
+        const sim = await server.simulateTransaction(tx);
+        if (SorobanRpc.Api.isSimulationError(sim)) {
+            throw new Error(`Simulation failed: ${sim.error}`);
+        }
+
+        const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+        if (!result) throw new Error('Simulation returned no result');
+
+        const signersData = scValToNative(result.retval);
+        const infos: SignerInfo[] = [];
+
+        const entries: Iterable<[unknown, unknown]> =
+            signersData instanceof Map
+                ? signersData.entries()
+                : Object.entries(signersData as Record<string, unknown>);
+
+        for (const [index, key] of entries) {
+            infos.push({
+                index: typeof index === 'string' ? parseInt(index, 10) : (index as number),
+                publicKey: bufferToHex(key as Uint8Array),
+            });
+        }
+
+        return infos.sort((a, b) => a.index - b.index);
+    }
+
+    // ── removeSigner ──────────────────────────────────────────────────────────
+
+    removeSigner = async (
+        signer: SignerInput,
+        signerIndex: number
+    ): Promise<void> => {
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+            // Same self-authorisation as add_signer: the contract calls
+            // current_contract_address().require_auth() before removing.
+            const operation = new Contract(address).call(
+                'remove_signer',
+                nativeToScVal(signerIndex, { type: 'u32' })
+            );
+            await this.submitSelfAuthorizedCall(signer, operation);
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── setGuardian ───────────────────────────────────────────────────────────
+
+    setGuardian = async (
+        signer: SignerInput,
+        guardianAddress: string
+    ): Promise<void> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(resolveSigner(signer).publicKey);
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(
+                    walletContract.call(
+                        'set_guardian',
+                        nativeToScVal(guardianAddress, { type: 'address' })
+                    )
+                )
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
+
+            const submissionTx = await signForSubmission(assembled, signer, this.config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── rotateSigner ──────────────────────────────────────────────────────────
+
+    rotateSigner = async (
+        signer: SignerInput,
+        username?: string,
+        options?: RegisterOptions
+    ): Promise<RotateSignerResult> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+        const store = this.store;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+            // The key currently registered on-chain — read before we touch storage.
+            const oldPublicKeyHex = await store.getItem('invisible_wallet_public_key');
+            if (!oldPublicKeyHex) {
+                throw new Error('No existing public key found. Call register() or login() first.');
+            }
+            const oldPublicKeyBytes = hexToUint8Array(oldPublicKeyHex);
+
+            // 1. Register a brand-new WebAuthn credential for the new device.
+            //    Deliberately omits excludeCredentials: rotation's entire purpose
+            //    is to enrol a replacement credential for this wallet.
+            const challenge = crypto.getRandomValues(new Uint8Array(32));
+            const normalizedUsername = username ? username.normalize('NFC') : undefined;
+            const name   = normalizedUsername || 'Veil User';
+            const userId = await resolveUserId(store);
+            const resolvedRpId = this.resolveRpId();
+
+            const {
+                credentialId: newCredentialId,
+                publicKeyBytes: newPublicKeyBytes,
+                attestationObject,
+                clientDataJSON,
+                authenticatorAttachment,
+                transports,
+            } = await webAuthnProvider.create({
+                challenge,
+                rpId:     resolvedRpId,
+                rpName:   'Invisible Wallet',
+                userId,
+                userName: name,
+                authenticatorAttachment: options?.authenticatorAttachment,
+            });
+
+            if (newPublicKeyBytes.length !== 65) {
+                throw new Error('New credential did not yield a 65-byte uncompressed P-256 key');
+            }
+
+            // Optional attestation verification for the new credential — mirrors register().
+            if (this.config.attestationPolicy) {
+                if (attestationObject && clientDataJSON) {
+                    await verifyAttestation({
+                        attestationObject,
+                        clientDataJSON,
+                        policy: this.config.attestationPolicy,
+                    });
+                } else if (this.config.requireAttestation) {
+                    throw new AttestationError(
+                        'Attestation required but the platform did not expose an attestationObject.'
+                    );
+                }
+            }
+
+            // 2. Build the rotate_signer(old, new) call against the wallet contract.
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(resolveSigner(signer).publicKey);
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(
+                    walletContract.call(
+                        'rotate_signer',
+                        nativeToScVal(oldPublicKeyBytes, { type: 'bytes' }),
+                        nativeToScVal(newPublicKeyBytes, { type: 'bytes' })
+                    )
+                )
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+
+            // 3. Authorize the rotation with the CURRENT passkey. signAuthEntry reads
+            //    the still-current credential from storage, so this must run before we
+            //    persist the new credential below.
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
+
+            const submissionTx = await signForSubmission(assembled, signer, this.config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+            // 4. Rotation confirmed on-chain — the new credential is now the active
+            //    signer. Persist it; the wallet address is intentionally untouched.
+            const newPublicKeyHex = bufferToHex(newPublicKeyBytes);
+            await store.setItem('invisible_wallet_public_key', newPublicKeyHex);
+            await store.setItem('invisible_wallet_key_id',     newCredentialId);
+
+            const resolvedAttachment = authenticatorAttachment ?? options?.authenticatorAttachment;
+            if (resolvedAttachment === 'cross-platform') {
+                const portable: PortableSigner = {
+                    credentialId: newCredentialId,
+                    publicKey: newPublicKeyHex,
+                    authenticatorAttachment: 'cross-platform',
+                    transports: transports ?? [],
+                };
+                await store.setItem(PORTABLE_SIGNER_KEY, JSON.stringify(portable));
+            } else if (store.removeItem) {
+                await store.removeItem(PORTABLE_SIGNER_KEY);
+            }
+
+            return { oldPublicKeyBytes, newPublicKeyBytes, walletAddress: address };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── initiateRecovery ──────────────────────────────────────────────────────
+
+    initiateRecovery = async (
+        signer: SignerInput,
+        newPublicKeyBytes: Uint8Array
+    ): Promise<InitiateRecoveryResult> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+            if (newPublicKeyBytes.length !== 65) {
+                throw new Error('newPublicKeyBytes must be exactly 65 bytes (uncompressed P-256)');
+            }
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(resolveSigner(signer).publicKey);
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(
+                    walletContract.call(
+                        'initiate_recovery',
+                        nativeToScVal(newPublicKeyBytes, { type: 'bytes' })
+                    )
+                )
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                const errMsg = sim.error ?? '';
+                if (errMsg.includes('NoGuardianSet') || errMsg.includes('no guardian')) {
+                    throw new NoGuardianSet();
+                }
+                throw new Error(`Simulation failed: ${errMsg}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+            const submissionTx = await signForSubmission(assembled, signer, this.config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+            let unlockTime = 0;
+            if ('returnValue' in txResult && txResult.returnValue) {
+                try {
+                    unlockTime = Number(scValToNative(txResult.returnValue));
+                } catch {
+                    // Default to 0 if parsing fails
+                }
+            }
+
+            return { unlockTime };
+
+        } catch (err: unknown) {
+            if (err instanceof NoGuardianSet) throw err;
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── completeRecovery ──────────────────────────────────────────────────────
+
+    completeRecovery = async (signer: SignerInput): Promise<void> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(resolveSigner(signer).publicKey);
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(walletContract.call('complete_recovery'))
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                const errMsg = sim.error ?? '';
+                if (errMsg.includes('TimelockActive') || errMsg.includes('timelock')) {
+                    const match = errMsg.match(/(\d{10,})/);
+                    const unlockTime = match ? Number(match[1]) : 0;
+                    throw new RecoveryTimelockActive(unlockTime);
+                }
+                if (errMsg.includes('NoGuardianSet') || errMsg.includes('no guardian')) {
+                    throw new NoGuardianSet();
+                }
+                if (errMsg.includes('NotPending') || errMsg.includes('not pending')) {
+                    throw new RecoveryNotPending();
+                }
+                throw new Error(`Simulation failed: ${errMsg}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+            const submissionTx = await signForSubmission(assembled, signer, this.config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+        } catch (err: unknown) {
+            if (
+                err instanceof RecoveryTimelockActive ||
+                err instanceof NoGuardianSet ||
+                err instanceof RecoveryNotPending
+            ) {
+                throw err;
+            }
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── getBalance ────────────────────────────────────────────────────────────
+
+    getBalance = async (token?: string): Promise<{ address: string; amount: bigint; assetCode: string }> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const contractAddress = token ?? Asset.native().contractId(networkPassphrase);
+            const tokenContract = new Contract(contractAddress);
+
+            const dummyKeypair = Keypair.random();
+            const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(tokenContract.call(
+                    'balance',
+                    nativeToScVal(address, { type: 'address' })
+                ))
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+            if (!result || result.retval === undefined) throw new Error('Simulation returned no result');
+
+            const amount = scValToNative(result.retval) as bigint;
+            return {
+                address,
+                amount,
+                assetCode: token ? token : 'XLM',
+            };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── sendPayment ───────────────────────────────────────────────────────────
+
+    sendPayment = async (
+        signer: SignerInput,
+        to: string,
+        amount: number | bigint,
+        token?: string,
+        memo?: string,
+    ): Promise<{ transactionHash: string; status: 'PENDING' | 'SUCCESS' | 'FAILED' }> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+
+            const contractAddress = token ?? Asset.native().contractId(networkPassphrase);
+            const tokenContract = new Contract(contractAddress);
+            const amountValue = typeof amount === 'bigint'
+                ? amount
+                : BigInt(Math.round(amount));
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const sourceAccount = await server.getAccount(resolveSigner(signer).publicKey);
+            const txBuilder = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(tokenContract.call(
+                    'transfer',
+                    nativeToScVal(address, { type: 'address' }),
+                    nativeToScVal(to, { type: 'address' }),
+                    nativeToScVal(amountValue, { type: 'i128' }),
+                ));
+
+            if (memo !== undefined) {
+                txBuilder.addMemo(Memo.text(String(memo)));
+            }
+
+            const tx = txBuilder.setTimeout(30).build();
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
+
+            const submissionTx = await signForSubmission(assembled, signer, this.config);
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+            return { transactionHash: sendResult.hash, status: 'SUCCESS' };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── getAllowance ──────────────────────────────────────────────────────────
+
+    getAllowance = async (spender: string, token: string): Promise<{ amount: number; expiry: number | undefined } | null> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+
+            const dummyKeypair = Keypair.random();
+            const sourceAccount = new Account(dummyKeypair.publicKey(), '0');
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(walletContract.call(
+                    'get_allowance',
+                    nativeToScVal(spender, { type: 'address' }),
+                    nativeToScVal(token, { type: 'address' })
+                ))
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const result = (sim as SorobanRpc.Api.SimulateTransactionSuccessResponse).result;
+            if (!result || !result.retval) throw new Error('Simulation returned no result');
+
+            if (result.retval.switch() === xdr.ScValType.scvVoid()) {
+                return null;
+            }
+
+            const allowanceMap = scValToNative(result.retval);
+            return {
+                amount: Number(allowanceMap.amount),
+                expiry: allowanceMap.expiry !== undefined ? Number(allowanceMap.expiry) : undefined,
+            };
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── approve ───────────────────────────────────────────────────────────────
+
+    approve = async (
+        signer: SignerInput,
+        spender: string,
+        token: string,
+        amount: number | bigint,
+        expiry?: number | bigint
+    ): Promise<void> => {
+        const { rpcUrl, networkPassphrase } = this.config;
+
+        this.setIsPending(true);
+        this.setError(null);
+        try {
+            const address = this.requireAddress();
+
+            const server = new SorobanRpc.Server(rpcUrl);
+            const walletContract = new Contract(address);
+            const sourceAccount = await server.getAccount(resolveSigner(signer).publicKey);
+
+            const tx = new TransactionBuilder(sourceAccount, {
+                fee: BASE_FEE,
+                networkPassphrase,
+            })
+                .addOperation(
+                    walletContract.call('approve', ...encodeApproveArgs(spender, token, amount, expiry))
+                )
+                .setTimeout(30)
+                .build();
+
+            const sim = await server.simulateTransaction(tx);
+            if (SorobanRpc.Api.isSimulationError(sim)) {
+                throw new Error(`Simulation failed: ${sim.error}`);
+            }
+
+            const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+
+            await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, server, tx);
+
+            const submissionTx = await signForSubmission(assembled, signer, this.config);
+
+            const sendResult = await server.sendTransaction(submissionTx);
+            if (sendResult.status === 'ERROR') {
+                throw new Error(
+                    `Transaction rejected: ${sendResult.errorResult?.toXDR('base64') ?? 'unknown error'}`
+                );
+            }
+
+            const txResult = await waitForTransaction(server, sendResult.hash);
+            if (txResult.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+                throw new Error(`Transaction failed with status: ${txResult.status}`);
+            }
+
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this.setError(message);
+            throw err;
+        } finally {
+            this.setIsPending(false);
+        }
+    };
+
+    // ── Offline outbox ────────────────────────────────────────────────────────
+
+    replayOutbox = async (opts?: ReplayOptions): Promise<ReplayResult> => {
+        const server = new SorobanRpc.Server(this.config.rpcUrl);
+        return this.outbox.replay(server, opts);
+    };
+
+    // ── Local PRF-derived encryption ──────────────────────────────────────────
+    // Lazily derive (and cache) a passkey-bound cipher for the registered
+    // credential, falling back to a stored random key when PRF is unsupported.
+
+    private async getCipher(): Promise<LocalCipher> {
+        if (this.cipher) return this.cipher;
+        const credentialId = await this.store.getItem('invisible_wallet_key_id');
+        if (!credentialId) throw new Error('No passkey credential found. Please register first.');
+        this.cipher = await createLocalCipher({ credentialId, rpId: this.config.rpId, storage: this.store });
+        return this.cipher;
+    }
+
+    encryptLocal = async (plaintext: string | Uint8Array): Promise<string> => {
+        const cipher = await this.getCipher();
+        return cipher.encrypt(plaintext);
+    };
+
+    decryptLocal = async (payload: string): Promise<string> => {
+        const cipher = await this.getCipher();
+        return cipher.decryptString(payload);
+    };
+
+    encryptionMode = async (): Promise<'prf' | 'fallback'> => {
+        const cipher = await this.getCipher();
+        return cipher.mode;
+    };
+
+    getSep43Wallet = (): Sep43Wallet => {
+        return createSep43Wallet({
+            getAddress: async () => this.state.address ?? (await this.store.getItem('invisible_wallet_address')),
+            getNetwork: () => ({
+                network: this.config.networkPassphrase.includes('Test') ? 'TESTNET' : 'PUBLIC',
+                networkPassphrase: this.config.networkPassphrase,
+                rpcUrl: this.config.rpcUrl,
+            }),
+            signTransaction: async (xdrString) => {
+                const rpc = new SorobanRpc.Server(this.config.rpcUrl);
+                const tx = TransactionBuilder.fromXDR(xdrString, this.config.networkPassphrase);
+                // A fee bump carries no operations of its own; the calls being
+                // authorised are the inner transaction's, so that is what the
+                // entries have to be checked against.
+                const inner = 'innerTransaction' in tx ? tx.innerTransaction : tx;
+                const sim = await rpc.simulateTransaction(tx, { cpuInstructions: 5_000_000 } as any);
+                if (SorobanRpc.Api.isSimulationError(sim)) {
+                    throw new Error(`Simulation failed: ${sim.error}`);
+                }
+                await this.authorizeEntries(sim as SorobanRpc.Api.SimulateTransactionSuccessResponse, rpc, inner);
+                const assembled = SorobanRpc.assembleTransaction(tx, sim).build();
+                return assembled.toXDR();
+            },
+            signAuthPayload: async (payloadHash: Uint8Array) => {
+                return this.signAuthEntry(payloadHash);
+            },
+            getWalletNonce: async () => {
+                try {
+                    return await this.getNonce();
+                } catch {
+                    return null;
+                }
+            },
+            signMessage: async (message: string) => {
+                const keyId = await this.store.getItem('invisible_wallet_key_id');
+                if (!keyId) throw new Error('No passkey registered.');
+                const signed = await signMessage(
+                    new TextEncoder().encode(message),
+                    this.signAuthEntry,
+                    keyId
+                );
+                return JSON.stringify(signed);
+            },
+            submitTransaction: async (signedXdr: string, submitUrl?: string) => {
+                const rpc = new SorobanRpc.Server(submitUrl || this.config.rpcUrl);
+                const tx = TransactionBuilder.fromXDR(signedXdr, this.config.networkPassphrase);
+                const res = await rpc.sendTransaction(tx);
+                if (res.status === 'ERROR') {
+                    throw new Error(`Transaction submission failed: ${JSON.stringify(res.errorResult)}`);
+                }
+                return res.hash;
+            },
+        });
+    };
+}

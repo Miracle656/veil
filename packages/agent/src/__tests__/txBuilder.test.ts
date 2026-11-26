@@ -31,6 +31,13 @@ const mockOperationPathPayment: any = jest.fn()
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockOperationChangeTrust: any = jest.fn()
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const mockStrictSendPaths: any = jest.fn().mockReturnValue({
+  call: (jest.fn() as any).mockResolvedValue({
+    records: [{ path: [], destination_amount: '100' }],
+  }),
+})
+
 // ── ESM mock (must precede dynamic import of txBuilder) ───────────────────────
 
 jest.unstable_mockModule('@stellar/stellar-sdk', () => {
@@ -47,7 +54,10 @@ jest.unstable_mockModule('@stellar/stellar-sdk', () => {
 
   return {
     Horizon: {
-      Server: jest.fn().mockImplementation(() => ({ loadAccount: mockLoadAccount })),
+      Server: jest.fn().mockImplementation(() => ({
+        loadAccount: mockLoadAccount,
+        strictSendPaths: mockStrictSendPaths,
+      })),
     },
     TransactionBuilder: jest.fn().mockImplementation(() => mockTxInstance),
     Networks: {
@@ -65,6 +75,18 @@ jest.unstable_mockModule('@stellar/stellar-sdk', () => {
     Contract: jest.fn(),
     Account: jest.fn(),
     Keypair: { random: jest.fn().mockReturnValue({ publicKey: () => 'GRANDOM' }) },
+    // `assets.ts` imports StrKey, and txBuilder now reaches it through
+    // `isRegisteredIssuer`, so the mock has to provide it or the whole module
+    // graph fails to link. A shape check, NOT real validation — it accepts
+    // 56 characters with the right alphabet and does not verify the checksum.
+    // Nothing in this file tests address validation; if something here ever
+    // does, use the real StrKey rather than widening this.
+    StrKey: {
+      isValidEd25519PublicKey: (value: unknown) =>
+        typeof value === 'string' && /^G[A-Z2-7]{55}$/.test(value),
+      isValidContract: (value: unknown) =>
+        typeof value === 'string' && /^C[A-Z2-7]{55}$/.test(value),
+    },
     nativeToScVal: jest.fn(),
     scValToNative: jest.fn(),
   }

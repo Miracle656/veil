@@ -1,13 +1,56 @@
-import * as Passkeys from 'react-native-passkeys';
+import * as Crypto from 'expo-crypto';
+// react-native-passkeys is a NATIVE module absent in Expo Go: a top-level import
+// crashes the app at startup (this file loads via _layout → WalletConnectApprovalModal
+// → registerPasskeySigner). Load it lazily so the app boots in Expo Go; a passkey
+// ceremony throws a clear "use a dev build" error only when actually invoked. The
+// type-only import is erased at compile time and never triggers the native require.
+import type * as PasskeysModule from 'react-native-passkeys';
+
+let cachedPasskeys: typeof PasskeysModule | null | undefined;
+function loadPasskeys(): typeof PasskeysModule | null {
+  if (cachedPasskeys !== undefined) return cachedPasskeys;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    cachedPasskeys = require('react-native-passkeys') as typeof PasskeysModule;
+  } catch {
+    cachedPasskeys = null;
+  }
+  return cachedPasskeys;
+}
+
+function passkeys(): typeof PasskeysModule {
+  const m = loadPasskeys();
+  if (!m) {
+    throw new Error(
+      'Native passkeys are unavailable in this build. Expo Go cannot load the ' +
+        'react-native-passkeys native module — use a development build.',
+    );
+  }
+  return m;
+}
 
 import {
   registerAuthEntrySigner,
   type AuthEntrySigner,
   type WebAuthnSignature,
 } from './walletConnect';
-import { isUserRejection } from './walletConnectHelpers';
-import { getPasskeyId, getPasskeyPublicKey } from './walletStore';
-import { base64UrlToUint8Array, derToRawSignature, hexToUint8Array, uint8ArrayToBase64Url } from './webauthn';
+import { prfFromAssertion, prfFromError, type PrfEvaluation } from './prfOutcome';
+import {
+  CREDENTIAL_ORPHANED_MESSAGE,
+  PASSKEY_CANCELLED_MESSAGE,
+  PasskeyCeremonyError,
+  isPasskeyCancellation,
+  toPasskeyCeremonyError,
+} from './passkeyOutcome';
+import { getPasskeyId, getPasskeyPublicKey, getSignerSecret } from './walletStore';
+import { listActiveAdditionalSigners } from './additionalSigners';
+import {
+  base64UrlToUint8Array,
+  derToRawSignature,
+  hexToUint8Array,
+  spkiToUncompressedP256,
+  uint8ArrayToBase64Url,
+} from './webauthn';
 
 /**
  * Device passkey signer.
@@ -22,60 +65,195 @@ import { base64UrlToUint8Array, derToRawSignature, hexToUint8Array, uint8ArrayTo
  * payload the wallet contract will verify.
  */
 
-/** Relying-party id the passkey was registered against. */
-function getRelyingPartyId(): string | undefined {
-  return process.env['EXPO_PUBLIC_PASSKEY_RP_ID']?.trim() || undefined;
-}
+export { getRelyingPartyId } from './relyingParty';
+import { getRelyingPartyId } from './relyingParty';
 
 export function isPasskeySupported(): boolean {
   try {
-    return Passkeys.isSupported();
+    return passkeys().isSupported();
   } catch {
     return false;
   }
 }
 
+/** The credential-descriptor list react-native-passkeys accepts. */
+type CredentialDescriptors = NonNullable<Parameters<typeof PasskeysModule.get>[0]['allowCredentials']>;
+
+function descriptors(list: { id: string; transports?: string[] }[]): CredentialDescriptors {
+  return list.map(({ id, transports }) => ({
+    id,
+    type: 'public-key',
+    ...(transports?.length ? { transports } : {}),
+  })) as CredentialDescriptors;
+}
+
 /**
  * Prompt the device passkey to sign one Soroban authorization-entry hash.
  *
- * Resolves to null when the user dismisses the prompt, so callers can treat a
- * decline as a rejection rather than a failure. Throws when the wallet has no
- * registered passkey or the platform reports a genuine error.
+ * Throws a {@link PasskeyCeremonyError} whose outcome says which of the three
+ * things happened — the user cancelled, the authenticator refused, or the
+ * ceremony failed — so a caller decides from the outcome, never from prose.
+ *
+ * The primary passkey is always offered. Additional passkeys are offered too
+ * once they are confirmed in the wallet's on-chain signer list, and the public
+ * key placed in the credential is the one belonging to whichever credential
+ * answered — `__check_auth` checks that key against the signer list and the
+ * signature against that key, so a mismatch would fail on chain.
  */
 export async function signPayloadWithPasskey(
   payloadHash: Uint8Array
 ): Promise<WebAuthnSignature | null> {
   const [keyId, publicKeyHex] = await Promise.all([getPasskeyId(), getPasskeyPublicKey()]);
   if (!keyId || !publicKeyHex) {
-    throw new Error('No passkey found on this device. Register the wallet first.');
+    throw new PasskeyCeremonyError(
+      'refused',
+      'No passkey found on this device. Register the wallet first, then try again.',
+    );
   }
 
   if (!isPasskeySupported()) {
-    throw new Error('Passkeys are not supported on this device.');
+    throw new PasskeyCeremonyError('refused', 'Passkeys are not supported on this device.');
   }
 
-  let assertion: Awaited<ReturnType<typeof Passkeys.get>>;
+  // An unreadable list must not stop the primary passkey from signing.
+  const additional = await listActiveAdditionalSigners().catch(() => []);
+
+  let assertion: Awaited<ReturnType<typeof PasskeysModule.get>>;
   try {
-    assertion = await Passkeys.get({
+    assertion = await passkeys().get({
       challenge: uint8ArrayToBase64Url(payloadHash),
       rpId: getRelyingPartyId(),
-      allowCredentials: [{ id: keyId, type: 'public-key' }],
+      allowCredentials: descriptors([
+        { id: keyId },
+        ...additional.map((signer) => ({ id: signer.credentialId, transports: signer.transports })),
+      ]),
       userVerification: 'required',
       timeout: 60_000,
     });
   } catch (error: unknown) {
-    if (isUserRejection(error)) return null;
-    throw error;
+    // A dismissal or the ceremony's own timeout is the user's decision, and it
+    // is converted HERE, where we know the error came from the passkey call —
+    // never inferred later from message text, where a Horizon timeout during
+    // submission would look identical and must not read as a cancellation.
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+    }
+    // A refusal is not a cancellation: carry which one it is so the spend
+    // screen can explain the next step instead of offering a blind retry.
+    throw toPasskeyCeremonyError(error);
   }
 
   // The platform returns null when the sheet is dismissed without a selection.
-  if (!assertion) return null;
+  if (!assertion) throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+
+  // With only the primary offered there is nothing to choose between, and this
+  // stays exactly the path every existing wallet has always taken.
+  let signingKeyHex = publicKeyHex;
+  if (additional.length > 0) {
+    const answered = (assertion as { id?: string; rawId?: string }).id
+      ?? (assertion as { id?: string; rawId?: string }).rawId;
+    if (answered !== keyId) {
+      const match = additional.find((signer) => signer.credentialId === answered);
+      if (!match) {
+        throw new PasskeyCeremonyError('refused', 'The passkey that answered is not one this wallet knows. Nothing was sent.');
+      }
+      signingKeyHex = match.publicKey;
+    }
+  }
 
   return {
-    publicKey: hexToUint8Array(publicKeyHex),
+    publicKey: hexToUint8Array(signingKeyHex),
     authData: base64UrlToUint8Array(assertion.response.authenticatorData),
     clientDataJSON: base64UrlToUint8Array(assertion.response.clientDataJSON),
     signature: derToRawSignature(base64UrlToUint8Array(assertion.response.signature)),
+  };
+}
+
+/** A credential minted to be added to the wallet as an extra signer. */
+export type CreatedSignerPasskey = {
+  credentialId: string;
+  /** Uncompressed P-256 public key (65 bytes). */
+  publicKey: Uint8Array;
+  transports?: string[];
+};
+
+/** What the platform says when an excluded credential lives on the authenticator. */
+function isExcludedCredential(error: unknown): boolean {
+  const message = (error instanceof Error ? `${error.name} ${error.message}` : String(error ?? '')).toLowerCase();
+  return message.includes('excluded') || message.includes('invalidstateerror') || message.includes('already registered');
+}
+
+export const SIGNER_ALREADY_ON_AUTHENTICATOR_MESSAGE =
+  'That passkey manager already holds this wallet’s passkey, so it would not be a second device. ' +
+  'When your phone asks where to save the new passkey, choose another phone, tablet or a security key.';
+
+export const SIGNER_CREATION_CANCELLED_MESSAGE = 'Passkey creation cancelled. Nothing was added.';
+
+/**
+ * Create a NEW passkey to add to the wallet — never a replacement for the
+ * primary one.
+ *
+ * Two details carry the safety:
+ *
+ *  - A fresh random WebAuthn user handle. A passkey manager that already holds
+ *    a credential for the same rp.id + user.id overwrites it; reusing the
+ *    primary's handle could replace the first device's passkey on the
+ *    authenticator.
+ *  - `excludeCredentials` lists every credential this wallet already knows, so
+ *    an authenticator holding one of them refuses instead of minting a second
+ *    key in the same place, which would add no second device at all.
+ *
+ * Resident (discoverable) with PRF, like the primary: the other device signs in
+ * with `loginWithAddress`, which needs a discoverable credential, and PRF is
+ * what lets that device derive its own recoverable fee payer.
+ *
+ * Writes nothing. The caller decides what to record.
+ */
+export async function createSignerPasskey(
+  exclude: { id: string; transports?: string[] }[],
+): Promise<CreatedSignerPasskey> {
+  if (!isPasskeySupported()) {
+    throw new PasskeyCeremonyError('refused', 'Passkeys are not supported on this device.');
+  }
+
+  let created: Awaited<ReturnType<typeof PasskeysModule.create>>;
+  try {
+    created = await passkeys().create({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rp: { id: getRelyingPartyId(), name: 'Invisible Wallet' },
+      user: {
+        id: uint8ArrayToBase64Url(Crypto.getRandomBytes(16)),
+        name: 'Veil additional passkey',
+        displayName: 'Veil additional passkey',
+      },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      timeout: 60_000,
+      excludeCredentials: descriptors(exclude),
+      authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+      extensions: { prf: {} },
+    });
+  } catch (error: unknown) {
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', SIGNER_CREATION_CANCELLED_MESSAGE);
+    }
+    if (isExcludedCredential(error)) {
+      throw new PasskeyCeremonyError('refused', SIGNER_ALREADY_ON_AUTHENTICATOR_MESSAGE);
+    }
+    throw toPasskeyCeremonyError(error);
+  }
+
+  if (!created) throw new PasskeyCeremonyError('cancelled', SIGNER_CREATION_CANCELLED_MESSAGE);
+
+  const spki = created.response.getPublicKey();
+  if (!spki) {
+    throw new PasskeyCeremonyError('failed', 'The new passkey did not report its public key. Nothing was added.');
+  }
+
+  const transports = created.response.transports;
+  return {
+    credentialId: created.id,
+    publicKey: spkiToUncompressedP256(base64UrlToUint8Array(spki)),
+    ...(transports?.length ? { transports } : {}),
   };
 }
 
@@ -86,4 +264,180 @@ export async function signPayloadWithPasskey(
 export function registerPasskeySigner(): () => void {
   const signer: AuthEntrySigner = (payloadHash) => signPayloadWithPasskey(payloadHash);
   return registerAuthEntrySigner(signer);
+}
+
+
+/**
+ * Whether the platform is telling us the credential does not exist here.
+ *
+ * This is not the same as "no passkey is registered": the credential id and its
+ * public key can be sitting in secure storage while the OS holds nothing that
+ * matches, because a passkey is bound to the relying party it was created
+ * against. Veil's RP moved to app.useveilapp.xyz on 2026-08-22, so wallets
+ * created before that — in practice the older testnet ones — still have stored
+ * credentials that no assertion can ever satisfy (see lib/relyingParty.ts).
+ *
+ * Worth naming precisely, because the raw platform error reads as "couldn't
+ * find a passkey", which sounds like nothing is registered and sends you
+ * looking in the wrong place.
+ */
+function isCredentialNotFound(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error ?? '')).toLowerCase();
+  return (
+    message.includes('no credentials') ||
+    message.includes('not found') ||
+    message.includes('no passkey') ||
+    message.includes('nomatchingcredential') ||
+    message.includes('no matching credential')
+  );
+}
+
+/** The message shown when a stored credential no longer resolves on-device. */
+export { CREDENTIAL_ORPHANED_MESSAGE };
+
+/**
+ * Gate a sensitive action behind the device passkey.
+ *
+ * Mirrors `requirePasskey` in the web wallet: assert over a fresh random
+ * challenge so the user proves presence before anything is built or submitted.
+ * Throws when the sheet is dismissed, so a caller can abort rather than sign.
+ */
+export async function requirePasskey(): Promise<void> {
+  const keyId = await getPasskeyId();
+
+  if (!keyId) {
+    // Plain testnet-keypair mode (no passkey registered): the stored signer
+    // secret authorises directly — nothing to assert against.
+    if (await getSignerSecret()) return;
+    throw new PasskeyCeremonyError(
+      'refused',
+      'No passkey found on this device. Register the wallet first, then try again.',
+    );
+  }
+
+  // A passkey exists → every sensitive action demands user presence, even
+  // though the classic transaction is signed by the fee-payer keypair. The
+  // assertion is over a fresh random challenge (presence gate, not an
+  // on-chain signature), so it needs only the credential id.
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      allowCredentials: [{ id: keyId, type: 'public-key' }],
+      userVerification: 'required',
+      timeout: 60_000,
+    });
+    if (!assertion) throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+  } catch (error: unknown) {
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+    }
+    if (isCredentialNotFound(error)) {
+      throw new PasskeyCeremonyError('refused', CREDENTIAL_ORPHANED_MESSAGE);
+    }
+    throw toPasskeyCeremonyError(error);
+  }
+}
+
+/**
+ * A native `PrfEvaluator` (SDK shape: `(salt) => Promise<Uint8Array | null>`)
+ * backed by the WebAuthn PRF extension via react-native-passkeys. Runs a passkey
+ * assertion requesting `prf.eval.first = salt` and returns the PRF output, or
+ * null when PRF is unsupported / the user declines. Used to derive the fee-payer
+ * key deterministically from the passkey.
+ */
+function parsePrfOutput(assertion: unknown): Uint8Array | null {
+  const results = (assertion as { clientExtensionResults?: { prf?: { results?: { first?: unknown } } } })
+    ?.clientExtensionResults?.prf?.results?.first;
+  if (!results) return null;
+  if (typeof results === 'string') return base64UrlToUint8Array(results);
+  if (results instanceof ArrayBuffer) return new Uint8Array(results);
+  if (ArrayBuffer.isView(results)) return new Uint8Array(results.buffer as ArrayBuffer);
+  return null;
+}
+
+/**
+ * Evaluate PRF for `salt` on one credential, and say why when there is no
+ * output: an unsupported password manager, a closed prompt, or an error.
+ */
+export async function evaluatePrf(credentialId: string, salt: Uint8Array): Promise<PrfEvaluation> {
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      allowCredentials: [{ id: credentialId, type: 'public-key' }],
+      userVerification: 'required',
+      timeout: 60_000,
+      extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
+    });
+    return prfFromAssertion(!!assertion, assertion ? parsePrfOutput(assertion) : null);
+  } catch (error: unknown) {
+    return prfFromError(error);
+  }
+}
+
+export function nativePrfEvaluator(credentialId: string): (salt: Uint8Array) => Promise<Uint8Array | null> {
+  return async (salt: Uint8Array) => (await evaluatePrf(credentialId, salt)).output;
+}
+
+/**
+ * A discovered assertion: one pic-and-tap passkey gesture, plus the pieces of
+ * the resulting WebAuthn assertion that let a caller verify the credential's
+ * public key against a candidate set (the assertion itself never reveals it)
+ * and the PRF output for the requested salt, which is null when the credential
+ * or its manager has no PRF.
+ */
+export type DiscoveredPasskey = {
+  /** The picked credential's id (base64url). */
+  credentialId: string;
+  /** Raw P-256 ECDSA signature (64 bytes, r‖s, low-S). */
+  signature: Uint8Array;
+  /** The authenticator's signed statement (RP hash at bytes 0..31). */
+  authData: Uint8Array;
+  /** The caller's challenge, origin and type, as the authenticator saw them. */
+  clientDataJSON: Uint8Array;
+  /** PRF output for the requested salt, or null when unavailable. */
+  prf: Uint8Array | null;
+};
+
+/**
+ * Discoverable assertion + PRF in ONE user gesture: no allowCredentials, so the
+ * platform sheet lists every passkey for the relying party and the user picks.
+ * Returns the chosen credential id, the assertion pieces (signature / authData /
+ * clientDataJSON), and the PRF output for `salt` — the facts "sign in with
+ * passkey" needs to re-derive the wallet on a fresh device. PRF stays optional:
+ * a manager without it returns `prf: null`, it never makes the gesture fail. A
+ * dismissed or timed-out prompt throws `PasskeyCeremonyError('cancelled')`.
+ */
+export async function discoverWithPrf(
+  salt: Uint8Array,
+): Promise<DiscoveredPasskey | null> {
+  try {
+    const assertion = await passkeys().get({
+      challenge: uint8ArrayToBase64Url(Crypto.getRandomBytes(32)),
+      rpId: getRelyingPartyId(),
+      userVerification: 'required',
+      timeout: 60_000,
+      extensions: { prf: { eval: { first: uint8ArrayToBase64Url(salt) } } },
+    });
+    // The platform returns nothing when the sheet is dismissed without a pick.
+    if (!assertion) throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+    const credentialId = (assertion as { id?: string; rawId?: string }).id
+      ?? (assertion as { id?: string; rawId?: string }).rawId;
+    if (!credentialId) return null;
+    return {
+      credentialId,
+      signature: derToRawSignature(base64UrlToUint8Array(assertion.response.signature)),
+      authData: base64UrlToUint8Array(assertion.response.authenticatorData),
+      clientDataJSON: base64UrlToUint8Array(assertion.response.clientDataJSON),
+      prf: parsePrfOutput(assertion),
+    };
+  } catch (error: unknown) {
+    // Converted at the ceremony boundary, so a login/recovery caller can rely on
+    // the outcome instead of matching prose.
+    if (isPasskeyCancellation(error)) {
+      throw new PasskeyCeremonyError('cancelled', PASSKEY_CANCELLED_MESSAGE);
+    }
+    throw toPasskeyCeremonyError(error);
+  }
 }

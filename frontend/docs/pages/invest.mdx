@@ -1,0 +1,156 @@
+---
+title: Invest Rail & Disclosures
+description: What tokenized Treasuries and real-world assets are, who issues them, what Veil does and does not do, issuer risks, and jurisdiction restrictions.
+---
+
+import { Callout, Cards } from 'nextra/components'
+
+# Invest Rail & Disclosures
+
+The invest rail in Veil allows users to interact with tokenized real-world assets (RWAs)—such as tokenized US Treasury bills—on the Stellar blockchain.
+
+Because holding yield-bearing assets invites the question **"is Veil a broker?"**, the answer is stated publicly, plainly, and precisely:
+
+<Callout type="warning">
+  **Veil is a self-custody wallet, not a broker, exchange, or financial intermediary.**
+
+  - **Veil does not take custody** of your funds or tokens.
+  - **Veil does not perform KYC** or collect your identity documents.
+  - **Veil does not advise** on investments, yields, or financial decisions.
+</Callout>
+
+Below are the details on how tokenized assets operate on Stellar, who issues them, what Veil does and does not do, what risks you take on, and where these assets are not offered.
+
+---
+
+## 1. What Tokenized Treasuries Are
+
+Tokenized Treasuries are digital tokens issued on a public blockchain that represent economic exposure to short-term United States Treasury bills and money market instruments.
+
+- **Underlying Backing**: Assets like **USDY** (Ondo US Dollar Yield) are backed by a portfolio of short-term US Treasury bills and bank deposits held at institutional qualified custodians.
+- **Accrual Mechanism**: Yield does not arrive as periodic airdrops or separate dividend payments. Instead, **the value per token increases over time as interest accrues**. For example, 100 USDY remains 100 USDY in token count, but its redemption value in USDC or USD increases according to the underlying yield.
+- **Floating Rates**: Yield moves with macroeconomic interest rates set by the US Federal Reserve. Yield is not fixed, guaranteed, or perpetual.
+- **Not Cash or Bank Deposits**: Tokenized Treasuries are investment securities or debt obligations issued under specific legal structures. They are **not bank deposits** and do **not** carry deposit insurance.
+
+---
+
+## 2. Who Issues Them
+
+Tokenized assets are created, underwritten, and redeemed by **independent third-party institutions**—not by Veil.
+
+| Asset | Primary Issuer | Stellar Issuer Public Key | Permissioning (`auth_required`) |
+|---|---|---|---|
+| **USDY** | Ondo USDY LLC (Ondo Finance) | `GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6` | `false` (Permissionless on-chain) |
+| **BENJI** | Franklin Templeton | `GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5` | `true` (Permissioned / Whitelist required) |
+
+### Pinning by Issuer, Never by Bare Code
+
+On an open blockchain like Stellar, **anyone can create an asset with any 4- or 12-letter code**. Scam tokens and copycats frequently issue assets titled `USDY`, `USDC`, or `BENJI` with fake domains (`2pacdrop.com`, `scopuly.pro`, etc.).
+
+Veil pins assets strictly by **issuer public key and verified `stellar.toml` home domain**. When you view or interact with an asset in Veil:
+- Veil matches the exact cryptographic issuer key on the Stellar ledger.
+- Any unverified asset using a matching code is flagged as unverified to protect users from impostors.
+- Veil never becomes the counterparty: your transaction executes directly against the issuer or an on-chain automated market maker / order book.
+
+---
+
+## 3. What Veil Does and Does Not Do
+
+To eliminate any ambiguity about regulatory status and custody, Veil's role is strictly defined below:
+
+### What Veil Does
+1. **Passkey-Powered Self-Custody**: Veil provides client-side smart wallet software. Transactions are signed locally on your device via WebAuthn using hardware secure enclaves (Face ID, Touch ID, Windows Hello).
+2. **Ledger Interface**: Veil reads public Stellar ledger state (account balances, trustlines, DEX quotes) and builds transactions for your review and biometric approval.
+3. **Transparent Execution**: Veil surfaces verified issuer identity, DEX spreads, and minimum reserve requirements before you confirm a transaction.
+
+### What Veil Does NOT Do
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     WHAT VEIL NEVER DOES                    │
+├─────────────────────────────────────────────────────────────┤
+│  ✗  NO CUSTODY      │ Keys never leave your device          │
+│  ✗  NO KYC          │ Zero identity or document collection  │
+│  ✗  NO ADVICE       │ No recommendations or yield promises   │
+│  ✗  NO BROKERAGE    │ Veil is not a counterparty or broker   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Veil Does Not Take Custody
+Veil is strictly non-custodial. There is no central server holding user funds, no master key, and no custodial database. All funds reside in your on-chain Soroban smart wallet contract or Stellar account. If you lose all your configured passkeys and recovery guardians, **Veil cannot recover or freeze your funds**.
+
+#### Veil Does Not Perform KYC
+Veil collects no passports, driver's licenses, national ID numbers, or utility bills. Veil has no user database and does not maintain customer accounts. 
+- For permissionless assets like USDY (`auth_required = false`), holding simply requires a standard Stellar trustline (which locks 0.5 XLM in ledger reserves).
+- If an asset requires whitelisting or authorization (such as regulated SEP-8 assets like BENJI or future DTCC equities), **the third-party issuer or anchor conducts its own KYC directly with you** via its own hosted portal. No customer identification data ever passes through Veil servers or storage.
+
+#### Veil Does Not Advise
+Veil is not a registered broker-dealer, investment adviser, commodity trading advisor, or financial planner under any jurisdiction. 
+- Veil never recommends that you purchase, hold, or sell any asset.
+- Information displayed in the app—such as annual percentage yield (APY), price history, or cost basis—is public market data, not financial advice or a forecast.
+- No language in the app or AI assistant constitutes a solicitation or endorsement.
+
+---
+
+## 4. Risks Described in Plain Language
+
+Holding tokenized real-world assets carries distinct financial, technical, and regulatory risks. You must evaluate whether you can afford the risk of losing money.
+
+### Issuer Risk (What Happens if the Issuer Fails?)
+
+Tokenized Treasuries are obligations of the third-party issuing entity:
+- **Credit & Insolvency Risk**: When you hold USDY, you hold a senior secured debt obligation of Ondo USDY LLC. If the issuer defaults, goes bankrupt, mismanages underlying reserves, or falls victim to operational fraud, **you could lose some or all of your invested principal**.
+- **No Government Insurance**: Tokenized assets are **NOT bank deposits** and are **NOT insured** by the Federal Deposit Insurance Corporation (FDIC), the Securities Investor Protection Corporation (SIPC), or any national government guarantee scheme.
+- **Redemption Freezes**: If the issuer halts operations, enters bankruptcy proceedings, or faces regulatory enforcement, primary redemptions into fiat or stablecoins may be delayed or permanently suspended.
+- **Bankruptcy-Remote Structures**: Issuers typically use bankruptcy-remote special purpose vehicles (SPVs) to segregate collateral from the parent company's balance sheet. However, these legal structures have not yet been extensively tested in international bankruptcy courts during severe crypto-market insolvencies.
+
+### Liquidity & Secondary Market Risk
+
+Unless you are an institutional participant onboarded directly with the issuer for primary minting and redemption, you buy and sell tokenized assets on secondary markets (such as the Stellar decentralized exchange or Soroswap AMMs):
+- **Thin Order Books**: Liquidity on Stellar secondary markets can be limited. At times, only a few thousand dollars worth of resting bids and asks may exist.
+- **Wide Bid-Ask Spreads**: The difference between the highest price a buyer is willing to pay and the lowest price a seller is willing to accept can be wide (often several percentage points). If you buy and immediately sell, **you lose that spread**.
+- **Price Slippage**: Large trades can substantially move market prices. If you execute a market order during a period of low liquidity, you may receive significantly less value than the token's theoretical net asset value (NAV).
+- **Secondary Market Discount**: In periods of market panic, tokenized Treasuries may trade at a steep discount to their underlying collateral if buyers are scarce.
+
+### Smart Contract & Ledger Risk
+
+- **Code Vulnerabilities**: Smart contracts, token protocols, and decentralized exchange routers on Stellar Soroban could contain undiscovered bugs or economic exploits.
+- **Network Outages or Congestion**: Network latency or transaction submission failures could prevent you from exiting a position quickly during market volatility.
+
+### Issuer Blacklisting & Clawback Risk
+
+Because tokenized assets must comply with sanctions and financial regulations, issuers frequently retain the technical ability to freeze, block, or clawback tokens held by specific addresses if required by law enforcement or international sanctions (e.g., OFAC lists).
+
+---
+
+## 5. Where Assets Are Not Offered
+
+Tokenized real-world assets and securities are subject to strict geographic restrictions based on national securities regulations, anti-money laundering laws, and international sanctions.
+
+<Callout type="error">
+  **Restricted Persons & Jurisdictions**
+
+  Tokenized assets displayed or accessible via the Stellar ledger are **not offered to, and may not be held by**:
+  1. **US Persons**: Under Regulation S of the US Securities Act of 1933, assets such as Ondo's USDY are strictly not available to US citizens, US residents, or entities organized under US law.
+  2. **Sanctioned Regions**: Any individual or entity located in, or resident of, Cuba, Iran, North Korea, Syria, the Crimea region, Donetsk, Luhansk, or any other jurisdiction subject to comprehensive economic sanctions by OFAC, the European Union, the United Kingdom, or the United Nations.
+  3. **Unapproved Domestic Markets**: Jurisdictions where offering or arranging transactions in foreign tokenized securities requires local licenses (such as licensing requirements under Nigeria's Securities and Exchange Commission, as discussed in [NGN Rails](/research/reserve-tax)).
+</Callout>
+
+### User Responsibility
+
+Veil does not target, solicit, or market financial products to users in prohibited jurisdictions. It is your sole legal responsibility to verify that holding, buying, or selling tokenized assets is lawful under the statutes and regulations of the country where you reside.
+
+---
+
+## Summary
+
+| Question | The Fact |
+|---|---|
+| **Is Veil a broker?** | **No.** Veil is self-custody wallet software. |
+| **Does Veil hold my funds?** | **No.** Veil never takes custody; keys stay in your device enclave. |
+| **Does Veil KYC users?** | **No.** Veil collects no identity documents or personal information. |
+| **Does Veil advise on investments?** | **No.** Veil never gives financial or investment advice. |
+| **Are tokenized Treasuries FDIC insured?** | **No.** They carry issuer credit risk and market liquidity risk. |
+| **Can US persons hold USDY?** | **No.** Restricted under Regulation S. |
+
+For technical details on how Veil manages assets, reserves, and protocol interactions, visit the [Wallet Features Reference](/guides/wallet-features) and the [Security Architecture](/security).

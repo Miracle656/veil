@@ -1,5 +1,6 @@
 'use client'
 
+import { inclusionFee } from '@/lib/fees'
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useParams, useSearchParams } from 'next/navigation'
 import Image from 'next/image'
@@ -7,6 +8,7 @@ import {
   Horizon, Keypair, rpc as SorobanRpc, Contract, Account,
   TransactionBuilder, BASE_FEE, Asset, nativeToScVal, scValToNative,
 } from '@stellar/stellar-sdk'
+import { walletLocal, walletSession } from '@/lib/walletStorage'
 const Server = Horizon.Server
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
@@ -63,11 +65,13 @@ export default function TokenPage() {
   const [selectedTx,   setSelectedTx]   = useState<TxRecord | null>(null)
   const [loading,      setLoading]      = useState(true)
   const [sparkPoints,  setSparkPoints]  = useState<number[]>([])
+  const [allSparkPoints, setAllSparkPoints] = useState<number[]>([])
   const [priceChange,  setPriceChange]  = useState<number | null>(null)
+  const [rangeTab, setRangeTab] = useState<'1D' | '1W' | '1M' | 'ALL'>('1W')
 
   const fetchData = useCallback(async () => {
-    const signerSecret = sessionStorage.getItem('veil_signer_secret')
-      ?? localStorage.getItem('veil_signer_secret')
+    const signerSecret = walletSession.getItem('veil_signer_secret')
+      ?? walletLocal.getItem('veil_signer_secret')
 
     // Derive public key — prefer from secret, fall back to stored public key.
     // Never redirect to /lock here; missing secret just means read-only mode.
@@ -75,11 +79,11 @@ export default function TokenPage() {
     if (signerSecret) {
       signerPublicKey = Keypair.fromSecret(signerSecret).publicKey()
     } else {
-      const storedPubKey = localStorage.getItem('veil_signer_public_key')
+      const storedPubKey = walletLocal.getItem('veil_signer_public_key')
       if (!storedPubKey) { router.replace('/dashboard'); return }
       signerPublicKey = storedPubKey
     }
-    const walletAddress   = sessionStorage.getItem('invisible_wallet_address') ?? ''
+    const walletAddress   = walletSession.getItem('invisible_wallet_address') ?? ''
     const horizonServer   = new Server(network.horizonUrl)
 
     setLoading(true)
@@ -97,7 +101,7 @@ export default function TokenPage() {
             const sacContract = new Contract(sacAddress)
             const dummyKp     = Keypair.random()
             const dummyAcct   = new Account(dummyKp.publicKey(), '0')
-            const balanceTx   = new TransactionBuilder(dummyAcct, { fee: BASE_FEE, networkPassphrase: network.networkPassphrase })
+            const balanceTx   = new TransactionBuilder(dummyAcct, { fee: inclusionFee(), networkPassphrase: network.networkPassphrase })
               .addOperation(sacContract.call('balance', nativeToScVal(walletAddress, { type: 'address' })))
               .setTimeout(30).build()
             const sim = await rpcServer.simulateTransaction(balanceTx)
@@ -174,12 +178,13 @@ export default function TokenPage() {
       const current = parseFloat(balance ?? '0')
       const pts = [current]
       let running = current
-      for (const tx of filtered.slice(0, 14).reverse()) {
+      for (const tx of filtered.slice(0, 30).reverse()) {
         const amt = parseFloat(tx.amount)
         if (tx.type === 'received') running -= amt
         else if (tx.type === 'sent') running += amt
         pts.unshift(Math.max(0, running))
       }
+      setAllSparkPoints(pts)
       setSparkPoints(pts)
 
       // Price change: first tx vs current
@@ -195,6 +200,22 @@ export default function TokenPage() {
   }, [code, issuer, router])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Filter sparkline points based on selected range tab
+  useEffect(() => {
+    if (allSparkPoints.length === 0) return
+    const len = allSparkPoints.length
+    switch (rangeTab) {
+      case '1D': setSparkPoints(allSparkPoints.slice(Math.max(0, len - 5)))
+        break
+      case '1W': setSparkPoints(allSparkPoints.slice(Math.max(0, len - 10)))
+        break
+      case '1M': setSparkPoints(allSparkPoints.slice(Math.max(0, len - 20)))
+        break
+      case 'ALL': setSparkPoints(allSparkPoints)
+        break
+    }
+  }, [rangeTab, allSparkPoints])
 
   const swapHref = code === 'XLM'
     ? `/swap`
@@ -220,15 +241,15 @@ export default function TokenPage() {
 
       <main className="wallet-main">
 
-        {/* ── Token header ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.75rem', paddingTop: '1rem', paddingBottom: '2rem' }}>
+        {/* ── Token header: balance + fiat + 24h chip ── */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', paddingTop: '1rem', paddingBottom: '1.5rem' }}>
           {meta.logo ? (
-            <div style={{ width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', background: meta.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Image src={meta.logo} alt={code} width={64} height={64}
-                style={{ objectFit: 'contain', ...(code === 'XLM' ? { filter: 'invert(1)', padding: '10px' } : {}) }} />
+            <div style={{ width: 56, height: 56, borderRadius: '50%', overflow: 'hidden', background: meta.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Image src={meta.logo} alt={code} width={56} height={56}
+                style={{ objectFit: 'contain', ...(code === 'XLM' ? { filter: 'invert(1)', padding: '8px' } : {}) }} />
             </div>
           ) : (
-            <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(253,218,36,0.12)', border: '1px solid rgba(253,218,36,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', fontWeight: 700, color: 'var(--gold)' }}>
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(253,218,36,0.12)', border: '1px solid rgba(253,218,36,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.25rem', fontWeight: 700, color: 'var(--gold)' }}>
               {code[0]}
             </div>
           )}
@@ -244,10 +265,17 @@ export default function TokenPage() {
                 <div style={{ fontFamily: 'Lora, Georgia, serif', fontWeight: 600, fontStyle: 'italic', fontSize: '2.25rem', color: 'var(--off-white)', lineHeight: 1.1 }}>
                   {balance !== null ? parseFloat(balance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'}
                 </div>
-                <div style={{ fontSize: '0.875rem', color: 'rgba(246,247,248,0.45)', marginTop: '0.25rem' }}>
-                  {meta.name}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '6px' }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.45)' }}>{meta.name}</span>
                   {priceChange !== null && (
-                    <span style={{ marginLeft: '0.5rem', color: priceChange >= 0 ? 'var(--teal)' : '#FF6B6B', fontSize: '0.8125rem' }}>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '3px',
+                      padding: '2px 8px', borderRadius: '100px',
+                      fontSize: '0.6875rem', fontWeight: 600,
+                      background: priceChange >= 0 ? 'rgba(0,167,181,0.12)' : 'rgba(255,107,107,0.12)',
+                      color: priceChange >= 0 ? 'var(--teal)' : '#FF6B6B',
+                      border: `1px solid ${priceChange >= 0 ? 'rgba(0,167,181,0.25)' : 'rgba(255,107,107,0.25)'}`,
+                    }}>
                       {priceChange >= 0 ? '▲' : '▼'} {Math.abs(priceChange).toFixed(1)}%
                     </span>
                   )}
@@ -257,56 +285,94 @@ export default function TokenPage() {
           </div>
         </div>
 
-        {/* ── Sparkline chart ── */}
-        {!loading && sparkPoints.length > 1 && (
+        {/* ── Sparkline chart with range tabs ── */}
+        {!loading && allSparkPoints.length > 1 && (
           <div className="card" style={{ padding: '1rem 1rem 0.5rem', marginBottom: '1.5rem', overflow: 'hidden' }}>
-            <div style={{ fontSize: '0.6875rem', fontFamily: 'Anton, Impact, sans-serif', color: 'rgba(246,247,248,0.3)', letterSpacing: '0.08em', marginBottom: '0.75rem' }}>
-              BALANCE HISTORY
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <div style={{ fontSize: '0.6875rem', fontFamily: 'Anton, Impact, sans-serif', color: 'rgba(246,247,248,0.3)', letterSpacing: '0.08em' }}>
+                BALANCE HISTORY
+              </div>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                {(['1D', '1W', '1M', 'ALL'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setRangeTab(tab)}
+                    style={{
+                      padding: '3px 10px', borderRadius: '100px', fontSize: '0.625rem', fontWeight: 600,
+                      border: '1px solid', cursor: 'pointer', transition: 'all 120ms var(--ease)',
+                      ...(rangeTab === tab
+                        ? { background: 'rgba(253,218,36,0.15)', borderColor: 'rgba(253,218,36,0.35)', color: 'var(--gold)' }
+                        : { background: 'transparent', borderColor: 'var(--border-dim)', color: 'rgba(246,247,248,0.4)' }),
+                    }}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
             </div>
             <Sparkline points={sparkPoints} color={meta.color === 'var(--gold)' ? '#FDDA24' : (code === 'USDC' ? '#2775CA' : '#FFFFFF')} />
           </div>
         )}
 
-        {/* ── XLM balance breakdown ── */}
+        {/* ── Where it lives: smart-wallet vs fee-payer split ── */}
         {!loading && code === 'XLM' && (contractBalance !== null || feePayerBalance !== null) && (
-          <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            <div style={{ fontSize: '0.6875rem', fontFamily: 'Anton, Impact, sans-serif', color: 'rgba(246,247,248,0.3)', letterSpacing: '0.08em' }}>
-              BALANCE BREAKDOWN
+          <div className="card" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0' }}>
+            <div style={{ fontSize: '0.6875rem', fontFamily: 'Anton, Impact, sans-serif', color: 'rgba(246,247,248,0.3)', letterSpacing: '0.08em', marginBottom: '1rem' }}>
+              WHERE IT LIVES
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--off-white)', fontWeight: 500 }}>Smart wallet</p>
-                <p style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.35)', fontFamily: 'Inconsolata, monospace', marginTop: '0.125rem' }}>
-                  Soroban contract (C…)
-                </p>
+            {/* Visual split bar */}
+            {(() => {
+              const cAmt = contractBalance ? parseFloat(contractBalance) : 0
+              const fAmt = feePayerBalance ? parseFloat(feePayerBalance) : 0
+              const total = cAmt + fAmt
+              const cPct = total > 0 ? (cAmt / total) * 100 : 50
+              return (
+                <div style={{ display: 'flex', height: '6px', borderRadius: '3px', overflow: 'hidden', marginBottom: '14px', background: 'rgba(255,255,255,0.06)' }}>
+                  <div style={{ width: `${cPct}%`, background: 'var(--teal)', borderRadius: '3px 0 0 3px', transition: 'width 300ms var(--ease)' }} />
+                  <div style={{ width: `${100 - cPct}%`, background: 'var(--gold)', borderRadius: '0 3px 3px 0', transition: 'width 300ms var(--ease)' }} />
+                </div>
+              )
+            })()}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--teal)', flexShrink: 0 }} />
+                <div>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--off-white)', fontWeight: 500 }}>Smart wallet</p>
+                  <p style={{ fontSize: '0.625rem', color: 'rgba(246,247,248,0.35)', fontFamily: 'Inconsolata, monospace', marginTop: '2px' }}>
+                    Soroban contract (C…)
+                  </p>
+                </div>
               </div>
-              <span style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.9375rem' }}>
+              <span style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.9375rem', fontWeight: 600 }}>
                 {contractBalance !== null ? parseFloat(contractBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'} XLM
               </span>
             </div>
             <div style={{ height: '1px', background: 'var(--border-dim)' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--off-white)', fontWeight: 500 }}>Fee-payer account</p>
-                <p style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.35)', fontFamily: 'Inconsolata, monospace', marginTop: '0.125rem' }}>
-                  Classic account (G…)
-                </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--gold)', flexShrink: 0 }} />
+                <div>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--off-white)', fontWeight: 500 }}>Fee-payer</p>
+                  <p style={{ fontSize: '0.625rem', color: 'rgba(246,247,248,0.35)', fontFamily: 'Inconsolata, monospace', marginTop: '2px' }}>
+                    Classic account (G…)
+                  </p>
+                </div>
               </div>
-              <span style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.9375rem' }}>
+              <span style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.9375rem', fontWeight: 600 }}>
                 {feePayerBalance !== null ? parseFloat(feePayerBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }) : '—'} XLM
               </span>
             </div>
           </div>
         )}
 
-        {/* ── Actions ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '2rem' }}>
+        {/* ── Action row: Send / Receive / Swap ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px', marginBottom: '2rem' }}>
           <ActionBtn label="Send" onClick={() => router.push(sendHref)}
             icon={<path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>} />
           <ActionBtn label="Receive" onClick={() => router.push('/receive')}
             icon={<path d="M19 12H5M12 19l-7-7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>} />
           <ActionBtn label="Swap" onClick={() => router.push(swapHref)}
-            icon={<path d="M7 10l5-5 5 5M17 14l-5 5-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>} />
+            icon={<path d="M7 16l-4-4 4-4M17 8l4 4-4 4M3 12h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>} />
         </div>
 
         {/* ── Transactions ── */}

@@ -1,0 +1,66 @@
+<svg width="400" height="400" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+
+    <linearGradient id="gMark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#FFE566"/>
+      <stop offset="50%"  stop-color="#FDDA24"/>
+      <stop offset="100%" stop-color="#B89000"/>
+    </linearGradient>
+
+    <linearGradient id="gBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#161616"/>
+      <stop offset="100%" stop-color="#0A0A0A"/>
+    </linearGradient>
+
+    <radialGradient id="gGlow" cx="50%" cy="55%" r="40%">
+      <stop offset="0%"   stop-color="#FDDA24" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#FDDA24" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+  </defs>
+
+  <!-- background -->
+  <rect width="400" height="400" fill="url(#gBg)"/>
+
+  <!-- ambient glow behind mark -->
+  <rect width="400" height="400" fill="url(#gGlow)"/>
+
+  <!-- ── V mark — centred, large ─────────────────────────────────── -->
+  <g transform="translate(200, 200)" filter="url(#glow)">
+
+    <!-- outer V -->
+    <path d="M-80 -90 L0 100 L80 -90"
+          fill="none"
+          stroke="url(#gMark)"
+          stroke-width="12"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- inner ghost V -->
+    <path d="M-48 -90 L0 60 L48 -90"
+          fill="none"
+          stroke="#FDDA24"
+          stroke-width="4"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          opacity="0.28"/>
+
+    <!-- horizontal veil bar -->
+    <line x1="-65" y1="-18" x2="65" y2="-18"
+          stroke="#FDDA24" stroke-width="2.5"
+          stroke-linecap="round" opacity="0.2"/>
+
+    <!-- apex dot -->
+    <circle cx="0" cy="100" r="6" fill="#FDDA24" opacity="0.6"/>
+
+  </g>
+
+</svg>

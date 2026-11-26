@@ -23,10 +23,10 @@
  * stable across sessions for a given credential — the authenticator returns the
  * same PRF output for the same (credential, salt) pair every time.
  */
-const PRF_SALT = new TextEncoder().encode('invisible-wallet/prf/v1');
+const PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/v1'));
 
 /** HKDF context string, separating this key from any other use of the PRF output. */
-const HKDF_INFO = new TextEncoder().encode('invisible-wallet/local-encryption/v1');
+const HKDF_INFO = new Uint8Array(new TextEncoder().encode('invisible-wallet/local-encryption/v1'));
 
 /** AES-GCM IV length in bytes (96-bit nonce, as recommended for GCM). */
 const IV_LENGTH = 12;
@@ -172,6 +172,60 @@ export async function deriveKeyFromPrf(prfOutput: Uint8Array): Promise<CryptoKey
         false,
         ['encrypt', 'decrypt']
     );
+}
+
+// ── Fee-payer seed derivation (ADR 0003) ──────────────────────────────────────
+
+/**
+ * PRF evaluation salt for the fee-payer key. DISTINCT from {@link PRF_SALT} so
+ * the fee-payer seed is cryptographically separated from the local-encryption
+ * key — the same passkey yields unrelated outputs for the two salts.
+ */
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+
+/** HKDF context string for the fee-payer Ed25519 seed. */
+const FEE_PAYER_HKDF_INFO = new Uint8Array(new TextEncoder().encode('invisible-wallet/feepayer-ed25519/v1'));
+
+/**
+ * Derive a 32-byte Ed25519 seed for the fee-payer key from raw WebAuthn PRF
+ * output, via HKDF-SHA256. Unlike {@link deriveKeyFromPrf} (which yields a
+ * non-extractable AES key) this returns the raw seed bytes, because the caller
+ * builds a Stellar Keypair from them. The seed is passkey-bound — it can only be
+ * produced by an authenticator that holds the credential — and is only ever held
+ * in memory, never persisted (ADR 0003, fixing C2/C3).
+ */
+export async function deriveFeePayerSeedFromPrf(prfOutput: Uint8Array): Promise<Uint8Array> {
+    // Pass a fresh Uint8Array view (a valid BufferSource) rather than a sliced
+    // ArrayBuffer — the latter trips cross-realm `instanceof ArrayBuffer` checks
+    // under jsdom, and the raw view works identically in the browser. The copy
+    // also fixes the buffer type to ArrayBuffer for strict BufferSource typing.
+    const ikm = new Uint8Array(prfOutput);
+    const baseKey = await globalThis.crypto.subtle.importKey(
+        'raw', ikm, 'HKDF', false, ['deriveBits']
+    );
+    const bits = await globalThis.crypto.subtle.deriveBits(
+        { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: FEE_PAYER_HKDF_INFO },
+        baseKey,
+        256 // 32 bytes = Ed25519 seed
+    );
+    return new Uint8Array(bits);
+}
+
+/**
+ * Run a WebAuthn PRF assertion against `credentialId` using the fee-payer salt
+ * and return the raw PRF output, or null when the authenticator does not surface
+ * a PRF result (PRF unsupported → the caller should fall back). The evaluator is
+ * injectable for tests and non-browser platforms; in the browser it defaults to
+ * a `navigator.credentials.get` with the PRF extension.
+ */
+export async function evaluateFeePayerPrf(
+    credentialId: string,
+    rpId?: string,
+    evaluator?: PrfEvaluator,
+): Promise<Uint8Array | null> {
+    const evalFn = evaluator ?? (isPrfSupported() ? browserPrfEvaluator(credentialId, rpId) : null);
+    if (!evalFn) return null;
+    return evalFn(FEE_PAYER_PRF_SALT);
 }
 
 /** Import a raw 32-byte key as an AES-GCM-256 key (used for the fallback path). */

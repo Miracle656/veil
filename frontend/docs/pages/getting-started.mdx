@@ -9,6 +9,10 @@ import { Callout, Steps } from 'nextra/components'
 
 This guide walks you through setting up the Veil smart contract and TypeScript SDK in a local development environment.
 
+<Callout type="info">
+Veil is **live on Stellar mainnet** — the factory `CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK` is deployed and source-verified (see the [introduction](/) for on-chain receipts). Develop against Testnet, then point at Mainnet for production; the [network guide](/guides/networks) covers the differences, including the paid-RPC proxy mainnet requires.
+</Callout>
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) with `wasm32-unknown-unknown` target
@@ -95,6 +99,30 @@ export default function WalletDemo() {
 }
 ```
 
+### Vue 3 — useInvisibleWallet composable
+
+```vue
+<script setup lang="ts">
+import { useInvisibleWallet } from 'invisible-wallet-sdk/vue'
+
+const { address, isPending, error, register, signAuthEntry, login } =
+  useInvisibleWallet({
+    factoryAddress: 'FACTORY_CONTRACT_ADDRESS',
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+  })
+</script>
+
+<template>
+  <p v-if="address">Wallet: {{ address }}</p>
+  <button v-else :disabled="isPending" @click="register('alice')">
+    {{ isPending ? 'Creating...' : 'Create Wallet' }}
+  </button>
+</template>
+```
+
+Both adapters wrap the same framework-agnostic core, so they expose the same actions — only the state differs (React state vs. Vue refs). `vue` is an optional peer dependency, and neither entry point pulls in the other's framework.
+
 ### Signing a Soroban auth entry
 
 ```tsx
@@ -132,6 +160,17 @@ RPC URL: `http://localhost:8000/soroban/rpc`
 - RPC: `https://soroban-testnet.stellar.org`
 - Network passphrase: `Test SDF Network ; September 2015`
 - Friendbot: `https://friendbot.stellar.org/?addr=<your_address>`
+
+### Mainnet
+
+Veil runs on mainnet today. Unlike testnet, **there is no public Soroban RPC** — the wallet reaches a paid provider through a server-side proxy, so the RPC URL is never shipped to the browser.
+
+- Factory contract: `CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`
+- Horizon: `https://horizon.stellar.org`
+- Network passphrase: `Public Global Stellar Network ; September 2015`
+- Soroban RPC: a paid/keyed provider set in the server-only `MAINNET_RPC_URL` (no Friendbot — buy XLM from an exchange)
+
+See [Choosing a Network → Mainnet RPC is paid](/guides/networks#mainnet-rpc-is-paid-and-why-the-wallet-proxies-it) for providers and the proxy pattern.
 
 ## Next Steps
 

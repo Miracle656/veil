@@ -1,21 +1,21 @@
-# create-veil-app
+# create-veil-wallet
 
 Scaffold a new [Veil](https://github.com/Miracle656/veil) passkey-wallet app
-from a template — `npx create-veil-app my-app` gives you a working,
+from a template — `npx create-veil-wallet my-app` gives you a working,
 installed project in about 30 seconds.
 
 ## Usage
 
 ```bash
-npx create-veil-app my-app
+npx create-veil-wallet my-app
 ```
 
 You'll be prompted to choose a template if you don't pass `--template`:
 
 ```bash
-npx create-veil-app my-app --template=next     # Next.js
-npx create-veil-app my-app --template=vite     # Vite + React
-npx create-veil-app my-app --template=vanilla  # Vanilla JS, no framework
+npx create-veil-wallet my-app --template=next     # Next.js
+npx create-veil-wallet my-app --template=vite     # Vite + React
+npx create-veil-wallet my-app --template=vanilla  # Vanilla JS, no framework
 ```
 
 Each command:

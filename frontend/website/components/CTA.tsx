@@ -48,7 +48,7 @@ export default function CTA() {
           </p>
 
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
-            <a href="https://veil-2ap8.vercel.app">
+            <a href="https://docs.useveilapp.xyz">
               <motion.button
                 whileHover={{ scale: 1.04, boxShadow: '0 0 28px rgba(5,162,194,0.2)' }}
                 whileTap={{ scale: 0.97 }}

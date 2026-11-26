@@ -8,6 +8,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 soroban-sdk = "22.0.0"
+# On-curve P-256 validation (M3 fix): validate_public_key now calls
+# VerifyingKey::from_sec1_bytes in both test and production builds.
+# Only the `ecdsa` feature is needed; `std` is intentionally omitted so
+# the crate compiles under #![no_std] for the wasm32-unknown-unknown target.
+p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils"] }

@@ -1,0 +1,242 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Horizon, Keypair } from '@stellar/stellar-sdk';
+import { Buffer } from 'buffer';
+
+import { recordFeePayerSource } from './feePayerSource';
+import { getNetwork } from './network';
+import { evaluatePrf } from './passkey';
+import type { PrfOutcome } from './prfOutcome';
+import { fundWithFriendbot, type CreatedWallet } from './classicWallet';
+import { writeBreadcrumbs } from './walletBreadcrumbs';
+import {
+  getPasskeyPublicKey,
+  getSignerSecret,
+  getWalletAddress,
+  setPasskeyCredential,
+  setPasskeyId,
+  setSignerSecret,
+  setWalletAddress,
+} from './walletStore';
+
+/**
+ * Domain-separated PRF salt for the fee-payer key. Matches the SDK's
+ * `FEE_PAYER_PRF_SALT` so the passkey → fee-payer mapping is stable.
+ */
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+
+/** SDK storage key holding the WebAuthn credential id (see useInvisibleWallet). */
+const SDK_KEY_ID = 'invisible_wallet_key_id';
+
+/** Minimal shape of the SDK's register(); avoids importing the whole hook type. */
+type Registerable = {
+  register: (username?: string) => Promise<{ walletAddress: string; publicKeyBytes?: Uint8Array }>;
+};
+
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Create a passkey smart wallet (dev build only — needs the native passkey
+ * module + a domain-associated RP):
+ *
+ *   1. `register()` creates a WebAuthn P-256 credential and computes the
+ *      deterministic C-address wallet (via the factory).
+ *   2. Derive the fee-payer G-account from the passkey's WebAuthn PRF output —
+ *      deterministic, so it's recoverable from the same passkey. Falls back to a
+ *      random keypair when PRF is unavailable (non-recoverable that session).
+ *   3. Fund the fee-payer with Friendbot (it sponsors the C-wallet's fees;
+ *      Friendbot only funds classic G-accounts).
+ *   4. Persist to the app's secure store so the rest of the app recognises it.
+ *
+ * NOTE: transacting *from* the C-wallet (send/swap) uses the smart-wallet
+ * signing path (passkey __check_auth), not the keypair path used in testnet
+ * mode — that's a separate milestone.
+ */
+export type PasskeyWalletResult =
+  | {
+      status: 'created';
+      wallet: CreatedWallet;
+    }
+  | {
+      status: 'unsupported';
+      walletAddress: string;
+      publicKeyBytes?: Uint8Array;
+      keyId: string | null;
+      issue: Exclude<PrfOutcome, 'ok'>;
+      commit: (feePayer?: Keypair | null) => Promise<CreatedWallet>;
+    };
+
+/**
+ * Create a passkey smart wallet (dev build only — needs the native passkey
+ * module + a domain-associated RP):
+ *
+ *   1. `register()` creates a WebAuthn P-256 credential and computes the
+ *      deterministic C-address wallet (via the factory).
+ *   2. Evaluate PRF to determine whether the platform's manager returns a PRF
+ *      output.
+ *   3. If PRF is supported, derive fee-payer G-account, fund, write breadcrumbs,
+ *      save to storage, and return `{ status: 'created', wallet }`.
+ *   4. If PRF is NOT supported, do not commit to storage yet. Return
+ *      `{ status: 'unsupported', walletAddress, publicKeyBytes, keyId, issue, commit }`
+ *      so the caller can surface the trade-off before committing.
+ */
+export async function createPasskeyWallet(
+  wallet: Registerable,
+  options?: { forceCommit?: boolean }
+): Promise<PasskeyWalletResult> {
+  const { walletAddress, publicKeyBytes } = await wallet.register('Veil wallet');
+
+  const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+  let feePayer: Keypair | null = null;
+  let issue: Exclude<PrfOutcome, 'ok'> = 'failed';
+  if (keyId) {
+    // The PRF output is what makes the wallet recoverable from the passkey
+    // alone — retry once before giving up on it. Not after `unsupported`: the
+    // passkey already answered without PRF, and asking again gets the same.
+    for (let attempt = 0; attempt < 2 && !feePayer; attempt++) {
+      const result = await evaluatePrf(keyId, FEE_PAYER_PRF_SALT);
+      if (result.outcome === 'ok' && result.output) {
+        feePayer = Keypair.fromRawEd25519Seed(Buffer.from(result.output.subarray(0, 32)));
+      } else {
+        issue = result.outcome === 'ok' ? 'unsupported' : result.outcome;
+        if (issue === 'unsupported') break;
+      }
+    }
+  }
+
+  const fallbackFeePayer = Keypair.random();
+
+  const doCommit = async (fp?: Keypair | null): Promise<CreatedWallet> => {
+    const finalFeePayer = fp ?? feePayer ?? fallbackFeePayer;
+    const recoverable = finalFeePayer !== fallbackFeePayer;
+
+    // Friendbot funding is a testnet-only step. On mainnet, fee-payers have no
+    // faucet and must be funded with real XLM.
+    const network = getNetwork();
+    const funded =
+      network.name === 'testnet' && network.friendbotUrl
+        ? await fundWithFriendbot(finalFeePayer.publicKey())
+        : false;
+
+    void writeBreadcrumbs(finalFeePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
+
+    await Promise.all([
+      setWalletAddress(walletAddress),
+      setSignerSecret(finalFeePayer.secret()),
+      // Whether this wallet can be recovered from the passkey alone. Settings
+      // and the recovery screens read it back through `getFeePayerInfo()`, and
+      // deferring the commit dropped this call — leaving `source: 'unknown'`,
+      // which reads as "we have no idea" rather than "random, not recoverable".
+      recordFeePayerSource(finalFeePayer.publicKey(), recoverable ? 'prf' : 'random'),
+      keyId && publicKeyBytes
+        ? setPasskeyCredential(keyId, toHex(publicKeyBytes))
+        : keyId
+          ? setPasskeyId(keyId)
+          : Promise.resolve(),
+    ]);
+
+    return { address: walletAddress, funded, recoverable, ...(recoverable ? {} : { recoveryIssue: issue }) };
+  };
+
+  if (feePayer || options?.forceCommit) {
+    const wallet = await doCommit(feePayer);
+    return { status: 'created', wallet };
+  }
+
+  return {
+    status: 'unsupported',
+    walletAddress,
+    publicKeyBytes: publicKeyBytes ?? undefined,
+    keyId,
+    issue,
+    commit: (fp?: Keypair | null) => doCommit(fp),
+  };
+}
+
+async function accountExists(address: string): Promise<boolean> {
+  try {
+    await new Horizon.Server(getNetwork().horizonUrl).loadAccount(address);
+    return true;
+  } catch (err) {
+    const status = (err as { response?: { status?: number } })?.response?.status;
+    // Only a definite 404 means "not on chain". Anything else is unknown, and
+    // unknown must count as existing, since the answer decides whether a key
+    // that may control money gets replaced.
+    return !(status === 404 || (err instanceof Error && err.name === 'NotFoundError'));
+  }
+}
+
+export type RecoveryRetry =
+  | { bound: true }
+  | { bound: false; issue: Exclude<PrfOutcome, 'ok'> | 'funded' };
+
+export type Recreation = { ok: true; result: PasskeyWalletResult } | { ok: false; reason: 'funded' };
+
+/**
+ * Build the wallet again from a fresh passkey.
+ *
+ * Some password managers never implement the WebAuthn PRF extension, and no
+ * amount of retrying one of *their* passkeys will produce a PRF output —
+ * {@link retryRecoveryBinding} asks the same authenticator the same question
+ * and gets the same answer. The only thing that changes the answer is a passkey
+ * held somewhere else, and the platform asks where to save each new one. So
+ * re-registering is the fix, and it keeps the user inside the app instead of
+ * sending them into device settings to delete a credential by hand.
+ *
+ * This replaces the wallet rather than repairing it: the address is derived
+ * from the passkey's public key, so a different passkey is a different wallet.
+ * That is only safe while the old one is empty, which is why this is offered on
+ * the creation screen and nowhere else, and why an on-chain spending account
+ * refuses instead.
+ */
+export async function recreatePasskeyWallet(
+  wallet: Registerable,
+  options?: { forceCommit?: boolean }
+): Promise<Recreation> {
+  const previous = await getSignerSecret();
+  // Friendbot funds every wallet moments after it is made, so "the account
+  // exists" says nothing on testnet about whether it holds anything worth
+  // keeping. On a network with no faucet, it does.
+  if (previous && !getNetwork().friendbotUrl) {
+    if (await accountExists(Keypair.fromSecret(previous).publicKey())) return { ok: false, reason: 'funded' };
+  }
+  return { ok: true, result: await createPasskeyWallet(wallet, options) };
+}
+
+/**
+ * Try again to bind the recovery secret to a freshly created wallet.
+ *
+ * When PRF failed at creation, the spending account got a random key, which no
+ * other device can re-derive. If PRF works now, that key is replaced with the
+ * passkey-derived one, so recovery works as designed.
+ *
+ * Only while the random account is not on chain. Once it exists it may hold
+ * XLM or trustlines, and swapping its key would strand them; that case refuses
+ * with `funded` and changes nothing. The smart wallet's own address never
+ * changes, because it comes from the passkey's public key, not this key.
+ */
+export async function retryRecoveryBinding(): Promise<RecoveryRetry> {
+  const keyId = await AsyncStorage.getItem(SDK_KEY_ID);
+  const walletAddress = await getWalletAddress();
+  if (!keyId || !walletAddress) return { bound: false, issue: 'failed' };
+
+  const result = await evaluatePrf(keyId, FEE_PAYER_PRF_SALT);
+  if (result.outcome !== 'ok' || !result.output) {
+    return { bound: false, issue: result.outcome === 'ok' ? 'unsupported' : result.outcome };
+  }
+  const derived = Keypair.fromRawEd25519Seed(Buffer.from(result.output.subarray(0, 32)));
+
+  const currentSecret = await getSignerSecret();
+  if (currentSecret && currentSecret !== derived.secret()) {
+    if (await accountExists(Keypair.fromSecret(currentSecret).publicKey())) {
+      return { bound: false, issue: 'funded' };
+    }
+  }
+
+  await Promise.all([setSignerSecret(derived.secret()), recordFeePayerSource(derived.publicKey(), 'prf')]);
+  const pubHex = await getPasskeyPublicKey().catch(() => null);
+  const pub = pubHex && /^[0-9a-fA-F]{130}$/.test(pubHex) ? new Uint8Array(Buffer.from(pubHex, 'hex')) : null;
+  void writeBreadcrumbs(derived.secret(), walletAddress, pub).catch(() => undefined);
+  return { bound: true };
+}

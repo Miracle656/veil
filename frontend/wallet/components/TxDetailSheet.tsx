@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { getNetwork } from '@/lib/network'
+import { useReverseName } from '@/hooks/useReverseName'
 
 export interface TxRecord {
   id: string
@@ -23,6 +24,8 @@ interface TxDetailSheetProps {
 }
 
 export function TxDetailSheet({ tx, onClose }: TxDetailSheetProps) {
+  const { name: reverseName } = useReverseName(tx.counterparty)
+
   // Close on Escape
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -86,8 +89,8 @@ export function TxDetailSheet({ tx, onClose }: TxDetailSheetProps) {
           )}
           <DetailRow
             label={tx.type === 'sent' ? 'To' : tx.type === 'swapped' ? 'Via' : 'From'}
-            value={tx.counterparty.length > 16 ? `${tx.counterparty.slice(0, 8)}...${tx.counterparty.slice(-8)}` : tx.counterparty}
-            mono
+            value={reverseName ?? (tx.counterparty.length > 16 ? `${tx.counterparty.slice(0, 8)}...${tx.counterparty.slice(-8)}` : tx.counterparty)}
+            mono={!reverseName}
           />
           <DetailRow label="Date" value={date} />
           {tx.memo && <DetailRow label="Memo" value={tx.memo} />}

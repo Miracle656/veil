@@ -1,3 +1,4 @@
+import { errorMessage } from './errorMessage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
@@ -10,7 +11,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
  * concerns and remains unit-testable on its own.
  */
 
-const STORAGE_KEY = 'veil_outbox_v1';
+/** AsyncStorage key holding the durable outbox queue. Wallet-derived: cleared on reset. */
+export const OUTBOX_STORAGE_KEY = 'veil_outbox_v1';
 
 /** Give up on an action after this many failed flush attempts. */
 export const MAX_ATTEMPTS = 5;
@@ -56,7 +58,7 @@ function notify(): void {
 
 async function persist(): Promise<void> {
   try {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+    await AsyncStorage.setItem(OUTBOX_STORAGE_KEY, JSON.stringify(queue));
   } catch (error) {
     console.warn('[outbox] failed to persist queue', error);
   }
@@ -85,7 +87,7 @@ export async function hydrateOutbox(): Promise<OutboxAction[]> {
   if (hydrated) return getOutbox();
   hydrated = true;
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    const raw = await AsyncStorage.getItem(OUTBOX_STORAGE_KEY);
     if (raw) {
       const parsed: unknown = JSON.parse(raw);
       queue = Array.isArray(parsed) ? parsed.filter(isOutboxAction) : [];
@@ -197,7 +199,7 @@ export async function flushOutbox(): Promise<FlushSummary> {
         remaining.push({
           ...action,
           attempts,
-          lastError: error instanceof Error ? error.message : String(error),
+          lastError: errorMessage(error),
         });
         summary.retried += 1;
       }

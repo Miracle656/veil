@@ -1,0 +1,209 @@
+/**
+ * Talking to the Veil agent: one HTTPS request per message.
+ *
+ * This replaced a WebSocket client (reconnect with backoff, a send queue) that
+ * talked to an always-on agent server on its own host. The agent now runs as a
+ * serverless route inside the web wallet's deployment, which cannot hold a
+ * socket — so each message is a POST that carries the recent conversation and
+ * gets the reply back. A dropped connection is now just a failed request the
+ * user can resend; there is no socket to lose when the app is backgrounded.
+ */
+
+import { StrKey } from '@stellar/stellar-sdk';
+import type { AgentMessage, CashOutIntent, InvestIntent, SwapIntent } from './agentMessages';
+
+/** Who the agent is talking to. Stored by lib/agentProfile.ts. */
+export type AgentUserProfile = {
+  name?: string;
+  language?: string;
+  persona?: string;
+  role?: string;
+};
+
+/** The hosted route. EXPO_PUBLIC_AGENT_URL overrides it, e.g. for a preview deploy. */
+export const PRODUCTION_AGENT_URL = 'https://app.useveilapp.xyz/api/agent';
+
+/**
+ * Where to send messages. A plain http:// URL is only accepted for a local
+ * machine: requests carry wallet addresses and replies carry transactions.
+ */
+export function resolveAgentUrl(configured: string | undefined): string {
+  const url = configured?.trim();
+  if (!url) return PRODUCTION_AGENT_URL;
+  try {
+    const parsed = new URL(url);
+    // Private ranges must match a literal IPv4 address, not a prefix. `/^10\./`
+    // also matched the hostname `10.evil.com`, which let a remote host be
+    // reached over plaintext HTTP purely by choosing its name.
+    const privateIpv4 = /^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2})$/;
+    const local = ['localhost', '127.0.0.1', '10.0.2.2'].includes(parsed.hostname) ||
+      privateIpv4.test(parsed.hostname);
+    if (parsed.protocol === 'https:' || (parsed.protocol === 'http:' && local)) return url;
+  } catch {
+    // fall through
+  }
+  return PRODUCTION_AGENT_URL;
+}
+
+export function getAgentUrl(): string {
+  return resolveAgentUrl(process.env['EXPO_PUBLIC_AGENT_URL']);
+}
+
+export type AgentTurn = { role: 'user' | 'assistant'; content: string };
+
+/**
+ * The conversation so far, as the agent should see it. Errors and app notices
+ * are this device's own messages, not part of the conversation, so they stay out.
+ */
+export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
+  const turns: AgentTurn[] = [];
+  for (const message of messages) {
+    if (message.kind === 'user') turns.push({ role: 'user', content: message.text });
+    else if (
+      (message.kind === 'agent' ||
+        message.kind === 'proposal' ||
+        message.kind === 'swap' ||
+        message.kind === 'invest' ||
+        message.kind === 'cashout') &&
+      message.text.trim()
+    ) {
+      turns.push({ role: 'assistant', content: message.text });
+    }
+  }
+  return turns;
+}
+
+/** Parse the small, bank-account-free cash-out payload before it reaches navigation. */
+export function parseCashOutIntent(value: unknown): CashOutIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.amountNGN !== 'number' ||
+    !Number.isFinite(v.amountNGN) ||
+    v.amountNGN <= 0 ||
+    typeof v.rate !== 'number' ||
+    !Number.isFinite(v.rate) ||
+    v.rate <= 0
+  ) {
+    return undefined;
+  }
+  return { amountNGN: v.amountNGN, rate: v.rate };
+}
+
+export type AgentReply = {
+  response: string;
+  pendingTxXdr?: string;
+  pendingTxSummary?: string;
+  swapIntent?: SwapIntent;
+  investIntent?: InvestIntent;
+  cashOutIntent?: CashOutIntent;
+};
+
+/**
+ * A swap hand-off from the server, or undefined when it is not one this app can
+ * open. Only short ticker codes and a plain positive amount get through — the
+ * Swap screen checks again, but nothing malformed should reach navigation.
+ */
+export function parseSwapIntent(value: unknown): SwapIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const code = (c: unknown) =>
+    typeof c === 'string' && /^[A-Z0-9]{1,12}$/.test(c) ? c : undefined;
+  const from = code(v.from);
+  const to = code(v.to);
+  if (!from || !to || from === to) return undefined;
+  const amount =
+    typeof v.amount === 'string' && /^\d+(\.\d{1,7})?$/.test(v.amount) && Number(v.amount) > 0
+      ? v.amount
+      : undefined;
+  return { from, to, ...(amount ? { amount } : {}) };
+}
+
+/**
+ * An invest hand-off from the server, or undefined when it is not valid.
+ */
+export function parseInvestIntent(value: unknown): InvestIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  let code = typeof v.code === 'string' && /^[A-Z0-9]{1,12}$/.test(v.code) ? v.code : undefined;
+  let issuer = typeof v.issuer === 'string' && StrKey.isValidEd25519PublicKey(v.issuer) ? v.issuer : undefined;
+
+  if (v.asset && typeof v.asset === 'object') {
+    const asset = v.asset as Record<string, unknown>;
+    if (!code && typeof asset.code === 'string' && /^[A-Z0-9]{1,12}$/.test(asset.code.trim().toUpperCase())) {
+      code = asset.code.trim().toUpperCase();
+    }
+    if (!issuer && typeof asset.issuer === 'string' && StrKey.isValidEd25519PublicKey(asset.issuer.trim())) {
+      issuer = asset.issuer.trim();
+    }
+  }
+
+  if (!code || !issuer) return undefined;
+
+  // A hand-off without a usable amount is dropped, not trimmed down to one
+  // without an amount. The agent has already told the user it is ready to buy a
+  // specific quantity; opening the screen with that quantity missing, or with a
+  // negative one silently discarded, changes what was agreed. This also matches
+  // the web twin `app/earn/prefill.ts`, which refuses the same inputs — the two
+  // disagreeing is how one hand-off behaves differently per client.
+  const amount = typeof v.amount === 'string' ? v.amount.trim() : '';
+  if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) return undefined;
+  const quoteCurrency =
+    typeof v.quoteCurrency === 'string' && /^[A-Z0-9]{1,12}$/.test(v.quoteCurrency)
+      ? v.quoteCurrency
+      : undefined;
+
+  return { code, issuer, amount, ...(quoteCurrency ? { quoteCurrency } : {}), asset: { code, issuer } };
+}
+
+export type AgentRequest = {
+  message: string;
+  walletAddress: string;
+  feePayerAddress?: string;
+  profile?: AgentUserProfile;
+  history: AgentTurn[];
+};
+
+/**
+ * Longer than the route's own 60s limit, so the server always answers — with a
+ * reply or an error — before this device gives up on it.
+ */
+const TIMEOUT_MS = 70_000;
+
+export async function sendAgentMessage(
+  request: AgentRequest,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AgentReply> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetchImpl(getAgentUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+      signal: controller.signal,
+    });
+    const data = (await res.json().catch(() => ({}))) as Partial<AgentReply> & { error?: string };
+    if (!res.ok) {
+      throw new Error(data.error ?? `The agent could not answer (${res.status}).`);
+    }
+    return {
+      response: typeof data.response === 'string' ? data.response : '',
+      pendingTxXdr: typeof data.pendingTxXdr === 'string' ? data.pendingTxXdr : undefined,
+      pendingTxSummary: typeof data.pendingTxSummary === 'string' ? data.pendingTxSummary : undefined,
+      swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
+      investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
+      cashOutIntent: parseCashOutIntent((data as { cashOutIntent?: unknown }).cashOutIntent),
+    };
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') {
+      throw new Error('The agent took too long to answer. Try again.');
+    }
+    if (err instanceof TypeError) {
+      throw new Error("Couldn't reach the agent. Check your connection and try again.");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}

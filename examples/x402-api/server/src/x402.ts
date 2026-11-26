@@ -30,6 +30,15 @@ import {
  */
 const PRICE: AssetAmount = { asset: XLM_SAC_ADDRESS, amount: PRICE_STROOPS }
 
+/**
+ * How long a signed payment stays valid. This is deliberately shorter than the
+ * Veil wallet's own `__check_auth` signatures, which expire 100 ledgers (~500 s)
+ * out: a single 0.01 XLM call has no reason to keep a signed payment alive that
+ * long. 120 s is ~24 ledgers. The value is part of the passkey challenge on the
+ * client, so changing it changes what the user is asked to approve.
+ */
+const MAX_TIMEOUT_SECONDS = 120
+
 const ROUTES: RoutesConfig = {
   'GET /paid/quote': {
     description: 'Premium price quote — 0.01 XLM per call',
@@ -38,7 +47,7 @@ const ROUTES: RoutesConfig = {
       network: NETWORK,
       payTo: PAY_TO || facilitatorAddress(),
       price: PRICE,
-      maxTimeoutSeconds: 120,
+      maxTimeoutSeconds: MAX_TIMEOUT_SECONDS,
     },
   },
 }

@@ -1,0 +1,29 @@
+appId: xyz.veil.wallet
+---
+# Cold start from a wiped install: no wallet in secure storage, no `veil_seen_welcome`,
+# no `veil_seen_tutorial`. Every flow begins here so ordering between flows can
+# never leak state.
+#
+# `app/index.tsx` routes on that state — wallet to /dashboard, welcome-seen to
+# /create-wallet, otherwise /welcome — so a wiped install always lands on the
+# welcome screen.
+- launchApp:
+    clearState: true
+- runFlow: dismiss-offline.yaml
+# A memory-starved emulator raises "Pixel Launcher isn't responding" over the
+# app. The welcome screen is behind that dialog, so the id check fails until
+# the dialog is closed. "Close app" kills the launcher, not Veil.
+- repeat:
+    times: 6
+    while:
+      notVisible:
+        id: "welcome-screen"
+    commands:
+      - tapOn:
+          text: "Close app"
+          optional: true
+      - extendedWaitUntil:
+          visible:
+            id: "welcome-screen"
+          timeout: 5000
+          optional: true

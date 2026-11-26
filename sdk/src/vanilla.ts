@@ -1,7 +1,6 @@
 import {
     Account,
     Contract,
-    Keypair,
     rpc as SorobanRpc,
     Horizon,
     StrKey,
@@ -14,6 +13,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 const HorizonServer = Horizon.Server;
+import { resolveSigner, signWith, type SignerInput } from './signer';
 import {
     bufferToHex,
     hexToUint8Array,
@@ -21,6 +21,7 @@ import {
     extractP256PublicKey,
     computeWalletAddress,
 } from './utils';
+import { assertionPublicKeyCandidates } from './crypto/assertionKey';
 
 // Re-export types from the main module
 export type {
@@ -41,6 +42,7 @@ import type {
     AddSignerResult,
     SignerInfo,
     InitiateRecoveryResult,
+    LoginOptions,
 } from './useInvisibleWallet';
 
 // Custom error classes
@@ -153,8 +155,8 @@ export class InvisibleWallet {
         };
     }
 
-    async deploy(signerKeypair: Keypair | string, publicKeyBytes?: Uint8Array): Promise<DeployResult> {
-        const keypair = typeof signerKeypair === 'string' ? Keypair.fromSecret(signerKeypair) : signerKeypair;
+    async deploy(signerInput: SignerInput, publicKeyBytes?: Uint8Array): Promise<DeployResult> {
+        const signer = resolveSigner(signerInput);
         
         const pubkeyBytes = publicKeyBytes || (() => {
             const stored = localStorage.getItem('invisible_wallet_pubkey');
@@ -180,7 +182,7 @@ export class InvisibleWallet {
             // Not deployed yet, continue with deployment
         }
 
-        const account = await horizonServer.loadAccount(keypair.publicKey());
+        const account = await horizonServer.loadAccount(signer.publicKey);
         const factory = new Contract(this.config.factoryAddress);
 
         const tx = new TransactionBuilder(account, {
@@ -199,9 +201,9 @@ export class InvisibleWallet {
             .build();
 
         const prepared = await server.prepareTransaction(tx);
-        prepared.sign(keypair);
+        const signed = await signWith(prepared, signer, this.config.networkPassphrase);
 
-        const result = await server.sendTransaction(prepared);
+        const result = await server.sendTransaction(signed);
         if (result.status === 'ERROR') {
             throw new Error(`Deploy failed: ${result.errorResult}`);
         }
@@ -249,20 +251,82 @@ export class InvisibleWallet {
         };
     }
 
-    async login(): Promise<{ walletAddress: string } | null> {
-        const stored = localStorage.getItem('invisible_wallet_address');
-        if (!stored) return null;
-
+    async login(options?: LoginOptions): Promise<{ walletAddress: string } | null> {
         const server = new SorobanRpc.Server(this.config.rpcUrl);
-        
-        try {
-            await server.getContractData(stored, xdr.ScVal.scvLedgerKeyContractInstance());
-            this._address = stored;
-            this._isDeployed = true;
-            return { walletAddress: stored };
-        } catch {
-            return null;
+
+        // Path 1: local storage has an address (original behaviour)
+        let candidateAddress = localStorage.getItem('invisible_wallet_address');
+
+        // Path 2: caller supplied a known wallet address
+        if (!candidateAddress && options?.walletAddress) {
+            candidateAddress = options.walletAddress;
         }
+
+        // Path 3: derive address from a passkey credential
+        //
+        // An assertion carries a signature, not a key: `getPublicKey()` belongs to
+        // the *attestation* (registration) response, and the assertion response has
+        // no such method, so the previous reliance on it here could never resolve an
+        // address. The signing key is instead recovered from the signature itself
+        // (SEC1 ECDSA recovery — see sdk/src/crypto/assertionKey.ts), which works on
+        // every platform. Recovery is inherently two-way ambiguous for a raw r ‖ s
+        // signature, so the candidates below are each verified on-chain rather than
+        // trusted — matching the React/`core.ts` login path exactly.
+        const addressesToCheck: string[] = candidateAddress ? [candidateAddress] : [];
+
+        if (!candidateAddress && options?.credentialId) {
+            try {
+                const credIdBytes = Uint8Array.from(
+                    atob(options.credentialId.replace(/-/g, '+').replace(/_/g, '/')),
+                    c => c.charCodeAt(0)
+                );
+                const assertion = await navigator.credentials.get({
+                    publicKey: {
+                        challenge: crypto.getRandomValues(new Uint8Array(32)),
+                        allowCredentials: [{
+                            type: 'public-key',
+                            id: credIdBytes as BufferSource,
+                        }],
+                        userVerification: 'required',
+                        timeout: 60_000,
+                    },
+                }) as PublicKeyCredential;
+
+                if (assertion?.response) {
+                    const response = assertion.response as AuthenticatorAssertionResponse;
+                    const candidates = assertionPublicKeyCandidates({
+                        authData:       new Uint8Array(response.authenticatorData),
+                        clientDataJSON: new Uint8Array(response.clientDataJSON),
+                        // The browser hands back DER; recovery needs raw r ‖ s.
+                        signature:      derToRawSignature(response.signature),
+                    });
+                    for (const publicKeyBytes of candidates) {
+                        addressesToCheck.push(computeWalletAddress(
+                            this.config.factoryAddress,
+                            publicKeyBytes,
+                            this.config.networkPassphrase
+                        ));
+                    }
+                }
+            } catch {
+                // Assertion cancelled, or a signature that recovers no key at all.
+            }
+        }
+
+        if (!addressesToCheck.length) return null;
+
+        for (const addressToCheck of addressesToCheck) {
+            try {
+                await server.getContractData(addressToCheck, xdr.ScVal.scvLedgerKeyContractInstance());
+                this._address = addressToCheck;
+                this._isDeployed = true;
+                localStorage.setItem('invisible_wallet_address', addressToCheck);
+                return { walletAddress: addressToCheck };
+            } catch {
+                // Undeployed candidate — try the next one before giving up.
+            }
+        }
+        return null;
     }
 
     async getNonce(): Promise<bigint> {

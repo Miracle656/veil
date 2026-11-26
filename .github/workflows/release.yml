@@ -8,8 +8,8 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: write
-  pull-requests: write
+  # The release job needs the wider scope, and declares it on the job.
+  contents: read
 
 jobs:
   release:
@@ -21,38 +21,65 @@ jobs:
       id-token: write      # npm OIDC trusted publishing + provenance signing
       attestations: write  # upload provenance attestation to GitHub
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20'
+          # npm trusted publishing requires a current npm CLI with OIDC support.
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
-        run: npm install --legacy-peer-deps
+      # The repo root is not an npm workspace (#670): it installs only the
+      # release tooling. Changesets reads the publishable package set from
+      # pnpm-workspace.yaml, which npm ignores.
+      - name: Install release tooling
+        run: npm ci
 
+      # Each publishable package is a standalone npm project with its own
+      # lockfile, so install and build it in its own directory. `npm ci ||
+      # npm install` is the same deterministic-first idiom the PR jobs use.
       - name: Build publishable packages
         run: |
-          npm run build --workspace invisible-wallet-sdk --if-present
-          npm run build --workspace @veil/agent --if-present
-          npm run build --workspace create-veil-app --if-present
+          set -euo pipefail
+          for pkg in sdk packages/agent packages/create-veil-app; do
+            echo "::group::$pkg"
+            (
+              cd "$pkg"
+              npm ci --no-audit --no-fund || { echo "::warning::npm ci failed; falling back to npm install"; npm install --no-audit --no-fund; }
+              npm run build --if-present
+            )
+            echo "::endgroup::"
+          done
+
+      # `changeset publish` otherwise reaches npm before revealing that a
+      # package name has not been bootstrapped/claimed. An npm 404 is ambiguous
+      # and gives maintainers no useful next step, so check every public target
+      # before the release action starts.
+      - name: Verify npm packages are publishable targets
+        if: vars.ENABLE_NPM_PUBLISH == 'true'
+        run: |
+          set -euo pipefail
+          for pkg in invisible-wallet-sdk create-veil-wallet; do
+            if ! npm view "$pkg" version >/dev/null 2>&1; then
+              echo "::error title=Release blocked::npm package '$pkg' could not be resolved. Check npm registry access and package ownership; the package must exist and have a Trusted Publisher configured for Miracle656/veil using release.yml. Set ENABLE_NPM_PUBLISH=false until setup is complete."
+              exit 1
+            fi
+          done
 
       # When changeset files exist, this opens/updates a "Version Packages" PR
       # that consumes them. When that PR is merged (versions already bumped, no
       # changesets left), the same action runs `publish` to release to npm.
       - name: Create Release PR or publish
-        uses: changesets/action@v1
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           version: npm run version-packages
-          # Publishing is gated until npm trusted publishing is set up for
-          # @veil/agent, invisible-wallet-sdk and create-veil-app. A brand-new
-          # package's first publish can't be authorized by OIDC alone, so
-          # `changeset publish` E404s. Until then only the version flow runs
-          # (opens/updates the "Version Packages" PR). To enable real publishing,
-          # configure the packages on npmjs.com and set repository variable
-          # ENABLE_NPM_PUBLISH=true (Settings → Secrets and variables → Actions).
+          # Publishing stays gated until every public package exists and has
+          # its npm Trusted Publisher configured. To enable publishing, verify
+          # npm package ownership/trust and set ENABLE_NPM_PUBLISH=true under
+          # Settings → Secrets and variables → Actions. The preflight above
+          # reports exactly which public package is still missing.
           publish: ${{ vars.ENABLE_NPM_PUBLISH == 'true' && 'npm run release' || '' }}
           commit: 'chore: version packages'
           title: 'chore: version packages'

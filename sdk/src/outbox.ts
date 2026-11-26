@@ -32,8 +32,8 @@ import {
     type FeeBumpTransaction,
 } from '@stellar/stellar-sdk';
 // Type-only import — erased at compile time, so this does not create a runtime
-// cycle with useInvisibleWallet (which imports this module).
-import type { StorageAdapter } from './useInvisibleWallet';
+// cycle with core (which imports this module).
+import type { StorageAdapter } from './core';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

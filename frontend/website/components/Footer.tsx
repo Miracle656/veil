@@ -1,6 +1,6 @@
 const LINKS = {
   Project: [
-    { label: 'Documentation', href: 'https://veil-2ap8.vercel.app' },
+    { label: 'Documentation', href: 'https://docs.useveilapp.xyz' },
     { label: 'GitHub',        href: 'https://github.com/Miracle656/veil' },
     { label: 'Roadmap',       href: '#roadmap' },
     { label: 'Changelog',     href: '#' },
@@ -14,7 +14,7 @@ const LINKS = {
   Community: [
     { label: 'Stellar Discord', href: 'https://discord.gg/stellardev' },
     { label: 'Open Issues',     href: 'https://github.com/Miracle656/veil/issues' },
-    { label: 'Contributing',    href: 'https://veil-2ap8.vercel.app/getting-started' },
+    { label: 'Contributing',    href: 'https://docs.useveilapp.xyz/getting-started' },
     { label: 'Twitter / X',     href: '#' },
   ],
 }
@@ -71,8 +71,13 @@ export default function Footer() {
         {/* Bottom bar */}
         <div className="border-t border-white/[0.05] pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-xs text-[#333]">
-            © {new Date().getFullYear()} Invisible Wallet (Veil). MIT License.
+            © {new Date().getFullYear()} Veil, a product of Divinity Labs Limited (RC 10031131). MIT License.
           </p>
+          <div className="flex items-center gap-4 text-xs text-[#777]">
+            <a href="/terms" className="hover:text-white">Terms</a>
+            <span>·</span>
+            <a href="/privacy" className="hover:text-white">Privacy</a>
+          </div>
           <div className="flex items-center gap-4 text-xs text-[#333]">
             <span>Stellar Soroban</span>
             <span>·</span>

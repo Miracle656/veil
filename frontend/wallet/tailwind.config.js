@@ -24,11 +24,11 @@ module.exports = {
         'border-dim':  'rgba(255,255,255,0.08)',
       },
       fontFamily: {
-        lora:  ['Lora', 'Georgia', 'serif'],
-        inter: ['Inter', 'system-ui', 'sans-serif'],
-        anton: ['Anton', 'Impact', 'sans-serif'],
-        sans:  ['Inter', 'system-ui', 'sans-serif'],
-        mono:  ['Inconsolata', 'Courier New', 'monospace'],
+        lora:  ['var(--font-lora)', 'Lora', 'Georgia', 'serif'],
+        inter: ['var(--font-inter)', 'Inter', 'system-ui', 'sans-serif'],
+        anton: ['var(--font-anton)', 'Anton', 'Impact', 'sans-serif'],
+        sans:  ['var(--font-inter)', 'Inter', 'system-ui', 'sans-serif'],
+        mono:  ['var(--font-inconsolata)', 'Inconsolata', 'Courier New', 'monospace'],
       },
       fontSize: {
         'display-xl': ['5rem',    { lineHeight: '1.04', letterSpacing: '-0.025em' }],

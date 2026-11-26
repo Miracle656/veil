@@ -143,7 +143,7 @@ export default function WhyVeil({ t }: { t: Messages }) {
             aria-label="Feature comparison: Veil vs Freighter vs xBull"
           >
             <table
-              className="w-full min-w-[520px] border-collapse"
+              className="w-full min-w-0 sm:min-w-[520px] border-collapse"
             >
               <caption className="sr-only">
                 Feature comparison between Veil, Freighter, and xBull Stellar wallets
@@ -152,25 +152,25 @@ export default function WhyVeil({ t }: { t: Messages }) {
                 <tr className="border-b border-white/[0.08]">
                   <th
                     scope="col"
-                    className="text-left font-inter text-xs text-warm-grey/50 uppercase tracking-widest px-6 py-4 w-1/2"
+                    className="text-left font-inter text-[10px] sm:text-xs text-warm-grey/50 uppercase tracking-widest px-2.5 sm:px-6 py-3 sm:py-4 w-[40%] sm:w-1/2"
                   >
                     {t.features.comparison.feature}
                   </th>
                   <th
                     scope="col"
-                    className="font-lora font-semibold italic text-gold text-sm px-6 py-4 text-center whitespace-nowrap"
+                    className="font-lora font-semibold italic text-gold text-sm px-2.5 sm:px-6 py-3 sm:py-4 text-center whitespace-nowrap"
                   >
                     Veil
                   </th>
                   <th
                     scope="col"
-                    className="font-inter text-sm text-warm-grey/60 px-6 py-4 text-center whitespace-nowrap"
+                    className="font-inter text-sm text-warm-grey/60 px-2.5 sm:px-6 py-3 sm:py-4 text-center whitespace-nowrap"
                   >
                     Freighter
                   </th>
                   <th
                     scope="col"
-                    className="font-inter text-sm text-warm-grey/60 px-6 py-4 text-center whitespace-nowrap"
+                    className="font-inter text-sm text-warm-grey/60 px-2.5 sm:px-6 py-3 sm:py-4 text-center whitespace-nowrap"
                   >
                     xBull
                   </th>
@@ -184,19 +184,19 @@ export default function WhyVeil({ t }: { t: Messages }) {
                   >
                     <th
                       scope="row"
-                      className="text-left font-inter text-sm text-warm-grey px-6 py-4 font-normal"
+                      className="text-left font-inter text-sm text-warm-grey px-2.5 sm:px-6 py-3 sm:py-4 font-normal"
                     >
                       {feature}
                     </th>
-                    <td className="text-center px-6 py-4">
+                    <td className="text-center px-2.5 sm:px-6 py-3 sm:py-4">
                       {veil ? <Check /> : <Cross />}
                       <span className="sr-only">{veil ? yes : no}</span>
                     </td>
-                    <td className="text-center px-6 py-4">
+                    <td className="text-center px-2.5 sm:px-6 py-3 sm:py-4">
                       {freighter ? <Check /> : <Cross />}
                       <span className="sr-only">{freighter ? yes : no}</span>
                     </td>
-                    <td className="text-center px-6 py-4">
+                    <td className="text-center px-2.5 sm:px-6 py-3 sm:py-4">
                       {xbull ? <Check /> : <Cross />}
                       <span className="sr-only">{xbull ? yes : no}</span>
                     </td>

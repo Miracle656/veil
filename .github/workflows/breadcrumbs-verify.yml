@@ -1,0 +1,58 @@
+name: Recovery breadcrumbs verification
+
+# Recovery depends on two manage-data entries existing — with the right
+# contents — on the fee-payer account (#1177). This verifies them against a
+# real network: on a schedule and on demand against testnet (self-contained:
+# the script creates a friendbot-funded fixture and verifies it), and on
+# mainnet deliberately, by dispatching with network=mainnet and the account
+# to verify. Mainnet runs are read-only; no secret key exists in this
+# workflow at all.
+
+on:
+  schedule:
+    - cron: '30 3 * * *'   # nightly, after the testnet smoke run
+  workflow_dispatch:
+    inputs:
+      network:
+        description: 'Network to verify against'
+        type: choice
+        options: [testnet, mainnet]
+        default: testnet
+      account:
+        description: 'Fee-payer G-account to verify (required for mainnet; omit on testnet for the self-check)'
+        required: false
+        type: string
+      expect_wallet:
+        description: 'C-address the breadcrumbs must derive to (optional)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-breadcrumbs:
+    name: Verify recovery breadcrumbs (${{ inputs.network || 'testnet' }})
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+
+      - name: Install stellar-sdk
+        run: npm install --no-save @stellar/stellar-sdk
+
+      - name: Verify breadcrumbs
+        run: |
+          set -euo pipefail
+          args=(--network "${{ inputs.network || 'testnet' }}")
+          if [ -n "${{ inputs.account || '' }}" ]; then
+            args+=(--account "${{ inputs.account }}")
+          fi
+          if [ -n "${{ inputs.expect_wallet || '' }}" ]; then
+            args+=(--expect-wallet "${{ inputs.expect_wallet }}")
+          fi
+          node scripts/verify-breadcrumbs.mjs "${args[@]}"

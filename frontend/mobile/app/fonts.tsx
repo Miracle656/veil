@@ -32,7 +32,7 @@ function Specimen({
  */
 export default function FontSpecimen() {
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.container}>
+    <ScrollView showsVerticalScrollIndicator={false} style={styles.screen} contentContainerStyle={styles.container}>
       <Text style={styles.pageTitle}>Type specimen</Text>
 
       <Specimen role="Headings" hint="Lora · 600 · italic" style={typography.heading}>

@@ -38,9 +38,9 @@ const POOLS: Pool[] = [
     yourShares: 340,
   },
   {
-    id: 'usdc-eurc',
+    id: 'usdc-xlm-2',
     assetA: 'USDC',
-    assetB: 'EURC',
+    assetB: 'XLM',
     reserveA: 88000,
     reserveB: 81000,
     totalShares: 84000,
@@ -72,7 +72,7 @@ export default function PoolsScreen() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
         <Text style={styles.title}>Pools</Text>
         <Text style={styles.subtitle}>Provide liquidity and earn a share of swap fees.</Text>
 

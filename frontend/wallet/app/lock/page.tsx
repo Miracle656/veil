@@ -1,11 +1,46 @@
 'use client'
 
+import { NetworkSwitcher } from '@/components/NetworkSwitcher'
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { LockKeyhole, Fingerprint, AlertCircle } from 'lucide-react'
-import { useInvisibleWallet } from '@veil/sdk'
-import { deriveStoredFeePayer } from '@/lib/deriveFeePayer'
-import { walletConfig } from '@/lib/network'
+import { computeWalletAddress, useInvisibleWallet } from '@veil/sdk'
+import { ensureFeePayer } from '@/lib/feePayer'
+import { FEE_PAYER_PRF_SALT, type PrfEvaluator } from '@veil/prf'
+import { getNetwork, getNetworkName, walletConfig } from '@/lib/network'
+import { adoptPasskeyFromOtherNetwork, walletLocal, walletSession } from '@/lib/walletStorage'
+import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+
+/**
+ * The active network's wallet address for a stored passkey public key, or null.
+ *
+ * Accepts the 65-byte uncompressed key as hex or base64, since both encodings
+ * have been written to this slot over time; anything else is treated as absent
+ * rather than guessed at.
+ */
+function deriveAddressForActiveNetwork(stored: string | null): string | null {
+  if (!stored) return null
+  let bytes: Uint8Array | null = null
+  const trimmed = stored.trim()
+  if (/^[0-9a-fA-F]{130}$/.test(trimmed)) {
+    bytes = new Uint8Array(trimmed.match(/.{2}/g)!.map((h) => parseInt(h, 16)))
+  } else {
+    try {
+      const bin = atob(trimmed.replace(/-/g, '+').replace(/_/g, '/'))
+      if (bin.length === 65) bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0))
+    } catch {
+      bytes = null
+    }
+  }
+  if (!bytes || bytes.length !== 65 || bytes[0] !== 0x04) return null
+  const net = getNetwork()
+  if (!net.factoryContractId) return null
+  try {
+    return computeWalletAddress(net.factoryContractId, bytes, net.networkPassphrase)
+  } catch {
+    return null
+  }
+}
 
 // ── Lock screen ───────────────────────────────────────────────────────────────
 export default function LockPage() {
@@ -25,11 +60,21 @@ export default function LockPage() {
       // wallet.login() only checks localStorage + chain; it doesn't prompt the
       // device. We call navigator.credentials.get() with userVerification:
       // 'required' so the OS always shows Face ID / fingerprint / Windows Hello.
-      const keyId = localStorage.getItem('invisible_wallet_key_id')
+      // A passkey created on the other network is still this user's passkey.
+      // Without this, switching to mainnet on this screen read an empty slot
+      // and said "register again" to someone whose passkey worked perfectly.
+      adoptPasskeyFromOtherNetwork()
+
+      const keyId = walletLocal.getItem('invisible_wallet_key_id')
       if (!keyId) {
-        setError('No passkey found. Please register again.')
+        setError('No passkey is saved in this browser yet. Create a wallet to set one up.')
         return
       }
+
+      // For a PRF wallet we reuse this single unlock assertion to also derive the
+      // fee-payer seed (ADR 0003) — piggybacking the PRF evaluation avoids a
+      // second biometric prompt.
+      let prfEvaluator: PrfEvaluator | undefined
 
       if (keyId !== 'recovery') {
         // Decode base64url key ID → ArrayBuffer
@@ -40,47 +85,100 @@ export default function LockPage() {
         for (let i = 0; i < binary.length; i++) idBuffer[i] = binary.charCodeAt(i)
 
         const challenge = crypto.getRandomValues(new Uint8Array(32))
-        await navigator.credentials.get({
+        const saltBuf = new Uint8Array(FEE_PAYER_PRF_SALT).buffer
+        const assertion = (await navigator.credentials.get({
           publicKey: {
             challenge,
             allowCredentials: [{ id: idBuffer, type: 'public-key' }],
             userVerification: 'required',
+            extensions: { prf: { eval: { first: saltBuf } } } as AuthenticationExtensionsClientInputs,
           },
-        })
+        })) as PublicKeyCredential | null
+
+        const prfFirst = (
+          assertion?.getClientExtensionResults() as {
+            prf?: { results?: { first?: ArrayBuffer | ArrayBufferView } }
+          }
+        )?.prf?.results?.first
+        if (prfFirst) {
+          const bytes =
+            prfFirst instanceof ArrayBuffer
+              ? new Uint8Array(prfFirst)
+              : new Uint8Array((prfFirst as ArrayBufferView).buffer)
+          prfEvaluator = async () => bytes
+        }
       }
 
       // Step 2 — Biometric confirmed; verify wallet exists on-chain and restore session.
       const result = await wallet.login()
+      let sessionAddress = result?.walletAddress ?? null
 
-      if (!result?.walletAddress) {
-        setError('No wallet found. Please register again.')
+      // login() only succeeds for a wallet already on chain. Wallets are now
+      // created off-chain and deployed on first use, so "not deployed yet" is
+      // a normal state, not a missing wallet. The address is a pure function of
+      // the factory, the network and the passkey's public key, and the
+      // assertion above already proved this person holds that passkey — so the
+      // derived address is theirs whether or not the contract exists yet.
+      if (!sessionAddress) {
+        const derived = deriveAddressForActiveNetwork(
+          walletLocal.getItem('invisible_wallet_public_key'),
+        )
+        if (derived) {
+          const onChain = await wallet.login({ walletAddress: derived })
+          sessionAddress = onChain?.walletAddress ?? derived
+          walletLocal.setItem('invisible_wallet_address', sessionAddress)
+        } else {
+          sessionAddress = walletLocal.getItem('invisible_wallet_address')
+        }
+      }
+
+      if (!sessionAddress) {
+        // The passkey is real; this network just has no wallet for it yet.
+        // Sending them to create one reuses the passkey — the create flow skips
+        // registration when one is stored — instead of registering a second.
+        setError(
+          getNetworkName() === 'mainnet'
+            ? 'Your passkey has no mainnet wallet yet. Taking you to create it…'
+            : 'Your passkey has no wallet on this network yet. Taking you to create it…',
+        )
+        setTimeout(() => router.replace('/'), 1400)
         return
       }
 
-      const existing = sessionStorage.getItem('invisible_wallet_address')
-      if (existing && existing !== result.walletAddress) {
+      // The wallet's stored WebAuthn origin is deliberately NOT checked here.
+      //
+      // Being bound to another platform stops this wallet *signing* on the web;
+      // it does not make the session invalid. Refusing the unlock turned that
+      // into a lockout: the passkey assertion above had already succeeded, and
+      // the holder still could not reach their own balances, history or
+      // settings — all of which are reads that work fine. #1003 shipped the
+      // warning as a gate here by mistake.
+      //
+      // The limitation is reported where it actually bites instead. Every
+      // signing path (walletConnect, sweepContractBalance, guardian) maps the
+      // contract's OriginMismatch (#9) through walletContractErrorMessage to
+      // the same sentence, at the moment the user tries to move funds.
+
+      const existing = walletSession.getItem('invisible_wallet_address')
+      if (existing && existing !== sessionAddress) {
         sessionStorage.clear()
         setError('Account mismatch detected. Please register again.')
         return
       }
-      sessionStorage.setItem('invisible_wallet_address', result.walletAddress)
-      // Restore fee-payer secret — derive from passkey if localStorage was cleared
-      let storedSecret = localStorage.getItem('veil_signer_secret')
-      if (!storedSecret) {
-        const derived = await deriveStoredFeePayer()
-        if (derived) {
-          storedSecret = derived.secret()
-          localStorage.setItem('veil_signer_secret', storedSecret)
-          localStorage.setItem('veil_signer_public_key', derived.publicKey())
-        }
-      }
-      if (storedSecret) sessionStorage.setItem('veil_signer_secret', storedSecret)
+      walletSession.setItem('invisible_wallet_address', sessionAddress)
+
+      // Re-establish the fee-payer for this session. PRF wallets re-derive the
+      // seed from the assertion above (no extra prompt) and keep it in
+      // sessionStorage only — nothing plaintext is restored to localStorage, so
+      // the lock actually protects the key at rest (ADR 0003, C3). Legacy wallets
+      // restore from localStorage without a prompt. Best-effort — a failure here
+      // must not block entry to the dashboard.
+      await ensureFeePayer(prfEvaluator).catch(() => null)
 
       router.replace('/dashboard')
 
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unlock failed. Please try again.'
-      setError(message)
+      setError(passkeyErrorMessage(err))
     } finally {
       setIsUnlocking(false)
     }
@@ -92,6 +190,9 @@ export default function LockPage() {
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
       <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem' }}>
+        {/* The switcher must sit inside a landmark (axe "region" rule), so it
+            lives inside the main below rather than above it. */}
+
         <header style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'center' }}>
            {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
         <span style={{ fontFamily: 'Anton, Impact, sans-serif', fontSize: '2rem', letterSpacing: '0.08em', color: 'var(--gold)', userSelect: 'none' }}>
@@ -99,7 +200,10 @@ export default function LockPage() {
         </span>
         </header>
        
-        <main style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
+        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
+          <NetworkSwitcher />
+        </div>
         {/* Lock card */}
         <div
           className="card"

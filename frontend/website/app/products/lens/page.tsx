@@ -69,7 +69,7 @@ export default function LensProductPage() {
             All Products
           </Link>
           <a href="https://lens-ldtu.onrender.com/status" target="_blank" rel="noopener noreferrer"
-            className="btn-gold !py-2 !px-5 !text-sm hidden md:inline-flex">
+            className="btn-gold !py-2 !px-4 !text-[13px] md:!px-5 md:!text-sm inline-flex whitespace-nowrap">
             View Live API
           </a>
         </div>
@@ -105,7 +105,7 @@ export default function LensProductPage() {
                   className="btn-gold">
                   View Live API
                 </a>
-                <a href="https://veil-2ap8.vercel.app" className="btn-ghost">
+                <a href="https://docs.useveilapp.xyz" className="btn-ghost">
                   Read the Docs
                 </a>
               </motion.div>
@@ -218,7 +218,7 @@ export default function LensProductPage() {
               {[
                 { label: 'Home', href: '/' },
                 { label: 'Products', href: '/products' },
-                { label: 'Docs', href: 'https://veil-2ap8.vercel.app' },
+                { label: 'Docs', href: 'https://docs.useveilapp.xyz' },
                 { label: 'GitHub', href: 'https://github.com/Miracle656/veil' },
               ].map(({ label, href }) => (
                 <a key={label} href={href}

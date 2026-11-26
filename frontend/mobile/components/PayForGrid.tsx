@@ -1,0 +1,208 @@
+import { useMemo } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
+import { fontFamily } from '../theme/typography';
+import {
+  AirtimeIcon,
+  BankIcon,
+  BettingIcon,
+  BillsIcon,
+  BuyIcon,
+  DataIcon,
+  GridIcon,
+  PowerIcon,
+  TVIcon,
+  type IconProps,
+} from './icons';
+
+export type BillService = {
+  id: string;
+  label: string;
+  hint: string;
+  Icon: (props: IconProps) => React.JSX.Element;
+  /**
+   * Whether the flow is live, expected later, or not planned. Only live
+   * services appear on the dashboard; unavailable services are explained in
+   * the drawer.
+   */
+  status: 'live' | 'soon' | 'not-planned';
+  /** Highlight in gold. Reserved for a service we want to draw the eye to. */
+  accent?: boolean;
+  /** Route to push when tapped. Absent means the caller handles selection. */
+  route?: string;
+};
+
+/**
+ * The everyday-money surface: airtime, data, bills, transfers — the things a
+ * Nigerian user opens a wallet to do. Fiat on the face, USDC + sponsored fees
+ * underneath.
+ *
+ * Only supported flows are shown on the dashboard. ServicesDrawer explains
+ * future services separately from categories the backend does not support.
+ *
+ * Flip a service to status: 'live' when its flow ships and it moves onto the
+ * dashboard on its own — there is no second list to update.
+ */
+export const BILL_SERVICES: BillService[] = [
+  // Live: the flow exists and the deposit is crypto from this wallet, so it
+  // never leaves the app. Like `transfer` below it stays hidden when the
+  // backend holding the Linq key is unreachable — there is no order without it.
+  { id: 'airtime', label: 'Airtime', hint: 'All networks', Icon: AirtimeIcon, status: 'live', route: '/airtime' },
+  { id: 'data', label: 'Data', hint: 'Bundles', Icon: DataIcon, status: 'soon' },
+  { id: 'power', label: 'Power', hint: 'Prepaid', Icon: PowerIcon, status: 'live', route: '/electricity' },
+  { id: 'tv', label: 'TV', hint: 'DStv · GOtv', Icon: TVIcon, status: 'soon' },
+  { id: 'bills', label: 'Bills', hint: 'Water · waste', Icon: BillsIcon, status: 'not-planned' },
+  // The onramp: buy naira-priced XLM by bank transfer. Live because the flow
+  // exists — but hidden when the backend holding the Linq key is unreachable.
+  // XLM only: Linq holds no USDC liquidity, so the coin toggle offers one coin.
+  { id: 'buy', label: 'Buy', hint: 'With naira', Icon: BuyIcon, status: 'live', route: '/buy-ngn', accent: true },
+  // The offramp: USDC out to a Nigerian bank account, via Linq. Live rather
+  // than 'soon' because the flow behind it exists — but the dashboard still
+  // hides it when the backend that holds the API key is unreachable, since
+  // there is no order to create without it.
+  { id: 'transfer', label: 'Cash out', hint: 'To any bank', Icon: BankIcon, status: 'live', route: '/cash-out' },
+  { id: 'betting', label: 'Betting', hint: 'Top up', Icon: BettingIcon, status: 'soon' },
+];
+
+export function getServiceAvailabilityMessage(service: Pick<BillService, 'id' | 'label' | 'status'>) {
+  if (service.status === 'soon') {
+    return `${service.label} is not available yet. No payment will be made.`;
+  }
+  // Water and waste are not "not planned by Veil" — the bill provider does not
+  // carry them at all, which is a different thing to tell someone and the
+  // reason this case is spelled out rather than folded into the line below.
+  if (service.id === 'bills') {
+    return 'Water and waste payments are not supported by the bill provider and are not planned. No payment will be made.';
+  }
+  return `${service.label} is not planned. No payment will be made.`;
+}
+
+export function PayForGrid({
+  services = BILL_SERVICES,
+  onSelect,
+  onMore,
+}: {
+  services?: BillService[];
+  onSelect?: (service: BillService) => void;
+  /** Opens the services drawer. The "More" cell only renders when provided. */
+  onMore?: () => void;
+}) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
+  const live = useMemo(() => services.filter((s) => s.status === 'live'), [services]);
+  const columnCount = Math.min(4, live.length + (onMore ? 1 : 0));
+  const cellWidth = `${100 / Math.max(columnCount, 1)}%` as `${number}%`;
+
+  // An empty live set means no card at all, rather than a grid of dead tiles.
+  // The drawer behind the drape mark explains unavailable services.
+  if (live.length === 0) return null;
+
+  return (
+    <View style={styles.card}>
+      <Text style={styles.heading}>Pay for</Text>
+      <View style={styles.grid}>
+        {live.map((service) => (
+          <Pressable
+            key={service.id}
+            onPress={() => onSelect?.(service)}
+            accessibilityRole="button"
+            accessibilityLabel={`${service.label} — ${service.hint}`}
+            style={({ pressed }) => [styles.cell, { width: cellWidth }, pressed && styles.pressed]}
+          >
+            <View style={[styles.iconWrap, service.accent && styles.iconWrapAccent]}>
+              <service.Icon size={20} color={service.accent ? colors.accent : colors.textPrimary} />
+            </View>
+            <Text style={[styles.cellLabel, service.accent && styles.cellLabelAccent]}>{service.label}</Text>
+            <Text style={styles.cellHint} numberOfLines={1}>
+              {service.hint}
+            </Text>
+          </Pressable>
+        ))}
+
+        {onMore ? (
+          <Pressable
+            onPress={onMore}
+            accessibilityRole="button"
+            accessibilityLabel="More — all services"
+            style={({ pressed }) => [styles.cell, { width: cellWidth }, pressed && styles.pressed]}
+          >
+            <View style={[styles.iconWrap, styles.iconWrapAccent]}>
+              <GridIcon size={20} color={colors.accent} />
+            </View>
+            <Text style={[styles.cellLabel, styles.cellLabelAccent]}>More</Text>
+            <Text style={styles.cellHint} numberOfLines={1}>
+              All services
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // No outer border, matching the Assets and Activity cards. This card was
+    // never visible before — it returns null while every service is 'soon' —
+    // so it kept a border the rest of the dashboard had already dropped, and
+    // appeared looking like it belonged to a different screen.
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 20,
+      paddingHorizontal: 14,
+      paddingTop: 14,
+      paddingBottom: 12,
+    },
+    heading: {
+      color: colors.accent,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 11,
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+      paddingHorizontal: 4,
+      paddingBottom: 6,
+    },
+    grid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+    },
+    cell: {
+      width: '25%',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 12,
+    },
+    iconWrap: {
+      width: 44,
+      height: 44,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceMd,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    iconWrapAccent: {
+      backgroundColor: 'rgba(253,218,36,0.08)',
+      borderColor: 'rgba(253,218,36,0.22)',
+    },
+    cellLabel: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 13,
+    },
+    cellLabelAccent: {
+      color: colors.accent,
+    },
+    cellHint: {
+      color: colors.textFaint,
+      fontFamily: fontFamily.body,
+      fontSize: 10,
+    },
+    pressed: {
+      opacity: 0.6,
+    },
+  });

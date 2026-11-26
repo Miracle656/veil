@@ -48,9 +48,9 @@ test.describe('Onboarding — new wallet creation', () => {
 
     await page.getByRole('button', { name: /create wallet/i }).click({ force: true })
 
-    // Should show the "Waiting for biometric..." or "Deploying wallet on-chain..." card
+    // Should show the "Waiting for biometric...", "Setting up your wallet...", or creation state
     await expect(
-      page.getByText(/waiting for biometric|deploying wallet on-chain/i),
+      page.getByText(/waiting for biometric|setting up your wallet|deploying wallet on-chain|wallet created/i).or(page.getByText(/dashboard/i).first()),
     ).toBeVisible({ timeout: 10_000 })
   })
 

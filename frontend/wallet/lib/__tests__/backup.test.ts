@@ -24,6 +24,19 @@ Object.defineProperty(globalThis, 'crypto', {
 // jsdom does not provide these globals; the SDK backup code needs them.
 Object.assign(globalThis, { TextEncoder, TextDecoder })
 
+// The encrypted-backup round-trips run real PBKDF2 key derivation, which
+// exceeds Jest's default 5s timeout on slower CI runners. Give them headroom.
+jest.setTimeout(30_000)
+
+jest.mock('../network', () => ({
+  ...jest.requireActual('../network'),
+  getNetwork: () => ({
+    displayName: 'Stellar Mainnet',
+    networkPassphrase: 'Public Global Network',
+    factoryContractId: 'CMAINNETFACTORY',
+  }),
+}))
+
 import {
   backupWallet,
   restoreWallet,
@@ -84,6 +97,15 @@ beforeEach(() => {
 // ── collectWalletMetadata ─────────────────────────────────────────────────────
 
 describe('collectWalletMetadata', () => {
+  it('uses the active mainnet network configuration', () => {
+    seedWallet()
+
+    expect(collectWalletMetadata()).toMatchObject({
+      factoryAddress: 'CMAINNETFACTORY',
+      networkPassphrase: 'Public Global Network',
+    })
+  })
+
   it('reads non-secret wallet state from local storage', () => {
     seedWallet()
     const md = collectWalletMetadata()
