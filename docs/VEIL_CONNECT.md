@@ -6,6 +6,9 @@ wallet there with a passkey; the app gets an answer back.
 
 Status: **pilot**. One partner, small amounts, the interface may change.
 
+Veil is a product of Divinity Labs Limited, a company registered in Nigeria
+(RC 10031131).
+
 ## What it does
 
 | Call | The person sees | The app gets |
