@@ -608,7 +608,7 @@ export default function BettingScreen() {
 
             <View style={styles.card}>
               <View style={styles.row}>
-                <Text style={styles.rowLabel}>{provider} didn't complete the deposit</Text>
+                <Text style={styles.rowLabel}>{provider} didn&apos;t complete the deposit</Text>
                 <Text style={styles.rowValue}>—</Text>
               </View>
               <View style={styles.row}>
