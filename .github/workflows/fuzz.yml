@@ -61,7 +61,7 @@ jobs:
 
       - name: Rust dependency cache
         id: cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: contracts
 
@@ -348,7 +348,7 @@ jobs:
 
       - name: Close resolved broken fuzz workflow issue
         if: ${{ always() && steps.classify.outputs.verdict == 'ok' }}
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           TARGET: ${{ matrix.target }}
           RUN_DATE: ${{ steps.classify.outputs.date }}
