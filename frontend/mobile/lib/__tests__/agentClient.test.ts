@@ -1,6 +1,7 @@
 import {
   PRODUCTION_AGENT_URL,
   historyFromMessages,
+  parseCashOutIntent,
   parseInvestIntent,
   parseSwapIntent,
   resolveAgentUrl,
@@ -116,9 +117,15 @@ describe('parseInvestIntent', () => {
   const issuer = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
   it('accepts an issuer-pinned investment hand-off', () => {
+    // Flat `code`/`issuer` as well as the nested `asset`: the hand-off sends
+    // both to /earn, because the screen reads `asset` while the agent speaks
+    // `code`, and sending only one of the two names is how the request
+    // silently drops on the way to the screen.
     expect(parseInvestIntent({ asset: { code: 'usdy', issuer }, amount: '50' })).toEqual({
-      asset: { code: 'USDY', issuer },
+      code: 'USDY',
+      issuer,
       amount: '50',
+      asset: { code: 'USDY', issuer },
     });
   });
 
@@ -126,5 +133,26 @@ describe('parseInvestIntent', () => {
     expect(parseInvestIntent({ asset: { code: 'USDY', issuer: 'not-an-issuer' }, amount: '50' })).toBeUndefined();
     expect(parseInvestIntent({ asset: { code: 'USDY' }, amount: '50' })).toBeUndefined();
     expect(parseInvestIntent({ asset: { code: 'USDY', issuer }, amount: '-1' })).toBeUndefined();
+    // No amount at all is as unusable as a bad one, and the web twin refuses it.
+    expect(parseInvestIntent({ asset: { code: 'USDY', issuer } })).toBeUndefined();
+  });
+});
+
+describe('parseCashOutIntent', () => {
+  it('accepts only a positive finite amount and rate', () => {
+    expect(parseCashOutIntent({ amountNGN: 25_000, rate: 1_500 })).toEqual({
+      amountNGN: 25_000,
+      rate: 1_500,
+    });
+  });
+
+  it('drops malformed cash-out data and never accepts bank details', () => {
+    expect(parseCashOutIntent({ amountNGN: -1, rate: 1_500 })).toBeUndefined();
+    expect(parseCashOutIntent({ amountNGN: 25_000, rate: 0 })).toBeUndefined();
+    expect(parseCashOutIntent({ amountNGN: 25_000, rate: 1_500, accountNumber: '0123456789' })).toEqual({
+      amountNGN: 25_000,
+      rate: 1_500,
+    });
+    expect(parseCashOutIntent('25,000')).toBeUndefined();
   });
 });

@@ -40,6 +40,7 @@ const fontVars = [
 import { InstallBanner } from "./InstallBanner";
 import { SentryInit } from "./SentryInit";
 import { BootnodeBanner } from "./BootnodeBanner";
+import { ConnectResume } from "@/components/ConnectResume";
 
 export const metadata: Metadata = {
   // Absolute URLs for og:image and friends. Never derived from the deployment:
@@ -58,6 +59,16 @@ export const metadata: Metadata = {
     "biometric",
   ],
   manifest: "/manifest.json",
+  // iOS does not read the manifest's icons for a home-screen shortcut with any
+  // reliability - it wants an apple-touch-icon, and without one it had been
+  // falling back to an icon left over from before the Drape mark existed.
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   openGraph: {
     title: "Veil Wallet",
     description: "Passkey-powered Stellar smart wallet.",
@@ -109,6 +120,7 @@ export default async function RootLayout({
       <body>
         {children}
         <BootnodeBanner />
+        <ConnectResume />
         <InstallBanner />
         <SentryInit />
       </body>

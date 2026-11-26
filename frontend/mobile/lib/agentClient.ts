@@ -10,7 +10,7 @@
  */
 
 import { StrKey } from '@stellar/stellar-sdk';
-import type { AgentMessage, InvestIntent, SwapIntent } from './agentMessages';
+import type { AgentMessage, CashOutIntent, InvestIntent, SwapIntent } from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -59,11 +59,35 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
   const turns: AgentTurn[] = [];
   for (const message of messages) {
     if (message.kind === 'user') turns.push({ role: 'user', content: message.text });
-    else if ((message.kind === 'agent' || message.kind === 'proposal' || message.kind === 'swap' || message.kind === 'invest') && message.text.trim()) {
+    else if (
+      (message.kind === 'agent' ||
+        message.kind === 'proposal' ||
+        message.kind === 'swap' ||
+        message.kind === 'invest' ||
+        message.kind === 'cashout') &&
+      message.text.trim()
+    ) {
       turns.push({ role: 'assistant', content: message.text });
     }
   }
   return turns;
+}
+
+/** Parse the small, bank-account-free cash-out payload before it reaches navigation. */
+export function parseCashOutIntent(value: unknown): CashOutIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.amountNGN !== 'number' ||
+    !Number.isFinite(v.amountNGN) ||
+    v.amountNGN <= 0 ||
+    typeof v.rate !== 'number' ||
+    !Number.isFinite(v.rate) ||
+    v.rate <= 0
+  ) {
+    return undefined;
+  }
+  return { amountNGN: v.amountNGN, rate: v.rate };
 }
 
 export type AgentReply = {
@@ -72,6 +96,7 @@ export type AgentReply = {
   pendingTxSummary?: string;
   swapIntent?: SwapIntent;
   investIntent?: InvestIntent;
+  cashOutIntent?: CashOutIntent;
 };
 
 /**
@@ -94,17 +119,41 @@ export function parseSwapIntent(value: unknown): SwapIntent | undefined {
   return { from, to, ...(amount ? { amount } : {}) };
 }
 
+/**
+ * An invest hand-off from the server, or undefined when it is not valid.
+ */
 export function parseInvestIntent(value: unknown): InvestIntent | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const v = value as Record<string, unknown>;
-  if (!v.asset || typeof v.asset !== 'object') return undefined;
-  const asset = v.asset as Record<string, unknown>;
-  const code = typeof asset.code === 'string' ? asset.code.trim().toUpperCase() : '';
-  const issuer = typeof asset.issuer === 'string' ? asset.issuer.trim() : '';
+  let code = typeof v.code === 'string' && /^[A-Z0-9]{1,12}$/.test(v.code) ? v.code : undefined;
+  let issuer = typeof v.issuer === 'string' && StrKey.isValidEd25519PublicKey(v.issuer) ? v.issuer : undefined;
+
+  if (v.asset && typeof v.asset === 'object') {
+    const asset = v.asset as Record<string, unknown>;
+    if (!code && typeof asset.code === 'string' && /^[A-Z0-9]{1,12}$/.test(asset.code.trim().toUpperCase())) {
+      code = asset.code.trim().toUpperCase();
+    }
+    if (!issuer && typeof asset.issuer === 'string' && StrKey.isValidEd25519PublicKey(asset.issuer.trim())) {
+      issuer = asset.issuer.trim();
+    }
+  }
+
+  if (!code || !issuer) return undefined;
+
+  // A hand-off without a usable amount is dropped, not trimmed down to one
+  // without an amount. The agent has already told the user it is ready to buy a
+  // specific quantity; opening the screen with that quantity missing, or with a
+  // negative one silently discarded, changes what was agreed. This also matches
+  // the web twin `app/earn/prefill.ts`, which refuses the same inputs — the two
+  // disagreeing is how one hand-off behaves differently per client.
   const amount = typeof v.amount === 'string' ? v.amount.trim() : '';
-  if (!/^[A-Z0-9]{1,12}$/.test(code) || !StrKey.isValidEd25519PublicKey(issuer)) return undefined;
   if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0) return undefined;
-  return { asset: { code, issuer }, amount };
+  const quoteCurrency =
+    typeof v.quoteCurrency === 'string' && /^[A-Z0-9]{1,12}$/.test(v.quoteCurrency)
+      ? v.quoteCurrency
+      : undefined;
+
+  return { code, issuer, amount, ...(quoteCurrency ? { quoteCurrency } : {}), asset: { code, issuer } };
 }
 
 export type AgentRequest = {
@@ -144,6 +193,7 @@ export async function sendAgentMessage(
       pendingTxSummary: typeof data.pendingTxSummary === 'string' ? data.pendingTxSummary : undefined,
       swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
       investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
+      cashOutIntent: parseCashOutIntent((data as { cashOutIntent?: unknown }).cashOutIntent),
     };
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Verify registered non-native assets by exact issuer identity on their
- * claimed Stellar network. stellar.toml is corroborating metadata only.
+ * claimed Stellar network, verifying wallet and mobile registry parity and
+ * corroborating with stellar.toml.
  */
 
 import { readFileSync } from 'node:fs';
@@ -128,6 +129,22 @@ export function parseTomlCurrencies(tomlText) {
   return parsed.CURRENCIES;
 }
 
+/**
+ * True only when the toml lists this exact code AND this exact issuer.
+ *
+ * The issuer is the whole check. A `[[CURRENCIES]]` entry naming only a code
+ * corroborates nothing: mainnet carries nine assets called USDT0, and two of
+ * the impostors publish a home domain while the genuine issuer
+ * (GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q) publishes none —
+ * so "the domain lists a currency with this code" is exactly the signal an
+ * impersonator can manufacture and the real issuer cannot.
+ *
+ * Treating a missing `issuer` as a match made every code-only toml corroborate
+ * any issuer we happened to have pinned, which is the inverse of what this
+ * function exists to do. Native assets have no issuer, but they never reach
+ * here — `main()` and the tests filter `kind === 'native'`, and
+ * `verifyNonNativeAsset` says so in its name.
+ */
 export function hasExactTomlCurrency(currencies, asset) {
   return currencies.some(
     (currency) => currency?.code === asset.code && currency?.issuer === asset.issuer,
@@ -160,8 +177,6 @@ export async function fetchTomlText(
     createTimeoutSignal = (milliseconds) => AbortSignal.timeout(milliseconds),
   } = {},
 ) {
-  // SEP-1 binds stellar.toml to the issuer account's literal home_domain.
-  // Do not invent alternate hostnames (such as www.) as additional trust roots.
   const url = `https://${domain}/.well-known/stellar.toml`;
   let response;
   try {
@@ -257,6 +272,9 @@ export async function verifyNonNativeAsset(
     );
   }
 
+  // Restored: #892 moved this declaration and the merge dropped it while
+  // keeping both usages below, so every asset that got past the home_domain
+  // check died on a ReferenceError rather than being verified.
   const derivedSacContractId = deriveSacContractId(asset);
   const homeDomain = account.home_domain;
   if (!homeDomain) {
@@ -269,6 +287,12 @@ export async function verifyNonNativeAsset(
       derivedSacContractId,
       note: 'issuer has no home_domain; stellar.toml corroboration is unavailable',
     };
+  }
+
+  if (asset.homeDomain && homeDomain !== asset.homeDomain) {
+    throw new Error(
+      `Issuer ${asset.issuer} for ${asset.code} home_domain mismatch: Horizon returned "${homeDomain}", registry expected "${asset.homeDomain}"`,
+    );
   }
 
   const tomlData = await fetchToml(homeDomain);
@@ -346,3 +370,4 @@ const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).hr
 if (import.meta.url === invokedPath) {
   process.exitCode = await main();
 }
+

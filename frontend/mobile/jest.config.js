@@ -42,5 +42,7 @@ module.exports = {
     // Pinning the helpers to this package's own copy makes the resolution
     // independent of which workspace the importing file lives in.
     '^@babel/runtime/(.*)$': '<rootDir>/node_modules/@babel/runtime/$1',
+    '^@stellar/stellar-sdk(.*)$': '<rootDir>/node_modules/@stellar/stellar-sdk$1',
+    '^axios(.*)$': '<rootDir>/node_modules/axios$1',
   },
 };

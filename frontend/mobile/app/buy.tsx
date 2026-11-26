@@ -39,8 +39,19 @@ async function authenticate(
   webAuthEndpoint: string,
   account: string,
   networkPassphrase: string,
+  homeDomain: string,
+  signingKey: string | undefined,
 ): Promise<string | undefined> {
   if (!webAuthEndpoint) return undefined;
+
+  // An anchor that publishes no SIGNING_KEY cannot have its challenges checked,
+  // and an unchecked challenge is signed with this device's real key. Refuse
+  // rather than authenticate blind.
+  if (!signingKey) {
+    throw new Error(
+      `${homeDomain} publishes no SEP-10 SIGNING_KEY, so its sign-in request cannot be verified.`,
+    );
+  }
 
   const secret = await getSignerSecret();
   if (!secret) {
@@ -49,7 +60,14 @@ async function authenticate(
   const signerKeypair = Keypair.fromSecret(secret);
 
   return getSep10Jwt(webAuthEndpoint, account, networkPassphrase, async (params) =>
-    signSep10Challenge(params.challengeXdr, params.networkPassphrase, signerKeypair),
+    signSep10Challenge(
+      params.challengeXdr,
+      params.networkPassphrase,
+      signerKeypair,
+      homeDomain,
+      signingKey,
+      new URL(webAuthEndpoint).host,
+    ),
   );
 }
 
@@ -135,10 +153,18 @@ export default function BuyScreen() {
         transferServerUrl: server,
         webAuthEndpoint,
         networkPassphrase,
+        homeDomain,
+        signingKey,
       } = await discoverAnchorInfo(anchorDomain.trim());
       setTransferServerUrl(server);
 
-      const jwt = await authenticate(webAuthEndpoint, resolved, networkPassphrase);
+      const jwt = await authenticate(
+        webAuthEndpoint,
+        resolved,
+        networkPassphrase,
+        homeDomain,
+        signingKey,
+      );
 
       const deposit = await initiateDeposit(
         server,

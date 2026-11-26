@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { getDefaultAnchor } from '@/lib/anchors'
 import {
   discoverAnchorInfo,
   getSep10Jwt,
@@ -12,12 +13,24 @@ import {
 
 // ── Anchor config ─────────────────────────────────────────────────────────────
 
-const DEFAULT_ANCHOR = 'testanchor.stellar.org'
-
+/**
+ * Anchors from the environment, and nothing else.
+ *
+ * This used to fall back to `testanchor.stellar.org`, so a mainnet wallet with
+ * no anchors configured offered "Deposit with testanchor.stellar.org" — a
+ * testnet anchor, named to a user holding real money. `lib/anchors.ts` removed
+ * exactly that default ("there is deliberately NO hard-coded anchor") and this
+ * component was never migrated to it.
+ *
+ * With none configured the list is empty and the sheet says so, which is the
+ * honest answer: this deployment has no anchor, rather than here is one that
+ * cannot work.
+ */
 function getAnchors(): string[] {
   const env = process.env.NEXT_PUBLIC_SEP24_ANCHORS
   if (env) return env.split(',').map(s => s.trim()).filter(Boolean)
-  return [DEFAULT_ANCHOR]
+  const fallback = getDefaultAnchor()
+  return fallback ? [fallback] : []
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -107,7 +120,13 @@ export function DepositModal({ mode, walletAddress, onClose }: Props) {
       transferServerRef.current = info.transferServerUrl
 
       // 2. SEP-10 auth — passkey signs the challenge transaction
-      const jwt = await getSep10Jwt(info.webAuthEndpoint, walletAddress, info.networkPassphrase)
+      const jwt = await getSep10Jwt(
+        info.webAuthEndpoint,
+        walletAddress,
+        info.networkPassphrase,
+        info.homeDomain,
+        info.signingKey,
+      )
       jwtRef.current = jwt
 
       // 3. Initiate interactive flow
@@ -160,7 +179,7 @@ export function DepositModal({ mode, walletAddress, onClose }: Props) {
       <div
         style={{
           width: '100%', maxWidth: '480px',
-          background: 'var(--surface)',
+          background: 'var(--surface-raised)',
           borderRadius: '20px 20px 0 0',
           padding: '1.5rem 1.25rem 2rem',
           border: '1px solid var(--border-dim)',
@@ -274,18 +293,23 @@ export function DepositModal({ mode, walletAddress, onClose }: Props) {
           <button
             className="btn-gold"
             onClick={step === 'idle' || step === 'error' ? handleStart : undefined}
-            disabled={step === 'auth' || step === 'opening' || step === 'polling'}
+            disabled={!anchor || step === 'auth' || step === 'opening' || step === 'polling'}
             style={{ width: '100%' }}
           >
             {step === 'auth'    ? 'Verifying passkey…' :
              step === 'opening' ? 'Opening anchor…'    :
              step === 'polling' ? 'Waiting for anchor…' :
-             `${title} with ${anchor}`}
+             anchor ? `${title} with ${anchor}` : 'No anchor configured'}
           </button>
         )}
 
+        {/* Naming no anchor is the honest answer when none is configured, and
+            it points at the route that does work here rather than leaving a
+            dead button with no explanation. */}
         <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.3)', textAlign: 'center', marginTop: '0.875rem' }}>
-          Powered by {anchor} · SEP-24
+          {anchor
+            ? `Powered by ${anchor} · SEP-24`
+            : 'This deployment has no SEP-24 anchor. Use Buy with naira, or receive from another wallet.'}
         </p>
       </div>
     </div>

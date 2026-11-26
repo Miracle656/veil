@@ -71,7 +71,9 @@ const sdk = jest.requireMock('stellar-private-payments') as {
   }
 }
 
-const REAL_POOL_ID = 'CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT'
+// Read from the pinned config rather than re-typed: SPP redeploys testnet
+// often, and the values are verified against upstream in drift.live.test.ts.
+const REAL_POOL_ID = getSppConfig('testnet')!.pools[0].id
 const SENDER = 'GB2VYTFZEVWKPTOEVT64NT7O3KCJAF7FXH4VCTUZDEN5M7QLBVBHNSPM'
 
 describe('privacy client — private send integration (V137)', () => {
@@ -85,9 +87,9 @@ describe('privacy client — private send integration (V137)', () => {
     await client.privateBalance()
 
     const contractConfig = sdk.Client.new.mock.calls[0][0].contractConfig
-    expect(contractConfig.public_key_registry).toBe(
-      'CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZDDLCMNPWXIH4',
-    )
+    // The point of this test is that the client reads config.ts — so assert
+    // against config.ts, not against a copy of the value it should have read.
+    expect(contractConfig.public_key_registry).toBe(getSppConfig('testnet')!.publicKeyRegistry)
     expect(contractConfig.pools[0].poolContractId).toBe(REAL_POOL_ID)
     expect(StrKey.isValidContract(contractConfig.pools[0].poolContractId)).toBe(true)
   })

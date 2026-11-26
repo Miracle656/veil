@@ -152,6 +152,19 @@ export async function sendPayment(
   memo?: string,
   asset?: { code: string; issuer: string | null },
   memoType?: string,
+  /**
+   * A Veil fee, paid in the same transaction as the payment it belongs to.
+   *
+   * Classic operations only, which is the whole reason this lives here and
+   * not on the smart-wallet path: a Stellar transaction may hold at most one
+   * Soroban operation, so a SAC transfer out of the `C…` address has no room
+   * for a second op. A classic transaction may carry a hundred.
+   *
+   * Atomic by construction — one signature, both operations settle or
+   * neither does. There is no state where the user has paid us and not the
+   * person they were paying.
+   */
+  platformFee?: { amount: string; assetCode: string; assetIssuer: string | null; destination: string },
 ): Promise<SendResult> {
   const errors = validateSend(recipient, amount, memo, memoType);
   if (errors.recipient) throw new Error(errors.recipient);
@@ -202,6 +215,21 @@ export async function sendPayment(
           : Operation.createAccount({ destination: to, startingBalance: amount.trim() }),
       )
       .setTimeout(30);
+    // Appended, never prepended: if the operations are applied in order and
+    // something is short, the payment the user actually asked for is the one
+    // that goes through first.
+    if (platformFee) {
+      builder.addOperation(
+        Operation.payment({
+          destination: platformFee.destination,
+          // Native has no issuer, and `new Asset('XLM', undefined)` is not it.
+          asset: platformFee.assetIssuer
+            ? new Asset(platformFee.assetCode, platformFee.assetIssuer)
+            : Asset.native(),
+          amount: platformFee.amount,
+        }),
+      );
+    }
     if (memoText) {
       const stellarMemo = buildStellarMemo(memoText, memoType);
       if (stellarMemo) {

@@ -11,13 +11,23 @@ mod storage;
 mod recovery;
 pub mod session_key;
 pub mod policies;
+pub mod sep41;
 #[cfg(test)]
 mod auth_failure_tests;
 #[cfg(test)]
 mod guardian_test;
 #[cfg(test)]
 mod batch_tests;
-use storage::{DataKey, AllowanceKey, PendingRecovery};
+#[cfg(test)]
+mod recovery_slot_test;
+#[cfg(test)]
+mod operator_refusal_tests;
+#[cfg(test)]
+mod spend_limit_tests;
+#[cfg(test)]
+mod webauthn_fixture;
+use storage::{DataKey, AllowanceKey};
+pub use recovery::{PendingRecoveryStatus, RecoverySource};
 
 /// Recovery timelock duration: 3 days in seconds.
 const RECOVERY_DELAY_SECONDS: u64 = 259_200;
@@ -47,8 +57,13 @@ pub enum WalletError {
     /// Guardian recovery was requested but no guardian is set on this wallet.
     NoGuardianSet               = 12,
     /// A recovery is already pending — cannot start another one.
+    /// Returned only by wallets deployed before #1182, by either recovery
+    /// system; current wallets return `GuardianRecoveryPending` or
+    /// `RecoveryKeyRequestPending` instead. Kept so clients can still decode
+    /// errors from those wallets.
     RecoveryAlreadyPending      = 13,
-    /// No recovery is pending — nothing to complete or cancel.
+    /// No recovery is pending in either recovery system — nothing to complete
+    /// or cancel.
     RecoveryNotPending          = 14,
     /// The recovery timelock has not yet expired.
     RecoveryTimelockActive      = 15,
@@ -78,6 +93,21 @@ pub enum WalletError {
     InvalidCeremonyType         = 26,
     // A negative transfer amount was presented against an allowance.
     NegativeAmount              = 27,
+    /// The recovery slot is held by a guardian recovery (`initiate_recovery`).
+    /// Returned when starting a recovery in either system, or when calling
+    /// `finalize_recovery` while it is the guardian's recovery that is pending.
+    GuardianRecoveryPending     = 28,
+    /// The recovery slot is held by a recovery-key request (`request_recovery`).
+    /// Returned when starting a recovery in either system, or when calling
+    /// `complete_recovery` while it is the recovery key's request that is pending.
+    RecoveryKeyRequestPending   = 29,
+    /// A key that has spend limits tried to move a token it has no budget
+    /// for. A limit is denominated in one token, and a scoped key may only
+    /// move the tokens it has been given a budget for.
+    SpendLimitTokenNotAllowed   = 30,
+    /// A key that has spend limits tried to make a call whose token movement
+    /// cannot be determined, so it cannot be budgeted.
+    SpendLimitUnsupportedCall   = 31,
 }
 
 #[contract]
@@ -114,13 +144,26 @@ impl InvisibleWallet {
     /// Add a new signer key to the wallet. Requires authorization from the
     /// contract itself (i.e. an existing signer must authorize via `__check_auth`).
     /// Returns the index assigned to the new signer.
-    pub fn add_signer(env: Env, new_public_key: BytesN<65>) -> u32 {
+    ///
+    /// Rejects a key that is already a registered signer with
+    /// `SignerAlreadyExists`, mirroring `rotate_signer`. Without this check a
+    /// duplicate would occupy a second slot and the same device would count
+    /// twice toward the last-signer guard.
+    pub fn add_signer(env: Env, new_public_key: BytesN<65>) -> Result<u32, WalletError> {
         env.current_contract_address().require_auth();
-        storage::add_signer(&env, &new_public_key)
+        storage::add_signer(&env, &new_public_key).ok_or(WalletError::SignerAlreadyExists)
     }
 
     /// Remove a signer by index. Requires authorization from the contract.
     /// Rejects removal if it would leave the wallet with zero signers.
+    ///
+    /// Indices are sparse after a middle removal: the map keeps its original
+    /// keys, so `signer_count` (the number of live entries) is what the
+    /// last-signer guard must use, not the highest index. A wallet with
+    /// signers at `{0, 2}` has count 2 and may lose one of them, but never
+    /// both. `add_signer` allocates from a monotonic counter, so the freed
+    /// index 1 is never reused and no cached client index can be silently
+    /// rebound to a different key.
     pub fn remove_signer(env: Env, index: u32) -> Result<(), WalletError> {
         env.current_contract_address().require_auth();
 
@@ -147,6 +190,11 @@ impl InvisibleWallet {
     /// The new key takes over the **same index** as the old one, so the signer
     /// set size is unchanged and — critically — the wallet's contract address and
     /// balances are untouched. No redeploy is needed.
+    ///
+    /// Rotation is the only operation that reuses an index. A client that
+    /// cached the index of the rotated key will find a different key there
+    /// afterwards; that is intentional (the slot is the identity, the key is
+    /// the credential) and is why `add_signer` never reuses a freed index.
     ///
     /// Errors:
     /// * `InvalidPublicKey`     — `old` and `new` are the same key (no-op).
@@ -422,18 +470,46 @@ impl InvisibleWallet {
         let origin = storage::get_origin(&env).ok_or(WalletError::OriginMismatch)?;
         auth::verify_origin(&client_data_json, &origin)?;
 
-        // Step 6 — Per-key 24-hour spend limit (if configured for this signer).
-        let total_amount: i128 = _auth_contexts.iter().fold(0i128, |acc, ctx| {
-            if let Context::Contract(c) = ctx {
-                if c.args.len() >= 3 {
-                    if let Ok(a) = i128::try_from_val(&env, &c.args.get(2).unwrap()) {
-                        return acc.saturating_add(a);
+        // Step 6 — Per-key, per-token 24-hour spend limits.
+        //
+        // A limit is denominated in one token: each (key, token) pair carries
+        // its own cap, its own running total and its own rolling window. The
+        // old shape summed every amount in the authorization whatever asset
+        // it was in, so one cap meant 100 XLM or 100 USDC depending on what
+        // moved — see `policies::spend_limit` for the full reasoning.
+        //
+        // A key with no limits at all is unrestricted and is not touched
+        // here, so no existing wallet changes behaviour.
+        if policies::spend_limit::has_limits(&env, &public_key) {
+            for context in _auth_contexts.iter() {
+                let Context::Contract(c) = context else {
+                    // A host-function context (a contract creation) moves no
+                    // token we can account for. A scoped key may not make a
+                    // call that cannot be budgeted.
+                    policies::spend_limit::enforce_unmetered(&env, &public_key)?;
+                    continue;
+                };
+
+                // The amount is read per selector: the token interface does
+                // not agree on where the amount sits — `transfer` puts it at
+                // index 2, `transfer_from` at 3, `burn` at 1. Reading a fixed
+                // index is how the old sum came to add up an `Address` to a
+                // budget.
+                let amount = match sep41::describe(&env, &c.fn_name, &c.args) {
+                    Ok(effect) => effect.amount,
+                    Err(_) => {
+                        policies::spend_limit::enforce_unmetered(&env, &public_key)?;
+                        continue;
                     }
-                }
+                };
+
+                // The contract being authorized *is* the token: for a
+                // SEP-41 transfer it is the token contract whose balance
+                // moves, and for the native asset it is the native asset
+                // contract.
+                policies::spend_limit::enforce(&env, &public_key, &c.contract, amount)?;
             }
-            acc
-        });
-        policies::spend_limit::enforce(&env, &public_key, total_amount)?;
+        }
 
         // Step 7 — Increment nonce ONLY after all checks pass.
         storage::increment_nonce(&env);
@@ -470,15 +546,29 @@ impl InvisibleWallet {
         expiry: Option<u64>,
     ) {
         env.current_contract_address().require_auth();
-        
-        if amount <= 0 {
-            panic!("Amount must be greater than 0");
+
+        if amount < 0 {
+            panic!("Amount must be non-negative");
         }
 
         let key = storage::DataKey::Allowance(AllowanceKey { spender, token });
-        let allowance = storage::Allowance { amount, expiry };
-        
-        env.storage().persistent().set(&key, &allowance);
+
+        if amount == 0 {
+            env.storage().persistent().remove(&key);
+        } else {
+            let allowance = storage::Allowance { amount, expiry };
+            env.storage().persistent().set(&key, &allowance);
+        }
+    }
+
+    /// Revoke an allowance previously granted via `approve`.
+    ///
+    /// Requires passkey authorization (i.e. from the contract itself).
+    /// This is equivalent to calling `approve(spender, token, 0, None)`.
+    pub fn revoke_allowance(env: Env, spender: Address, token: Address) {
+        env.current_contract_address().require_auth();
+        let key = storage::DataKey::Allowance(AllowanceKey { spender, token });
+        env.storage().persistent().remove(&key);
     }
 
     /// Get the current allowance for a spender and token.
@@ -519,7 +609,8 @@ impl InvisibleWallet {
     ///
     /// # Errors
     /// * `WalletError::NoGuardianSet` - if no guardian has been configured.
-    /// * `WalletError::RecoveryAlreadyPending` - if a recovery is already in progress.
+    /// * `WalletError::GuardianRecoveryPending` - if a guardian recovery is already in progress.
+    /// * `WalletError::RecoveryKeyRequestPending` - if a recovery-key request is in progress.
     pub fn initiate_recovery(env: Env, new_public_key: BytesN<65>) -> Result<(), WalletError> {
         // Verify a guardian is set
         let guardian: Address = env.storage()
@@ -530,20 +621,14 @@ impl InvisibleWallet {
         // Require guardian authorization
         guardian.require_auth();
 
-        // Prevent overwriting an existing pending recovery
-        if env.storage().persistent().has(&DataKey::RecoveryPending) {
-            return Err(WalletError::RecoveryAlreadyPending);
-        }
-
-        // Calculate unlock time: current ledger timestamp + 3 day delay
-        let recovery_unlock_time = env.ledger().timestamp() + RECOVERY_DELAY_SECONDS;
-
-        let pending = PendingRecovery {
-            new_public_key: new_public_key.clone(),
-            recovery_unlock_time,
-        };
-
-        env.storage().persistent().set(&DataKey::RecoveryPending, &pending);
+        // Take the single recovery slot shared with the recovery-key path;
+        // refuses while either system has a recovery pending.
+        let recovery_unlock_time = recovery::claim_slot(
+            &env,
+            RecoverySource::Guardian,
+            &new_public_key,
+            RECOVERY_DELAY_SECONDS,
+        )?;
 
         env.events().publish(
             (symbol_short!("recovery"), symbol_short!("init")),
@@ -560,25 +645,22 @@ impl InvisibleWallet {
     /// that was specified during `initiate_recovery`.
     ///
     /// # Errors
-    /// * `WalletError::RecoveryNotPending` - if no recovery has been initiated.
+    /// * `WalletError::RecoveryNotPending` - if no recovery is pending in either system.
+    /// * `WalletError::RecoveryKeyRequestPending` - if the pending recovery is a
+    ///   recovery-key request; complete it with `finalize_recovery`.
     /// * `WalletError::RecoveryTimelockActive` - if the timelock has not yet expired.
     pub fn complete_recovery(env: Env) -> Result<(), WalletError> {
         // Retrieve pending recovery
-        let pending: PendingRecovery = env.storage()
-            .persistent()
-            .get(&DataKey::RecoveryPending)
-            .ok_or(WalletError::RecoveryNotPending)?;
+        let pending = recovery::pending_for(&env, RecoverySource::Guardian)?;
 
         // Verify timelock has expired
         if env.ledger().timestamp() < pending.recovery_unlock_time {
             return Err(WalletError::RecoveryTimelockActive);
         }
 
-        // Replace signers: reset the map to only the recovered key at index 0.
-        storage::init_signers(&env, &pending.new_public_key);
-
-        // Clear the pending recovery
-        env.storage().persistent().remove(&DataKey::RecoveryPending);
+        // Replace every signer with the recovered key and release the slot.
+        // Why replace rather than merge: see `recovery::install_recovered_signer`.
+        recovery::install_recovered_signer(&env, RecoverySource::Guardian, &pending.new_public_key);
 
         env.events().publish(
             (symbol_short!("recovery"), symbol_short!("done")),
@@ -588,32 +670,34 @@ impl InvisibleWallet {
         Ok(())
     }
 
-    /// Cancel a pending guardian recovery.
+    /// Cancel the pending recovery, whichever system started it.
     ///
     /// Only callable by the current wallet signer (the contract itself must
     /// authorize). This allows a wallet owner who still has their key to
-    /// abort an unwanted or malicious recovery attempt.
+    /// abort an unwanted or malicious recovery attempt. A guardian recovery
+    /// and a recovery-key request share one slot, so on success nothing is
+    /// left pending; `cancel_recovery_request` behaves identically.
     ///
     /// # Errors
-    /// * `WalletError::RecoveryNotPending` - if no recovery has been initiated.
+    /// * `WalletError::RecoveryNotPending` - if no recovery is pending in either system.
     pub fn cancel_recovery(env: Env) -> Result<(), WalletError> {
         // Require current signer authorization
         env.current_contract_address().require_auth();
 
-        // Verify a recovery is actually pending
-        if !env.storage().persistent().has(&DataKey::RecoveryPending) {
-            return Err(WalletError::RecoveryNotPending);
-        }
-
-        // Remove the pending recovery
-        env.storage().persistent().remove(&DataKey::RecoveryPending);
+        let cancelled = recovery::cancel_any(&env)?;
 
         env.events().publish(
             (symbol_short!("recovery"), symbol_short!("cancel")),
-            (),
+            cancelled,
         );
 
         Ok(())
+    }
+
+    /// The pending recovery, if any: which system started it, the key it will
+    /// install and when it unlocks. `None` means nothing is counting down.
+    pub fn get_pending_recovery(env: Env) -> Option<PendingRecoveryStatus> {
+        recovery::pending(&env)
     }
 
     /// Register a scoped session key with an ACL.
@@ -689,30 +773,79 @@ impl InvisibleWallet {
         session_key::revoke(&env, &key_id);
     }
 
-    /// Set a 24-hour rolling spend limit for a WebAuthn signer key.
+    /// Set a 24-hour rolling spend limit for a WebAuthn signer key, in one
+    /// specific token.
     ///
-    /// Once set, every `__check_auth` call using `key_id` sums all context
-    /// amounts and checks the total against `cap` within a rolling 24-hour window.
-    /// Pass `cap = 0` to block all spending. Call `remove_key_spend_limit` to
-    /// lift the restriction entirely.
+    /// The cap is denominated in `token` — the base units of that one token
+    /// contract. A cap of `100_000_000` on the native asset contract is one
+    /// XLM per 24 hours and means nothing on any other contract: the wallet
+    /// has no price oracle, so a cap cannot mean one thing in two assets.
+    ///
+    /// Each (key, token) pair has its own cap and its own rolling window.
+    /// Setting a limit on one token does not touch another token's budget.
+    ///
+    /// A key that has at least one limit is *scoped* to the tokens it has a
+    /// budget for: moving any other token is refused
+    /// (`SpendLimitTokenNotAllowed`), and so is a call whose token movement
+    /// cannot be determined (`SpendLimitUnsupportedCall`) — including a call
+    /// to this wallet contract, so a scoped key cannot add signers, rotate
+    /// keys, change limits, or reach `execute`.
+    ///
+    /// A key with no limits at all is unrestricted.
+    ///
+    /// Pass `cap = 0` to block all spending of that token. Call
+    /// `remove_key_spend_limit` to lift the restriction for that token, or
+    /// `remove_all_key_spend_limits` to lift it for every token.
+    ///
+    /// A limited key cannot manage limits — not its own, not anyone else's.
+    /// Set and remove limits from a signer that has none, which is the key
+    /// that owns the wallet.
     ///
     /// Requires wallet owner authorization.
-    pub fn set_key_spend_limit(env: Env, key_id: BytesN<65>, cap: i128) {
+    pub fn set_key_spend_limit(env: Env, key_id: BytesN<65>, token: Address, cap: i128) {
         env.current_contract_address().require_auth();
-        policies::spend_limit::set(&env, &key_id, cap);
+        policies::spend_limit::set(&env, &key_id, &token, cap);
     }
 
-    /// Remove the 24-hour spend limit for a signer key (no limit = no cap).
+    /// Remove the 24-hour spend limit for a signer key on one token.
+    ///
+    /// If it was that key's only limit, the key becomes unrestricted again.
+    ///
+    /// A limited key cannot remove limits — not its own, not anyone else's.
+    /// Remove them from a signer that has none.
     ///
     /// Requires wallet owner authorization.
-    pub fn remove_key_spend_limit(env: Env, key_id: BytesN<65>) {
+    pub fn remove_key_spend_limit(env: Env, key_id: BytesN<65>, token: Address) {
         env.current_contract_address().require_auth();
-        policies::spend_limit::remove(&env, &key_id);
+        policies::spend_limit::remove(&env, &key_id, &token);
     }
 
-    /// Get the current spend window record for a signer key, if any.
-    pub fn get_key_spend_limit(env: Env, key_id: BytesN<65>) -> Option<policies::spend_limit::SpendWindow> {
-        policies::spend_limit::get(&env, &key_id)
+    /// Remove every spend limit for a signer key, making it unrestricted
+    /// again.
+    ///
+    /// Requires wallet owner authorization.
+    pub fn remove_all_key_spend_limits(env: Env, key_id: BytesN<65>) {
+        env.current_contract_address().require_auth();
+        policies::spend_limit::remove_all(&env, &key_id);
+    }
+
+    /// Get the current spend window record for a signer key on one token, if
+    /// any.
+    pub fn get_key_spend_limit(
+        env: Env,
+        key_id: BytesN<65>,
+        token: Address,
+    ) -> Option<policies::spend_limit::SpendWindow> {
+        policies::spend_limit::get(&env, &key_id, &token)
+    }
+
+    /// The tokens a signer key has spend limits for.
+    ///
+    /// Empty means the key has no limits and is therefore unrestricted. A
+    /// non-empty list means the key is scoped: it may move those tokens and
+    /// nothing else.
+    pub fn get_key_spend_limit_tokens(env: Env, key_id: BytesN<65>) -> Vec<Address> {
+        policies::spend_limit::tokens(&env, &key_id)
     }
 
     /// Register a designated recovery key for this wallet.
@@ -732,8 +865,9 @@ impl InvisibleWallet {
     /// to complete the rotation.
     ///
     /// # Errors
-    /// * `NoRecoveryKeySet`       — no recovery key has been registered.
-    /// * `RecoveryAlreadyPending` — a recovery request is already in progress.
+    /// * `NoRecoveryKeySet`          — no recovery key has been registered.
+    /// * `RecoveryKeyRequestPending` — a recovery-key request is already in progress.
+    /// * `GuardianRecoveryPending`   — a guardian recovery is in progress.
     pub fn request_recovery(env: Env, new_signer: BytesN<65>) -> Result<(), WalletError> {
         recovery::request_recovery(&env, new_signer)
     }
@@ -743,20 +877,23 @@ impl InvisibleWallet {
     /// Permissionless — anyone may call this once `ledger.timestamp > unlock_at`.
     ///
     /// # Errors
-    /// * `RecoveryNotPending`     — no recovery request is in progress.
-    /// * `RecoveryTimelockActive` — the 7-day cooldown has not yet elapsed.
+    /// * `RecoveryNotPending`      — no recovery is pending in either system.
+    /// * `GuardianRecoveryPending` — the pending recovery is a guardian
+    ///   recovery; complete it with `complete_recovery`.
+    /// * `RecoveryTimelockActive`  — the 7-day cooldown has not yet elapsed.
     pub fn finalize_recovery(env: Env) -> Result<(), WalletError> {
         recovery::finalize_recovery(&env)
     }
 
-    /// Cancel a pending recovery-key request.
+    /// Cancel the pending recovery, whichever system started it.
     ///
     /// Only the current wallet signer (the contract itself) may cancel.
     /// This lets a wallet owner who still holds their key abort a recovery
-    /// attempt before it is finalized.
+    /// attempt before it is finalized. Identical to `cancel_recovery`: on
+    /// success nothing is left pending in either system.
     ///
     /// # Errors
-    /// * `RecoveryNotPending` — no recovery request is in progress.
+    /// * `RecoveryNotPending` — no recovery is pending in either system.
     pub fn cancel_recovery_request(env: Env) -> Result<(), WalletError> {
         env.current_contract_address().require_auth();
         recovery::cancel_recovery_request(&env)
@@ -1586,5 +1723,105 @@ mod test {
 
         let remaining = client.get_allowance(&spender, &token).unwrap();
         assert_eq!(remaining.amount, 300);
+    }
+
+    #[test]
+    fn test_allowance_zero_amount_revokes() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.approve(&spender, &token, &500, &None);
+        let before = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(before.amount, 500);
+
+        client.approve(&spender, &token, &0, &None);
+        assert_eq!(client.get_allowance(&spender, &token), None);
+
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::InsufficientAllowance)));
+    }
+
+    #[test]
+    fn test_revoke_allowance_removes_allowance() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.approve(&spender, &token, &500, &None);
+        let before = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(before.amount, 500);
+
+        client.revoke_allowance(&spender, &token);
+        assert_eq!(client.get_allowance(&spender, &token), None);
+
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::InsufficientAllowance)));
+    }
+
+    #[test]
+    fn test_allowance_after_revoke_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+
+        // No allowance ever granted — rejected.
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::InsufficientAllowance)));
     }
 }
