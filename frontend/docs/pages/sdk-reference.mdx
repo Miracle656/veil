@@ -17,7 +17,7 @@ The `invisible-wallet-sdk` is a TypeScript package providing framework adapters 
 |---|---|---|
 | Default (Core + React) | `invisible-wallet-sdk` | `useInvisibleWallet` hook, core types, error classes, and utility functions |
 | Vanilla (no framework) | `invisible-wallet-sdk/vanilla` | `createInvisibleWallet` client |
-| React (provider & hooks) | `invisible-wallet-sdk/react` | `VeilProvider`, `useVeilContext`, React Query hooks (`useBalance`, `useHistory`, `useSendTransaction`), and UI components |
+| React (provider & hooks) | `invisible-wallet-sdk/react` | `VeilProvider`, `useVeilContext`, React Query hooks (`useAccount`, `useBalance`, `useSendPayment`, `useTransactionStatus`), and UI components |
 | Vue 3 | `invisible-wallet-sdk/vue` | `useInvisibleWallet` composable |
 | Svelte | `invisible-wallet-sdk/svelte` | `createWalletStore` readable store |
 | Solid.js | `invisible-wallet-sdk/solid` | `useInvisibleWallet` reactive primitive |
@@ -84,13 +84,19 @@ Configuration object passed to `useInvisibleWallet`, `createInvisibleWallet`, `c
 
 ```typescript
 type WalletConfig = {
-  factoryAddress: string          // Factory contract address (C...)
-  rpcUrl: string                  // Soroban RPC endpoint
-  networkPassphrase: string       // e.g. Networks.TESTNET
-  rpId?: string                   // WebAuthn relying party ID (default: window.location.hostname)
-  origin?: string                 // WebAuthn origin (default: window.location.origin)
-  storage?: StorageAdapter        // Optional custom persistence adapter
-  sponsorSigner?: TransactionSigner // Optional fee-bump sponsor signer
+  factoryAddress: string                  // Factory contract address (C...)
+  rpcUrl: string                          // Soroban RPC endpoint
+  networkPassphrase: string               // e.g. Networks.TESTNET
+  rpId?: string                           // WebAuthn relying party ID (default: window.location.hostname)
+  origin?: string                         // WebAuthn origin (default: window.location.origin)
+  storage?: StorageAdapter                // Optional custom persistence adapter
+  autoReplayOnReconnect?: boolean         // Auto-replay offline outbox on browser 'online' event (default: true)
+  attestationPolicy?: AttestationPolicy   // Optional WebAuthn attestation verifier run during register()
+  requireAttestation?: boolean            // Abort register() if attestationPolicy is set but raw attestation is unavailable (default: false)
+  sponsorSigner?: TransactionSigner       // Optional fee-bump sponsor signer
+  /** @deprecated Use sponsorSigner instead. */
+  sponsorSecret?: string                  // Deprecated: raw sponsor secret key
+  feeBumpBaseFee?: string                 // Base fee for outer fee-bump transaction (default: BASE_FEE)
 }
 ```
 
@@ -276,8 +282,8 @@ Derives the deterministic counterfactual wallet contract address for a 65-byte P
 deriveCounterfactualAddress: (publicKeyBytes: Uint8Array) => CounterfactualAddress
 
 // Example
-const { address, salt } = wallet.deriveCounterfactualAddress(publicKeyBytes)
-console.log(address, salt)
+const { address, publicKeyHex, derivedAt } = wallet.deriveCounterfactualAddress(publicKeyBytes)
+console.log(address, publicKeyHex, derivedAt)
 ```
 
 ---
@@ -337,7 +343,7 @@ registerAdditionalSigner: (signer: SignerInput, options?: RegisterAdditionalSign
 
 // Example
 const added = await wallet.registerAdditionalSigner(feePayer, {
-  label: 'Backup security key',
+  username: 'Backup security key',
   authenticatorAttachment: 'cross-platform',
 })
 console.log('added signer index:', added.signerIndex)
