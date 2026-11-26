@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Veil live privacy proof</title>
+<style>
+  body { font: 18px system-ui; max-width: 960px; margin: 48px auto; padding: 24px; color: #171717; background: #fafafa; }
+  button { padding: 12px 18px; margin: 8px 8px 8px 0; font: inherit; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<h1>Veil testnet privacy proof</h1>
+<p>Real browser WASM, encrypted OPFS and proofs. Uses disposable testnet signers; passkey recovery is outside this test.</p>
+<p id="address"></p>
+<button id="initialize">Initialize</button>
+<button id="register" disabled>Register privacy keys</button>
+<button id="shield" disabled>Shield 5 XLM</button>
+<button id="send" disabled>Send 2 XLM privately</button>
+<button id="unshield" disabled>Unshield 1 XLM</button>
+<pre id="status">Ready</pre>
+<script type="module" src="/browser.js"></script>
+</html>
