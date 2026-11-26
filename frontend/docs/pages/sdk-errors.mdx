@@ -82,51 +82,77 @@ try {
 
 ## Contract error codes (`WalletError`)
 
-The `WalletError` enum is defined in `contracts/invisible_wallet/src/lib.rs`. When a Soroban invocation fails with one of these codes the SDK wraps it in a standard `Error` whose message contains the numeric code returned by the RPC node.
+The `WalletError` enum is defined in `contracts/invisible_wallet/src/lib.rs`. When a wallet call fails with one of these codes, the error text contains `Error(Contract, #N)`, where `N` is the code below. See [Reading the code from an error](#reading-the-code-from-an-error).
 
-| Code | Name | When thrown | Recovery |
-|------|------|-------------|----------|
-| 1 | `AlreadyInitialized` | `init()` called on a wallet that already has a registered signer | Do not call `init()` more than once per contract instance |
-| 2 | `InvalidSignatureFormat` | The WebAuthn signature bytes could not be parsed as DER-encoded ECDSA | Ensure `derToRawSignature` in `utils.ts` ran without error before submitting |
-| 3 | `SignerNotAuthorized` | The supplied public key is not in the registered-signers list | Register the key via `add_signer()` using an already-authorized signer |
-| 4 | `InvalidPublicKey` | The supplied public key bytes are not a valid uncompressed P-256 point (must be 65 bytes, prefix `0x04`) | Re-extract the key with `extractP256PublicKey` |
-| 5 | `InvalidSignature` | The signature bytes are not valid (wrong length, malformed `r`/`s`) | Re-run `derToRawSignature`; check the raw byte length is 64 |
-| 6 | `SignatureVerificationFailed` | P-256 ECDSA verification failed — signature does not match the payload under the supplied key | The WebAuthn assertion was for a different transaction; re-request a fresh assertion |
-| 7 | `InvalidChallenge` | `challenge` is absent from `clientDataJSON` or does not match `base64url(signature_payload)` | Ensure the challenge passed to `navigator.credentials.get()` is `base64url(signature_payload)` with no padding |
-| 8 | `RpIdMismatch` | `rpIdHash` in `authData` does not match `SHA-256(expected_rp_id)` stored in the contract | The credential was registered for a different domain; register a new credential on the correct origin |
-| 9 | `OriginMismatch` | `origin` in `clientDataJSON` does not match the expected origin | The assertion came from the wrong website; ensure your app URL matches the registered RP ID |
-| 10 | `CannotRemoveLastSigner` | `remove_signer()` would leave the wallet with zero signers | Add a replacement signer before removing the last one |
-| 11 | `SignerNotFound` | The signer index supplied to `remove_signer()` does not exist | Query the current signer list before removing |
-| 12 | `NoGuardianSet` | `initiate_recovery()` called but no guardian was registered via `set_guardian()` | Register a guardian first |
-| 13 | `RecoveryAlreadyPending` | Wallets deployed before #1182 only: `initiate_recovery()` or `request_recovery()` called while that same path already had a recovery in progress. It does not tell you which path; on those wallets a recovery in the *other* path may also be pending | Cancel with **both** `cancel_recovery()` and `cancel_recovery_request()`, or wait for it to complete |
-| 14 | `RecoveryNotPending` | Completing or cancelling with no recovery pending in either path (on wallets before #1182: in the path you called) | Start a recovery first |
-| 15 | `RecoveryTimelockActive` | `complete_recovery()` called before the timelock has expired | Wait for the on-chain ledger timestamp to exceed the stored expiry |
-| 16 | `NonceMismatch` | The transaction nonce is out of sequence (replay or ordering protection) | Fetch the current on-chain nonce and retry with the correct value |
-| 17 | `InsufficientAllowance` | A session-key transfer exceeds its approved spending limit | Request a new session key with a higher allowance, or use the primary passkey signer |
-| 18 | `AllowanceExpired` | The session-key allowance period has ended | Issue a new session key |
-| 19 | `SessionKeyExpired` | The session key's validity window has passed | Issue a new session key |
-| 20 | `SessionKeyAclViolation` | The session key attempted an operation not permitted by its ACL | Use a session key with broader permissions, or use the primary passkey signer |
-| 28 | `GuardianRecoveryPending` | A guardian recovery (`initiate_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `finalize_recovery()` | Wait for it and call `complete_recovery()`, or cancel it with either cancel function |
-| 29 | `RecoveryKeyRequestPending` | A recovery-key request (`request_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `complete_recovery()` | Wait for it and call `finalize_recovery()`, or cancel it with either cancel function |
+<Callout type="warning">
+  **Mainnet wallets run older code.** Every wallet on mainnet was deployed from commit `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2` (`contracts/deployments.json`) and can never be upgraded. Its enum stops at code 27, and some codes are returned in different places. The **Mainnet** column says how each code applies to those wallets:
+
+  - **Yes**: returned the same way by mainnet wallets.
+  - **Partly**: mainnet wallets return it, but not in every case listed. The cause column says which cases are source only.
+  - **Source only**: only wallets built from current source return it. Mainnet wallets never do.
+  - **Mainnet only**: only mainnet wallets return it. Wallets built from current source return a newer code instead.
+  - **Not returned**: the code is in the enum, but no code path in either version returns it.
+</Callout>
+
+| Code | Name | Mainnet | When thrown | Recovery |
+|------|------|---------|-------------|----------|
+| 1 | `AlreadyInitialized` | Yes | `init()` called on a wallet that already has a registered signer | Do not call `init()` more than once per contract instance |
+| 2 | `InvalidSignatureFormat` | Yes | The `signature` passed to `__check_auth` is not an allowance address or a session-key triple, and is not a 5-element `Vec` of `[public_key: BytesN<65>, authenticator_data: Bytes, client_data_json: Bytes, signature: BytesN<64>, nonce: u64]`, or an element has the wrong type | Build the passkey signature with all five elements in that order. The signature element must be the raw 64 bytes, 32-byte `r` then 32-byte `s`: convert the authenticator's DER signature with `derToRawSignature` first |
+| 3 | `SignerNotAuthorized` | Yes | The supplied public key is not in the registered-signers list | Register the key via `add_signer()` using an already-authorized signer |
+| 4 | `InvalidPublicKey` | Yes | `rotate_signer()` was given the same key as both `old_public_key` and `new_public_key`. The wallet returns it nowhere else: a malformed key passed to `__check_auth` fails `SignerNotAuthorized` or traps in the host | Pass the replacement key as `new_public_key`. Re-extract it with `extractP256PublicKey` if both values came from the same credential |
+| 5 | `InvalidSignature` | Not returned | Neither version of the wallet returns this code. P-256 signatures are checked with the host's `secp256r1_verify`, which traps with a host error instead. Kept in the enum so the numbering does not shift | If a signature is rejected without a contract code, check the raw signature is 64 bytes (`derToRawSignature`) and was made over this transaction |
+| 6 | `SignatureVerificationFailed` | Not returned | Neither version of the wallet returns this code. A P-256 signature that does not verify makes the host's `secp256r1_verify` trap with a host error, not `Error(Contract, #6)`. Kept in the enum so the numbering does not shift | A host trap during `__check_auth` usually means the assertion was for a different transaction or key. Request a fresh assertion over the current `signature_payload` |
+| 7 | `InvalidChallenge` | Yes | `challenge` is absent from `clientDataJSON` or does not match `base64url(signature_payload)` | Ensure the challenge passed to `navigator.credentials.get()` is `base64url(signature_payload)` with no padding |
+| 8 | `RpIdMismatch` | Yes | `rpIdHash` in `authData` does not match `SHA-256(expected_rp_id)` stored in the contract | The credential was registered for a different domain; register a new credential on the correct origin |
+| 9 | `OriginMismatch` | Yes | `origin` in `clientDataJSON` does not match the expected origin | The assertion came from the wrong website; ensure your app URL matches the registered RP ID |
+| 10 | `CannotRemoveLastSigner` | Yes | `remove_signer()` would leave the wallet with zero signers | Add a replacement signer before removing the last one |
+| 11 | `SignerNotFound` | Yes | The signer index supplied to `remove_signer()` does not exist | Query the current signer list before removing |
+| 12 | `NoGuardianSet` | Yes | `initiate_recovery()` called but no guardian was registered via `set_guardian()` | Register a guardian first |
+| 13 | `RecoveryAlreadyPending` | Mainnet only | Wallets deployed before #1182 only, which includes every mainnet wallet: `initiate_recovery()` or `request_recovery()` called while that same path already had a recovery in progress. It does not tell you which path; on those wallets a recovery in the *other* path may also be pending | Cancel with **both** `cancel_recovery()` and `cancel_recovery_request()`, or wait for it to complete |
+| 14 | `RecoveryNotPending` | Yes | Completing or cancelling with no recovery pending in either path (on wallets before #1182: in the path you called) | Start a recovery first |
+| 15 | `RecoveryTimelockActive` | Yes | `complete_recovery()` or `finalize_recovery()` called before the timelock has expired | Wait for the on-chain ledger timestamp to exceed the stored expiry |
+| 16 | `NonceMismatch` | Yes | The transaction nonce is out of sequence (replay or ordering protection) | Fetch the current on-chain nonce and retry with the correct value |
+| 17 | `InsufficientAllowance` | Yes | A session-key transfer exceeds its approved spending limit | Request a new session key with a higher allowance, or use the primary passkey signer |
+| 18 | `AllowanceExpired` | Yes | The session-key allowance period has ended | Issue a new session key |
+| 19 | `SessionKeyExpired` | Yes | The session key's validity window has passed | Issue a new session key |
+| 20 | `SessionKeyAclViolation` | Yes | The session key attempted an operation not permitted by its ACL | Use a session key with broader permissions, or use the primary passkey signer |
+| 21 | `SignerAlreadyExists` | Partly | `rotate_signer()` was given a `new_public_key` that is already a registered signer. **Source only:** `add_signer()` also returns it for a key that is already registered. A mainnet wallet's `add_signer()` accepts the duplicate and gives it a second index | Rotate to, or add, a key that is not registered yet. Check with `has_signer()` first |
+| 22 | `NoRecoveryKeySet` | Yes | `request_recovery()` called but no recovery key was registered via `set_recovery_key()` | Have the wallet owner call `set_recovery_key()` first. Without a recovery key, use guardian recovery (`initiate_recovery()`) if a guardian is set |
+| 23 | `SpendLimitExceeded` | Yes | A passkey signer that has a spend limit authorised more than its rolling 24-hour cap allows, or the running total overflowed. On mainnet wallets the key has one cap, checked against the sum of argument 2 of every call in the authorisation, whatever the token. **Source only:** the cap is per token, and the error is also returned if a token's limit record is missing | Wait until 24 hours after the window started, send less, or sign with a key that has no limit. The owner can raise the cap with `set_key_spend_limit()` or lift it with `remove_key_spend_limit()`. Read the window with `get_key_spend_limit()` |
+| 24 | `InvalidAuthData` | Yes | `authenticatorData` is shorter than 37 bytes (rpIdHash 32 + flags 1 + signCount 4) | Pass the authenticator's `response.authenticatorData` through unmodified. It is usually truncated, or the wrong field was sent |
+| 25 | `UserVerificationRequired` | Yes | The authenticator did not set both the User Present (`0x01`) and User Verified (`0x04`) flags in `authenticatorData`. Every transaction must be gated by a biometric or PIN check | Request the assertion with `userVerification: 'required'` in `navigator.credentials.get()`. With `'preferred'` or `'discouraged'`, an authenticator may skip verification, and the wallet then rejects the signature |
+| 26 | `InvalidCeremonyType` | Yes | `clientDataJSON` is not a `"type":"webauthn.get"` assertion, for example a registration (`webauthn.create`) response | Sign with `navigator.credentials.get()`, not `create()`, and pass its `clientDataJSON` unmodified |
+| 27 | `NegativeAmount` | Partly | A negative `transfer` amount was presented against an allowance (allowance authorisation path). **Source only:** a negative amount was presented against a passkey key's per-token spend limit | Send a non-negative amount. A negative token amount is never valid |
+| 28 | `GuardianRecoveryPending` | Source only | A guardian recovery (`initiate_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `finalize_recovery()` | Wait for it and call `complete_recovery()`, or cancel it with either cancel function |
+| 29 | `RecoveryKeyRequestPending` | Source only | A recovery-key request (`request_recovery()`) holds the wallet's single recovery slot: returned when starting a recovery in either path, or by `complete_recovery()` | Wait for it and call `finalize_recovery()`, or cancel it with either cancel function |
+| 30 | `SpendLimitTokenNotAllowed` | Source only | A passkey key with spend limits tried to move a token it has no budget for. A key with any limit may move only the tokens it has a limit for | Sign with a key that has no limits, or have the owner add a limit for that token with `set_key_spend_limit()`. `get_key_spend_limit_tokens()` lists the tokens the key may move |
+| 31 | `SpendLimitUnsupportedCall` | Source only | A passkey key with spend limits made a call whose token movement cannot be read (not a SEP-41 `transfer`, `transfer_from`, `burn` or similar, or a contract creation), so it cannot be budgeted. This includes calls to the wallet itself, such as `add_signer()` or `execute()` | Make the call with a key that has no limits. To give the key full access, the owner can remove its limits with `remove_all_key_spend_limits()` |
 
 ---
 
-## Mapping contract codes to SDK errors
+## Reading the code from an error
 
-When the Soroban RPC returns a simulation or transaction failure the error object contains a `diagnosticEvents` array. The contract code is embedded as a `u32` in the event data. The SDK does not currently re-wrap these into typed classes; callers must inspect the raw RPC error. A future SDK release will expose a helper:
+The SDK does not wrap contract failures in typed classes. A failed simulation or transaction surfaces as an error whose text includes the host's diagnostic output. That output names the contract code as `Error(Contract, #N)`, where `N` is the code from the table above.
+
+Match on that pattern, not on message wording. The codes are part of the deployed contract's on-chain ABI, and mainnet wallets cannot be upgraded, so the numbers will not change. The web wallet does this in `frontend/wallet/lib/walletContractError.ts`:
 
 ```typescript
-// Planned (not yet released)
-import { parseContractError } from 'invisible-wallet-sdk'
+/** `Error(Contract, #N)` as the host prints it inside an auth failure. */
+function contractErrorCode(detail: string): number | null {
+  const m = detail.match(/Error\(Contract,\s*#(\d+)\)/)
+  return m ? Number(m[1]) : null
+}
 
 try {
   await wallet.send(destination, amount, signerKeypair)
 } catch (err) {
-  const code = parseContractError(err) // returns WalletError code or null
-  if (code === 6) { /* SignatureVerificationFailed — re-request assertion */ }
+  const code = contractErrorCode(err instanceof Error ? err.message : String(err))
+  if (code === 25) {
+    // UserVerificationRequired: request the assertion with userVerification: 'required'
+  }
 }
 ```
 
 <Callout type="info">
-  Until `parseContractError` ships, inspect `err.message` for the string `"Error(Contract, #N)"` where `N` is the numeric code from the table above.
+  There is no exported helper for this in `invisible-wallet-sdk`. Copy the function above. A failure that does not contain `Error(Contract, #N)` did not come from `WalletError`. For example, a P-256 or ed25519 signature that does not verify, or a missing authorisation, makes the host trap with its own error. Show the raw text in that case rather than guessing.
 </Callout>
