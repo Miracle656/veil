@@ -128,6 +128,35 @@ describe('executeRowByRow', () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(bulkView(result, 2)).toBe('failed');
   });
+
+  it('re-throws a cancellation before any row was submitted, so the screen can stay quiet', async () => {
+    const send = jest.fn(async () => {
+      throw new Error('USER_REJECTED');
+    });
+
+    await expect(
+      executeRowByRow([row(A), row(B)], send, undefined, {
+        isCancellation: (e) => String(e).includes('USER_REJECTED'),
+      }),
+    ).rejects.toThrow('USER_REJECTED');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps already-submitted rows when a later prompt is cancelled', async () => {
+    const send = jest.fn(async (_r: PayoutRow, i: number) => {
+      if (i === 1) throw new Error('USER_REJECTED');
+      return HASH(i + 1);
+    });
+
+    const result = await executeRowByRow([row(A), row(B), row(C)], send, undefined, {
+      isCancellation: (e) => String(e).includes('USER_REJECTED'),
+    });
+
+    expect(result.submitted).toEqual([0]);
+    expect(result.failed).toEqual([]);
+    expect(result.notAttempted).toEqual([1, 2]);
+    expect(bulkView(result, 3)).toBe('partial');
+  });
 });
 
 describe('bulkView', () => {

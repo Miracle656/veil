@@ -1,0 +1,28 @@
+{
+  "name": "Veil-ian #04",
+  "description": "A veiled figure for Veil: a crowned mask over layered, patterned cloth falling to an uneven hem. Crown: Flat cap. Aperture: Slot. Ornament: Concentric squares. Palette: Gold + lilac. Hem: Ragged. Its palette is shared with one other in the set of 20. No face — where the cloth is open, it is cloth removed rather than features drawn on.",
+  "image": "https://app.useveilapp.xyz/masquerade/04.jpg",
+  "external_url": "https://useveilapp.xyz",
+  "attributes": [
+    {
+      "trait_type": "Crown",
+      "value": "Flat cap"
+    },
+    {
+      "trait_type": "Aperture",
+      "value": "Slot"
+    },
+    {
+      "trait_type": "Ornament",
+      "value": "Concentric squares"
+    },
+    {
+      "trait_type": "Palette",
+      "value": "Gold + lilac"
+    },
+    {
+      "trait_type": "Hem",
+      "value": "Ragged"
+    }
+  ]
+}

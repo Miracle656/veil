@@ -43,6 +43,10 @@ docs.useveilapp.xyz — documents two upgrade paths:
   of every contract call regardless of asset, so one cap means 10 XLM or 10 USDC depending on
   what moves (~9× overspend in USDC terms). Unreachable today — `set_key_spend_limit` is called
   from nowhere — but no existing wallet can ever receive the fix.
+  **Fixed in the contract, for new wallets only.** The limit is now keyed per
+  `(key_id, token contract)`, each pair with its own cap, total and 24-hour window. A wallet
+  already deployed on the old factory keeps the old asset-blind code forever: the fix reaches
+  it only when its owner opens a wallet from the new factory and moves the balance across.
 - **One passkey = one wallet per network**, fixed by the salt. Changing that needs a new factory.
 - **A new factory means new addresses for everyone.** The factory's own address is part of
   every wallet address (`HashIdPreimage::ContractId { networkId, factory, salt }`). A new
@@ -113,7 +117,14 @@ funded by the award.
       funds. That is the self-custody question reviewers will ask first.
 - [ ] **Factory `set_wasm_hash(new_hash)`, admin-gated** (the admin is already fixed at
       construction). Affects only wallets deployed afterwards.
-- [ ] **Spend limits keyed per `(key_id, token contract)`** instead of one asset-blind sum.
+- [x] **Spend limits keyed per `(key_id, token contract)`** instead of one asset-blind sum.
+      Shipped in the contract: each `(key, token)` pair carries its own cap, its own running
+      total and its own rolling 24-hour window, and the amount is read per selector from the
+      SEP-41 argument layout rather than from a fixed index. A key with no limits is
+      unrestricted; a key with at least one limit is scoped to the tokens it has a budget for,
+      and an unset token is **denied** rather than unlimited — the reasoning is in
+      `contracts/invisible_wallet/src/policies/spend_limit.rs`. This reaches **new wallets
+      only**: see the migration note in §2.
 - [ ] **A batch entry point — `batch_execute(calls)` or a router — so one signature can cover
       many payments.** `execute(target, func, args)` (`contracts/invisible_wallet/src/lib.rs:450`)
       takes exactly one call, and a Soroban transaction carries one `InvokeHostFunction`, so N
@@ -140,7 +151,7 @@ funded by the award.
 
 ## 7. Do now — no contract work needed
 
-- [ ] **Correct `frontend/docs/pages/contract-upgrades.mdx`.** Mark both functions as *not
+- [x] **Correct `frontend/docs/pages/contract-upgrades.mdx`.** Mark both functions as *not
       implemented, planned for contracts v2*. It is public and describes guarantees we do not have.
 - [ ] **SCF application:** state the gap and put contracts v2 in the milestones.
 

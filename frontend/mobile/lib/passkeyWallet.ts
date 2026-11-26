@@ -6,7 +6,7 @@ import { recordFeePayerSource } from './feePayerSource';
 import { getNetwork } from './network';
 import { evaluatePrf } from './passkey';
 import type { PrfOutcome } from './prfOutcome';
-import { fundWithFriendbot } from './testnetWallet';
+import { fundWithFriendbot, type CreatedWallet } from './classicWallet';
 import { writeBreadcrumbs } from './walletBreadcrumbs';
 import {
   getPasskeyPublicKey,
@@ -17,7 +17,6 @@ import {
   setSignerSecret,
   setWalletAddress,
 } from './walletStore';
-import type { CreatedWallet } from './testnetWallet';
 
 /**
  * Domain-separated PRF salt for the fee-payer key. Matches the SDK's
@@ -112,8 +111,13 @@ export async function createPasskeyWallet(
     const finalFeePayer = fp ?? feePayer ?? fallbackFeePayer;
     const recoverable = finalFeePayer !== fallbackFeePayer;
 
-    // Friendbot only exists on testnet; on mainnet this returns false at once.
-    const funded = await fundWithFriendbot(finalFeePayer.publicKey());
+    // Friendbot funding is a testnet-only step. On mainnet, fee-payers have no
+    // faucet and must be funded with real XLM.
+    const network = getNetwork();
+    const funded =
+      network.name === 'testnet' && network.friendbotUrl
+        ? await fundWithFriendbot(finalFeePayer.publicKey())
+        : false;
 
     void writeBreadcrumbs(finalFeePayer.secret(), walletAddress, publicKeyBytes ?? null).catch(() => undefined);
 

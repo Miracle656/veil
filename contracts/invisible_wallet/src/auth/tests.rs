@@ -1,13 +1,18 @@
-// Happy-path __check_auth tests — authenticatorData size coverage
+// __check_auth test suite — grouped by concern.
 //
-// Real authenticators produce auth_data of varying lengths:
-//   37 B  — minimal: rpIdHash (32) + flags (1) + signCount (4)
-//  100 B  — with attested credential data stub
-//  200 B  — with CBOR extensions stub
+// Sections:
+//   1. Authorisation — happy-path __check_auth tests (authenticatorData size
+//      coverage). Real authenticators produce auth_data of varying lengths:
+//        37 B  — minimal: rpIdHash (32) + flags (1) + signCount (4)
+//       100 B  — with attested credential data stub
+//       200 B  — with CBOR extensions stub
+//      verify_rp_id only reads auth_data[0..32], so the contract must accept
+//      any length ≥ 32. Each test builds a cryptographically valid P-256 /
+//      WebAuthn ES256 fixture and asserts __check_auth returns Ok(()) +
+//      increments the nonce.
 //
-// verify_rp_id only reads auth_data[0..32], so the contract must accept any
-// length ≥ 32. Each test builds a cryptographically valid P-256 / WebAuthn
-// ES256 fixture and asserts __check_auth returns Ok(()) + increments the nonce.
+//   2. Limits, 3. Recovery, 4. Lifecycle — reserved for future tests; add new
+//      tests under the matching heading so the shape of the suite stays clear.
 
 extern crate alloc;
 
@@ -148,18 +153,31 @@ fn run_happy_path(auth_data_size: usize) {
     assert_eq!(client.get_nonce(), 1, "nonce must increment after successful auth");
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// ── 1. Authorisation ──────────────────────────────────────────────────────────
+//
+// These tests guard the signing path: if any of them fails, a wallet whose
+// keys are derived from a passkey can no longer authorise transactions, or
+// (worse) accepts a signature it should reject. Do not weaken them.
 
+// Guards: minimal 37-byte auth_data (rpIdHash + flags + signCount) must be
+// accepted. Breaks if verify_rp_id or the length check rejects the shortest
+// real authenticator output, locking out wallets on minimal devices.
 #[test]
 fn check_auth_happy_path_37b() {
     run_happy_path(37);
 }
 
+// Guards: auth_data with attested credential data (100 B) must be accepted.
+// Breaks if the contract assumes a fixed auth_data length, rejecting
+// authenticators that include credential data on registration.
 #[test]
 fn check_auth_happy_path_100b() {
     run_happy_path(100);
 }
 
+// Guards: auth_data with CBOR extensions (200 B) must be accepted. Breaks if
+// the contract parses past auth_data[0..32] or caps the length, rejecting
+// authenticators that emit extensions.
 #[test]
 fn check_auth_happy_path_200b() {
     run_happy_path(200);

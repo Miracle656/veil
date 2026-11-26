@@ -264,7 +264,7 @@ enum DataKey {
 }
 ```
 
-Signers use **persistent storage** — they survive ledger expiry extensions and contract upgrades. Guardian uses **instance storage** to stay tightly coupled to the contract instance lifetime.
+Signers use **persistent storage** — they survive ledger expiry extensions. Guardian uses **instance storage** to stay tightly coupled to the contract instance lifetime.
 
 ## Error Hierarchy
 
@@ -279,3 +279,13 @@ pub enum WalletError {
     InvalidChallenge,          // signaturePayload not in clientDataJSON
 }
 ```
+
+## Contract Immutability
+
+Deployed Veil contracts are immutable on-chain:
+- **No in-place upgrades:** Neither the factory nor the invisible wallet contract exposes an upgrade function (such as `update_current_contract_wasm` or `set_wasm_hash`).
+- **New code requires a new factory:** Shipping updated contract logic requires deploying a new factory contract at a new address on the network.
+- **Address derivation:** Because a wallet's contract address is deterministically bound to the deploying factory's address (`HashIdPreimage::ContractId { networkId, factory, salt }`), a new factory yields new wallet addresses. Existing wallet holders retain their original wallet code and address, and migrate funds if they choose to adopt a new contract version.
+
+See [Contract Immutability & Upgrades](/contract-upgrades) for details.
+

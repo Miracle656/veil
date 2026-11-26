@@ -10,7 +10,7 @@
  */
 
 import { StrKey } from '@stellar/stellar-sdk';
-import type { AgentMessage, InvestIntent, SwapIntent } from './agentMessages';
+import type { AgentMessage, CashOutIntent, InvestIntent, SwapIntent } from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
 export type AgentUserProfile = {
@@ -59,11 +59,35 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
   const turns: AgentTurn[] = [];
   for (const message of messages) {
     if (message.kind === 'user') turns.push({ role: 'user', content: message.text });
-    else if ((message.kind === 'agent' || message.kind === 'proposal' || message.kind === 'swap' || message.kind === 'invest') && message.text.trim()) {
+    else if (
+      (message.kind === 'agent' ||
+        message.kind === 'proposal' ||
+        message.kind === 'swap' ||
+        message.kind === 'invest' ||
+        message.kind === 'cashout') &&
+      message.text.trim()
+    ) {
       turns.push({ role: 'assistant', content: message.text });
     }
   }
   return turns;
+}
+
+/** Parse the small, bank-account-free cash-out payload before it reaches navigation. */
+export function parseCashOutIntent(value: unknown): CashOutIntent | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (
+    typeof v.amountNGN !== 'number' ||
+    !Number.isFinite(v.amountNGN) ||
+    v.amountNGN <= 0 ||
+    typeof v.rate !== 'number' ||
+    !Number.isFinite(v.rate) ||
+    v.rate <= 0
+  ) {
+    return undefined;
+  }
+  return { amountNGN: v.amountNGN, rate: v.rate };
 }
 
 export type AgentReply = {
@@ -72,6 +96,7 @@ export type AgentReply = {
   pendingTxSummary?: string;
   swapIntent?: SwapIntent;
   investIntent?: InvestIntent;
+  cashOutIntent?: CashOutIntent;
 };
 
 /**
@@ -168,6 +193,7 @@ export async function sendAgentMessage(
       pendingTxSummary: typeof data.pendingTxSummary === 'string' ? data.pendingTxSummary : undefined,
       swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
       investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
+      cashOutIntent: parseCashOutIntent((data as { cashOutIntent?: unknown }).cashOutIntent),
     };
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {

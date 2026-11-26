@@ -584,12 +584,171 @@ export interface BillStatus {
   wallet: string;
   description: string;
   stale?: boolean;
+  token?: string;
+  prepaidToken?: string;
+  units?: string;
 }
 
 export function getBillStatus(customerRef: string, orderId: string): Promise<BillStatus> {
   return call<BillStatus>(
     `/ngn/bills/${encodeURIComponent(orderId)}?customerRef=${encodeURIComponent(customerRef)}`,
   );
+}
+
+export type BillTerminalOutcome = 'done' | 'failed' | 'pending';
+
+/**
+ * Classifies a bill order status into terminal or in-flight states.
+ *
+ * Success: 'complete', 'completed', 'success', 'delivered', 'settled',
+ * 'disbursed'. Failure: 'failed', 'refunded', 'reversed', 'cancelled',
+ * 'expired', 'timeout'. Anything still moving, and anything unrecognised,
+ * stays 'pending' so requerying can settle it rather than assuming a false
+ * failure.
+ *
+ * `settled` and `disbursed` are in the success list because they are the words
+ * Linq actually ends a vend with. Without them a delivered, paid-for top-up
+ * classified as `pending` and the screen waited for it forever. wraith now
+ * appends "(completed)" for installed apps that predate this
+ * (`billStatusForClients`), but a client that can read the provider's own word
+ * should not need the translation.
+ */
+export function classifyBillStatus(status: string): BillTerminalOutcome {
+  const s = status.trim().toLowerCase();
+  // Checked before the success test: "settlement_pending" and "refund_pending"
+  // both contain a terminal word and are not terminal.
+  if (/pending|processing|awaiting|queued|initiated|progress/.test(s)) return 'pending';
+  if (/complete|success|delivered|settled|disbursed/.test(s)) return 'done';
+  if (/fail|refund|revers|cancel|expire|timeout/.test(s)) return 'failed';
+  return 'pending';
+}
+
+export interface MeterVerification {
+  valid: boolean;
+  customerName?: string;
+  accountHolderName?: string;
+  address?: string;
+  meterNumber?: string;
+  disco?: string;
+  meterType?: 'prepaid' | 'postpaid';
+  minimumAmount?: number;
+  error?: string;
+}
+
+/**
+ * Look up and verify an electricity meter before taking money.
+ *
+ * Electricity is the category where a typo costs the most: paying the wrong
+ * meter credits a stranger's electricity and there is no reversal.
+ * This verifies the meter with the distribution company (disco) and returns
+ * the customer name so the user can confirm it is theirs before any spend.
+ */
+export async function verifyMeter(params: {
+  disco: string;
+  meterNumber: string;
+  meterType?: 'prepaid' | 'postpaid';
+  customerRef?: string;
+}): Promise<MeterVerification> {
+  return call<MeterVerification>('/ngn/bills/electricity/verify', {
+    method: 'POST',
+    body: params,
+  });
+}
+
+export interface BillCustomerLookup {
+  valid: boolean;
+  customerName?: string;
+  accountHolderName?: string;
+  currentPackage?: string;
+  dueDate?: string;
+  address?: string;
+  meterNumber?: string;
+  meterType?: 'prepaid' | 'postpaid';
+  minimumAmount?: number;
+  error?: string;
+}
+
+/**
+ * Look up a bill customer / account holder before taking money.
+ *
+ * For categories that support provider lookup (electricity, cable TV, betting),
+ * returns the verified account holder's name so the user can confirm it is theirs
+ * before confirming the payment.
+ */
+export function lookupBillCustomer(params: {
+  billCategory: BillCategory | string;
+  provider: string;
+  customerId: string;
+  customerRef?: string;
+  meterType?: string;
+}): Promise<BillCustomerLookup> {
+  return call<BillCustomerLookup>('/ngn/bills/lookup', {
+    method: 'POST',
+    body: params,
+  });
+}
+
+// ─── Bill Lookups ───────────────────────────────────────────────────────────
+
+export interface CableTvLookup {
+  customerName: string;
+  currentPackage: string;
+  dueDate: string;
+  availablePackages: Array<{
+    id: string;
+    name: string;
+    price: number;
+  }>;
+}
+
+export interface BettingLookup {
+  accountName: string;
+  accountStatus: string;
+  balance?: number;
+}
+
+/**
+ * Look up a cable TV smartcard before purchase.
+ *
+ * Returns customer name, current package, due date, and available packages.
+ * This allows the user to confirm details before spending.
+ */
+export function lookupCableTv(params: {
+  provider: string;
+  smartcardNumber: string;
+}): Promise<CableTvLookup> {
+  return call<CableTvLookup>('/ngn/bills/lookup/cabletv', { method: 'POST', body: params });
+}
+
+/**
+ * Look up a betting account ID before purchase.
+ *
+ * Returns account name and status. Supported only where the provider
+ * offers account ID verification.
+ */
+export function lookupBetting(params: {
+  provider: string;
+  accountId: string;
+}): Promise<BettingLookup> {
+  return call<BettingLookup>('/ngn/bills/lookup/betting', { method: 'POST', body: params });
+}
+
+/**
+ * Check if a specific bill category is available.
+ *
+ * Returns false if the provider is unreachable (outage), true otherwise.
+ * This allows us to show an outage message instead of hiding the category.
+ */
+export async function isBillCategoryAvailable(category: BillCategory): Promise<boolean> {
+  try {
+    // Try a lightweight operation to check availability
+    // For now, we check the main naira availability as a proxy
+    // In the future, this could be more category-specific
+    await getOnrampRate('usdc');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ─── Availability ────────────────────────────────────────────────────────────
