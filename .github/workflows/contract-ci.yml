@@ -59,8 +59,11 @@ jobs:
 
       - name: Build contracts
         run: cargo build --all
-        # cargo test is disabled — stellar-xdr 20.1.0 transitively pulls a
-        # broken `arbitrary` feature on fresh CI builds. See issue #79.
+        # Build only, on purpose. The tests of every workspace member run in
+        # the `contracts` job of ci.yml (cargo test --workspace, #1406), which
+        # runs on every PR; repeating them here would double the Rust cost of
+        # contract PRs for no extra coverage. This job's value is the sccache
+        # layer and the stats below, a cache-warm build timing for contracts/.
 
       - name: Show sccache stats
         if: always()

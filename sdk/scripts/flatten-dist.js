@@ -83,7 +83,17 @@ function addExtensions(outDir) {
       throw new Error(`flatten-dist: cannot resolve ${spec} from ${path.relative(distDir, file)}`);
     });
   }
-  fs.writeFileSync(path.join(outDir, 'package.json'), `${JSON.stringify({ type: 'module' }, null, 2)}\n`);
+  // Bundlers read sideEffects from this nearest manifest, not the package root.
+  // Keep the ESM scope's paths relative to dist/esm/ after flattening.
+  const { sideEffects } = JSON.parse(fs.readFileSync(path.join(distDir, '..', 'package.json'), 'utf8'));
+  const esmManifest = { type: 'module' };
+  if (sideEffects !== undefined) {
+    esmManifest.sideEffects = Array.isArray(sideEffects)
+      ? sideEffects.filter((file) => file.startsWith('./dist/esm/'))
+        .map((file) => `./${file.slice('./dist/esm/'.length)}`)
+      : sideEffects;
+  }
+  fs.writeFileSync(path.join(outDir, 'package.json'), `${JSON.stringify(esmManifest, null, 2)}\n`);
 }
 
 const esmDir = path.join(distDir, 'esm');
