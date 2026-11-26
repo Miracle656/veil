@@ -98,8 +98,13 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: contracts
+      # Kept as its own step: it compiles every crate as a normal (non-test)
+      # build, so a test-only module that is missing its #[cfg(test)] fails
+      # here. `cargo test` builds with cfg(test) set and would not notice.
       - run: cargo build --all
-      - run: cargo test -p invisible-wallet
+      # Every workspace member, not just the wallet (#1406). veil-names and
+      # veil-masquerade are live on mainnet; their tests must gate merges too.
+      - run: cargo test --workspace
 
   sdk:
     name: SDK — typecheck, test & size budget
