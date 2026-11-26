@@ -46,3 +46,29 @@ export function convertPath(deliveredXlm: number): string {
   const amount = convertibleXlm(deliveredXlm)
   return `/swap?from=XLM&to=USDC${amount ? `&amount=${amount}` : ''}`
 }
+
+/** Where a naira order is, in words the page can show. */
+export type OnrampStage = 'waiting' | 'received' | 'done' | 'failed' | 'expired'
+
+const STILL_MOVING = new Set(['pending', 'processing', 'initiated', 'awaiting', 'queued', 'requested'])
+const DONE_WORDS = new Set(['completed', 'complete', 'success', 'successful', 'settled', 'paid', 'delivered'])
+const FAILED_WORDS = new Set(['failed', 'refunded', 'reversed', 'cancelled', 'canceled', 'rejected', 'expired'])
+const RECEIVED_WORDS = new Set(['processing', 'received', 'confirmed', 'funded'])
+
+/**
+ * Read the payment service's status word.
+ *
+ * Whole words only. Matching a piece of a word is how `refund_pending` came to
+ * be read as a refund and `unpaid` as paid. A status that is still moving is
+ * never an ending, whatever else it says. Anything unrecognised is "waiting",
+ * so an odd word keeps the page polling instead of announcing a result.
+ */
+export function onrampStage(status: string, secondsLeft: number): OnrampStage {
+  const words = String(status ?? '').toLowerCase().split(/[^a-z]+/).filter(Boolean)
+  const has = (set: Set<string>) => words.some((w) => set.has(w))
+  const moving = has(STILL_MOVING)
+  if (!moving && has(DONE_WORDS)) return 'done'
+  if (!moving && has(FAILED_WORDS)) return 'failed'
+  if (has(RECEIVED_WORDS)) return 'received'
+  return secondsLeft <= 0 ? 'expired' : 'waiting'
+}
