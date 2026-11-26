@@ -596,6 +596,27 @@ function Footer({ t, locale }: { t: Messages; locale: Locale }) {
           {t.footer.poweredBy}
         </p>
       </div>
+
+      {/* Legal bar: who is behind Veil, and the two documents people agree to. */}
+      <div className="max-w-6xl mx-auto mt-10 pt-6 border-t border-white/[0.06] flex flex-col md:flex-row items-center justify-between gap-4">
+        <p className="font-inter text-xs text-warm-grey/60 text-center md:text-left">
+          © {new Date().getFullYear()} Divinity Labs Limited (RC 10031131). Veil is a product of Divinity Labs.
+        </p>
+        <nav aria-label="Legal" className="flex items-center gap-6">
+          <Link
+            href="/privacy"
+            className="font-mono text-xs uppercase tracking-[0.14em] text-warm-grey hover:text-gold transition-colors"
+          >
+            Privacy Policy
+          </Link>
+          <Link
+            href="/terms"
+            className="font-mono text-xs uppercase tracking-[0.14em] text-warm-grey hover:text-gold transition-colors"
+          >
+            Terms of Service
+          </Link>
+        </nav>
+      </div>
     </footer>
   )
 }
