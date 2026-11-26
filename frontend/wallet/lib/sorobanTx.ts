@@ -1,5 +1,6 @@
 import { Keypair, TransactionBuilder, rpc as SorobanRpc } from '@stellar/stellar-sdk'
 import { buildSponsoredFeeBumpTransaction } from './feeBump'
+import { describeFailure } from './walletInvoke'
 
 /**
  * Sign a Soroban transaction XDR with the fee-payer key and submit via RPC.
@@ -44,7 +45,7 @@ export async function signAndSubmitSorobanXdr(params: {
     const result = await rpc.getTransaction(sendResult.hash)
     if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
       if (result.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
-        throw new Error(`Transaction failed: ${result.status}`)
+        throw new Error(`Transaction failed: ${describeFailure(result, 'swap')}`)
       }
       return sendResult.hash
     }
