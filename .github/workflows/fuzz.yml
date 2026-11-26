@@ -16,12 +16,12 @@ on:
         type: boolean
         default: false
 
-permissions:
-  contents: read
-
 concurrency:
   group: fuzz-${{ github.ref }}
   cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   fuzz:
@@ -179,6 +179,26 @@ jobs:
             }
             const errLine = (logTail.match(/^==ERROR:.*$/m) || ['(see log below)'])[0];
 
+            const titlePrefix = `Fuzz crash: ${target}`;
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'fuzz',
+              per_page: 100,
+            });
+            const dup = openIssues.find(i => i.title.startsWith(titlePrefix) && !i.labels.some(l => (typeof l === 'string' ? l : l.name) === 'fuzz-broken-workflow'));
+            if (dup) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                body: `Still crashing on ${process.env.RUN_DATE}.\n\nRun: <${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}>\n\nFirst error line: \`${errLine}\``,
+              });
+              core.notice(`Commented on existing crash issue #${dup.number} instead of opening a duplicate`);
+              return;
+            }
+
             const body = [
               simulated
                 ? '> **SIMULATED RUN** — this issue was created by a `workflow_dispatch` ' +
@@ -325,6 +345,43 @@ jobs:
               body,
               labels: ['fuzz', 'fuzz-broken-workflow'],
             });
+
+      - name: Close resolved broken fuzz workflow issue
+        if: ${{ always() && steps.classify.outputs.verdict == 'ok' }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        env:
+          TARGET: ${{ matrix.target }}
+          RUN_DATE: ${{ steps.classify.outputs.date }}
+        with:
+          script: |
+            const target = process.env.TARGET;
+            const title = `Fuzz workflow broken: ${target} — weekly fuzz job is not fuzzing`;
+            const { data: openIssues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'fuzz-broken-workflow',
+              per_page: 100,
+            });
+            const dup = openIssues.find(i => i.title === title);
+            if (dup) {
+              const runLink =
+                `<${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}>`;
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                body: `Resolved on ${process.env.RUN_DATE}. Fuzzing ran successfully with no crashes in ${runLink}.`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              core.notice(`Closed resolved broken workflow issue #${dup.number}`);
+            }
 
       # Surface the verdict in the job status itself: only a real crash or a
       # broken run goes red; a clean fuzz run goes green.

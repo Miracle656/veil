@@ -45,6 +45,12 @@ landscape, anchor survey, costs, and the licensing position.
   endpoints require `customerRef` **and** `orderId`, which is that rule, so the
   design note was right and is now load-bearing for a different provider than the
   one it was written about.
+- **The eBills client is gone from this repo (#1410).** `packages/bills`
+  (`@veil/bills`, an eBills client plus a mock) and `scripts/ebills-probe.mjs`
+  were removed: nothing imported them, no workflow ran their tests, and a bills
+  package here read as if it were how bills work. Bill payments are implemented
+  in wraith (`src/linq/bills.ts`, served by `src/api/ngn.ts`); the wallet and
+  mobile app call that backend.
 
 ### What this does *not* change
 
@@ -429,7 +435,7 @@ dashboards for the two prefunded wallets.
 > bill rather than a failed order.
 
 **Needs a human with a login (cannot be desk-researched):**
-- ~~**eBills "reseller role"**~~ — **SETTLED 2026-08-26: the role is gated on funding the eBills wallet.** Probed directly: `/jwt-auth/v1/token` authenticates fine on an unfunded account, `GET /api/v2/balance` returns `403 rest_forbidden`. So the role is not a support request or a form — it is a deposit. **This is now a money blocker, not a paperwork one**, and the airtime build is parked until there is float to fund. Probe kept at `scripts/ebills-probe.mjs`; re-run it after funding to confirm.
+- ~~**eBills "reseller role"**~~ — **SETTLED 2026-08-26: the role is gated on funding the eBills wallet.** Probed directly: `/jwt-auth/v1/token` authenticates fine on an unfunded account, `GET /api/v2/balance` returns `403 rest_forbidden`. So the role is not a support request or a form — it is a deposit. **This is now a money blocker, not a paperwork one**, and the airtime build is parked until there is float to fund. (The probe, `scripts/ebills-probe.mjs`, was removed in #1410 with the rest of the unused eBills client.)
 - **eBills duplicate semantics** — does replaying a `request_id` after the 3-minute `duplicate_order` window create a **second vend**? Ask support before any retry logic ships.
 - **eBills margins on a funded account** — confirm the live 1%-median finding before any revenue model depends on it.
 - **eBills top-up mechanism** — undocumented publicly.

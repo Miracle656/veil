@@ -221,7 +221,22 @@ function SpendingCard({ address, assetCode, assetIssuer, amount }: SpendingCardP
           size={200}
           bgColor="#ffffff"
           fgColor="#0F0F0F"
-          level="M"
+          // H, not M. The mark in the middle destroys the modules it covers,
+          // and only the 30% recovery of level H reliably survives that. The
+          // code gets denser, which is the trade being made on purpose.
+          level="H"
+          imageSettings={{
+            // A square mark. The old `/veil-logo.svg` was the 160x48 wordmark
+            // lockup, and qrcode.react draws whatever it is handed into a
+            // square box: it arrived as a 10px-tall pale-gold smear, which is
+            // why the QR looked like it had no mark at all.
+            src: '/veil-qr-mark.svg',
+            height: 46,
+            width: 46,
+            // Clear the modules behind the mark rather than paint over them,
+            // so a scanner reads an erasure it can correct instead of noise.
+            excavate: true,
+          }}
         />
       </div>
 

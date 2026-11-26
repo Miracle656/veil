@@ -15,12 +15,28 @@
 import type { PortfolioSummary as Summary, PortfolioLine } from '@/lib/portfolio'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, type CurrencyCode } from '@/lib/currency'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { walletLocal } from '@/lib/walletStorage'
 import { compareCostBasis, readRecordedCostBasis, writeRecordedCostBasis, type RecordedCostBasis } from '@/lib/costBasis'
+import { ETHERFUSE_MAINNET_ISSUER, USDY_MAINNET_ISSUER } from '@/lib/assets'
 import { AlertTriangle } from 'lucide-react'
 
-const USTRY_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC'
+// Holdings that accrue through price rather than balance, where a manually
+// recorded USDC cost can express the yield. Matched by code AND issuer, so a
+// counterfeit token of the same code never inherits someone's basis.
+//
+// Returns the ISSUER, which is what the storage key is built from. That is
+// deliberate and not interchangeable with the code: keys written before USDY
+// existed are `…:${issuer}`, so keying by code instead would read an empty slot
+// and silently show "unknown" to everyone who had already recorded a USTRY
+// cost. The pairing above is what keeps a counterfeit out, so the issuer alone
+// is a safe key — a collision would need one issuer to mint two assets on this
+// list, which adding to this allowlist would make obvious.
+function recordedBasisIssuer(code: string, issuer: string | null): string | null {
+  if (issuer === ETHERFUSE_MAINNET_ISSUER && code === 'USTRY') return issuer
+  if (issuer === USDY_MAINNET_ISSUER && code === 'USDY') return issuer
+  return null
+}
 
 // ── Section header ────────────────────────────────────────────────────────────
 
@@ -105,19 +121,20 @@ function AssetLine({
   last: boolean
   walletAddress?: string | null
 }) {
-  const [basis, setBasis] = useState<RecordedCostBasis | null>(null)
+  const basisIssuer = walletAddress ? recordedBasisIssuer(line.code, line.issuer) : null
+  const basisKey = basisIssuer && walletAddress
+    ? `veil:recorded-cost-basis:v1:${walletAddress}:${basisIssuer}`
+    : null
   const [editingBasis, setEditingBasis] = useState(false)
   const [basisInput, setBasisInput] = useState('')
   const [basisError, setBasisError] = useState<string | null>(null)
-  const basisKey = walletAddress && line.code === 'USTRY' && line.issuer === USTRY_ISSUER
-    ? `veil:recorded-cost-basis:v1:${walletAddress}:${line.issuer}`
-    : null
+  // Read during init, not an effect: a static render (and the first client
+  // paint) would otherwise show "unknown" for a basis that is already stored.
+  const [basis, setBasis] = useState<RecordedCostBasis | null>(() =>
+    basisKey ? readRecordedCostBasis(walletLocal, basisKey) : null,
+  )
 
-  useEffect(() => {
-    setBasis(basisKey ? readRecordedCostBasis(walletLocal, basisKey) : null)
-  }, [basisKey])
-
-  const basisResult = line.code === 'USTRY' ? compareCostBasis(line.amount, line.valueUsd, basis) : null
+  const basisResult = basisIssuer ? compareCostBasis(line.amount, line.valueUsd, basis) : null
 
   function saveBasis(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
