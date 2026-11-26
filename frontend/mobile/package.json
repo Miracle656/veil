@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "eas-build-post-install": "sh modules/spp-native/scripts/install-rust-toolchain.sh",
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",

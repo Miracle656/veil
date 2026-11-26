@@ -1,0 +1,18 @@
+# Shell scripts must keep LF line endings in the WORKING COPY, not just in git.
+#
+# Git stores LF and a Windows checkout rewrites it to CRLF. That is harmless for
+# anything only Linux CI runs — but EAS Build uploads the working tree, so a
+# build started from a Windows machine shipped `set -eu\r` to a Linux shell and
+# died with:
+#
+#     install-rust-toolchain.sh: 24: set: Illegal option -
+#
+# with the preceding error line visibly overwritten by the carriage return. The
+# file was correct in git the whole time, which is what made it confusing.
+*.sh text eol=lf
+
+# Same reasoning: these are read by Linux tooling even when edited on Windows.
+*.bash text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
