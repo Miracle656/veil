@@ -17,12 +17,14 @@ import {
 import { Button, Card, Screen } from '../components/ui';
 import { useHiddenAmounts } from '../hooks/useHiddenAmounts';
 import { useNetwork } from '../hooks/useNetwork';
+import { isBackstopEnabled } from '../lib/backstopFlag';
 import { useTheme } from '../hooks/useTheme';
 import {
   BACKSTOP_RISK_NOTICE,
   buildBackstopActionXdr,
   loadBackstopLpBalance,
   loadBackstopOverview,
+  loadBackstopQueueLength,
   parseStroops,
   type BackstopAction,
   type BackstopOverview,
@@ -55,7 +57,26 @@ import { fontFamily, typography } from '../theme/typography';
 const STROOPS = 1e7;
 const TAB_BAR_CLEARANCE = 48;
 
-type Step = 'overview' | 'deposit-form' | 'working' | 'done' | 'error';
+type Step = 'overview' | 'deposit-form' | 'confirm' | 'working' | 'done' | 'error';
+
+interface PendingExit {
+  action: 'queue' | 'cancel';
+  pool: BackstopPoolInfo;
+  shares: bigint;
+  /** Seconds the queue lasts, read from the backstop. Null while loading. */
+  queueSeconds: number | null;
+  /** For a cancel: when the queued shares were due out. */
+  expiresAt: number | null;
+  /** The queue length could not be read, so a queue cannot be confirmed. */
+  failed: boolean;
+}
+
+function formatDuration(seconds: number): string {
+  const days = Math.round(seconds / 86400);
+  if (days >= 1) return `${days} day${days === 1 ? '' : 's'}`;
+  const hours = Math.max(1, Math.round(seconds / 3600));
+  return `${hours} hour${hours === 1 ? '' : 's'}`;
+}
 
 const ACTION_LABEL: Record<BackstopAction, { working: string; done: string }> = {
   deposit: { working: 'Depositing…', done: 'Deposited' },
@@ -95,7 +116,13 @@ export default function BackstopRoute() {
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { network } = useNetwork();
 
+  const enabled = isBackstopEnabled(network.name);
+  useEffect(() => {
+    if (!enabled) router.replace('/(tabs)/earn');
+  }, [enabled, router]);
+
   const [step, setStep] = useState<Step>('overview');
+  const [pending, setPending] = useState<PendingExit | null>(null);
   const [accountAddress, setAccountAddress] = useState<string | null>(null);
   const [overview, setOverview] = useState<BackstopOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -179,16 +206,18 @@ export default function BackstopRoute() {
   async function run(next: BackstopAction, pool: BackstopPoolInfo, stroops: bigint) {
     if (!accountAddress) return;
     setAction(next);
-    setProgress('Waiting for passkey…');
+    setProgress('Checking your fee account…');
     setStep('working');
     setErrorMsg(null);
     try {
+      // Fee-payer cover first: a user short on XLM is told so before being asked
+      // for a passkey they would spend on a transaction that cannot be paid for.
+      await assertFeePayerCanCoverBackstop(accountAddress, next);
+
+      setProgress('Waiting for passkey…');
       await requirePasskey();
       const signerSecret = await getSignerSecret();
       if (!signerSecret) throw new Error('Signing key not found. Please unlock the wallet again.');
-
-      setProgress('Checking your fee account…');
-      await assertFeePayerCanCoverBackstop(accountAddress, next);
 
       setProgress(ACTION_LABEL[next].working);
       const xdr = await buildBackstopActionXdr({
@@ -208,16 +237,42 @@ export default function BackstopRoute() {
 
       setTxHash(hash);
       setStep('done');
+      setPending(null);
       setAmount('');
       await load(accountAddress);
     } catch (error: unknown) {
       if (isPasskeyCancellation(error)) {
         setErrorMsg(null);
         setStep(next === 'deposit' ? 'deposit-form' : 'overview');
+        setPending(null);
         return;
       }
       setErrorMsg(describeFailure(error));
       setStep('error');
+    }
+  }
+
+  /** Queue and cancel both stop at a confirm step before any passkey prompt. */
+  async function openConfirm(
+    next: 'queue' | 'cancel',
+    pool: BackstopPoolInfo,
+    shares: bigint,
+    expiresAt: number | null,
+  ) {
+    if (!accountAddress) return;
+    setPending({ action: next, pool, shares, queueSeconds: null, expiresAt, failed: false });
+    setStep('confirm');
+    if (next === 'cancel') return;
+    try {
+      const { seconds } = await loadBackstopQueueLength({
+        backstopId: pool.backstopId,
+        poolId: pool.poolId,
+        userAddress: accountAddress,
+        amount: shares,
+      });
+      setPending((p) => (p && p.action === 'queue' ? { ...p, queueSeconds: seconds } : p));
+    } catch {
+      setPending((p) => (p && p.action === 'queue' ? { ...p, failed: true } : p));
     }
   }
 
@@ -334,14 +389,21 @@ export default function BackstopRoute() {
                               <Button
                                 label="Queue withdrawal"
                                 variant="ghost"
-                                onPress={() => void run('queue', position, active)}
+                                onPress={() => void openConfirm('queue', position, active, null)}
                               />
                             ) : null}
                             {locked > 0n ? (
                               <Button
                                 label="Cancel queued withdrawal"
                                 variant="ghost"
-                                onPress={() => void run('cancel', position, locked)}
+                                onPress={() =>
+                                  void openConfirm(
+                                    'cancel',
+                                    position,
+                                    locked,
+                                    Math.min(...position.queued.map((q) => q.expiresAt)),
+                                  )
+                                }
                               />
                             ) : null}
                             {unlocked > 0n ? (
@@ -450,6 +512,54 @@ export default function BackstopRoute() {
               />
               <Button label="Cancel" variant="ghost" onPress={() => setStep('overview')} />
             </View>
+          ) : null}
+
+          {step === 'confirm' && pending ? (
+            <Card style={styles.card}>
+              <Text style={[typography.heading, styles.cardTitle]}>
+                {pending.action === 'queue' ? 'Queue this withdrawal?' : 'Cancel this queued withdrawal?'}
+              </Text>
+              <View style={styles.rowBetween}>
+                <Text style={styles.muted}>{pending.pool.poolName} pool</Text>
+                <Text style={styles.value} testID="backstop-confirm-amount">
+                  {mask(formatAmount(units(pending.shares)))} shares
+                </Text>
+              </View>
+              {pending.action === 'queue' ? (
+                pending.failed ? (
+                  <Text style={styles.warning}>
+                    Could not read the queue length from the backstop, so this cannot be confirmed. Go back and try
+                    again.
+                  </Text>
+                ) : pending.queueSeconds === null ? (
+                  <Text style={styles.muted}>Reading the queue length from the backstop…</Text>
+                ) : (
+                  <Text style={styles.muted} testID="backstop-confirm-queue">
+                    Your whole active position is queued. You can withdraw after{' '}
+                    {formatDuration(pending.queueSeconds)}. The shares are still exposed to losses while they wait.
+                  </Text>
+                )
+              ) : (
+                <Text style={styles.muted} testID="backstop-confirm-queue">
+                  These shares go back to your active position
+                  {pending.expiresAt ? ` instead of becoming withdrawable on ${formatWhen(pending.expiresAt)}` : ''}.
+                  Queuing again later starts a new wait from zero.
+                </Text>
+              )}
+              <Button
+                label={pending.action === 'queue' ? 'Confirm and queue' : 'Confirm and cancel'}
+                disabled={pending.action === 'queue' && pending.queueSeconds === null}
+                onPress={() => void run(pending.action, pending.pool, pending.shares)}
+              />
+              <Button
+                label="Go back"
+                variant="ghost"
+                onPress={() => {
+                  setPending(null);
+                  setStep('overview');
+                }}
+              />
+            </Card>
           ) : null}
 
           {step === 'working' ? (

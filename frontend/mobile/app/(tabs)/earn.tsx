@@ -32,6 +32,7 @@ import {
 } from '../../lib/blend';
 import { fundDeposit, loadEarnBalances, type EarnBalances } from '../../lib/earnFunding';
 import { useNetwork } from '../../hooks/useNetwork';
+import { isBackstopEnabled } from '../../lib/backstopFlag';
 import { useWallet } from '../../components/WalletProvider';
 import { requirePasskey } from '../../lib/passkey';
 import { isPasskeyCancellation, PasskeyCeremonyError } from '../../lib/passkeyOutcome';
@@ -377,6 +378,7 @@ export default function EarnRoute() {
                 </View>
               ) : null}
 
+              {isBackstopEnabled(network.name) ? (
               <Card style={styles.card}>
                 <View style={styles.rowBetween}>
                   <Text style={[typography.heading, styles.cardTitle]}>Backstop</Text>
@@ -388,6 +390,7 @@ export default function EarnRoute() {
                 </Text>
                 <Button label="Open backstop" variant="ghost" onPress={() => router.push('/backstop')} />
               </Card>
+              ) : null}
 
               <View style={styles.section}>
                 <Text style={[typography.accent, styles.sectionLabel]}>Pools</Text>

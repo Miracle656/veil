@@ -11,6 +11,8 @@ const mockSigner = Keypair.random();
 const E7 = 10_000_000n;
 
 const mockOverview = jest.fn();
+const mockQueueLength = jest.fn();
+const mockCalls: string[] = [];
 
 jest.mock('expo-router', () => ({
   useRouter: () => ({ replace: jest.fn(), push: jest.fn(), back: jest.fn() }),
@@ -36,9 +38,17 @@ jest.mock('../lib/walletStore', () => ({
   getWalletAddress: jest.fn(async () => 'CWALLET'),
   getSignerSecret: jest.fn(async () => mockSigner.secret()),
 }));
-jest.mock('../lib/passkey', () => ({ requirePasskey: jest.fn(async () => undefined) }));
+jest.mock('../lib/passkey', () => ({
+  requirePasskey: jest.fn(async () => {
+    mockCalls.push('passkey');
+  }),
+}));
 jest.mock('../lib/sorobanTx', () => ({ signAndSubmitSorobanXdr: jest.fn(async () => 'HASH') }));
-jest.mock('../lib/feePayerCheck', () => ({ assertFeePayerCanCoverBackstop: jest.fn(async () => undefined) }));
+jest.mock('../lib/feePayerCheck', () => ({
+  assertFeePayerCanCoverBackstop: jest.fn(async () => {
+    mockCalls.push('feePayer');
+  }),
+}));
 jest.mock('../lib/blend', () => {
   const actual = jest.requireActual('../lib/blend');
   return {
@@ -46,6 +56,7 @@ jest.mock('../lib/blend', () => {
     loadBackstopOverview: (...a: unknown[]) => mockOverview(...a),
     loadBackstopLpBalance: jest.fn(async () => 500n * 10_000_000n),
     buildBackstopActionXdr: jest.fn(async () => 'XDR'),
+    loadBackstopQueueLength: (...a: unknown[]) => mockQueueLength(...a),
   };
 });
 
@@ -96,7 +107,11 @@ const position = {
 
 jest.setTimeout(60_000);
 
-beforeEach(() => mockOverview.mockReset());
+beforeEach(() => {
+  mockOverview.mockReset();
+  mockQueueLength.mockReset();
+  mockCalls.length = 0;
+});
 
 it('states that a share can fall before anyone can make a first deposit', async () => {
   mockOverview.mockResolvedValue({ pools: [pool], positions: [], failedPoolIds: [] });
@@ -148,4 +163,57 @@ it('keeps a first deposit disabled until the risk is acknowledged', async () => 
     (root.findAllByProps({ accessibilityRole: 'checkbox' })[0].props.onPress as () => void)();
   });
   expect(depositButton().props.disabled).toBe(false);
+});
+
+const press = (root: { findAllByProps: (p: object) => Instance[] }, label: string) =>
+  renderer.act(async () => {
+    (root.findAllByProps({ label })[0].props.onPress as () => void)();
+  });
+
+it('stops at a confirm step that states the amount and queue length before queuing', async () => {
+  mockOverview.mockResolvedValue({ pools: [pool], positions: [position], failedPoolIds: [] });
+  mockQueueLength.mockResolvedValue({ expiresAt: 0, seconds: 17 * 86400 });
+  const root = await render();
+
+  await press(root, 'Queue withdrawal');
+
+  expect(mockCalls).toEqual([]); // no fee check, no passkey yet
+  expect(text(root.findByProps({ testID: 'backstop-confirm-amount' }))).toContain('100 shares');
+  expect(text(root.findByProps({ testID: 'backstop-confirm-queue' }))).toContain('17 days');
+});
+
+it('cannot confirm a queue whose length could not be read', async () => {
+  mockOverview.mockResolvedValue({ pools: [pool], positions: [position], failedPoolIds: [] });
+  mockQueueLength.mockRejectedValue(new Error('rpc down'));
+  const root = await render();
+
+  await press(root, 'Queue withdrawal');
+
+  expect(root.findAllByProps({ label: 'Confirm and queue' })[0].props.disabled).toBe(true);
+});
+
+it('stops at a confirm step before cancelling a queued withdrawal', async () => {
+  const queued = {
+    ...position,
+    activeShares: '0',
+    queued: [{ shares: (40n * E7).toString(), lpTokens: '1', expiresAt: 1_900_000_000 }],
+  };
+  mockOverview.mockResolvedValue({ pools: [pool], positions: [queued], failedPoolIds: [] });
+  const root = await render();
+
+  await press(root, 'Cancel queued withdrawal');
+
+  expect(mockCalls).toEqual([]);
+  expect(text(root.findByProps({ testID: 'backstop-confirm-amount' }))).toContain('40 shares');
+});
+
+it('checks the fee-payer before asking for the passkey', async () => {
+  mockOverview.mockResolvedValue({ pools: [pool], positions: [position], failedPoolIds: [] });
+  mockQueueLength.mockResolvedValue({ expiresAt: 0, seconds: 17 * 86400 });
+  const root = await render();
+
+  await press(root, 'Queue withdrawal');
+  await press(root, 'Confirm and queue');
+
+  expect(mockCalls.slice(0, 2)).toEqual(['feePayer', 'passkey']);
 });

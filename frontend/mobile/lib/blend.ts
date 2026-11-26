@@ -596,3 +596,28 @@ export async function buildBackstopActionXdr(params: BackstopActionParams): Prom
   }
   return buildBlendOperationXdr(params.userAddress, operationXdr);
 }
+
+/**
+ * When a queued withdrawal of `amount` shares would come out of the queue, read
+ * from the backstop itself by simulating `queue_withdrawal`: the contract
+ * returns the queue entry it would create, expiry included. Nothing is
+ * submitted. Throws if the backstop cannot be read, so the caller never shows a
+ * guessed queue length.
+ */
+export async function loadBackstopQueueLength(
+  params: Omit<BackstopActionParams, 'action'>,
+): Promise<{ expiresAt: number; seconds: number }> {
+  const xdrString = await buildBackstopActionXdr({ ...params, action: 'queue' });
+  const net = getNetwork();
+  const tx = TransactionBuilder.fromXDR(xdrString, net.networkPassphrase);
+  const sim = await new SorobanRpc.Server(net.rpcUrl).simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(sim)) {
+    throw new Error(`Could not read the withdrawal queue length: ${sim.error}`);
+  }
+  const retval = 'result' in sim ? sim.result?.retval : undefined;
+  const entry = retval ? (scValToNative(retval) as { exp?: bigint | number }) : undefined;
+  if (entry?.exp === undefined) throw new Error('The backstop did not report a queue length.');
+  const expiresAt = Number(entry.exp);
+  const seconds = Math.max(0, expiresAt - Math.floor(Date.now() / 1000));
+  return { expiresAt, seconds };
+}
