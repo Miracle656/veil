@@ -558,7 +558,10 @@ export async function runAgent(
           return JSON.stringify({ available: false, status: 'unavailable' })
         }
         try {
-          const res = await fetch(`${wraithUrl.replace(/\/+$/, '')}/offramp/rate`, {
+          // Name the coin, never let the backend guess. A request without one is
+          // priced as USDC by the retired compatibility path; once that path is
+          // gone every caller that stayed silent gets a 400.
+          const res = await fetch(`${wraithUrl.replace(/\/+$/, '')}/offramp/rate?coin=usdc`, {
             signal: AbortSignal.timeout(15_000),
           })
           if (!res.ok) {
@@ -566,6 +569,14 @@ export async function runAgent(
             return JSON.stringify({ available: false, status: 'unavailable' })
           }
           const quote = (await res.json()) as { rate?: unknown; currency?: unknown; coin?: unknown }
+          // The answer must name the asset that was asked for. Cash-out divides
+          // naira by this rate to work out how much to send, so a quote priced
+          // for anything other than USDC would hand the Cash Out screen a wrong
+          // amount. Compared without case; an absent coin is not trusted either.
+          if (typeof quote.coin !== 'string' || quote.coin.toUpperCase() !== 'USDC') {
+            cashOutUnavailable = true
+            return JSON.stringify({ available: false, status: 'unavailable' })
+          }
           if (typeof quote.rate !== 'number' || !Number.isFinite(quote.rate) || quote.rate <= 0) {
             cashOutUnavailable = true
             return JSON.stringify({ available: false, status: 'unavailable' })
@@ -576,7 +587,7 @@ export async function runAgent(
             available: true,
             rate: quote.rate,
             currency: typeof quote.currency === 'string' ? quote.currency : 'NGN',
-            coin: typeof quote.coin === 'string' ? quote.coin : 'USDC',
+            coin: 'USDC',
           })
         } catch (err) {
           console.warn('[agent] Cash-out rate lookup failed:', (err as Error).message)

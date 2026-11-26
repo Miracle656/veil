@@ -185,7 +185,81 @@ describe('runAgent', () => {
       expect(result.response).not.toMatch(/account is invalid/i)
       expect(result.cashOutIntent).toBeUndefined()
       expect(fetchMock).toHaveBeenCalledTimes(1)
-      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate')
+      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate?coin=usdc')
+      expect(llm.availableTools.map((tool) => tool.name)).not.toContain('create_offramp_order')
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('refuses a rate priced for a different coin and hands nothing to the Cash Out screen', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ rate: 1450, currency: 'NGN', coin: 'USDT0' }),
+    } as Response)
+    try {
+      const llm = scripted([
+        { text: '', toolCalls: [{ id: 'r', name: 'get_offramp_rate', input: {} }] },
+        { text: '', toolCalls: [{ id: 'p', name: 'prepare_cash_out', input: { amount_ngn: 25000 } }] },
+        { text: 'Cash out 25000 naira at 1450.', toolCalls: [] },
+      ])
+      const result = await runAgent(
+        'Cash out 25000 naira',
+        wallet,
+        [],
+        undefined,
+        undefined,
+        llm,
+        { wraithUrl: 'https://wraith.test' },
+      )
+
+      expect(JSON.parse(llm.results[0][0].content)).toEqual({ available: false, status: 'unavailable' })
+      expect(llm.results[0][0].content).not.toContain('1450')
+      expect(JSON.parse(llm.results[1][0].content)).toEqual({
+        error: 'Cash-out is unavailable or its live rate has not been checked.',
+      })
+      expect(result.cashOutIntent).toBeUndefined()
+      expect(result.response).toMatch(/Cash-out is unavailable right now/i)
+      expect(result.response).not.toMatch(/1450/)
+      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate?coin=usdc')
+      expect(llm.availableTools.map((tool) => tool.name)).not.toContain('create_offramp_order')
+    } finally {
+      fetchMock.mockRestore()
+    }
+  })
+
+  it('treats a 400 from the rate endpoint as unavailable and guesses no rate', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: 'coin is required' }),
+    } as Response)
+    try {
+      const llm = scripted([
+        { text: '', toolCalls: [{ id: 'r', name: 'get_offramp_rate', input: {} }] },
+        { text: '', toolCalls: [{ id: 'p', name: 'prepare_cash_out', input: { amount_ngn: 25000 } }] },
+        { text: 'Cash out 25000 naira at 1500.', toolCalls: [] },
+      ])
+      const result = await runAgent(
+        'Cash out 25000 naira',
+        wallet,
+        [],
+        undefined,
+        undefined,
+        llm,
+        { wraithUrl: 'https://wraith.test' },
+      )
+
+      expect(JSON.parse(llm.results[0][0].content)).toEqual({ available: false, status: 'unavailable' })
+      expect(JSON.parse(llm.results[1][0].content)).toEqual({
+        error: 'Cash-out is unavailable or its live rate has not been checked.',
+      })
+      expect(result.cashOutIntent).toBeUndefined()
+      expect(result.response).toMatch(/Cash-out is unavailable right now/i)
+      expect(result.response).not.toMatch(/1500/)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate?coin=usdc')
       expect(llm.availableTools.map((tool) => tool.name)).not.toContain('create_offramp_order')
     } finally {
       fetchMock.mockRestore()
@@ -276,7 +350,7 @@ describe('runAgent', () => {
         error: 'Cash-out deposits must be sent from the Cash Out screen.',
       })
       expect(fetchMock).toHaveBeenCalledTimes(1)
-      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate')
+      expect(fetchMock.mock.calls[0][0]).toBe('https://wraith.test/offramp/rate?coin=usdc')
       expect(llm.availableTools.map((tool) => tool.name)).not.toContain('create_offramp_order')
       expect(llm.availableTools.map((tool) => tool.name)).not.toContain('verify_bank_account')
     } finally {
