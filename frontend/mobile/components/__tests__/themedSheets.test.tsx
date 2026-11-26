@@ -1,5 +1,5 @@
 import React from 'react';
-import { setTheme } from '../../lib/theme';
+import { setTheme, THEMES } from '../../lib/theme';
 import { ContactPicker } from '../ContactPicker';
 import { ConnectDAppModal } from '../ConnectDAppModal';
 import { WalletConnectApprovalModal } from '../WalletConnectApprovalModal';
@@ -70,7 +70,7 @@ describe('Themed Sheets (#1390)', () => {
       await setTheme(theme);
     });
 
-    it('renders ContactPicker without error', () => {
+    it('renders ContactPicker with themed colors', () => {
       let tree: any;
       renderer.act(() => {
         tree = renderer.create(
@@ -78,12 +78,16 @@ describe('Themed Sheets (#1390)', () => {
         );
       });
       expect(tree.toJSON()).toBeTruthy();
+      const themedSurfaces = tree.root.findAll(
+        (node: any) => node.props?.style?.backgroundColor === THEMES[theme].surfaceRaised
+      );
+      expect(themedSurfaces.length).toBeGreaterThan(0);
       renderer.act(() => {
         tree.unmount();
       });
     });
 
-    it('renders ConnectDAppModal without error', () => {
+    it('renders ConnectDAppModal with themed colors', () => {
       let tree: any;
       renderer.act(() => {
         tree = renderer.create(
@@ -91,18 +95,26 @@ describe('Themed Sheets (#1390)', () => {
         );
       });
       expect(tree.toJSON()).toBeTruthy();
+      const themedSurfaces = tree.root.findAll(
+        (node: any) => node.props?.style?.backgroundColor === THEMES[theme].surfaceRaised
+      );
+      expect(themedSurfaces.length).toBeGreaterThan(0);
       renderer.act(() => {
         tree.unmount();
       });
     });
 
-    it('renders WalletConnectApprovalModal without error when pending requests exist', () => {
+    it('renders WalletConnectApprovalModal with themed colors when pending requests exist', () => {
       mockPendingRequests = [mockPendingRequest];
       let tree: any;
       renderer.act(() => {
         tree = renderer.create(<WalletConnectApprovalModal />);
       });
       expect(tree.toJSON()).toBeTruthy();
+      const themedSurfaces = tree.root.findAll(
+        (node: any) => node.props?.style?.backgroundColor === THEMES[theme].surfaceRaised
+      );
+      expect(themedSurfaces.length).toBeGreaterThan(0);
       renderer.act(() => {
         tree.unmount();
       });

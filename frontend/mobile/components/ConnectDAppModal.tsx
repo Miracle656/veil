@@ -467,7 +467,7 @@ const createStyles = (colors: ThemeColors) =>
       aspectRatio: 1,
       borderRadius: 12,
       overflow: 'hidden',
-      backgroundColor: colors.background,
+      backgroundColor: '#000000',
     },
     scannerFallback: {
       gap: 12,
