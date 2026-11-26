@@ -35,6 +35,7 @@
 
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const { createRequire } = require('node:module')
 
@@ -161,6 +162,14 @@ for (const field of ['main', 'module', 'types', 'react-native']) {
   }
 }
 
+// Every framework peer must be optional so npm 7+ does not auto-install React
+// (or any other framework) for consumers using /vanilla or another adapter.
+for (const peer of Object.keys(manifest.peerDependencies ?? {})) {
+  if (manifest.peerDependenciesMeta?.[peer]?.optional !== true) {
+    fail(`peerDependencies["${peer}"] is not marked "optional": true in peerDependenciesMeta.`)
+  }
+}
+
 // ── The packed tarball ──────────────────────────────────────────────────────
 
 if (!fs.existsSync(path.join(root, 'dist'))) {
@@ -174,6 +183,7 @@ if (!fs.existsSync(path.join(root, 'dist'))) {
 // resolve the package name to sdk/ itself (self-reference) instead of the
 // installed tarball.
 const tmp = fs.mkdtempSync(path.join(root, '.verify-consumer-'))
+const noReactTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'veil-sdk-no-react-'))
 
 try {
   const [packed] = JSON.parse(
@@ -357,6 +367,51 @@ ${body}`
     console.log('typescript consumers (nodenext, .cts + .mts): ok')
   }
 
+  // 6. Prove /vanilla loads and runs in a clean folder with no React installed.
+  //
+  // This folder lives in os.tmpdir() (outside sdk/) so Node cannot walk up to
+  // sdk/node_modules and find react or @tanstack/react-query. Only @stellar
+  // (the SDK's real runtime dependency) is linked in.
+  const noReactInstallDir = path.join(noReactTmp, 'node_modules', name)
+  fs.mkdirSync(noReactInstallDir, { recursive: true })
+  fs.writeFileSync(path.join(noReactTmp, 'package.json'), `${JSON.stringify({ name: 'veil-sdk-no-react-check', private: true }, null, 2)}\n`)
+  execFileSync('tar', ['-xzf', path.relative(noReactInstallDir, tarball), '--strip-components=1'], {
+    cwd: noReactInstallDir,
+    stdio: 'inherit',
+  })
+  const stellarLink = path.join(noReactTmp, 'node_modules', '@stellar')
+  fs.symlinkSync(
+    path.join(root, 'node_modules', '@stellar'),
+    stellarLink,
+    process.platform === 'win32' ? 'junction' : 'dir',
+  )
+  fs.writeFileSync(path.join(noReactTmp, 'vanilla-no-react.cjs'), `'use strict'
+const assert = require('node:assert')
+assert.throws(() => require.resolve('react'), { code: 'MODULE_NOT_FOUND' })
+assert.throws(() => require.resolve('@tanstack/react-query'), { code: 'MODULE_NOT_FOUND' })
+const vanilla = require(${JSON.stringify(`${name}/vanilla`)})
+const memory = new Map()
+const storage = { getItem: (k) => memory.get(k) ?? null, setItem: (k, v) => void memory.set(k, v), removeItem: (k) => void memory.delete(k) }
+globalThis.localStorage = storage
+const wallet = vanilla.createInvisibleWallet({
+  factoryContractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4',
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+  storage,
+})
+assert.ok(wallet instanceof vanilla.InvisibleWallet)
+console.log('vanilla consumer (no react): ok')
+`)
+  try {
+    console.log(execFileSync(process.execPath, ['vanilla-no-react.cjs'], {
+      cwd: noReactTmp,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim())
+  } catch (error) {
+    fail(`vanilla-no-react.cjs failed: ${String(error.stderr || error.message).split('\n').filter(Boolean).slice(0, 6).join(' | ')}`)
+  }
+
   // ── Output ────────────────────────────────────────────────────────────────
 
   const width = Math.max(...report.map((row) => row.specifier.length), 'subpath'.length)
@@ -373,5 +428,7 @@ ${body}`
     console.log('\nEvery subpath resolves to its declared format, and loads, from the packed tarball.')
   }
 } finally {
+  try { fs.unlinkSync(path.join(noReactTmp, 'node_modules', '@stellar')) } catch {}
   fs.rmSync(tmp, { recursive: true, force: true })
+  fs.rmSync(noReactTmp, { recursive: true, force: true })
 }

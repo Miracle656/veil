@@ -2,6 +2,11 @@
 
 This directory contains Playwright E2E tests for the Veil wallet PWA.
 
+The separate [live privacy proof](../e2e-live/privacy/README.md) deliberately
+submits real testnet payments and is **not** included in this directory or the
+ordinary Playwright command. These mocked wallet tests are not private-payment
+evidence.
+
 ## Test Files
 
 ### `onboarding.spec.ts`
