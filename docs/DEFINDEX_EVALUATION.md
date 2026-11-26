@@ -29,11 +29,11 @@ DeFindex contract source was read at [`defindex-io/stellar-contracts@529f7c5`](h
 | XLM | 20.68 | <0.01% |
 
 **By strategy (on-chain).** The USDC Blend Fixed strategy
-`CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP` holds **18,259,765.17 USDC** in the Blend Fixed pool `CAJJZSGM…BXBD`. That was read directly from the pool (`loadUser(strategy)`), not from DeFindex's API. Its stored config (`Config.pool`) is the same pool ID Veil uses in `frontend/mobile/lib/blend.ts`.
+`CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP` holds **18,259,765.17 USDC** in the Blend Fixed pool `CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD`. That was read directly from the pool (`loadUser(strategy)`), not from DeFindex's API. Its stored config (`Config.pool`) is the same pool ID Veil uses in `frontend/mobile/lib/blend.ts`.
 
 | Strategy (API `/strategies`, 11:18 UTC) | Asset | TVL (asset units) |
 |---|---|---:|
-| `blend_autocompound_fixed` (`CDB2WMKQ…`) | USDC | **18,259,730.67** |
+| `blend_autocompound_fixed` (`CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP`) | USDC | **18,259,730.67** |
 | `eurc_blend_autocompound_fixed` | EURC | 13,526.48 |
 | `cetes_blend_autocompound_etherfuse` | CETES | 2,171.61 |
 | `tesouro_blend_autocompound_etherfuse` | TESOURO | 1,107.68 |
@@ -63,7 +63,7 @@ So "aggregator" describes the contract design, not what is deployed. On mainnet 
 
 Observed fee configurations on mainnet (`[VaultFee, DeFindexProtocolFeeRate]` from instance storage): Meru `[1792, 2000]`, the BNS vaults `[1000, 2000]`, hana/xPortal/SVT/SEAV `[2000, 2000]`, rozo/nUSDC `[1000, 5000]`, the P* vaults `[100, 5000]`.
 
-Meru runs DeFindex's **Stable APY** product. Its Manager is a FeeProxy contract (`CBXBQ7SI…3QTB`) with `target_apy_bps = 500`, `min_fee_bps = 150` and `max_fee_bps = 8000`. The fee floats so that depositors receive about 5%, and everything above 5% is fee ([docs: Stable APY](https://docs.defindex.io/products/stable-apy)). At today's 6.06% gross, 1792 bps leaves depositors 4.97%, which matches the target.
+Meru runs DeFindex's **Stable APY** product. Its Manager is a FeeProxy contract (`CBXBQ7SI5UOCDFGUKBAQS4HIZOUSVTSJYY4L2ZJRBHIYCKDDC3PQ3QTB`) with `target_apy_bps = 500`, `min_fee_bps = 150` and `max_fee_bps = 8000`. The fee floats so that depositors receive about 5%, and everything above 5% is fee ([docs: Stable APY](https://docs.defindex.io/products/stable-apy)). At today's 6.06% gross, 1792 bps leaves depositors 4.97%, which matches the target.
 
 ### Same asset, same amount: 1,000 USDC for one year
 
@@ -105,16 +105,16 @@ Every role is a single `Address`, enforced by `require_auth()` (`access.rs:43`, 
 
 | Vault | USDC held | Upgradable | Manager | Rebalance Manager |
 |---|---:|:-:|---|---|
-| **Meru** | **17,829,154** | **yes** | FeeProxy contract; its per-vault admin is `GAYBFY…TWPL`, **single key** | `GAYBFY…TWPL`, **single key** |
-| BNS USDC | 250,529 | yes | `GC5ZV3…FLYP`, 2-of-3 | same |
-| USDC-SEAV | 14,160 (idle) | no | `GC5ZV3…FLYP`, 2-of-3 | `GB3W56…HMIA`, single key |
-| xPortal | 13,418 | yes | `GDQ4HY…6QYA`, single key | same |
-| nUSDC | 8,257 | no | `GBPH7P…OTDW`, single key | same |
-| SVT | 8,064 | yes | `GAFCZU…MK2O`, 2-of-3 (low threshold 0) | same |
-| hana | 7,375 | no | `GBDEH6…E4M2`, single key | same |
-| rozo | 4,761 | no | `GC56BX…7FD`, single key | same |
+| **Meru** | **17,829,154** | **yes** | FeeProxy contract; its per-vault admin is `GAYBFYMAQU7GSHSHNX7RBUE2KSSRQBME7XHP5BONAVKXI5BSUOQXTWPL`, **single key** | `GAYBFYMAQU7GSHSHNX7RBUE2KSSRQBME7XHP5BONAVKXI5BSUOQXTWPL`, **single key** |
+| BNS USDC | 250,529 | yes | `GC5ZV3VZZEZHFU7YH6YAOEPONSTGFVRO7V64H6X2MFXRZH6QLC5OFLYP`, 2-of-3 | same |
+| USDC-SEAV | 14,160 (idle) | no | `GC5ZV3VZZEZHFU7YH6YAOEPONSTGFVRO7V64H6X2MFXRZH6QLC5OFLYP`, 2-of-3 | `GB3W56BWDAFN37AE5FUUUW3Y5K3H7RKIFHF52JCKEEGXFKPBGQRDHMIA`, single key |
+| xPortal | 13,418 | yes | `GDQ4HYM5GRYMZX754BWXLCCE5UKNWVVLS2OEP5WNG6NXR6N4NWXA6QYA`, single key | same |
+| nUSDC | 8,257 | no | `GBPH7PWUDCTRDTC2GIEKSLINSNE754FGO26RIX5B7F6DDRNLG6MKOTDW`, single key | same |
+| SVT | 8,064 | yes | `GAFCZUU7533X6GRCUGQOQTWRIYANGE5IQXHAZ7ZXKJXFECYF2TOCMK2O`, 2-of-3 (low threshold 0) | same |
+| hana | 7,375 | no | `GBDEH6C5UICDFKU5CCSM7INYG6TQBVZRTJ7NRWH5NYVHA4EPAPBSE4M2`, single key | same |
+| rozo | 4,761 | no | `GC56BXCNEWL6JSGKHD3RJ5HJRNKFEJQ53D3YY3SMD6XK7YPDI75BQ7FD`, single key | same |
 
-"Single key" means Horizon thresholds of 0 or 1 with one effective signer.
+"Single key" means Horizon thresholds of 0 or 1 with one effective signer. Every address in this table is written in full, so it can be pasted straight into `https://horizon.stellar.org/accounts/<address>`.
 
 **The decisive finding.** The vault holding 98% of DeFindex TVL is upgradable. Its Rebalance Manager, and the admin through which its upgrade authority is exercised, is one single-signer account. That account can do all of the following now, in one transaction, with no delay:
 
@@ -122,7 +122,7 @@ Every role is a single `Address`, enforced by `require_auth()` (`access.rs:43`, 
 - raise the fee: Meru's current bounds already allow up to 80% of yield, and the per-vault admin can change the bounds;
 - replace the vault's code.
 
-The FeeProxy is DeFindex's Stable APY contract. Its ABI exposes `upgrade_vault`, `rescue_vault`, `set_vault_manager`, `set_fee_bounds`, `set_target_apy` and `propose_admin`/`accept_admin`, and nothing that queues or delays an action. DeFindex's docs say that only the registered admin can upgrade the vault through it. The FeeProxy source is not in `stellar-contracts`, so its auth rules are taken from the [Stable APY docs](https://docs.defindex.io/products/stable-apy) and the Runtime Verification audit listing, not from source. The proxy's own admin (`GD6MNC…BZF5`) and fee manager (`GCED56…547G`) are also single-key accounts, as are the factory admin (`GAJZKZ…L35P`) and the Blend strategy's keeper (`GC7LSN…JGCP`). DeFindex's protocol fee receiver (`GCTQL7…EAQ6`) is a 2-of-3.
+The FeeProxy is DeFindex's Stable APY contract. Its ABI exposes `upgrade_vault`, `rescue_vault`, `set_vault_manager`, `set_fee_bounds`, `set_target_apy` and `propose_admin`/`accept_admin`, and nothing that queues or delays an action. DeFindex's docs say that only the registered admin can upgrade the vault through it. The FeeProxy source is not in `stellar-contracts`, so its auth rules are taken from the [Stable APY docs](https://docs.defindex.io/products/stable-apy) and the Runtime Verification audit listing, not from source. The proxy's own admin (`GD6MNC3WFIZ6HSSUTYWEHJCFFNHR4Z6XX3NF6V2254NLQAJFZXEIBZF5`) and fee manager (`GCED56ZG7NMCZBYI6THE6KQNUYTBJPCSITDY75LIK3426PRCH2XC547G`) are also single-key accounts, as are the factory admin (`GAJZKZVWJ237N23KAGBRIFNVE7KOUF27OTIKQPXF3TIJEGYM776WL35P`) and the Blend strategy's keeper (`GC7LSNNCRW4PNLLHIXE53RB7N5BKSQVXTGWYHIYBA7LAWY7XYPC4JGCP`). DeFindex's protocol fee receiver (`GCTQL76FD4EHJJ6V7NQO4BA2CHRALBLEVPD5EANNQYIOZLO3LIW7EAQ6`) is a 2-of-3.
 
 **Could Veil fix this by running its own vault?** Partly. A Veil-created vault could be **non-upgradable**, which removes the code-replacement path permanently. Its Manager and Rebalance Manager could be a Veil multisig or policy contract, and Veil could wrap them in its own timelock contract, since any role can be a contract. That is all custom work Veil would build, audit and operate. DeFindex provides none of it. Even then, Veil would still hold a key that can redirect users' allocations and raise their fee to 90% instantly unless Veil's own contract stops it. If the vault has only Blend Fixed as its strategy, the manager has nothing meaningful to rebalance into, and the result is the pointless wrapper again: same pool, plus a fee.
 
@@ -150,7 +150,7 @@ The FeeProxy is DeFindex's Stable APY contract. Its ABI exposes `upgrade_vault`,
 - `public/mainnet.contracts.json`;
 - the full DeFindex documentation (`docs.defindex.io/llms-full.txt`, zero matches for "usdt").
 
-The Blend Fixed pool itself has only XLM, USDC and EURC reserves, so there is nowhere for a Blend Fixed USDT0 strategy to supply. DeFindex does not settle #1280. The canonical USDT0 SAC is `CBSJZEIO…26YF` (see `scripts/wave-issues-usdt0.md`), and it has no DeFindex route.
+The Blend Fixed pool itself has only XLM, USDC and EURC reserves, so there is nowhere for a Blend Fixed USDT0 strategy to supply. DeFindex does not settle #1280. The canonical USDT0 SAC is `CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF` (see `scripts/wave-issues-usdt0.md`), and it has no DeFindex route.
 
 ## 7. Recommendation: decline
 
@@ -175,6 +175,6 @@ Revisit if **all** of the following become true:
 - **Vault roles, fees and upgradability:** read the vault's contract-instance ledger entry (`getLedgerEntries`, key `ScVal::LedgerKeyContractInstance`) and decode the `Manager`, `RebalanceManager`, `EmergencyManager`, `VaultFee`, `DeFindexProtocolFeeRate` and `Upgradable` keys. Or simulate `get_manager`, `get_rebalance_manager`, `get_fees` and `fetch_total_managed_funds`.
 - **Signer thresholds:** `curl https://horizon.stellar.org/accounts/<G…>`, then read `thresholds` and `signers`.
 - **Strategy position in Blend Fixed:** with `@blend-capital/blend-sdk`, call `PoolV2.load(mainnet, 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD')`, then `pool.loadUser('CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP').getSupplyFloat(usdcReserve)`.
-- **Meru's Stable APY config:** simulate `get_vault_config(CCA2ZJP5…F5HR)` on `CBXBQ7SI5UOCDFGUKBAQS4HIZOUSVTSJYY4L2ZJRBHIYCKDDC3PQ3QTB`.
+- **Meru's Stable APY config:** simulate `get_vault_config(CCA2ZJP5BVRXYTQH4FAGHCAUMRYCXVC4CRYC2NXHWMR7TIVX36U7F5HR)` on `CBXBQ7SI5UOCDFGUKBAQS4HIZOUSVTSJYY4L2ZJRBHIYCKDDC3PQ3QTB`.
 
 All on-chain figures change every ledger. Re-measure before quoting them anywhere else.
