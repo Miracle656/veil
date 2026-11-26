@@ -130,7 +130,10 @@ export async function sdexSwap(params: {
       nativeAmountIn: params.amountIn,
       feeAmount: platformFee.amount,
       perOpBidStroops: Number(inclusionFee()),
-      opsWithoutFee: builder.build().operations.length,
+      // Counted, never built: build() moves the account's sequence number
+      // on, so building here and again below sent a number the network
+      // had not reached and every such swap came back tx_bad_seq.
+      opsWithoutFee: addsTrustline ? 2 : 1,
       addsTrustline,
     })
   ) {
