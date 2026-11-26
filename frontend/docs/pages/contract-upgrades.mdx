@@ -10,8 +10,13 @@ import { Callout } from 'nextra/components'
 A foundational property of Veil's on-chain architecture is **contract immutability**: once deployed on Stellar, contracts cannot be upgraded in place.
 
 <Callout type="warning">
-  **No in-place upgrades exist:** Neither the factory contract nor individual wallet contracts expose an upgrade entrypoint (`update_current_contract_wasm` or `set_wasm_hash`). Deployed contracts run the exact bytecode they were deployed with permanently.
+  **No existing wallet can be upgraded, by anyone.** No wallet contract, deployed or in source, has an upgrade entrypoint (`update_current_contract_wasm` or an `upgrade` function). The factory deployed on mainnet has no way to change its wallet code either. Every deployed wallet runs the exact bytecode it was deployed with, permanently. Neither its owner, the factory admin, nor Veil can change it.
 </Callout>
+
+There is one nuance, and this page keeps the two sides of it apart:
+
+- **Deployed on mainnet (permanent).** The mainnet factory was built from commit `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2` (see `contracts/deployments.json`). It has **three entrypoints** and can never gain a fourth. The wallet WASM hash it deploys can never change.
+- **Source on `main` (not deployed).** The factory source now has a fourth entrypoint, an admin-gated `set_wasm_hash` (added in commit `d93abe5cb66391d0aa4435bb1207a13444ae86c5` for #1171). A **new** factory deployed from this source could point the wallets it deploys **afterwards** at new code. It still could not change any wallet that already exists.
 
 This page explains how the contracts are structured, what immutability means for existing wallet holders, and the procedure required when new contract versions are released.
 
@@ -25,7 +30,8 @@ While the Soroban environment provides host primitives for in-place contract rep
 
 | Component | Purported Mechanism | Reality in Code |
 |---|---|---|
-| **Factory Contract** | `set_wasm_hash` (public entrypoint) | ❌ **Does not exist.** `set_wasm_hash` is an internal storage helper in `contracts/factory/src/storage.rs`, called once by `init()`. The WASM hash cannot be changed after initialization. |
+| **Factory Contract (mainnet)** | `set_wasm_hash` entrypoint | ❌ **Not in the deployed factory.** The mainnet factory, built from `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2`, has only `__constructor`, `init` and `deploy`. Its wallet WASM hash is set once by `init()` and can never change. |
+| **Factory Contract (source on `main`)** | `set_wasm_hash` entrypoint | ⚠️ **Written, not deployed.** `contracts/factory/src/lib.rs` has an admin-gated `set_wasm_hash(new_hash)`. It changes which code **future** `deploy` calls install, and only in a factory deployed from this source. It never touches an existing wallet. |
 | **Invisible Wallet** | `upgrade(new_wasm_hash)` via `update_current_contract_wasm` | ❌ **Does not exist.** Neither `update_current_contract_wasm` nor any `upgrade` entrypoint is present in `contracts/invisible_wallet/`. Deployed wallets run their initial code permanently. |
 
 ### Why Immutability?
@@ -45,10 +51,12 @@ Understanding what the contracts actually expose clarifies how deployments and m
 
 ### 1. Factory Contract (`contracts/factory/src/lib.rs`)
 
-The factory exposes **exactly three entrypoints**:
+#### Deployed on mainnet: three entrypoints, permanent
+
+The mainnet factory (`CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`) was built from commit `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2`. It exposes **exactly three entrypoints**, and because it has no upgrade path it will never have more:
 
 ```rust
-// contracts/factory/src/lib.rs
+// git show ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2:contracts/factory/src/lib.rs
 
 pub fn __constructor(env: Env, admin: Address)
 pub fn init(env: Env, wasm_hash: BytesN<32>) -> Result<(), FactoryError>
@@ -64,22 +72,47 @@ pub fn deploy(
 |---|---|---|
 | `__constructor` | Deployer | Runs atomically during contract creation to bind the factory admin address so it cannot be front-run. |
 | `init` | Admin only | One-time initialization. Stores the wallet WASM hash (`storage::set_wasm_hash`). Calling it a second time returns `Err(FactoryError::AlreadyInitialized)`. |
-| `deploy` | Public | Deploys a new wallet using salt `SHA-256(public_key)` and the immutable stored WASM hash, then invokes `init` on the wallet. Calling it again with the same public key returns `Err(FactoryError::AlreadyDeployed)`. |
+| `deploy` | Public | Deploys a new wallet using salt `SHA-256(public_key)` and the stored WASM hash, then invokes `init` on the wallet. Calling it again with the same public key returns `Err(FactoryError::AlreadyDeployed)`. |
 
-<Callout type="info">
-  `storage::set_wasm_hash` is an internal storage helper in `storage.rs`. It is called only by `init()` during setup. There is no public or admin entrypoint to update the WASM hash after the factory is initialized.
+In the deployed factory the stored WASM hash is written only by `init()`, so the wallet code it deploys (WASM SHA-256 `b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5`) is fixed forever.
+
+#### Source on `main`: a fourth entrypoint, not deployed
+
+The factory source on `main` adds `set_wasm_hash`:
+
+```rust
+// contracts/factory/src/lib.rs (main), not deployed
+pub fn set_wasm_hash(env: Env, new_hash: BytesN<32>) -> Result<(), FactoryError>
+```
+
+| Entrypoint | Access | Description |
+|---|---|---|
+| `set_wasm_hash` | Admin only | Points **future** `deploy` calls at a new wallet WASM hash. Only the admin fixed by `__constructor` can call it, the same gate as `init`. It refuses to run before `init` has stored a first hash, returning `Err(FactoryError::NotInitialized)`, so `init` stays the one place the first hash is installed. |
+
+What `set_wasm_hash` deliberately does **not** do, per its doc comment:
+
+- **It never touches an existing wallet.** `deploy` reads the hash when it is called, and a deployed wallet's code is pinned by its own contract instance. The factory holds no pointer back to the wallets it deployed.
+- **It does not change any wallet address.** A wallet's address derives from the factory address and the salt (`SHA-256(public_key)`), never from the WASM hash. An address computed before the call is the address `deploy` still produces after it.
+
+<Callout type="warning">
+  `set_wasm_hash` exists only in source. It is **not** in the mainnet factory and cannot be added to it. It would only take effect in a new factory, deployed from this source at a new address. Even there it changes only the wallets deployed after the call. Wallets that already exist keep their code forever.
 </Callout>
 
 ### 2. Invisible Wallet Contract (`contracts/invisible_wallet/src/lib.rs`)
 
-The wallet contract exposes entrypoints for authentication, signer management, execution, allowances, and guardian recovery:
+The wallet contract exposes 29 entrypoints in source on `main`. 24 of them are in the wallets deployed on mainnet. The five marked *(source only)* below exist only in source and are not in any mainnet wallet:
 
 - **Initialization & Auth:** `init`, `__check_auth`
 - **Signer Management:** `add_signer`, `remove_signer`, `rotate_signer`, `has_signer`, `get_signers`, `get_nonce`
-- **Execution & Allowances:** `execute`, `approve`, `get_allowance`
-- **Guardian Recovery:** `set_guardian`, `initiate_recovery`, `complete_recovery`
+- **Execution & Allowances:** `execute`, `approve`, `revoke_allowance` *(source only)*, `get_allowance`
+- **Guardian Recovery:** `set_guardian`, `initiate_recovery`, `complete_recovery`, `cancel_recovery`, `get_pending_recovery` *(source only)*
+- **Recovery Key:** `set_recovery_key`, `request_recovery`, `finalize_recovery`, `cancel_recovery_request`
+- **Session Keys:** `register_session_key`, `register_session_key_scoped` *(source only)*, `revoke_session_key`
+- **Spend Limits:** `set_key_spend_limit`, `remove_key_spend_limit`, `remove_all_key_spend_limits` *(source only)*, `get_key_spend_limit`, `get_key_spend_limit_tokens` *(source only)*
 
-**There is no `upgrade` entrypoint.** The contract bytecode cannot be modified after deployment.
+See the [Contract API](/contract-api) for signatures.
+
+**There is no `upgrade` entrypoint, in the deployed wallet or in source.** A wallet's bytecode cannot be modified after deployment. A source-only function will never appear in a wallet that is already deployed.
 
 ---
 
@@ -88,11 +121,11 @@ The wallet contract exposes entrypoints for authentication, signer management, e
 For an existing wallet holder on Stellar mainnet:
 
 1. **Permanent Code Execution:**
-   The mainnet factory (`CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`) and every wallet deployed from it run the exact code they were initialized with (`b485f817…`).
+   The mainnet factory (`CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`) and every wallet deployed from it run the exact code they were initialized with (wallet WASM SHA-256 `b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5`). The mainnet factory has no `set_wasm_hash`, so this cannot change.
 2. **Fixes Do Not Reach Existing Wallets:**
    If a bug fix or new feature is introduced to the wallet contract, existing deployed wallets **will not receive the update**. They continue running their existing bytecode.
 3. **New Factory for New Releases:**
-   To deploy wallets with updated contract code, a **new factory contract at a new contract address** must be deployed on-chain and initialized with the new wallet WASM hash.
+   To deploy wallets with updated contract code, a **new factory contract at a new contract address** must be deployed on-chain and initialized with the new wallet WASM hash. If that new factory is built from current source, it will have `set_wasm_hash`, so *later* releases could reuse it instead of needing yet another factory. That still never changes a wallet that already exists.
 4. **New Factory Means New Wallet Addresses:**
    Soroban contract addresses for deterministic deployments are derived from:
    ```
@@ -177,10 +210,10 @@ Once the new factory is initialized:
 A future evolution of Veil contracts (tracked in `docs/CONTRACTS_V2.md`) explores self-custodial upgradeability while maintaining security:
 
 - **Self-Custodial Wallet Upgrades:** If an `upgrade(new_wasm_hash)` entrypoint is introduced to the wallet contract, it will **only** be authorized by that wallet's registered signers (via WebAuthn `__check_auth`). **Never by an operator key.**
-- **Factory Hash Update:** A future factory might provide an admin-gated `set_wasm_hash(new_hash)` so new wallet deployments receive updated code without changing the factory address. This would still not alter already-deployed wallets.
+- **Factory Hash Update:** *Written, not deployed.* The factory source on `main` now has an admin-gated `set_wasm_hash(new_hash)`, so once a factory built from it is deployed, later wallet deployments can receive updated code without changing that factory's address. It does not alter already-deployed wallets or any wallet address, and it does not exist in the mainnet factory.
 - **Account Abstraction Standard:** Evaluating standard smart account frameworks (e.g. OpenZeppelin Soroban smart accounts) to provide standardized upgrade and migration patterns.
 
-Until Contracts v2 is formally implemented, tested, and deployed, **all deployed Veil contracts remain strictly immutable**.
+Until Contracts v2 is formally implemented, tested, and deployed, **all deployed Veil contracts remain strictly immutable**. Even after that, no wallet that already exists today can be upgraded. Its owner can only move funds to a new wallet.
 
 ---
 
