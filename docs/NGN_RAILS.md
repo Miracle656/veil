@@ -4,6 +4,65 @@ _Research completed 2026-08-21 (5 web-research agents + 3 adversarial verificati
 three load-bearing claims CONFIRMED). This is the reference for the "naira in → USDC out,
 bills paid" product layer._
 
+---
+
+## ⚠️ Provider superseded 2026-10-02 — all three rails are built on Linq
+
+**Everything below is the research that led here, and its analysis still holds. Its
+provider recommendations no longer describe what exists.** Read this section before
+acting on the stack table.
+
+All three rails — **offramp, onramp and bills** — are implemented against
+**Linq's B2B API**, not Busha and not eBills. The code is in wraith:
+
+| | |
+| --- | --- |
+| `src/linq/client.ts` | offramp: quote, bank verification, trustline, orders |
+| `src/linq/onramp.ts` | onramp + customer provisioning and NIN verification |
+| `src/linq/bills.ts` | airtime, data, electricity, cable TV, betting |
+| `src/api/offramp.ts`, `src/api/ngn.ts` | the HTTP surface |
+| `src/api/linqWebhook.ts` | `POST /webhooks/linq`, offramp reconciliation only |
+
+**The implementation reference is [`wraith/docs/ngn-rails.md`](https://github.com/Miracle656/wraith/blob/main/docs/ngn-rails.md)** — endpoints, guards, field
+traps, and what is deliberately absent. This file remains the *why*: provider
+landscape, anchor survey, costs, and the licensing position.
+
+### What this changes
+
+- **One provider instead of three.** The split model (Monnify collecting, Busha
+  converting, eBills vending) is not what was built. Linq covers naira in, naira
+  out, and bills behind one `X-API-Key`.
+- **The eBills funding blocker is moot.** "Open items" below parks the airtime
+  build on depositing float into an eBills wallet to unlock the reseller role.
+  That is no longer the path.
+- **There is no sandbox.** Busha and Pairgate had test modes; Linq does not.
+  **Every call moves real money**, which is why the whole `/ngn` surface is
+  refused on testnet at the router level rather than by convention. This is a
+  harder constraint than anything the research anticipated, and it is the single
+  most important operational fact about these rails.
+- **The adapter rule survives intact.** The research settled that a `BillsProvider`
+  interface must be built around "requery by *our* reference". Linq's status
+  endpoints require `customerRef` **and** `orderId`, which is that rule, so the
+  design note was right and is now load-bearing for a different provider than the
+  one it was written about.
+- **The eBills client is gone from this repo (#1410).** `packages/bills`
+  (`@veil/bills`, an eBills client plus a mock) and `scripts/ebills-probe.mjs`
+  were removed: nothing imported them, no workflow ran their tests, and a bills
+  package here read as if it were how bills work. Bill payments are implemented
+  in wraith (`src/linq/bills.ts`, served by `src/api/ngn.ts`); the wallet and
+  mobile app call that backend.
+
+### What this does *not* change
+
+**The licensing analysis is unaffected and still governs.** Linq holding the
+licence is the same posture as Busha holding it — necessary, nowhere near
+sufficient, and exactly the structure the ISA 2025 "arranging" limb reaches. The
+sequencing decision stands: **bills are built, the offramp stays gated** on the SEC
+letter or the CBN sandbox, and the closed-testing constraint below is unchanged.
+Swapping providers is not a regulatory event.
+
+---
+
 ## The idea being validated
 
 > "When users are in naira view and press Receive, it creates a Nigerian bank account
@@ -367,8 +426,16 @@ dashboards for the two prefunded wallets.
 
 ## Open items
 
+> **Superseded 2026-10-02.** The eBills items below are no longer blockers — bills
+> ship on Linq. They are kept because the *questions* (duplicate-vend semantics on
+> replay, real margins, top-up mechanics) are the right ones to put to any bills
+> provider, Linq included, and none of them are answered for Linq yet either.
+> **The Linq equivalent of the duplicate question is open and matters:** bills
+> settle at whatever amount actually arrives, so an underpayment is a smaller
+> bill rather than a failed order.
+
 **Needs a human with a login (cannot be desk-researched):**
-- ~~**eBills "reseller role"**~~ — **SETTLED 2026-08-26: the role is gated on funding the eBills wallet.** Probed directly: `/jwt-auth/v1/token` authenticates fine on an unfunded account, `GET /api/v2/balance` returns `403 rest_forbidden`. So the role is not a support request or a form — it is a deposit. **This is now a money blocker, not a paperwork one**, and the airtime build is parked until there is float to fund. Probe kept at `scripts/ebills-probe.mjs`; re-run it after funding to confirm.
+- ~~**eBills "reseller role"**~~ — **SETTLED 2026-08-26: the role is gated on funding the eBills wallet.** Probed directly: `/jwt-auth/v1/token` authenticates fine on an unfunded account, `GET /api/v2/balance` returns `403 rest_forbidden`. So the role is not a support request or a form — it is a deposit. **This is now a money blocker, not a paperwork one**, and the airtime build is parked until there is float to fund. (The probe, `scripts/ebills-probe.mjs`, was removed in #1410 with the rest of the unused eBills client.)
 - **eBills duplicate semantics** — does replaying a `request_id` after the 3-minute `duplicate_order` window create a **second vend**? Ask support before any retry logic ships.
 - **eBills margins on a funded account** — confirm the live 1%-median finding before any revenue model depends on it.
 - **eBills top-up mechanism** — undocumented publicly.

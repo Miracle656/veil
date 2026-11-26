@@ -3,14 +3,17 @@
 import { PageHeader } from '@/components/ui/primitives'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Keypair } from '@stellar/stellar-sdk'
+import { Asset, Keypair, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk'
+import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import {
   proposalRefusal,
   reviewProposedTransaction,
+  shortenAddress,
   type ProposalReview,
 } from '@veil/agent-review'
 
@@ -26,6 +29,7 @@ interface Message {
   review?: ProposalReview | null
   /** A swap the agent handed to the Swap screen, which quotes and confirms it. */
   swapIntent?: { from: string; to: string; amount?: string }
+  investIntent?: { code?: string; asset?: string; issuer: string; amount?: string; quoteCurrency?: string }
 }
 
 /** Link into the Swap screen, pre-filled. The Swap page validates it again. */
@@ -35,12 +39,75 @@ function swapHref(intent: { from: string; to: string; amount?: string }): string
   return `/swap?${q}`
 }
 
+/** Link into the Earn/Invest section. */
+function investHref(intent: { code?: string; asset?: string; issuer?: string; amount?: string; quoteCurrency?: string }): string {
+  const code = intent.code ?? intent.asset ?? ''
+  const q = new URLSearchParams()
+  if (code) {
+    q.set('code', code)
+    q.set('asset', code)
+  }
+  if (intent.issuer) q.set('issuer', intent.issuer)
+  if (intent.amount) q.set('amount', intent.amount)
+  if (intent.quoteCurrency) q.set('quoteCurrency', intent.quoteCurrency)
+  return `/earn?${q}`
+}
+
 /** Earlier turns for the agent, as plain text. The server keeps no history. */
 function historyForAgent(messages: Message[]) {
   return messages.map((m) => ({
     role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
     content: m.content,
   }))
+}
+
+interface ProposalConfirmation {
+  destination: string
+  amount: string
+  asset: string
+}
+
+function describeAssetCode(asset: Asset): string {
+  return asset.isNative() ? 'XLM' : asset.getCode()
+}
+
+function extractProposalConfirmations(xdr: string): ProposalConfirmation[] {
+  try {
+    const parsed = TransactionBuilder.fromXDR(xdr, network.networkPassphrase)
+    const tx: Transaction =
+      'innerTransaction' in parsed ? (parsed.innerTransaction as Transaction) : parsed
+    const confirmations: ProposalConfirmation[] = []
+    for (const op of tx.operations) {
+      if (op.type === 'payment') {
+        confirmations.push({
+          destination: op.destination,
+          amount: op.amount,
+          asset: describeAssetCode(op.asset),
+        })
+      } else if (op.type === 'pathPaymentStrictSend') {
+        confirmations.push({
+          destination: op.destination,
+          amount: `at least ${op.destMin}`,
+          asset: describeAssetCode(op.destAsset),
+        })
+      } else if (op.type === 'pathPaymentStrictReceive') {
+        confirmations.push({
+          destination: op.destination,
+          amount: op.destAmount,
+          asset: describeAssetCode(op.destAsset),
+        })
+      } else if (op.type === 'createAccount') {
+        confirmations.push({
+          destination: op.destination,
+          amount: op.startingBalance,
+          asset: 'XLM',
+        })
+      }
+    }
+    return confirmations
+  } catch {
+    return []
+  }
 }
 
 function decode(xdr: string): ProposalReview | null {
@@ -221,6 +288,8 @@ export default function AgentPage() {
   const [isThinking, setIsThinking] = useState(false)
   const [pendingTxXdr, setPendingTxXdr] = useState<string | null>(null)
   const [pendingTxSummary, setPendingTxSummary] = useState<string | null>(null)
+  const [confirmingXdr, setConfirmingXdr] = useState<string | null>(null)
+  const [confirmedDetails, setConfirmedDetails] = useState(false)
   const [approving, setApproving] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -290,12 +359,27 @@ export default function AgentPage() {
       if (data.swapIntent && typeof data.swapIntent.from === 'string' && typeof data.swapIntent.to === 'string') {
         msg.swapIntent = data.swapIntent
       }
+      if (data.investIntent) {
+        const parsed = parseInvestIntent(data.investIntent)
+        if (parsed) {
+          msg.investIntent = {
+            code: parsed.asset,
+            asset: parsed.asset,
+            issuer: parsed.issuer,
+            amount: parsed.amount,
+          }
+        } else if (typeof data.investIntent.code === 'string' && typeof data.investIntent.issuer === 'string') {
+          msg.investIntent = data.investIntent
+        }
+      }
       if (data.pendingTxXdr) {
         msg.pendingTxXdr = data.pendingTxXdr
         msg.pendingTxSummary = data.pendingTxSummary
         msg.review = decode(data.pendingTxXdr)
         setPendingTxXdr(data.pendingTxXdr)
         setPendingTxSummary(data.pendingTxSummary ?? null)
+        setConfirmingXdr(null)
+        setConfirmedDetails(false)
       }
       setMessages((prev) => [...prev, msg])
     } catch (err) {
@@ -315,6 +399,25 @@ export default function AgentPage() {
     }
   }
 
+  const declineTransaction = (xdrToDecline: string) => {
+    setMessages((prev) => [
+      ...prev.map((m) =>
+        m.pendingTxXdr === xdrToDecline
+          ? { ...m, pendingTxXdr: undefined, pendingTxSummary: undefined, review: undefined }
+          : m,
+      ),
+      { role: 'agent', content: 'Cancelled — nothing was sent.' },
+    ])
+    if (pendingTxXdr === xdrToDecline) {
+      setPendingTxXdr(null)
+      setPendingTxSummary(null)
+    }
+    if (confirmingXdr === xdrToDecline) {
+      setConfirmingXdr(null)
+      setConfirmedDetails(false)
+    }
+  }
+
   const approveTransaction = async () => {
     if (!pendingTxXdr) return
     const xdrToSubmit = pendingTxXdr
@@ -322,7 +425,8 @@ export default function AgentPage() {
     // Decide from the decoded transaction, never from the agent's summary: the
     // source must be this wallet's fee payer and every operation one we can
     // show. The same rule the mobile app applies (proposalRefusal).
-    const refusal = proposalRefusal(decode(xdrToSubmit), feePayerAddress || null)
+    const decodedReview = decode(xdrToSubmit)
+    const refusal = proposalRefusal(decodedReview, feePayerAddress || null)
     if (refusal) {
       setMessages((prev) => [
         ...prev.map((m) =>
@@ -334,6 +438,14 @@ export default function AgentPage() {
       ])
       setPendingTxXdr(null)
       setPendingTxSummary(null)
+      setConfirmingXdr(null)
+      setConfirmedDetails(false)
+      return
+    }
+
+    const confirmations = extractProposalConfirmations(xdrToSubmit)
+    const requiresExplicitRecipientConfirm = confirmations.length > 0
+    if (confirmingXdr !== xdrToSubmit || (requiresExplicitRecipientConfirm && !confirmedDetails)) {
       return
     }
 
@@ -348,6 +460,8 @@ export default function AgentPage() {
     )
     setPendingTxXdr(null)
     setPendingTxSummary(null)
+    setConfirmingXdr(null)
+    setConfirmedDetails(false)
     try {
       // Require biometric / passkey approval before signing
       await requirePasskey()
@@ -381,6 +495,14 @@ export default function AgentPage() {
         },
       ])
     } catch (err: any) {
+      // The user closed the prompt; that is not a failed transaction.
+      if (isPasskeyCancellation(err)) {
+        setMessages((prev) => [
+          ...prev,
+          { role: 'agent', content: 'Cancelled — nothing was sent.' },
+        ])
+        return
+      }
       // Extract detailed Horizon error codes when available
       let detail = err?.message ?? 'Unknown error'
       try {
@@ -667,55 +789,190 @@ export default function AgentPage() {
                 </div>
               )}
 
-              {/* Transaction approval card — inline, passkey-gated */}
-              {msg.pendingTxXdr && (
+              {/* Invest hand-off — open Earn/Invest section */}
+              {msg.investIntent && (
                 <div className="agent-tx-card">
                   <div className="agent-tx-card__header">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="var(--gold)" strokeWidth="2"/>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                    <span className="agent-tx-card__label">Transaction ready</span>
+                    <span className="agent-tx-card__label">Earn / Invest</span>
                   </div>
-                  {msg.review ? (
-                    <div className="agent-tx-card__summary">
-                      {msg.review.operations.map((op, j) => (
-                        <div key={j}>{op}</div>
-                      ))}
-                      <div style={{ opacity: 0.6, marginTop: 6 }}>Fee: {Number(msg.review.fee) / 1e7} XLM</div>
-                    </div>
-                  ) : (
-                    <div className="agent-tx-card__summary">
-                      This transaction could not be decoded and cannot be approved.
-                    </div>
-                  )}
-                  {msg.pendingTxSummary && (
-                    <div className="agent-tx-card__summary" style={{ opacity: 0.6 }}>
-                      Agent says: {msg.pendingTxSummary}
-                    </div>
-                  )}
+                  <div className="agent-tx-card__summary">
+                    Route to Earn section ({msg.investIntent.code ?? msg.investIntent.asset ?? ''})
+                  </div>
                   <button
-                    onClick={approveTransaction}
-                    disabled={approving}
+                    onClick={() => router.push(investHref(msg.investIntent!))}
                     className="agent-tx-card__btn"
                   >
-                    {approving ? (
-                      <>
-                        <span className="spinner" style={{ width: '14px', height: '14px' }} />
-                        Verifying…
-                      </>
-                    ) : (
-                      <>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2"/>
-                          <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                        </svg>
-                        Approve &amp; Submit
-                      </>
-                    )}
+                    Open Earn Section
                   </button>
                 </div>
               )}
+
+              {/* Transaction approval card — inline, passkey-gated */}
+              {msg.pendingTxXdr && (() => {
+                const refusal = proposalRefusal(msg.review ?? null, feePayerAddress || null)
+                const confirmations = extractProposalConfirmations(msg.pendingTxXdr)
+                const isConfirmStep = confirmingXdr === msg.pendingTxXdr
+                return (
+                  <div className="agent-tx-card" data-testid="agent-proposal-card">
+                    <div className="agent-tx-card__header">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="var(--gold)" strokeWidth="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round"/>
+                      </svg>
+                      <span className="agent-tx-card__label">
+                        {refusal
+                          ? 'Transaction refused'
+                          : isConfirmStep
+                            ? 'Confirm destination and amount'
+                            : 'Transaction ready'}
+                      </span>
+                    </div>
+                    {msg.review ? (
+                      <div className="agent-tx-card__summary">
+                        {msg.review.operations.map((op, j) => (
+                          <div key={j}>{op}</div>
+                        ))}
+                        <div style={{ opacity: 0.6, marginTop: 6 }}>
+                          From: {shortenAddress(msg.review.source)} · Fee: {Number(msg.review.fee) / 1e7} XLM
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="agent-tx-card__summary">
+                        This transaction could not be decoded and cannot be approved.
+                      </div>
+                    )}
+                    {msg.pendingTxSummary && (
+                      <div className="agent-tx-card__summary" style={{ opacity: 0.6 }}>
+                        Agent says: {msg.pendingTxSummary}
+                      </div>
+                    )}
+                    {refusal ? (
+                      <div
+                        className="agent-tx-card__summary"
+                        data-testid="agent-proposal-refusal"
+                        style={{ color: '#f87171', marginTop: 6 }}
+                      >
+                        {refusal}
+                      </div>
+                    ) : !isConfirmStep ? (
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                        <button
+                          type="button"
+                          data-testid="review-confirmation-step-button"
+                          onClick={() => {
+                            setConfirmingXdr(msg.pendingTxXdr ?? null)
+                            setConfirmedDetails(confirmations.length === 0)
+                          }}
+                          disabled={approving}
+                          className="agent-tx-card__btn"
+                          style={{ flex: 2 }}
+                        >
+                          Review destination &amp; amount
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="decline-proposal-button"
+                          onClick={() => declineTransaction(msg.pendingTxXdr!)}
+                          disabled={approving}
+                          className="btn-ghost"
+                          style={{ flex: 1 }}
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        data-testid="agent-explicit-confirmation"
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '0.625rem',
+                          marginTop: '0.5rem',
+                          paddingTop: '0.5rem',
+                          borderTop: '1px solid var(--border-dim)',
+                        }}
+                      >
+                        {confirmations.map((item, idx) => (
+                          <div key={idx} style={{ fontSize: '0.8125rem', lineHeight: 1.5 }}>
+                            <div>
+                              <span style={{ opacity: 0.65 }}>Amount: </span>
+                              <strong data-testid="confirm-amount">
+                                {item.amount} {item.asset}
+                              </strong>
+                            </div>
+                            <div style={{ wordBreak: 'break-all' }}>
+                              <span style={{ opacity: 0.65 }}>Destination: </span>
+                              <code
+                                data-testid="confirm-destination"
+                                style={{ fontFamily: 'Inconsolata, monospace', fontSize: '0.75rem' }}
+                              >
+                                {item.destination}
+                              </code>
+                            </div>
+                          </div>
+                        ))}
+                        {confirmations.length > 0 && (
+                          <label
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.5rem',
+                              fontSize: '0.8125rem',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              data-testid="confirm-destination-amount-checkbox"
+                              checked={confirmedDetails}
+                              onChange={(e) => setConfirmedDetails(e.target.checked)}
+                            />
+                            <span>I confirm the destination address and amount above</span>
+                          </label>
+                        )}
+                        <div style={{ display: 'flex', gap: '0.5rem' }}>
+                          <button
+                            type="button"
+                            data-testid="cancel-confirmation-step-button"
+                            onClick={() => {
+                              setConfirmingXdr(null)
+                              setConfirmedDetails(false)
+                            }}
+                            disabled={approving}
+                            className="btn-ghost"
+                            style={{ flex: 1 }}
+                          >
+                            Back
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="confirm-and-sign-button"
+                            onClick={approveTransaction}
+                            disabled={approving || (confirmations.length > 0 && !confirmedDetails)}
+                            className="agent-tx-card__btn"
+                            style={{ flex: 2 }}
+                          >
+                            {approving ? (
+                              <>
+                                <span className="spinner" style={{ width: '14px', height: '14px' }} />
+                                Verifying…
+                              </>
+                            ) : (
+                              <>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2"/>
+                                  <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+                                </svg>
+                                Confirm &amp; Sign
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           </div>
         ))}

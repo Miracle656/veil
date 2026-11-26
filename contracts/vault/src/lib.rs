@@ -418,3 +418,8 @@ mod tests {
         assert!(client.try_queue_withdrawal(&ctx.recipient, &-1).is_err());
     }
 }
+
+// Pre-deployment review findings (#1278), written as tests of the behaviour
+// the vault should have. Test-only: not part of the release WASM.
+#[cfg(test)]
+mod audit_tests;

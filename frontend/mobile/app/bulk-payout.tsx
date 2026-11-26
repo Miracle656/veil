@@ -26,6 +26,7 @@ import {
   type RowByRowResult,
 } from '../lib/bulkPayout';
 import { sendAssetFromContract } from '../lib/contractSpend';
+import { isPasskeyCancellation } from '../lib/passkeyOutcome';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
 import { getWalletAddress } from '../lib/walletStore';
 
@@ -91,6 +92,7 @@ export default function BulkPayoutScreen() {
           return sendAssetFromContract(stored, row.recipient, row.amount);
         },
         errorMessage,
+        { isCancellation: isPasskeyCancellation },
       );
       setResult(outcome);
       const view = bulkView(outcome, rows.length);
@@ -103,6 +105,12 @@ export default function BulkPayoutScreen() {
       }
       setStep(view);
     } catch (e: unknown) {
+      // Cancelling a prompt is not a payout failure. Return to the batch with
+      // no alert and no row marked failed — nothing was submitted for it.
+      if (isPasskeyCancellation(e)) {
+        setStep('form');
+        return;
+      }
       Alert.alert('Payout failed', errorMessage(e));
       setStep('form');
     }

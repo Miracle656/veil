@@ -34,6 +34,7 @@ jest.mock('../walletStore', () => ({
 jest.mock('../passkey', () => ({
   evaluatePrf: (...a: unknown[]) => mockEvaluatePrf(...a),
 }));
+jest.mock('../classicWallet', () => ({ fundWithFriendbot: jest.fn(async () => false) }));
 jest.mock('../testnetWallet', () => ({ fundWithFriendbot: jest.fn(async () => false) }));
 jest.mock('../walletBreadcrumbs', () => ({ writeBreadcrumbs: jest.fn(async () => undefined) }));
 
@@ -75,8 +76,13 @@ describe('both derivation states, recorded at wallet creation', () => {
 
   it('identifies a random-fallback fee-payer as random', async () => {
     mockEvaluatePrf.mockResolvedValue({ outcome: 'unsupported', output: null });
-    const created = await createPasskeyWallet({ register: mockRegister });
-    expect(created.recoverable).toBe(false);
+      // The commit is deferred when PRF is unavailable, so this returns
+      // { status: 'unsupported', commit } rather than a wallet. Commit it to
+      // get the wallet this assertion is about.
+      const result = await createPasskeyWallet({ register: mockRegister });
+      expect(result.status).toBe('unsupported');
+      const created = result.status === 'unsupported' ? await result.commit() : result.wallet;
+      expect(created.recoverable).toBe(false);
 
     const info = await getFeePayerInfo();
     expect(info?.source).toBe('random');

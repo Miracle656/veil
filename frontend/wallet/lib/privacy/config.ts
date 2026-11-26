@@ -129,8 +129,11 @@ export type SppPool = {
   policyFlags: readonly string[]
   /** `asset.kind` — whether the pool's base asset is native XLM. */
   assetKind: 'native' | 'soroban'
-  /** `gvkMode`, present only when the pool is global-view-key traceable. */
-  gvkMode?: 'traceable'
+  /**
+   * `gvkMode`, present only when the pool carries a global view key:
+   * 'traceable' (authority can trace) or 'viewOnly' (authority can view).
+   */
+  gvkMode?: 'traceable' | 'viewOnly'
 }
 
 /** The SPP deployment the wallet should talk to on one network, if any. */
@@ -177,10 +180,16 @@ export function getSppBootnodeUrl(configuredUrl?: string): string {
 /**
  * SPP contract addresses, copied from SPP's
  * `deployments/testnet/deployments.json` at upstream commit
- * `91ba67d659cb50a66ecba7ba42e27f8e686117f4`
- * (NethermindEth/stellar-private-payments, 2026-09-23 — "redeploy testnet for
- * the packed storage layout"). Copy the testnet entry again — and bump the
- * commit hash above with it — whenever SPP redeploys.
+ * `0c7a5647500b72036ef3c7acc1295526f60e37a3`
+ * (NethermindEth/stellar-private-payments, 2026-10-19 — "Add a view only GVK
+ * pool to testnet and fix its note status in the admin panel").
+ * Copy the testnet entry again — and bump the commit hash above with it —
+ * whenever SPP redeploys.
+ *
+ * Every address here changes on an SPP redeploy, and that happens often: this
+ * is the fourth testnet redeploy since August. A redeploy regenerates the
+ * circuit keys, which invalidates every note in the old pools, so there is
+ * nothing to migrate and no reason to keep the previous ids around.
  *
  * Mainnet has no entry on purpose: SPP is not approved for mainnet, so there is
  * nothing to point at, and {@link getSppConfig} returning `null` there is how a
@@ -188,33 +197,45 @@ export function getSppBootnodeUrl(configuredUrl?: string): string {
  */
 export const SPP_NETWORKS: Partial<Record<VeilNetworkName, SppNetworkConfig>> = {
   testnet: {
-    deployer: 'GDX6X7DZQGIAGP6MWUK24BRQFDNQCP6E4FCJ4M6K3OCTNQM3EMWLQGPH',
-    admin: 'GCBU2YCJGVLRSPPFK3ADYNUEH2W6ZFNNJLX6IHCEZT54VOHZZNYNHXDG',
-    aspMembership: 'CAUPZISOB4GWTH22MVKA6MRWJMQRTLUMIGUSBFNJEF32Z6WEY3RFOKGC',
-    aspNonMembership: 'CAFLZKGO3KYKNOBPCVT3APFEWMUBRDBF4EVYK65E6O653WYMX4XH4QYJ',
+    // Upstream now publishes one account as both deployer and admin.
+    deployer: 'GCBTXCQFE3SUEOEF63MLUEWYBY4SO2PWR7KQUVCRPGM54P5W33DKALEW',
+    admin: 'GCBTXCQFE3SUEOEF63MLUEWYBY4SO2PWR7KQUVCRPGM54P5W33DKALEW',
+    aspMembership: 'CBIIM5NROBSQDS2NAZ32R3FUYZVALTSV5ZZSAQ46RPQWRM5RFBBWBC4O',
+    aspNonMembership: 'CARVREMY7J5M2LELIK6GDN24XUBGIBGLD5FL3NKXB7PIGAFKHY67JRUC',
     verifiers: {
-      standard: 'CD34JHLNB7AYASRLOTMT6EECBKFMOS356PPP5RPXRO5Y5EA5Y4DIXGTV',
-      traceable: 'CDBA2ZZSVV5VVE4OL2ORCSG2XDN4CD2UPTZIEO7BI32RKRTPFCUF2FMV',
+      // Upstream calls these `B` and `B_gvk_T`. (It also publishes a
+      // `B_gvk_V` view-only verifier now; nothing here consumes it yet.)
+      standard: 'CA66PGQD3OUO5R64CMOWL3FIRAQTWORLX36ZERALPPYOJ4ORETGFO3P5',
+      traceable: 'CDKKM5WNIV57OXOWZ2CDRV4Y7B2C2EPPI4YKKXQLLQWXBIM6HE3L34SH',
     },
-    publicKeyRegistry: 'CC6EJCBEULJGHNQQROKLXD6M6IKFW6LN7IHTVUEFQQWZDDLCMNPWXIH4',
+    publicKeyRegistry: 'CARLOV7O2W2O4NR6Y4FTEQC4SWZZATH2B6KZV3AEKSB36P54IGSZGLED',
     bootnodeUrl: getSppBootnodeUrl(process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL),
     pools: [
       {
         // XLM pool with a block-list policy.
-        id: 'CBEDPYMAEPQ6JR7WKWXRM6CFHHJLKA5RHPRRLSD4UZXZRGNMBXOT2GOT',
-        deploymentLedger: 4831618,
+        id: 'CA73PEBSX2GXZSMMVL46PTCXY424AIMPXKI7WWUMYJXV22AVY2DXC6DQ',
+        deploymentLedger: 5190086,
         tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',
       },
       {
         // XLM pool with a block-list policy and a global view key (traceable).
-        id: 'CADS665GRBHOMPE7GY5XYTFT2J5JKRZN6ILYMJ5ZO62GU4YPL3PYIN42',
-        deploymentLedger: 4831623,
+        id: 'CCIVQDB36TYWZ5ZN4P33OJ3BMHTMNFCT7KSSBBEVSLC2BCV36LAHGWFL',
+        deploymentLedger: 5190087,
         tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
         policyFlags: ['blocklist'],
         assetKind: 'native',
         gvkMode: 'traceable',
+      },
+      {
+        // XLM pool with a block-list policy and a view-only global view key.
+        id: 'CCMYN7CJI3W5OYNLMY4RURZ2AIQCMIAE33ACDJTOBK5T2VP4YNKMFMIG',
+        deploymentLedger: 5224754,
+        tokenContractId: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+        policyFlags: ['blocklist'],
+        assetKind: 'native',
+        gvkMode: 'viewOnly',
       },
     ],
   },

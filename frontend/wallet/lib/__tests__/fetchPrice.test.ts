@@ -52,3 +52,71 @@ describe('wallet fetchPrice - USDT0 & dollar stablecoins (Issue #790)', () => {
     expect(usdValue('10.0000002', fractionalPrice)).toBe(5.0000001)
   })
 })
+
+/**
+ * What happens when the oracle is not there.
+ *
+ * Lens was suspended on 2026-10-05 and the web wallet showed no prices at all,
+ * while mobile kept pricing balances — because mobile had an order-book fallback
+ * and this module did not. Two copies of the same function, one of them better,
+ * and the outage is what revealed which.
+ */
+describe('falls back to the SDEX order book when Lens is unavailable', () => {
+  const realFetch = global.fetch
+  afterEach(() => {
+    global.fetch = realFetch
+    jest.clearAllMocks()
+  })
+
+  const book = (bid: string, ask: string) => ({
+    ok: true,
+    json: async () => ({ bids: [{ price: bid }], asks: [{ price: ask }] }),
+  })
+
+  it('quotes the mid of the book when Lens returns a non-2xx', async () => {
+    const spy = jest.fn(async (url: unknown) =>
+      String(url).includes('/order_book')
+        ? (book('0.2217832', '0.2219707') as never)
+        : ({ ok: false, status: 503 } as never),
+    )
+    global.fetch = spy as unknown as typeof fetch
+
+    await expect(fetchPrice('XLM', null)).resolves.toBeCloseTo(0.22187695, 8)
+    expect(spy.mock.calls.some(([u]) => String(u).includes('/order_book'))).toBe(true)
+  })
+
+  it('falls back when Lens throws rather than answers', async () => {
+    const spy = jest.fn(async (url: unknown) => {
+      if (String(url).includes('/order_book')) return book('1.0', '1.1') as never
+      throw new Error('ECONNREFUSED')
+    })
+    global.fetch = spy as unknown as typeof fetch
+
+    await expect(fetchPrice('XLM', null)).resolves.toBeCloseTo(1.05, 6)
+  })
+
+  it('returns null rather than a one-sided price', async () => {
+    // Taking whichever side exists would quote a price nobody will trade at.
+    const spy = jest.fn(async (url: unknown) =>
+      String(url).includes('/order_book')
+        ? ({ ok: true, json: async () => ({ bids: [{ price: '0.22' }], asks: [] }) } as never)
+        : ({ ok: false, status: 503 } as never),
+    )
+    global.fetch = spy as unknown as typeof fetch
+
+    await expect(fetchPrice('XLM', null)).resolves.toBeNull()
+  })
+
+  it('still prefers Lens when it answers', async () => {
+    const spy = jest.fn(async (url: unknown) =>
+      String(url).includes('/order_book')
+        ? (book('9', '9') as never)
+        : ({ ok: true, json: async () => ({ price: 0.5 }) } as never),
+    )
+    global.fetch = spy as unknown as typeof fetch
+
+    await expect(fetchPrice('XLM', null)).resolves.toBe(0.5)
+    expect(spy.mock.calls.some(([u]) => String(u).includes('/order_book'))).toBe(false)
+  })
+})
+

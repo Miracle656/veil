@@ -10,11 +10,15 @@ TypeScript SDK for Veil / Invisible Wallet (Soroban + WebAuthn passkeys). Suppor
 npm install invisible-wallet-sdk @stellar/stellar-sdk
 ```
 
-Optional peer dependencies based on your framework:
-- **React**: `npm install react react-dom @tanstack/react-query`
-- **Vue 3**: `npm install vue`
-- **Angular**: `npm install @angular/core`
-- **React Native / Expo**: `npm install react-native react-native-passkey`
+All framework peer dependencies are optional — install only the peers required by the entry point you import:
+- **`invisible-wallet-sdk`** (main entry): `npm install react`
+- **`invisible-wallet-sdk/react`**: `npm install react react-dom @tanstack/react-query`
+- **`invisible-wallet-sdk/vue`**: `npm install vue`
+- **`invisible-wallet-sdk/svelte`**: `npm install svelte`
+- **`invisible-wallet-sdk/solid`**: `npm install solid-js`
+- **`invisible-wallet-sdk/angular`**: `npm install @angular/core`
+- **`invisible-wallet-sdk/vanilla`**: no framework peer dependencies required
+- **React Native / Expo**: `npm install react-native react-native-passkeys`
 
 ---
 

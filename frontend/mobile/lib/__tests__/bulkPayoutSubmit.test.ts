@@ -36,6 +36,24 @@ describe('isTxHash', () => {
   });
 });
 
+describe('isTxHash table', () => {
+  it.each([
+    ['empty string', ''],
+    ['the old placeholder', 'pending-abc'],
+    ['a 63-character hex string', 'a'.repeat(63)],
+    ['a 65-character hex string', 'a'.repeat(65)],
+    ['a 64-character non-hex string', 'g'.repeat(64)],
+    ['a non-string', 12345],
+  ])('never treats %s as a transaction hash', (_label, value) => {
+    expect(isTxHash(value)).toBe(false);
+  });
+
+  it('accepts upper- and lower-case 64-character hex', () => {
+    expect(isTxHash('a'.repeat(64))).toBe(true);
+    expect(isTxHash('A'.repeat(64))).toBe(true);
+  });
+});
+
 describe('batchProblems', () => {
   it('flags an empty batch, bad rows, non-XLM assets and oversized batches', () => {
     expect(batchProblems([])).toHaveLength(1);
@@ -78,6 +96,16 @@ describe('executeRowByRow', () => {
     expect(bulkView(result, 1)).toBe('failed');
   });
 
+  it.each(['', 'pending-abc', 'a'.repeat(63), 'g'.repeat(64)])(
+    'never reports %p as a submitted transaction hash',
+    async (fake) => {
+      const result = await executeRowByRow([row(A)], async () => fake);
+      expect(result.submitted).toEqual([]);
+      expect(result.outcomes[0]).toMatchObject({ status: 'failed' });
+      expect(bulkView(result, 1)).toBe('failed');
+    },
+  );
+
   it('partial failure names the rows that did not go through and stops signing', async () => {
     const send = jest.fn(async (_r: PayoutRow, i: number) => {
       if (i === 1) throw new Error('op_underfunded');
@@ -99,6 +127,35 @@ describe('executeRowByRow', () => {
     const result = await executeRowByRow([row(A), row(B)], send);
     expect(send).toHaveBeenCalledTimes(1);
     expect(bulkView(result, 2)).toBe('failed');
+  });
+
+  it('re-throws a cancellation before any row was submitted, so the screen can stay quiet', async () => {
+    const send = jest.fn(async () => {
+      throw new Error('USER_REJECTED');
+    });
+
+    await expect(
+      executeRowByRow([row(A), row(B)], send, undefined, {
+        isCancellation: (e) => String(e).includes('USER_REJECTED'),
+      }),
+    ).rejects.toThrow('USER_REJECTED');
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps already-submitted rows when a later prompt is cancelled', async () => {
+    const send = jest.fn(async (_r: PayoutRow, i: number) => {
+      if (i === 1) throw new Error('USER_REJECTED');
+      return HASH(i + 1);
+    });
+
+    const result = await executeRowByRow([row(A), row(B), row(C)], send, undefined, {
+      isCancellation: (e) => String(e).includes('USER_REJECTED'),
+    });
+
+    expect(result.submitted).toEqual([0]);
+    expect(result.failed).toEqual([]);
+    expect(result.notAttempted).toEqual([1, 2]);
+    expect(bulkView(result, 3)).toBe('partial');
   });
 });
 

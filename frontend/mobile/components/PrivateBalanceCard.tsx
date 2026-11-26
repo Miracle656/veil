@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useMemo } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { useTheme } from '../hooks/useTheme';
@@ -111,6 +111,14 @@ export function PrivateBalanceCard({
           scanner is integrated.
         </Text>
       )}
+
+      <Pressable
+        onPress={() => Linking.openURL('https://docs.useveilapp.xyz/privacy')}
+        accessibilityRole="link"
+        accessibilityLabel="What private means — open the privacy guide"
+      >
+        <Text style={styles.pendingCopy}>What does &quot;private&quot; mean? Read the guide ↗</Text>
+      </Pressable>
 
       {/* Divider */}
       <View style={styles.divider} />

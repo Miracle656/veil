@@ -20,7 +20,7 @@ Evidence, reproducible from the repo:
 | Check | Result |
 |---|---|
 | `grep -rn "update_current_contract_wasm\|fn upgrade" contracts --include=*.rs` | **no matches** |
-| Factory public functions (`contracts/factory/src/lib.rs`) | `__constructor(admin)`, `init(wasm_hash)`, `deploy(public_key, rp_id, origin)` — nothing else |
+| Factory public functions (`contracts/factory/src/lib.rs`) | `__constructor(admin)`, `init(wasm_hash)`, `deploy(public_key, rp_id, origin)` — nothing else. Still true of the **deployed** factory (built from `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2`). Source on `main` has since added a fourth, `set_wasm_hash`, which is not deployed; see §6. |
 | `init` | sets the wallet Wasm hash **once**; a second call fails `AlreadyInitialized` |
 | Wallet salt in `deploy` | `SHA-256(public_key)` only; a second deploy for the same key fails `AlreadyDeployed` |
 
@@ -29,13 +29,15 @@ docs.useveilapp.xyz — documents two upgrade paths:
 
 | Documented | Exists |
 |---|---|
-| Factory `set_wasm_hash` (new wallets use new code) | ❌ |
+| Factory `set_wasm_hash` (new wallets use new code) | ❌ on mainnet, and it can never be added there. ✅ **Written in source, not deployed**: commit `d93abe5cb66391d0aa4435bb1207a13444ae86c5` (#1171) added an admin-gated `set_wasm_hash` to `contracts/factory/src/lib.rs`. It only takes effect in a factory deployed from that source, and only for wallets deployed after the call. |
 | Wallet `upgrade(new_wasm_hash)` via `update_current_contract_wasm` | ❌ |
 
 ## 2. What it means
 
 - **The mainnet factory is permanent.** `CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`
-  will deploy the wallet code it was initialised with (`b485f817…`) for as long as the apps point at it.
+  will deploy the wallet code it was initialised with (wallet WASM SHA-256
+  `b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5`) for as long as the apps point at it.
+  It has no `set_wasm_hash`, so that hash can never change.
 - **Every wallet already on mainnet runs that code forever.** A bug fix in the wallet contract
   reaches only wallets deployed afterwards, from a new factory. Existing users would have to
   move their funds.
@@ -43,6 +45,10 @@ docs.useveilapp.xyz — documents two upgrade paths:
   of every contract call regardless of asset, so one cap means 10 XLM or 10 USDC depending on
   what moves (~9× overspend in USDC terms). Unreachable today — `set_key_spend_limit` is called
   from nowhere — but no existing wallet can ever receive the fix.
+  **Fixed in the contract, for new wallets only.** The limit is now keyed per
+  `(key_id, token contract)`, each pair with its own cap, total and 24-hour window. A wallet
+  already deployed on the old factory keeps the old asset-blind code forever: the fix reaches
+  it only when its owner opens a wallet from the new factory and moves the balance across.
 - **One passkey = one wallet per network**, fixed by the salt. Changing that needs a new factory.
 - **A new factory means new addresses for everyone.** The factory's own address is part of
   every wallet address (`HashIdPreimage::ContractId { networkId, factory, salt }`). A new
@@ -111,9 +117,21 @@ funded by the award.
       key.** The current docs say to submit upgrades "using stellar CLI as operator" — building
       that would let whoever holds our admin key replace the code of every wallet and take the
       funds. That is the self-custody question reviewers will ask first.
-- [ ] **Factory `set_wasm_hash(new_hash)`, admin-gated** (the admin is already fixed at
-      construction). Affects only wallets deployed afterwards.
-- [ ] **Spend limits keyed per `(key_id, token contract)`** instead of one asset-blind sum.
+- [x] **Factory `set_wasm_hash(new_hash)`, admin-gated** (the admin is already fixed at
+      construction). Affects only wallets deployed afterwards. **Written, not deployed:**
+      added to `contracts/factory/src/lib.rs` in commit
+      `d93abe5cb66391d0aa4435bb1207a13444ae86c5` (#1171). It refuses to run before `init`,
+      never touches an existing wallet and does not change any wallet address. It reaches
+      mainnet only with the v2 factory redeploy above. The mainnet factory
+      (`CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK`) does not have it and never will.
+- [x] **Spend limits keyed per `(key_id, token contract)`** instead of one asset-blind sum.
+      Shipped in the contract: each `(key, token)` pair carries its own cap, its own running
+      total and its own rolling 24-hour window, and the amount is read per selector from the
+      SEP-41 argument layout rather than from a fixed index. A key with no limits is
+      unrestricted; a key with at least one limit is scoped to the tokens it has a budget for,
+      and an unset token is **denied** rather than unlimited — the reasoning is in
+      `contracts/invisible_wallet/src/policies/spend_limit.rs`. This reaches **new wallets
+      only**: see the migration note in §2.
 - [ ] **A batch entry point — `batch_execute(calls)` or a router — so one signature can cover
       many payments.** `execute(target, func, args)` (`contracts/invisible_wallet/src/lib.rs:450`)
       takes exactly one call, and a Soroban transaction carries one `InvokeHostFunction`, so N
@@ -140,7 +158,7 @@ funded by the award.
 
 ## 7. Do now — no contract work needed
 
-- [ ] **Correct `frontend/docs/pages/contract-upgrades.mdx`.** Mark both functions as *not
+- [x] **Correct `frontend/docs/pages/contract-upgrades.mdx`.** Mark both functions as *not
       implemented, planned for contracts v2*. It is public and describes guarantees we do not have.
 - [ ] **SCF application:** state the gap and put contracts v2 in the milestones.
 

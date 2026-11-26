@@ -44,6 +44,35 @@ export class WalletNotActivatedError extends Error {
  * `undeployed` would show a working, deployed wallet as "not set up yet" for as
  * long as the network blinked.
  */
+/**
+ * What a failed contract-instance read means: the wallet has never spent, or
+ * something else went wrong.
+ *
+ * Separated from the RPC call because this is the part with the judgement in
+ * it, and because the judgement was wrong: it recognised only "not found" and
+ * "404", so a node answering in any other words produced `unknown`. That let
+ * the caller carry on and read a signer list that could not exist, and a tester
+ * opening Passkeys on an unspent wallet was shown the raw result:
+ *
+ *   HostError: Error(Storage, MissingValue) … "trying to get non-existing
+ *   value for contract instance" … fn_call, CCDRZY5F…, get_signers
+ *
+ * A network failure must still be `unknown`. Calling that `undeployed` would
+ * tell someone with a real, funded wallet that it does not exist.
+ */
+const CONTRACT_ABSENT = [
+  'not found',
+  '404',
+  'missingvalue',
+  'non-existing value for contract instance',
+  'contract instance',
+]
+
+export function classifyContractDataError(err: unknown): DeploymentState {
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return CONTRACT_ABSENT.some((phrase) => message.includes(phrase)) ? 'undeployed' : 'unknown'
+}
+
 export async function getDeploymentState(address: string | null): Promise<DeploymentState> {
   if (!address || !address.startsWith('C')) return 'unknown'
   try {
@@ -55,8 +84,7 @@ export async function getDeploymentState(address: string | null): Promise<Deploy
     )
     return 'deployed'
   } catch (err) {
-    const message = err instanceof Error ? err.message.toLowerCase() : String(err).toLowerCase()
-    return message.includes('not found') || message.includes('404') ? 'undeployed' : 'unknown'
+    return classifyContractDataError(err)
   }
 }
 

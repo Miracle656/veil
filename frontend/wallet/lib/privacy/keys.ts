@@ -156,7 +156,7 @@ export function signPrivacyKeyDerivation(
 export async function isPrivacyRecoverySupported(evaluator?: PrfEvaluator): Promise<boolean> {
   const mode = getFeePayerMode()
   if (mode === null) return true // nothing established yet — no wallet to warn about
-  if (mode === 'legacy') return false
+  if (mode === 'legacy' || mode === 'random') return false
   // prf-raw / prf-hkdf are PRF-derived by definition; confirm the authenticator
   // still answers with a PRF (a synced passkey can move to a non-PRF device).
   const credentialId = walletLocal.getItem('invisible_wallet_key_id')
@@ -173,8 +173,8 @@ export async function isPrivacyRecoverySupported(evaluator?: PrfEvaluator): Prom
  * Produce SPP's key-derivation signature for this session's wallet.
  *
  * The fee payer must already be established (session entry points run
- * `ensureFeePayer`; this never prompts on its own). `legacy` mode is refused
- * outright — see the header for why.
+ * `ensureFeePayer`; this never prompts on its own). `legacy` and `random` modes
+ * are refused outright — see the header for why.
  *
  * @param evaluator injectable PRF ceremony, for tests / re-checks.
  */
@@ -183,7 +183,7 @@ export async function preparePrivacySigner(evaluator?: PrfEvaluator): Promise<Pr
   if (mode === null) {
     throw new PrivacyKeyError('No wallet is established for this session yet.')
   }
-  if (mode === 'legacy') {
+  if (mode === 'legacy' || mode === 'random') {
     throw new PrivacyKeyError(LEGACY_FEE_PAYER_MESSAGE)
   }
   const keypair = peekFeePayerKeypair()

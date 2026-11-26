@@ -9,12 +9,22 @@ import { getPasskeyId } from './walletStore';
  * passkey credential id — the native port of the web wallet's
  * `lib/deriveFeePayer.ts`.
  *
- * SECURITY (known limitation — see docs/adr/0003-fee-payer-key-from-webauthn-prf.md):
- * the credential id is NOT a secret (it is stored in the keychain and returned in
- * every assertion's allowCredentials), so this derivation is not passkey-bound —
- * anyone who can read the credential id can reconstruct this keypair. Blast radius
- * is the G… fee account only. The planned fix derives the seed from a WebAuthn PRF
- * output instead. Do not add callers that rely on this being biometric-gated.
+ * SECURITY (known limitation — see docs/NON_PRF_FEE_PAYER_EXPOSURE.md and docs/adr/0003-fee-payer-key-from-webauthn-prf.md):
+ * The credential id is NOT a secret (it is stored in the keychain/AsyncStorage and
+ * returned in every assertion's allowCredentials), so this derivation is not passkey-bound —
+ * anyone who can read the credential id can reconstruct this keypair with no biometric prompt.
+ *
+ * Blast radius:
+ * On smart wallets, the contract balance is protected by passkey authentication, so the
+ * exposure is bounded to the fee-payer gas account. On keypair wallets, the key holds everything.
+ *
+ * Current Architecture:
+ * - Mobile derives passkey-bound fee-payer keys via WebAuthn PRF (`prf` mode).
+ * - When PRF is unsupported, mobile falls back to `Keypair.random()` (`random` mode),
+ *   never deriving from the credential ID for new wallets.
+ * - This function is preserved solely for backward-compatibility checks in `feePayerSource.ts`
+ *   to identify whether an existing wallet was originally set up under `source: 'credential-id'`.
+ *   Do not add callers that rely on this being biometric-gated.
  *
  * The wallet is fee-sponsored, so this account must be **byte-identical** on web
  * and native: a mismatch would pay fees from the wrong account. The web derives

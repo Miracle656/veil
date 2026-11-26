@@ -773,6 +773,9 @@ const CONTRACT_ERRORS: Record<number, string> = {
   14: 'There is no pending recovery on this wallet to finalize.',
   15: 'The recovery timelock has not expired yet. Come back after the unlock date.',
   22: 'This wallet has no recovery key set, so server-assisted recovery is not available for it.',
+  // Wallets built after #1182: the guardian and recovery-key paths share one slot.
+  28: "A guardian recovery is already pending on this wallet, so a server-assisted recovery can't start until it finishes or is cancelled from a device that still has access.",
+  29: 'A server-assisted recovery is already pending on this wallet. Wait for it to finish, or cancel it from the device that still has access.',
 };
 
 /** Turn a simulation failure into something a user can act on. */

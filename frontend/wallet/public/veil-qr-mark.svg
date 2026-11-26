@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="Veil">
+  <!--
+    The mark that sits in the middle of a receive QR.
+
+    Square on purpose: qrcode.react draws this into a fixed square box, so the
+    160x48 wordmark that used to be here was crushed to an illegible smear.
+    It carries its own off-white pad so the dark tile reads against the white
+    QR, and it references nothing external — an SVG drawn into a canvas runs
+    in secure static mode, where a remote font or image is simply dropped.
+
+    Geometry is the Drape from app/icon.svg, scaled 82/96 and offset by the pad.
+  -->
+  <rect width="96" height="96" rx="20" fill="#F6F7F8"/>
+  <rect x="7" y="7" width="82" height="82" rx="16" fill="#0F0F0F"/>
+  <rect x="25.8" y="29.2" width="44.4" height="10.3" rx="5.1" fill="#FDDA24"/>
+  <rect x="30.9" y="44.6" width="34.2" height="10.3" rx="5.1" fill="#FDDA24" opacity="0.62"/>
+  <rect x="36.0" y="59.9" width="23.9" height="10.3" rx="5.1" fill="#FDDA24" opacity="0.34"/>
+</svg>

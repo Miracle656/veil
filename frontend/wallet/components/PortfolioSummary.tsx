@@ -15,7 +15,28 @@
 import type { PortfolioSummary as Summary, PortfolioLine } from '@/lib/portfolio'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, type CurrencyCode } from '@/lib/currency'
+import { useState, type FormEvent } from 'react'
+import { walletLocal } from '@/lib/walletStorage'
+import { compareCostBasis, readRecordedCostBasis, writeRecordedCostBasis, type RecordedCostBasis } from '@/lib/costBasis'
+import { ETHERFUSE_MAINNET_ISSUER, USDY_MAINNET_ISSUER } from '@/lib/assets'
 import { AlertTriangle } from 'lucide-react'
+
+// Holdings that accrue through price rather than balance, where a manually
+// recorded USDC cost can express the yield. Matched by code AND issuer, so a
+// counterfeit token of the same code never inherits someone's basis.
+//
+// Returns the ISSUER, which is what the storage key is built from. That is
+// deliberate and not interchangeable with the code: keys written before USDY
+// existed are `…:${issuer}`, so keying by code instead would read an empty slot
+// and silently show "unknown" to everyone who had already recorded a USTRY
+// cost. The pairing above is what keeps a counterfeit out, so the issuer alone
+// is a safe key — a collision would need one issuer to mint two assets on this
+// list, which adding to this allowlist would make obvious.
+function recordedBasisIssuer(code: string, issuer: string | null): string | null {
+  if (issuer === ETHERFUSE_MAINNET_ISSUER && code === 'USTRY') return issuer
+  if (issuer === USDY_MAINNET_ISSUER && code === 'USDY') return issuer
+  return null
+}
 
 // ── Section header ────────────────────────────────────────────────────────────
 
@@ -91,13 +112,40 @@ function AssetLine({
   currencyCode,
   fxRate,
   last,
+  walletAddress,
 }: {
   line: PortfolioLine
   hideAmounts: boolean
   currencyCode: CurrencyCode
   fxRate: number
   last: boolean
+  walletAddress?: string | null
 }) {
+  const basisIssuer = walletAddress ? recordedBasisIssuer(line.code, line.issuer) : null
+  const basisKey = basisIssuer && walletAddress
+    ? `veil:recorded-cost-basis:v1:${walletAddress}:${basisIssuer}`
+    : null
+  const [editingBasis, setEditingBasis] = useState(false)
+  const [basisInput, setBasisInput] = useState('')
+  const [basisError, setBasisError] = useState<string | null>(null)
+  // Read during init, not an effect: a static render (and the first client
+  // paint) would otherwise show "unknown" for a basis that is already stored.
+  const [basis, setBasis] = useState<RecordedCostBasis | null>(() =>
+    basisKey ? readRecordedCostBasis(walletLocal, basisKey) : null,
+  )
+
+  const basisResult = basisIssuer ? compareCostBasis(line.amount, line.valueUsd, basis) : null
+
+  function saveBasis(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!basisKey || !writeRecordedCostBasis(walletLocal, basisKey, line.amount, basisInput)) {
+      setBasisError('Enter a non-negative USDC cost and make sure local storage is available.')
+      return
+    }
+    setBasis({ amount: line.amount, costUsdc: basisInput, recordedAt: Date.now() })
+    setBasisError(null)
+    setEditingBasis(false)
+  }
   const fiatLabel = line.valueUsd !== null
     ? formatFiat(line.valueUsd, currencyCode, fxRate)
     : '—'
@@ -174,6 +222,42 @@ function AssetLine({
               {shareLabel}
             </span>
           )}
+          {!hideAmounts && basisKey && (
+            <div style={{ fontSize: '11px', color: 'rgba(246,247,248,0.55)', textAlign: 'right', maxWidth: 250 }}>
+              <div>Current value: {line.valueUsd === null ? '—' : `${formatFiat(line.valueUsd, 'USD', 1)} USDC`}</div>
+              {basisResult?.status === 'known' ? (
+                <>
+                  <div>Cost: {formatFiat(basisResult.costUsdc, 'USD', 1)} USDC</div>
+                  <div aria-label="Change in value" style={{ color: basisResult.changeUsdc < 0 ? '#F08A8A' : '#79C99E' }}>
+                    Change in value: {basisResult.changeUsdc < 0 ? '−' : '+'}{formatFiat(Math.abs(basisResult.changeUsdc), 'USD', 1)} USDC
+                  </div>
+                </>
+              ) : (
+                <div title={basisResult?.reason === 'holding-changed' ? 'The balance changed since this basis was recorded.' : undefined}>
+                  Change in value unknown — record your USDC cost.
+                </div>
+              )}
+              <div>Basis is stored on this device and applies only while the holding amount stays the same.</div>
+              {editingBasis ? (
+                <form onSubmit={saveBasis} style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 5 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    Total USDC cost
+                    <input autoFocus type="number" min="0" step="any" inputMode="decimal" aria-label="Total USDC cost" value={basisInput}
+                      onChange={(event) => setBasisInput(event.target.value)}
+                      style={{ width: 84, background: 'transparent', color: 'inherit', border: '1px solid rgba(246,247,248,0.3)', borderRadius: 4, padding: '2px 4px' }} />
+                  </label>
+                  <button type="submit" style={{ color: 'var(--gold)', background: 'none', border: 0, cursor: 'pointer' }}>Save</button>
+                  <button type="button" onClick={() => setEditingBasis(false)} style={{ color: 'inherit', background: 'none', border: 0, cursor: 'pointer' }}>Cancel</button>
+                </form>
+              ) : (
+                <button type="button" onClick={() => { setBasisInput(basis?.costUsdc ?? ''); setEditingBasis(true) }}
+                  style={{ color: 'var(--gold)', background: 'none', border: 0, padding: 0, marginTop: 3, cursor: 'pointer', fontSize: '11px' }}>
+                  {basisResult?.status === 'known' ? 'Edit recorded cost' : 'Record cost'}
+                </button>
+              )}
+              {basisError && <div role="alert" style={{ color: '#F08A8A' }}>{basisError}</div>}
+            </div>
+          )}
         </span>
       </Row>
       {!hideAmounts && <ShareBar share={line.share} />}
@@ -190,6 +274,7 @@ function Bucket({
   hideAmounts,
   currencyCode,
   fxRate,
+  walletAddress,
 }: {
   label: string
   lines: PortfolioLine[]
@@ -197,6 +282,7 @@ function Bucket({
   hideAmounts: boolean
   currencyCode: CurrencyCode
   fxRate: number
+  walletAddress?: string | null
 }) {
   if (lines.length === 0) return null
   return (
@@ -216,6 +302,7 @@ function Bucket({
           currencyCode={currencyCode}
           fxRate={fxRate}
           last={i === lines.length - 1}
+          walletAddress={walletAddress}
         />
       ))}
     </section>
@@ -233,6 +320,7 @@ export interface PortfolioSummaryProps {
   fxRate: number
   /** Mask all amounts behind ••••. */
   hideAmounts?: boolean
+  walletAddress?: string | null
 }
 
 /**
@@ -253,6 +341,7 @@ export function PortfolioSummary({
   currencyCode,
   fxRate,
   hideAmounts = false,
+  walletAddress,
 }: PortfolioSummaryProps) {
   const { lines, totalUsd, cashUsd, lendingUsd, investUsd, pricedAt } = portfolio
   const unpricedCount = lines.filter((l) => l.valueUsd === null).length
@@ -308,6 +397,7 @@ export function PortfolioSummary({
         hideAmounts={hideAmounts}
         currencyCode={currencyCode}
         fxRate={fxRate}
+        walletAddress={walletAddress}
       />
       <Bucket
         label="Lending"
@@ -316,6 +406,7 @@ export function PortfolioSummary({
         hideAmounts={hideAmounts}
         currencyCode={currencyCode}
         fxRate={fxRate}
+        walletAddress={walletAddress}
       />
       <Bucket
         label="Invest"
@@ -324,6 +415,7 @@ export function PortfolioSummary({
         hideAmounts={hideAmounts}
         currencyCode={currencyCode}
         fxRate={fxRate}
+        walletAddress={walletAddress}
       />
 
       {/* Footer: priced-at timestamp + partial-pricing warning. "Priced at"

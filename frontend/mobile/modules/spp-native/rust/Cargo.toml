@@ -1,0 +1,22 @@
+# SPP native module — Rust workspace root.
+#
+# One member crate today (`spp-prover`); laid out as a workspace so the
+# parameters tooling and future crates (a dedicated tree builder, for one)
+# have somewhere to land without reshuffling paths the Gradle build already
+# points at.
+
+[workspace]
+members = ["spp-prover"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

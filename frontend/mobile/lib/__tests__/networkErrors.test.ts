@@ -73,6 +73,18 @@ describe('friendlyHostError', () => {
     expect(friendlyHostError('HostError: Error(Contract, #10) … transfer')).toMatch(/isn't enough/);
   });
 
+  it('maps contract error 9 (origin mismatch) to wrong-platform message', () => {
+    expect(friendlyHostError('HostError: Error(Contract, #9) … __check_auth')).toMatch(
+      /created on the website and cannot be signed here/i,
+    );
+  });
+
+  it('maps OriginMismatch to wrong-platform message', () => {
+    expect(friendlyHostError('HostError: OriginMismatch … __check_auth')).toMatch(
+      /created on the website and cannot be signed here/i,
+    );
+  });
+
   it('does not guess at a contract error outside a token transfer', () => {
     expect(friendlyHostError('HostError: Error(Contract, #10) … deposit')).toBeNull();
   });

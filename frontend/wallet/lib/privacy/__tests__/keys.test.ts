@@ -100,10 +100,15 @@ describe('signPrivacyKeyDerivation', () => {
   it('turns the PRF-derived spend key into the golden signature and seeds', () => {
     const kp = Keypair.fromRawEd25519Seed(Buffer.from(PRF_OUTPUT, 'hex'))
     const result = signPrivacyKeyDerivation(kp)
+    const repeated = signPrivacyKeyDerivation(kp)
     expect(result.ownerAddress).toBe(GOLDEN_ADDRESS)
     expect(hex(result.signature)).toBe(GOLDEN_SIGNATURE)
     expect(hex(result.noteSeed)).toBe(GOLDEN_NOTE_SEED)
     expect(hex(result.encryptionSeed)).toBe(GOLDEN_ENCRYPTION_SEED)
+    expect(repeated.ownerAddress).toBe(result.ownerAddress)
+    expect(repeated.signature).toEqual(result.signature)
+    expect(repeated.noteSeed).toEqual(result.noteSeed)
+    expect(repeated.encryptionSeed).toEqual(result.encryptionSeed)
     expect(result.recoverySupported).toBe(true)
     // The signature must verify under the owner address — SPP's own check.
     expect(kp.verify(hash(Buffer.from(keyDerivationPayload())), Buffer.from(result.signature))).toBe(true)
@@ -182,9 +187,30 @@ describe('preparePrivacySigner — pre-PRF wallets', () => {
     expect(LEGACY_FEE_PAYER_MESSAGE).toMatch(/PRF-capable passkey/)
   })
 
+  it('refuses to sign with a random fallback fee payer', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    const randomKp = Keypair.random()
+    localStorage.setItem('veil_signer_secret', randomKp.secret())
+    localStorage.setItem(MODE, 'random')
+
+    await expect(preparePrivacySigner()).rejects.toThrow(LEGACY_FEE_PAYER_MESSAGE)
+  })
+
   it('flags legacy wallets as recovery-unsupported without any ceremony', async () => {
     localStorage.setItem(KEY_ID, CRED)
     localStorage.setItem(MODE, 'legacy')
+    let prfCalled = false
+    const spying: PrfEvaluator = async () => {
+      prfCalled = true
+      return fromHex(PRF_OUTPUT)
+    }
+    await expect(isPrivacyRecoverySupported(spying)).resolves.toBe(false)
+    expect(prfCalled).toBe(false)
+  })
+
+  it('flags random fallback wallets as recovery-unsupported without any ceremony', async () => {
+    localStorage.setItem(KEY_ID, CRED)
+    localStorage.setItem(MODE, 'random')
     let prfCalled = false
     const spying: PrfEvaluator = async () => {
       prfCalled = true

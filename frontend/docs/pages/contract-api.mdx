@@ -213,3 +213,69 @@ soroban-sdk = { version = "20.0.0", features = ["alloc"] }
 p256        = { version = "0.13", features = ["ecdsa", "sha2"] }
 sha2        = { version = "0.10", default-features = false }
 ```
+
+---
+
+## Factory Contract API
+
+**Contract crate:** `factory v0.1.0`
+**Source:** `contracts/factory/src/`
+
+The Factory contract deploys deterministic wallet instances using Soroban's address derivation (`env.deployer().with_address(factory, salt).deploy(wasm_hash)`). It is immutable once initialized and exposes **exactly three entrypoints**:
+
+### `FactoryError`
+
+```rust
+#[contracterror]
+pub enum FactoryError {
+    AlreadyInitialized = 1,
+    NotInitialized     = 2,
+    AlreadyDeployed    = 3,
+    InvalidPublicKey   = 4,
+}
+```
+
+### `__constructor`
+
+```rust
+pub fn __constructor(env: Env, admin: Address)
+```
+
+Runs atomically during contract creation. Binds the factory `admin` address in storage so it cannot be front-run.
+
+### `init`
+
+```rust
+pub fn init(env: Env, wasm_hash: BytesN<32>) -> Result<(), FactoryError>
+```
+
+One-time initialization. Authenticated by the admin (`admin.require_auth()`). Stores the wallet WASM hash. If already initialized, returns `Err(FactoryError::AlreadyInitialized)`.
+
+<Callout type="info">
+  `storage::set_wasm_hash` in `storage.rs` is an internal storage helper, not a contract entrypoint. There is no entrypoint to alter or update the WASM hash after initialization.
+</Callout>
+
+### `deploy`
+
+```rust
+pub fn deploy(
+    env: Env,
+    public_key: BytesN<65>,
+    rp_id: Bytes,
+    origin: Bytes,
+) -> Result<Address, FactoryError>
+```
+
+Deploys a new `invisible_wallet` contract instance for the given P-256 public key.
+
+- Computes `salt = SHA-256(public_key)`
+- Verifies public key is valid SEC1 uncompressed P-256 point (`0x04 || x || y`)
+- Deploys the wallet contract using the stored WASM hash
+- Invokes `init(public_key, rp_id, origin)` on the newly deployed wallet
+- Returns the deployed wallet `Address`
+
+**Errors:**
+- `NotInitialized` — factory has not been initialized with a WASM hash
+- `InvalidPublicKey` — malformed or non-curve public key
+- `AlreadyDeployed` — a wallet for this public key salt already exists
+
