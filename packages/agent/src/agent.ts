@@ -5,7 +5,7 @@ import {
   type ChatTurn,
   type LlmProvider,
 } from './llm.js'
-import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { HORIZON_URL, NETWORK, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
 import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
@@ -13,20 +13,11 @@ import { getTrendingActivity } from './trending.js'
 import { StrKey } from '@stellar/stellar-sdk'
 import { redactSensitive, toModelTools, type VeilTool } from './boundary.js'
 import {
-  assertNoNin,
-  maskPhoneNumber,
-  MAX_AMOUNT_NGN,
-  MAX_TOTAL_PERIODS,
-  MIN_AMOUNT_NGN,
-  normalizeNigerianPhone,
-  type CancelTopupIntent,
-  type NairaCoin,
-  type PublicRecurringTopupPlan,
-  type RecurringTopupIntent,
-  type TopupCategory,
-  type TopupFrequency,
-  type TopupProvider,
-} from './recurring/index.js'
+  ALLOWED_OPERATION_TYPES,
+  proposalRefusal,
+  reviewProposedTransaction,
+  type ProposalReview,
+} from './txReview.js'
 
 // ── Agent configuration ──────────────────────────────────────────────────────
 
@@ -326,20 +317,19 @@ export const TOOL_REGISTRY: VeilTool[] = [
     kind: 'prepare',
     approval: 'self',
     description:
-      'ALWAYS call this before any transaction executes. ' +
-      'Sends the transaction to the wallet UI for passkey (biometric) approval. ' +
-      'The user must approve with Face ID / fingerprint before the tx is submitted.',
+      'ALWAYS call this after build_payment before any transaction executes. ' +
+      'Sends only the transaction the server built in this turn to the wallet UI for passkey (biometric) approval. ' +
+      'Never supply transaction bytes; the user confirms destination and amount with Face ID / fingerprint before submission.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        transaction_xdr: { type: 'string', description: 'Unsigned transaction XDR (base64)' },
         summary: {
           type: 'string',
           description: 'Plain English: what this transaction does, amounts, assets, recipient',
         },
         estimated_fee_xlm: { type: 'number', description: 'Estimated network fee in XLM' },
       },
-      required: ['transaction_xdr', 'summary'],
+      required: ['summary'],
     },
   },
 ]
@@ -519,6 +509,9 @@ export async function runAgent(
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
+  let serverBuiltTx:
+    | { xdr: string; review: ProposalReview; signerAccount: string }
+    | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
   let recurringTopupIntent: RecurringTopupIntent | undefined
@@ -637,7 +630,10 @@ export async function runAgent(
           return JSON.stringify({ available: false, status: 'unavailable' })
         }
         try {
-          const res = await fetch(`${wraithUrl.replace(/\/+$/, '')}/offramp/rate`, {
+          // Name the coin, never let the backend guess. A request without one is
+          // priced as USDC by the retired compatibility path; once that path is
+          // gone every caller that stayed silent gets a 400.
+          const res = await fetch(`${wraithUrl.replace(/\/+$/, '')}/offramp/rate?coin=usdc`, {
             signal: AbortSignal.timeout(15_000),
           })
           if (!res.ok) {
@@ -645,6 +641,14 @@ export async function runAgent(
             return JSON.stringify({ available: false, status: 'unavailable' })
           }
           const quote = (await res.json()) as { rate?: unknown; currency?: unknown; coin?: unknown }
+          // The answer must name the asset that was asked for. Cash-out divides
+          // naira by this rate to work out how much to send, so a quote priced
+          // for anything other than USDC would hand the Cash Out screen a wrong
+          // amount. Compared without case; an absent coin is not trusted either.
+          if (typeof quote.coin !== 'string' || quote.coin.toUpperCase() !== 'USDC') {
+            cashOutUnavailable = true
+            return JSON.stringify({ available: false, status: 'unavailable' })
+          }
           if (typeof quote.rate !== 'number' || !Number.isFinite(quote.rate) || quote.rate <= 0) {
             cashOutUnavailable = true
             return JSON.stringify({ available: false, status: 'unavailable' })
@@ -655,7 +659,7 @@ export async function runAgent(
             available: true,
             rate: quote.rate,
             currency: typeof quote.currency === 'string' ? quote.currency : 'NGN',
-            coin: typeof quote.coin === 'string' ? quote.coin : 'USDC',
+            coin: 'USDC',
           })
         } catch (err) {
           console.warn('[agent] Cash-out rate lookup failed:', (err as Error).message)
@@ -789,12 +793,53 @@ export async function runAgent(
           cashOutPaymentBlocked = true
           return JSON.stringify({ error: 'Cash-out deposits must be sent from the Cash Out screen.' })
         }
+        if (input.operation !== undefined && String(input.operation) !== 'payment') {
+          serverBuiltTx = undefined
+          return JSON.stringify({
+            error: `Unsupported operation "${String(input.operation)}". Only payment transactions may be built here.`,
+          })
+        }
+        const expectedFeePayer =
+          feePayerAddress ?? (StrKey.isValidEd25519PublicKey(walletAddress) ? walletAddress : undefined)
+        const proposedSource =
+          typeof input.wallet_address === 'string' ? input.wallet_address.trim() : ''
+        if (expectedFeePayer && proposedSource && proposedSource !== expectedFeePayer) {
+          serverBuiltTx = undefined
+          return JSON.stringify({
+            error: `Source account mismatch: ${proposedSource} is not this wallet's fee payer.`,
+          })
+        }
+        const signerAccount = expectedFeePayer ?? (StrKey.isValidEd25519PublicKey(proposedSource) ? proposedSource : '')
+        if (!signerAccount) {
+          serverBuiltTx = undefined
+          return JSON.stringify({
+            error: 'A valid fee-payer Stellar account is required to build a payment.',
+          })
+        }
         const payInput = {
           ...(input as unknown as Parameters<typeof buildPayment>[0]),
-          wallet_address: feePayerAddress ?? (input as any).wallet_address,
+          wallet_address: signerAccount,
         }
         const xdr = await buildPayment(payInput)
-        return JSON.stringify({ transaction_xdr: xdr, status: 'built' })
+        let review: ProposalReview | null = null
+        try {
+          review = reviewProposedTransaction(xdr, NETWORK_PASSPHRASE)
+        } catch {
+          review = null
+        }
+        const refusal = proposalRefusal(review, signerAccount)
+        if (refusal || !review) {
+          serverBuiltTx = undefined
+          return JSON.stringify({ error: refusal ?? 'Server-built transaction failed validation.' })
+        }
+        serverBuiltTx = { xdr, review, signerAccount }
+        return JSON.stringify({
+          status: 'built',
+          source: review.source,
+          fee: review.fee,
+          operations: review.operations,
+          confirmations: review.confirmations,
+        })
       }
 
       case 'prepare_recurring_topup': {
@@ -877,8 +922,29 @@ export async function runAgent(
           cashOutPaymentBlocked = true
           return JSON.stringify({ error: 'Cash-out deposits must be sent from the Cash Out screen.' })
         }
-        pendingTxXdr = input.transaction_xdr as string
-        pendingTxSummary = input.summary as string
+        if (input.transaction_xdr !== undefined) {
+          return JSON.stringify({
+            error: 'Model-supplied transaction_xdr is not accepted; the server only sends transactions it built itself.',
+          })
+        }
+        if (input.operation !== undefined && !ALLOWED_OPERATION_TYPES.has(String(input.operation))) {
+          return JSON.stringify({
+            error: `Unsupported operation "${String(input.operation)}" cannot be sent for approval.`,
+          })
+        }
+        if (!serverBuiltTx) {
+          return JSON.stringify({
+            error: 'No server-built transaction is ready for approval. Call build_payment first.',
+          })
+        }
+        const refusal = proposalRefusal(serverBuiltTx.review, serverBuiltTx.signerAccount)
+        if (refusal) {
+          serverBuiltTx = undefined
+          return JSON.stringify({ error: refusal })
+        }
+        pendingTxXdr = serverBuiltTx.xdr
+        pendingTxSummary = typeof input.summary === 'string' ? input.summary : ''
+        serverBuiltTx = undefined
         return JSON.stringify({ status: 'awaiting_approval' })
       }
 
