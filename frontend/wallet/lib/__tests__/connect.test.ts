@@ -1,11 +1,13 @@
 import {
   CONNECT_APPS,
+  CONNECT_TEST_APPS,
   MAX_PAY_AMOUNT,
   decodePending,
   encodePending,
   getConnectApp,
   isAllowedOrigin,
   parseConnectRequest,
+  referenceMemo,
   requestFromMessage,
   sendPathFor,
 } from '../connect'
@@ -50,6 +52,20 @@ describe('which apps may use Veil Connect', () => {
     expect(isAllowedOrigin(app, 'null')).toBe(false)
   })
 
+  it("keeps a partner's test entry apart from the real one", () => {
+    const test = getConnectApp('stakesync-test')
+    expect(test?.name).toBe('Stake-Sync (test)')
+    expect(isAllowedOrigin(test!, 'http://localhost:3000')).toBe(true)
+    expect(isAllowedOrigin(test!, 'http://localhost:3001')).toBe(false)
+    expect(isAllowedOrigin(test!, 'https://usestakesync.xyz')).toBe(false)
+    // The real app never answers to a developer's machine.
+    expect(isAllowedOrigin(CONNECT_APPS.stakesync, 'http://localhost:3000')).toBe(false)
+    for (const app of Object.values(CONNECT_TEST_APPS)) {
+      expect(app.name).toMatch(/\(test\)$/)
+      for (const origin of app.origins) expect(origin).toMatch(/^http:\/\/localhost:\d+$/)
+    }
+  })
+
   it('lists only https origins for real apps', () => {
     for (const app of Object.values(CONNECT_APPS)) {
       for (const origin of app.origins) expect(origin).toMatch(/^https:\/\/[a-z0-9.-]+$/)
@@ -61,6 +77,14 @@ describe('a request from another app', () => {
   it('accepts connect and fund', () => {
     expect(parseConnectRequest({ type: 'connect', id: ID })).toEqual({ ok: true, request: { type: 'connect', id: ID } })
     expect(parseConnectRequest({ type: 'fund', id: ID })).toEqual({ ok: true, request: { type: 'fund', id: ID } })
+  })
+
+  it('accepts cash out, and carries nothing the app sent with it', () => {
+    // An app opens the screen. The amount and the bank are the person's to
+    // choose in Veil, so anything extra on the request is dropped.
+    expect(
+      parseConnectRequest({ type: 'cashout', id: ID, amount: '500', bank: '058', account: 'x' }),
+    ).toEqual({ ok: true, request: { type: 'cashout', id: ID } })
   })
 
   it('accepts a payment to an account or a contract', () => {
@@ -145,6 +169,24 @@ describe('the hand-off to the Send screen', () => {
     if (!parsed.ok || parsed.request.type !== 'pay') throw new Error('fixture')
     return parsed.request
   }
+
+  it('writes the reference on the payment as a text memo, unchanged', () => {
+    const q = new URLSearchParams(sendPathFor(request({ reference: 'order_AB-123' }), ISSUER).split('?')[1])
+    expect(q.get('memo')).toBe('order_AB-123')
+    expect(q.get('memo_type')).toBe('text')
+    // 28 characters is the most a text memo holds.
+    const longest = 'a'.repeat(28)
+    expect(referenceMemo(longest)).toBe(longest)
+  })
+
+  it('sends no memo rather than a shortened reference', () => {
+    // A UUID is 36 characters. Cutting it would match nothing on the app's side.
+    const uuid = '3f2b8c1e-9d4a-4b7c-8e21-5a6f0c9d1e2b'
+    expect(referenceMemo(uuid)).toBeNull()
+    const q = new URLSearchParams(sendPathFor(request({ reference: uuid }), ISSUER).split('?')[1])
+    expect(q.get('memo')).toBeNull()
+    expect(q.get('memo_type')).toBeNull()
+  })
 
   it('names USDC by Veil\'s own issuer and locks the asset', () => {
     const q = new URLSearchParams(sendPathFor(request(), ISSUER).split('?')[1])
