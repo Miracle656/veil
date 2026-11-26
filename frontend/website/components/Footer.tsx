@@ -73,6 +73,11 @@ export default function Footer() {
           <p className="text-xs text-[#333]">
             © {new Date().getFullYear()} Veil, a product of Divinity Labs Limited (RC 10031131). MIT License.
           </p>
+          <div className="flex items-center gap-4 text-xs text-[#777]">
+            <a href="/terms" className="hover:text-white">Terms</a>
+            <span>·</span>
+            <a href="/privacy" className="hover:text-white">Privacy</a>
+          </div>
           <div className="flex items-center gap-4 text-xs text-[#333]">
             <span>Stellar Soroban</span>
             <span>·</span>
