@@ -35,9 +35,12 @@ export async function sweepContractBalance(
   signAuthEntry: (payload: Uint8Array) => Promise<WebAuthnSignature | null>,
   rpcUrl: string,
   networkPassphrase: string,
+  // XLM when omitted. For an issued asset the fee-payer must already hold a
+  // trustline, or the transfer is refused.
+  asset?: { code: string; issuer: string },
 ): Promise<string> {
   const rpc = new SorobanRpc.Server(rpcUrl)
-  const sacId = Asset.native().contractId(networkPassphrase)
+  const sacId = (asset ? new Asset(asset.code, asset.issuer) : Asset.native()).contractId(networkPassphrase)
   const sac = new Contract(sacId)
 
   // Read the C… SAC balance with a throw-away account; this is simulation
