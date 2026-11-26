@@ -10,9 +10,10 @@ import {
   Keypair,
   nativeToScVal,
   scValToNative,
+  StrKey,
 } from '@stellar/stellar-sdk'
-import { HORIZON_URL, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
-import { getRegisteredAsset, isRegisteredIssuer } from './assets.js'
+import { HORIZON_URL, NETWORK, NETWORK_PASSPHRASE, SOROBAN_RPC_URL, type StellarNetwork } from './network.js'
+import { getRegisteredAsset, isRegisteredIssuer, registeredAsset } from './assets.js'
 
 // Network and endpoints come from one place (network.ts). Deciding them here
 // separately is how mainnet signing ended up paired with testnet Horizon.
@@ -20,8 +21,13 @@ const networkPassphrase = NETWORK_PASSPHRASE
 
 const horizon = new Horizon.Server(HORIZON_URL)
 
-function parseAsset(assetStr: string): Asset {
+function parseAsset(assetStr: string, network: StellarNetwork = NETWORK): Asset {
   if (assetStr === 'XLM' || assetStr === 'native') return Asset.native()
+  if (!assetStr.includes(':')) {
+    const reg = registeredAsset(assetStr, network)
+    if (reg) return new Asset(reg.code, reg.issuer)
+    throw new Error(`Asset "${assetStr}" must be "CODE:ISSUER" or "XLM"`)
+  }
   const [code, issuer] = assetStr.split(':')
   if (!issuer) throw new Error(`Asset "${assetStr}" must be "CODE:ISSUER" or "XLM"`)
   return new Asset(code, issuer)
@@ -41,6 +47,7 @@ export interface PaymentInput {
   amount: number
   wallet_address: string
   memo?: string
+  network?: StellarNetwork
 }
 
 /**
@@ -116,8 +123,54 @@ export async function buildSwap(input: SwapInput): Promise<string> {
  * Returns unsigned XDR — user must sign with passkey before submission.
  */
 export async function buildPayment(input: PaymentInput): Promise<string> {
+  const network = input.network ?? NETWORK
+
+  // 1. Recipient address validation: C address cannot receive standard payments
+  if (typeof input.to_address === 'string' && StrKey.isValidContract(input.to_address)) {
+    return "Sending to a Veil wallet address is done from the Send screen. Paste the recipient's G address instead."
+  }
+
+  // 2. Amount validation: must be a finite positive number with at most 7 decimals
+  if (typeof input.amount !== 'number' || !Number.isFinite(input.amount)) {
+    return "Amount must be a number."
+  }
+  if (input.amount <= 0) {
+    return "Amount must be greater than zero."
+  }
+  const amountParts = String(input.amount).split('.')
+  if (amountParts.length > 1 && amountParts[1].length > 7) {
+    return "Amount has more than seven decimal places. Stellar supports at most seven."
+  }
+
+  // 3. Memo validation: at most 28 bytes UTF-8
+  if (input.memo !== undefined && input.memo !== null && Buffer.byteLength(input.memo, 'utf8') > 28) {
+    return "Memo exceeds 28 bytes. Shorten it and try again."
+  }
+
+  // 4. Asset validation: bare registered code, CODE:ISSUER (validating registered impostors), XLM
+  let asset: Asset
+  if (input.asset === 'XLM' || input.asset === 'native') {
+    asset = Asset.native()
+  } else if (!input.asset.includes(':')) {
+    const reg = registeredAsset(input.asset, network)
+    if (!reg) {
+      return `Unknown asset '${input.asset}'. Use XLM, a registered code, or CODE:ISSUER.`
+    }
+    asset = new Asset(reg.code, reg.issuer)
+  } else {
+    const [code, issuer] = input.asset.split(':')
+    const reg = registeredAsset(code, network)
+    if (reg && reg.issuer !== issuer) {
+      return `'${code}' is a registered asset but the issuer does not match. Use the registered issuer or omit it and let the agent resolve it.`
+    }
+    if (!code || !issuer) {
+      return `Unknown asset '${input.asset}'. Use XLM, a registered code, or CODE:ISSUER.`
+    }
+    asset = new Asset(code, issuer)
+  }
+
+  // 5. Build payment operation
   const account = await horizon.loadAccount(input.wallet_address)
-  const asset = parseAsset(input.asset)
   const amount = input.amount.toFixed(7)
 
   const builder = new TransactionBuilder(account, {

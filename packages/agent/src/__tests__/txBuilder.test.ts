@@ -95,6 +95,7 @@ jest.unstable_mockModule('@stellar/stellar-sdk', () => {
 // Dynamic import AFTER mock registration so txBuilder receives the mock
 const { buildPayment, buildSwap } = await import('../txBuilder.js')
 import type { PaymentInput, SwapInput } from '../txBuilder.js'
+import { registeredAsset } from '../assets.js'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -117,6 +118,153 @@ describe('buildPayment', () => {
     jest.clearAllMocks()
     resetChain()
     mockLoadAccount.mockResolvedValue(makeAccount())
+  })
+
+  it('bare registered code resolves to registered issuer', async () => {
+    const input: PaymentInput = { to_address: 'GDEST', asset: 'USDC', amount: 10, wallet_address: 'GSOURCE' }
+    const result = await buildPayment(input)
+    expect(result).toBe('mock-xdr-string')
+    expect(mockOperationPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destination: 'GDEST',
+        amount: '10.0000000',
+        asset: expect.objectContaining({
+          getCode: expect.any(Function),
+          getIssuer: expect.any(Function),
+        }),
+      }),
+    )
+    const callArg = mockOperationPayment.mock.calls[0][0]
+    expect(callArg.asset.getCode()).toBe('USDC')
+    const expectedIssuer = registeredAsset('USDC')!.issuer
+    expect(callArg.asset.getIssuer()).toBe(expectedIssuer)
+  })
+
+  it('registered code with wrong issuer is refused', async () => {
+    const input: PaymentInput = {
+      to_address: 'GDEST',
+      asset: 'USDC:GWRONGISSUER123456789012345678901234567890123456789012345',
+      amount: 10,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toContain('does not match')
+    expect(mockOperationPayment).not.toHaveBeenCalled()
+  })
+
+  it('unregistered CODE:ISSUER is accepted', async () => {
+    const customIssuer = 'GCUSTOMISSUER123456789012345678901234567890123456789012'
+    const input: PaymentInput = {
+      to_address: 'GDEST',
+      asset: `CUSTOM:${customIssuer}`,
+      amount: 10,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toBe('mock-xdr-string')
+    expect(mockOperationPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        asset: expect.objectContaining({
+          getCode: expect.any(Function),
+          getIssuer: expect.any(Function),
+        }),
+      }),
+    )
+    const callArg = mockOperationPayment.mock.calls[0][0]
+    expect(callArg.asset.getCode()).toBe('CUSTOM')
+    expect(callArg.asset.getIssuer()).toBe(customIssuer)
+  })
+
+  it('C address recipient returns plain message', async () => {
+    const cAddress = 'C' + 'A'.repeat(55)
+    const input: PaymentInput = {
+      to_address: cAddress,
+      asset: 'XLM',
+      amount: 10,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toContain('Send screen')
+    expect(mockOperationPayment).not.toHaveBeenCalled()
+  })
+
+  it('zero amount is refused', async () => {
+    const input: PaymentInput = {
+      to_address: 'GDEST',
+      asset: 'XLM',
+      amount: 0,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toContain('greater than zero')
+    expect(mockOperationPayment).not.toHaveBeenCalled()
+  })
+
+  it('negative amount is refused', async () => {
+    const input: PaymentInput = {
+      to_address: 'GDEST',
+      asset: 'XLM',
+      amount: -5,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toContain('greater than zero')
+    expect(mockOperationPayment).not.toHaveBeenCalled()
+  })
+
+  it('string amount is refused', async () => {
+    const input = {
+      to_address: 'GDEST',
+      asset: 'XLM',
+      amount: 'five' as unknown as number,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toContain('must be a number')
+    expect(mockOperationPayment).not.toHaveBeenCalled()
+  })
+
+  it('amount with more than seven decimals is refused', async () => {
+    const input: PaymentInput = {
+      to_address: 'GDEST',
+      asset: 'XLM',
+      amount: 1.00000001,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toContain('seven decimal places')
+    expect(mockOperationPayment).not.toHaveBeenCalled()
+  })
+
+  it('memo over 28 bytes is refused', async () => {
+    const longMemo = 'a'.repeat(29)
+    const input: PaymentInput = {
+      to_address: 'GDEST',
+      asset: 'XLM',
+      amount: 1,
+      wallet_address: 'GSOURCE',
+      memo: longMemo,
+    }
+    const result = await buildPayment(input)
+    expect(result).toContain('28 bytes')
+    expect(mockOperationPayment).not.toHaveBeenCalled()
+  })
+
+  it('valid payment builds without error', async () => {
+    const input: PaymentInput = {
+      to_address: 'GDEST',
+      asset: 'XLM',
+      amount: 1.0,
+      wallet_address: 'GSOURCE',
+    }
+    const result = await buildPayment(input)
+    expect(result).toBe('mock-xdr-string')
+    expect(mockOperationPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destination: 'GDEST',
+        amount: '1.0000000',
+      }),
+    )
   })
 
   it('returns an XDR string', async () => {
