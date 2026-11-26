@@ -130,6 +130,8 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
           fail_ci_if_error: false
+      - name: Single-function browser tree shaking
+        run: npm run test:tree-shaking
       - name: Bundle size budget (size-limit)
         run: npm run size
       # Packs the SDK, installs the tarball into a throwaway consumer, and

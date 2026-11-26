@@ -1,4 +1,4 @@
-import { StrKey, xdr, hash as stellarHash } from '@stellar/stellar-sdk';
+export { computeWalletAddress } from './walletAddress';
 
 // ── Buffer helpers ────────────────────────────────────────────────────────────
 
