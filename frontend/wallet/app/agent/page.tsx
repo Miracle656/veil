@@ -1,7 +1,7 @@
 'use client'
 
 import { PageHeader } from '@/components/ui/primitives'
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Keypair } from '@stellar/stellar-sdk'
 import { parseInvestIntent } from '../earn/prefill'
@@ -66,6 +66,97 @@ function decode(xdr: string): ProposalReview | null {
   } catch {
     return null
   }
+}
+
+/**
+ * The transaction approval card. The decoded destination and amount are shown
+ * explicitly, and signing is blocked until the user explicitly confirms them.
+ * `confirmed` lives here so a fresh transaction starts unconfirmed (keyed by
+ * its XDR so it remounts when the transaction changes).
+ */
+function TransactionConfirmationCard({
+  review,
+  claim,
+  xdr,
+  onConfirm,
+  submitting,
+}: {
+  review: ProposalReview | null
+  claim: string | null
+  xdr: string
+  onConfirm: () => void
+  submitting: boolean
+}) {
+  const [confirmed, setConfirmed] = useState(false)
+  const destination = review?.destination ?? null
+  const amount = review?.amount ?? null
+  const requiresConfirmation = Boolean(destination && amount)
+  // Fail closed: nothing is signable while undecodable, and a payment is not
+  // signable until the user explicitly confirms destination and amount.
+  const disabled = submitting || !review || (requiresConfirmation && !confirmed)
+
+  return (
+    <div className="agent-tx-card">
+      <div className="agent-tx-card__header">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="var(--gold)" strokeWidth="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+        <span className="agent-tx-card__label">Transaction ready</span>
+      </div>
+      {review ? (
+        <div className="agent-tx-card__summary">
+          {review.operations.map((op, j) => (
+            <div key={j}>{op}</div>
+          ))}
+          <div style={{ opacity: 0.6, marginTop: 6 }}>Fee: {Number(review.fee) / 1e7} XLM</div>
+          {requiresConfirmation && (
+            <>
+              <div className="agent-tx-card__detail">Destination: {destination}</div>
+              <div className="agent-tx-card__detail">Amount: {amount}</div>
+              <label className="agent-tx-card__confirm">
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={(e) => setConfirmed(e.target.checked)}
+                />
+                {'I confirm sending ' + amount + ' to ' + destination}
+              </label>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="agent-tx-card__summary">
+          This transaction could not be decoded and cannot be approved.
+        </div>
+      )}
+      {claim && (
+        <div className="agent-tx-card__summary" style={{ opacity: 0.6 }}>
+          Agent says: {claim}
+        </div>
+      )}
+      <button
+        onClick={onConfirm}
+        disabled={disabled}
+        className="agent-tx-card__btn"
+      >
+        {submitting ? (
+          <>
+            <span className="spinner" style={{ width: '14px', height: '14px' }} />
+            Verifying…
+          </>
+        ) : (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+            {requiresConfirmation && !confirmed ? 'Confirm destination & amount' : 'Approve & Submit'}
+          </>
+        )}
+      </button>
+    </div>
+  )
 }
 
 // Agent output relays third-party data (transfer memos, token metadata, price
@@ -723,54 +814,16 @@ export default function AgentPage() {
                 </div>
               )}
 
-              {/* Transaction approval card — inline, passkey-gated */}
+              {/* Transaction approval card — destination/amount confirmed explicitly, passkey-gated */}
               {msg.pendingTxXdr && (
-                <div className="agent-tx-card">
-                  <div className="agent-tx-card__header">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="var(--gold)" strokeWidth="2"/>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round"/>
-                    </svg>
-                    <span className="agent-tx-card__label">Transaction ready</span>
-                  </div>
-                  {msg.review ? (
-                    <div className="agent-tx-card__summary">
-                      {msg.review.operations.map((op, j) => (
-                        <div key={j}>{op}</div>
-                      ))}
-                      <div style={{ opacity: 0.6, marginTop: 6 }}>Fee: {Number(msg.review.fee) / 1e7} XLM</div>
-                    </div>
-                  ) : (
-                    <div className="agent-tx-card__summary">
-                      This transaction could not be decoded and cannot be approved.
-                    </div>
-                  )}
-                  {msg.pendingTxSummary && (
-                    <div className="agent-tx-card__summary" style={{ opacity: 0.6 }}>
-                      Agent says: {msg.pendingTxSummary}
-                    </div>
-                  )}
-                  <button
-                    onClick={approveTransaction}
-                    disabled={approving}
-                    className="agent-tx-card__btn"
-                  >
-                    {approving ? (
-                      <>
-                        <span className="spinner" style={{ width: '14px', height: '14px' }} />
-                        Verifying…
-                      </>
-                    ) : (
-                      <>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                          <rect x="3" y="11" width="18" height="11" rx="2" ry="2" stroke="currentColor" strokeWidth="2"/>
-                          <path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-                        </svg>
-                        Approve &amp; Submit
-                      </>
-                    )}
-                  </button>
-                </div>
+                <TransactionConfirmationCard
+                  key={msg.pendingTxXdr}
+                  review={msg.review ?? null}
+                  claim={msg.pendingTxSummary ?? null}
+                  xdr={msg.pendingTxXdr}
+                  onConfirm={approveTransaction}
+                  submitting={approving}
+                />
               )}
             </div>
           </div>

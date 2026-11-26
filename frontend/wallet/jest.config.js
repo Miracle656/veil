@@ -36,6 +36,8 @@ const config = {
     // The ONE dApp allow-list — mobile's module, imported by the web wallet
     // (see dappParity.test.ts, which pins this mapping to the real file).
     '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',
+    // Shared agent review model (tsconfig alias), imported by the agent page.
+    '^@veil/agent-review$': '<rootDir>/../mobile/lib/agentMessages',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [

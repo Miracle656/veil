@@ -59,7 +59,7 @@ describe('runAgent', () => {
           {
             id: 'call_1',
             name: 'request_user_approval',
-            input: { transaction_xdr: 'AAAA', summary: 'Send 1 XLM' },
+            input: { summary: 'Send 1 XLM' },
           },
         ],
       },
@@ -68,7 +68,9 @@ describe('runAgent', () => {
 
     const result = await runAgent('send 1 xlm', wallet, [], undefined, undefined, llm)
 
-    expect(result.pendingTxXdr).toBe('AAAA')
+    // request_user_approval no longer accepts raw XDR from the model; nothing was
+    // built this turn, so nothing is emitted to the client.
+    expect(result.pendingTxXdr).toBeUndefined()
     expect(result.pendingTxSummary).toBe('Send 1 XLM')
     expect(result.response).toBe('Approve the payment in your wallet.')
     expect(llm.results).toEqual([[{ id: 'call_1', content: JSON.stringify({ status: 'awaiting_approval' }) }]])

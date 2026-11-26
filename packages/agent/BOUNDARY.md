@@ -34,12 +34,22 @@ A tool that writes without approval does not get merged.
   registry, so a tool cannot exist without a kind.
 - A `read` tool cannot reach a write path or hand an action to the user; a
   `prepare` tool cannot stage a transaction except through
-  `request_user_approval`.
+  `request_user_approval`. Only `request_user_approval` (`approval: 'self'`) may
+  assign `pendingTxXdr`/`pendingTxSummary` for return to the client; `build_payment`
+  retains the server-built XDR in a server-local variable the model never sees.
 - No source file in this package signs or submits (`sendTransaction`,
   `signXdrPayload`, `.sign(`, `Keypair.fromSecret`).
 - No tool returns a secret seed, a raw 64-hex key or a URL, given hostile input
   and a backend that errors with those in its message.
+- `request_user_approval` no longer accepts `transaction_xdr` from the model. The
+  model names a summary (and optional estimated fee); the server emits only the
+  transaction bytes it built and validated itself. A hostile model injecting
+  `transaction_xdr` is ignored and never forwarded.
 - A prompt telling the agent to skip approval does not skip approval.
+- Every server-built transaction is reviewed with the same fail-closed rules the
+  wallet applies client-side (`proposalRefusal`): undecodable XDR, a source
+  account that is not the wallet's fee payer, and any unsupported operation
+  (`setOptions`, `accountMerge`, anything unknown) are all rejected.
 
 The checker is run against deliberately broken tools in the same file, so you can
 see it fail.
