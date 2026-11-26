@@ -183,7 +183,19 @@ export function formatFeePayerDiagnostics(diagnostics: FeePayerDiagnostics): str
  *
  * @param evaluator injectable PRF ceremony, for tests / non-browser platforms.
  */
-export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair | null> {
+export async function ensureFeePayer(
+  evaluator?: PrfEvaluator,
+  options: {
+    /**
+     * True when this call is not the result of a tap: a page loading, an
+     * effect running. Mobile browsers refuse a passkey prompt then, so a
+     * failure says nothing about the passkey, and a passive call must never
+     * answer it by creating a key. It returns null and leaves the tap-driven
+     * "Set up fee-payer" to ask properly.
+     */
+    passive?: boolean
+  } = {},
+): Promise<Keypair | null> {
   if (cached) return cached
   if (!hasWindow()) return null
 
@@ -267,7 +279,23 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
     if (effectiveMode === 'random' && existing) {
       chosen = { mode: 'random', kp: Keypair.fromSecret(existing) }
     } else {
-      chosen = candidates.find((c) => c.mode === effectiveMode) ?? candidates[0]!
+      const pinnedCandidate = candidates.find((c) => c.mode === effectiveMode)
+      if (!pinnedCandidate) {
+        // The wallet is pinned to a key that could not be produced this time:
+        // the passkey prompt was blocked or dismissed, or a random key is no
+        // longer in storage. This used to fall through to `candidates[0]`,
+        // which is the legacy key, and then PIN it. So one blocked prompt
+        // moved the wallet to a different, empty address for good, and the
+        // money stayed on the real one. iOS Safari blocks every passkey prompt
+        // that does not come from a tap, and this runs on page load, so it hit
+        // iPhone users within hours of creating a wallet (2026-11-19).
+        //
+        // No key is better than the wrong key. Nothing is pinned and nothing
+        // is stored; the caller shows "Set up fee-payer", and the tap that
+        // follows is a gesture the browser will allow.
+        return null
+      }
+      chosen = pinnedCandidate
     }
   } else {
     probed = true
@@ -285,6 +313,13 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
       const prfCandidate = candidates.find((c) => c.mode === 'prf-raw' || c.mode === 'prf-hkdf')
       if (prfCandidate) {
         chosen = prfCandidate
+      } else if (prfOutcome === 'error' && options.passive) {
+        // The passkey was asked while the page was loading and the browser
+        // refused, as iOS Safari always does without a tap. That says nothing
+        // about whether this passkey can do PRF, so it is not a reason to give
+        // the wallet a random key that lives only in this browser's storage.
+        // Leave it unset; the "Set up fee-payer" tap asks again properly.
+        return null
       } else {
         chosen = { mode: 'random', kp: Keypair.random() }
       }
@@ -324,7 +359,14 @@ export async function ensureFeePayer(evaluator?: PrfEvaluator): Promise<Keypair 
 
 /** What a retry did, or why it could not. */
 export type PrfRetryResult =
-  | { ok: true; mode: 'prf-raw'; publicKey: string; previousPublicKey: string }
+  | {
+      ok: true
+      mode: 'prf-raw' | 'prf-hkdf'
+      publicKey: string
+      previousPublicKey: string
+      /** True when the adopted account already existed on chain: an account that was found, not made. */
+      foundOnChain?: boolean
+    }
   | { ok: false; reason: 'already-prf' | 'no-passkey' | 'cancelled' | 'unsupported' | 'funded' | 'network'; message: string; detail?: string }
 
 /**
@@ -392,25 +434,37 @@ export async function retryPrfFeePayer(evaluator?: PrfEvaluator): Promise<PrfRet
     }
   }
 
-  const derived = Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32)))
-  if (derived.publicKey() === current.publicKey()) {
-    // Nothing to move; just record the mode so the ceremony is not repeated.
-    localStorage.setItem(MODE, 'prf-raw')
-    return { ok: true, mode: 'prf-raw', publicKey: derived.publicKey(), previousPublicKey: current.publicKey() }
+  // The passkey makes two possible keys, one for each way this wallet has ever
+  // turned a PRF output into a seed. Which one a given wallet uses is not
+  // something to guess: the ledger knows which account exists.
+  const rawKey = Keypair.fromRawEd25519Seed(Buffer.from(prf.subarray(0, 32)))
+  const hkdfKey = Keypair.fromRawEd25519Seed(Buffer.from(await deriveFeePayerSeedFromPrf(prf)))
+  for (const [mode, key] of [['prf-raw', rawKey], ['prf-hkdf', hkdfKey]] as const) {
+    if (key.publicKey() === current.publicKey()) {
+      // Nothing to move; just record the mode so the ceremony is not repeated.
+      localStorage.setItem(MODE, mode)
+      return { ok: true, mode, publicKey: key.publicKey(), previousPublicKey: current.publicKey() }
+    }
+  }
+
+  const { horizonUrl } = getNetwork()
+  /** true: exists. false: Horizon says there is no such account. null: could not tell. */
+  const exists = async (publicKey: string): Promise<boolean | null> => {
+    try {
+      const res = await fetch(`${horizonUrl}/accounts/${publicKey}`)
+      if (res.status === 404) return false
+      return res.ok ? true : null
+    } catch {
+      return null
+    }
   }
 
   // Refuse rather than strand. An account that does not exist on chain holds
   // nothing, and is the only case where swapping the key costs nothing.
-  const { horizonUrl } = getNetwork()
-  let currentExists: boolean
-  try {
-    const res = await fetch(`${horizonUrl}/accounts/${current.publicKey()}`)
-    if (res.status === 404) currentExists = false
-    else if (res.ok) currentExists = true
-    else return { ok: false, reason: 'network', message: 'Could not check the current fee payer. Nothing was changed.' }
-  } catch {
-    // Unknown must count as funded: the answer decides whether a key that may
-    // control money is overwritten.
+  // Unknown must count as funded: the answer decides whether a key that may
+  // control money is overwritten.
+  const currentExists = await exists(current.publicKey())
+  if (currentExists === null) {
     return { ok: false, reason: 'network', message: 'Could not reach the network to check the current fee payer. Nothing was changed.' }
   }
 
@@ -425,8 +479,22 @@ export async function retryPrfFeePayer(evaluator?: PrfEvaluator): Promise<PrfRet
     }
   }
 
+  // The current account is empty. If the passkey already has an account on
+  // chain, that is this wallet's real spending account and the one to go back
+  // to: a wallet pushed onto another address by a blocked passkey prompt left
+  // its money there (2026-11-19, iOS Safari). With neither on chain this is a
+  // wallet that never had one, and prf-raw is the default.
+  const rawExists = await exists(rawKey.publicKey())
+  const hkdfExists = rawExists === true ? false : await exists(hkdfKey.publicKey())
+  if (rawExists === null || hkdfExists === null) {
+    return { ok: false, reason: 'network', message: 'Could not reach the network to look for your spending account. Nothing was changed.' }
+  }
+  const adoptedMode: 'prf-raw' | 'prf-hkdf' = !rawExists && hkdfExists ? 'prf-hkdf' : 'prf-raw'
+  const derived = adoptedMode === 'prf-hkdf' ? hkdfKey : rawKey
+  const foundOnChain = rawExists || hkdfExists
+
   cached = derived
-  localStorage.setItem(MODE, 'prf-raw')
+  localStorage.setItem(MODE, adoptedMode)
   walletSession.setItem(SECRET, derived.secret())
   walletSession.setItem(PUBKEY, derived.publicKey())
   // A PRF seed is re-derivable from the passkey, so it must not be left in
@@ -440,14 +508,25 @@ export async function retryPrfFeePayer(evaluator?: PrfEvaluator): Promise<PrfRet
     prfOutcome: 'success',
     probed: true,
     candidates: [
-      { mode: 'random', publicKey: current.publicKey(), status: 'not-found' },
-      { mode: 'prf-raw', publicKey: derived.publicKey(), status: 'not-probed' },
+      { mode: pinned ?? 'random', publicKey: current.publicKey(), status: 'not-found' },
+      { mode: 'prf-raw', publicKey: rawKey.publicKey(), status: rawExists ? 'exists' : 'not-found' },
+      {
+        mode: 'prf-hkdf',
+        publicKey: hkdfKey.publicKey(),
+        status: rawExists ? 'not-probed' : hkdfExists ? 'exists' : 'not-found',
+      },
     ],
-    chosenMode: 'prf-raw',
+    chosenMode: adoptedMode,
     chosenPublicKey: derived.publicKey(),
   })
 
-  return { ok: true, mode: 'prf-raw', publicKey: derived.publicKey(), previousPublicKey: current.publicKey() }
+  return {
+    ok: true,
+    mode: adoptedMode,
+    publicKey: derived.publicKey(),
+    previousPublicKey: current.publicKey(),
+    foundOnChain,
+  }
 }
 
 /** Cache + persist a diagnostics record (sessionStorage — metadata only, no secret). */
