@@ -546,15 +546,29 @@ impl InvisibleWallet {
         expiry: Option<u64>,
     ) {
         env.current_contract_address().require_auth();
-        
-        if amount <= 0 {
-            panic!("Amount must be greater than 0");
+
+        if amount < 0 {
+            panic!("Amount must be non-negative");
         }
 
         let key = storage::DataKey::Allowance(AllowanceKey { spender, token });
-        let allowance = storage::Allowance { amount, expiry };
-        
-        env.storage().persistent().set(&key, &allowance);
+
+        if amount == 0 {
+            env.storage().persistent().remove(&key);
+        } else {
+            let allowance = storage::Allowance { amount, expiry };
+            env.storage().persistent().set(&key, &allowance);
+        }
+    }
+
+    /// Revoke an allowance previously granted via `approve`.
+    ///
+    /// Requires passkey authorization (i.e. from the contract itself).
+    /// This is equivalent to calling `approve(spender, token, 0, None)`.
+    pub fn revoke_allowance(env: Env, spender: Address, token: Address) {
+        env.current_contract_address().require_auth();
+        let key = storage::DataKey::Allowance(AllowanceKey { spender, token });
+        env.storage().persistent().remove(&key);
     }
 
     /// Get the current allowance for a spender and token.
@@ -1709,5 +1723,105 @@ mod test {
 
         let remaining = client.get_allowance(&spender, &token).unwrap();
         assert_eq!(remaining.amount, 300);
+    }
+
+    #[test]
+    fn test_allowance_zero_amount_revokes() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.approve(&spender, &token, &500, &None);
+        let before = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(before.amount, 500);
+
+        client.approve(&spender, &token, &0, &None);
+        assert_eq!(client.get_allowance(&spender, &token), None);
+
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::InsufficientAllowance)));
+    }
+
+    #[test]
+    fn test_revoke_allowance_removes_allowance() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.approve(&spender, &token, &500, &None);
+        let before = client.get_allowance(&spender, &token).unwrap();
+        assert_eq!(before.amount, 500);
+
+        client.revoke_allowance(&spender, &token);
+        assert_eq!(client.get_allowance(&spender, &token), None);
+
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::InsufficientAllowance)));
+    }
+
+    #[test]
+    fn test_allowance_after_revoke_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, InvisibleWallet);
+        let client = InvisibleWalletClient::new(&env, &contract_id);
+
+        let (_, pub_bytes) = test_keypair();
+        client.init(&BytesN::from_array(&env, &pub_bytes), &bytes_from_str(&env, "localhost"), &bytes_from_str(&env, "https://test.example"));
+
+        let spender = Address::generate(&env);
+        let token = Address::generate(&env);
+
+        env.mock_all_auths();
+
+        // No allowance ever granted — rejected.
+        let context = Context::Contract(soroban_sdk::auth::ContractContext {
+            contract: token.clone(),
+            fn_name: Symbol::new(&env, "transfer"),
+            args: Vec::from_array(&env, [
+                contract_id.to_val(),
+                Address::generate(&env).to_val(),
+                100i128.into_val(&env),
+            ]),
+        });
+
+        let signature = spender.to_val();
+        let res = client.try___check_auth(&BytesN::from_array(&env, &[0; 32]), &signature, &Vec::from_array(&env, [context]));
+        assert_eq!(res, Err(Ok(WalletError::InsufficientAllowance)));
     }
 }

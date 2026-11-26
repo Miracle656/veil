@@ -23,10 +23,8 @@ import {
 } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
-import { inclusionFee } from './fees';
-import { registerPasskeySigner } from './passkey';
-import { signXdrPayload } from './walletConnect';
-import { pollForResult, toStroops } from './sendPayment';
+import { invokeAsWallet } from './contractInvoke';
+import { toStroops } from './sendPayment';
 import { getFeePayerAddress } from './activity';
 
 /** Whether the wallet CONTRACT is actually deployed on-chain (vs counterfactual). */
@@ -139,37 +137,15 @@ export async function sendAssetFromContract(
   // Asset('USDC', GA5ZSEJY…).contractId(PUBLIC) is the CCW67TSZ… that Horizon
   // reports as USDC's contract.
   const sacAsset = asset ? new Asset(asset.code, asset.issuer) : Asset.native();
-  const contract = new Contract(sacAsset.contractId(network.networkPassphrase));
 
-  const account = await server.getAccount(feePayer);
-  const unsigned = new TransactionBuilder(account, {
-    fee: inclusionFee(),
-    networkPassphrase: network.networkPassphrase,
-  })
-    .addOperation(
-      contract.call(
-        'transfer',
-        nativeToScVal(contractAddress, { type: 'address' }),
-        nativeToScVal(destination, { type: 'address' }),
-        nativeToScVal(toStroops(amount), { type: 'i128' }),
-      ),
-    )
-    .setTimeout(60)
-    .build();
-
-  // The passkey signer answers the auth-entry signature requests.
-  const unregister = registerPasskeySigner();
-  try {
-    const signedXdr = await signXdrPayload(unsigned.toXDR());
-    const signedTx = TransactionBuilder.fromXDR(signedXdr, network.networkPassphrase);
-    const sendResult = await server.sendTransaction(signedTx);
-    if (sendResult.status === 'ERROR') {
-      throw new Error(rejectionFromResult(sendResult.errorResult));
-    }
-    return await pollForResult(server, sendResult.hash);
-  } finally {
-    unregister();
-  }
+  // The ceremony itself is in `./contractInvoke`: a transfer is one call among
+  // several the wallet now makes, and three copies of it was three chances to
+  // get the hardest sequence in this codebase subtly wrong.
+  return invokeAsWallet(sacAsset.contractId(network.networkPassphrase), 'transfer', [
+    nativeToScVal(contractAddress, { type: 'address' }),
+    nativeToScVal(destination, { type: 'address' }),
+    nativeToScVal(toStroops(amount), { type: 'i128' }),
+  ]);
 }
 
 /**

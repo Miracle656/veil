@@ -15,7 +15,16 @@ describe('NamesRegistry (Issue #1073)', () => {
   let registry: NamesRegistry
 
   beforeEach(() => {
-    registry = new NamesRegistry()
+    // Both verifiers are stated explicitly rather than inherited. The
+    // constructor defaults refuse — a stub standing in for a payment has to
+    // fail closed, because the deployed claim route inherited the old
+    // permissive ones and handed out names for free. These tests are about
+    // charset, reserved names and claim concurrency, so they opt in to
+    // "payment accepted" and say so here.
+    registry = new NamesRegistry({
+      paymentVerifier: async (txHash) => Boolean(txHash && txHash.trim().length > 0),
+      signatureVerifier: async () => true,
+    })
   })
 
   describe('Criterion 1: A name cannot be claimed twice under concurrent requests (tested concurrently)', () => {

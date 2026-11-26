@@ -25,6 +25,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import {
@@ -210,7 +211,7 @@ export default function MultisigScreen() {
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>Multisig</Text>
+        <FlowHeader title="Multisig" />
         <Text style={styles.subtitle}>
           Connect a deployed M-of-N wallet to propose transfers and collect approvals from its
           owners.
@@ -258,7 +259,7 @@ export default function MultisigScreen() {
         />
       }
     >
-      <Text style={styles.title}>Multisig</Text>
+      <FlowHeader title="Multisig" />
       <Text style={[styles.mono, styles.contractId]}>{contractId}</Text>
 
       {loadError && <Text style={styles.error}>{loadError}</Text>}
@@ -473,11 +474,6 @@ const createStyles = (colors: ThemeColors) =>
       gap: 10,
       padding: 24,
       paddingBottom: 64,
-    },
-    title: {
-      color: colors.textStrong,
-      fontSize: 28,
-      fontWeight: '700',
     },
     subtitle: {
       color: colors.textSecondary,

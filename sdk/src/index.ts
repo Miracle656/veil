@@ -72,6 +72,8 @@ export * from './reserves';
 export * from './deriveFeePayer';
 export * from './feePayer';
 export * from './walletStorage';
+export * from './additionalSigners';
+export * from './signatureVector';
 export * from './sep43';
 
 

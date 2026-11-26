@@ -4,16 +4,25 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { Keypair, StrKey } from '@stellar/stellar-sdk';
 import { Buffer } from 'buffer';
 
+import { deriveFeePayerKeypair } from './deriveFeePayer';
 import { recordFeePayerSource } from './feePayerSource';
-import { getNetworkName } from './network';
+import { defaultSweepDeps, sweepStrandedFeePayer, type SweepOutcome } from './feePayerSweep';
+import { inclusionFee } from './fees';
+import { getNetwork, getNetworkName } from './network';
 import { discoverWithPrf, nativePrfEvaluator, type DiscoveredPasskey } from './passkey';
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import {
+  fetchContractOrigin,
+  isWrongPlatformOrigin,
+  WRONG_PLATFORM_ERROR_MESSAGE,
+} from './platformLimitation';
 import { readSigners, WalletContractNotFoundError, type WalletSigner } from './signers';
 import { readBreadcrumbs, writeBreadcrumbs } from './walletBreadcrumbs';
-import { getSignerSecret, getWalletAddress, setPasskeyCredential, setPasskeyId, setSignerSecret, setWalletAddress } from './walletStore';
+import { getPasskeyId, getPasskeyPublicKey, getSignerSecret, getWalletAddress, setPasskeyCredential, setPasskeyId, setSignerSecret, setWalletAddress } from './walletStore';
 import { hexToUint8Array } from './webauthn';
 
 /** Same PRF salt the fee-payer was derived with at creation (SDK constant). */
-const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
+export const FEE_PAYER_PRF_SALT = new Uint8Array(new TextEncoder().encode('invisible-wallet/prf/feepayer/v1'));
 
 // SDK storage keys — mirrored so the SDK's login()/signAuthEntry() see the
 // recovered wallet exactly as if register() had run on this device.
@@ -25,10 +34,14 @@ export type LoginResult = {
   address: string;
   /** 'local' = wallet was already on this device; 'recovered' = rebuilt from the passkey. */
   source: 'local' | 'recovered';
+  /** Outcome of the stranded fee-payer sweep, when one was attempted. */
+  feePayerSweep?: SweepOutcome;
 };
 
 export type AddressLoginResult = {
   address: string;
+  /** Outcome of the stranded fee-payer sweep, when one was attempted. */
+  feePayerSweep?: SweepOutcome;
   /**
    * Whether the fee-payer was derived from the passkey's PRF output (so the
    * wallet stays recoverable from the passkey elsewhere) rather than a fresh
@@ -50,6 +63,18 @@ function toHex(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('hex');
 }
 
+function getActiveRpcUrl(): string {
+  try {
+    if (typeof getNetwork === 'function') {
+      const net = getNetwork();
+      if (net?.rpcUrl) return net.rpcUrl;
+    }
+  } catch {
+    // fallback
+  }
+  return 'https://soroban-testnet.stellar.org';
+}
+
 /**
  * Sign in with an existing passkey.
  *
@@ -62,6 +87,41 @@ function toHex(bytes: Uint8Array): string {
  * breadcrumbs on that account name the C-address and passkey public key →
  * everything is re-persisted locally. Serverless, seedless.
  */
+/**
+ * Bring across a fee-payer stranded by the credential-id-to-PRF move.
+ *
+ * Wallets created under the old scheme derive a different classic account on a
+ * current build, so the funded one goes invisible and the dashboard reports the
+ * contract balance alone. This notices that and moves the balance to the
+ * passkey-bound account — but only when the stranded account's breadcrumbs name
+ * the signer that just authenticated. See feePayerRecovery.ts.
+ *
+ * Deliberately not allowed to fail a sign-in. If it cannot run, the money stays
+ * exactly where it already was, which is the state the user is in anyway.
+ */
+async function recoverStrandedFeePayer(
+  walletAddress: string,
+  prfAddress: string,
+  walletSigner: Uint8Array | null,
+): Promise<SweepOutcome> {
+  try {
+    const keyId = await getPasskeyId();
+    if (!keyId) return { swept: false, reason: 'no-legacy-candidate' };
+    const legacy = deriveFeePayerKeypair(keyId);
+    return await sweepStrandedFeePayer(
+      {
+        walletAddress,
+        prfAddress,
+        legacyAddress: legacy.publicKey(),
+        legacySecret: legacy.secret(),
+      },
+      defaultSweepDeps(walletSigner, getNetwork(), inclusionFee()),
+    );
+  } catch (error) {
+    return { swept: false, reason: error instanceof Error ? error.message : 'sweep-failed' };
+  }
+}
+
 export async function loginWithPasskey(): Promise<LoginResult> {
   // ── Same-device fast path ──────────────────────────────────────────────────
   const [storedAddress, storedSecret] = await Promise.all([
@@ -69,7 +129,18 @@ export async function loginWithPasskey(): Promise<LoginResult> {
     getSignerSecret().catch(() => null),
   ]);
   if (storedAddress && storedSecret) {
-    return { address: storedAddress, source: 'local' };
+    // The stranded case reaches here, not the ceremony below: somebody whose
+    // fee-payer was replaced on a previous sign-in is already "logged in", so
+    // a recovery that only ran on a fresh assertion would never reach them.
+    // The signer is the one already stored for this device, so this costs no
+    // extra passkey prompt and no simulation.
+    const storedSigner = await getPasskeyPublicKey().catch(() => null);
+    const feePayerSweep = await recoverStrandedFeePayer(
+      storedAddress,
+      Keypair.fromSecret(storedSecret).publicKey(),
+      storedSigner ? hexToUint8Array(storedSigner) : null,
+    );
+    return { address: storedAddress, source: 'local', feePayerSweep };
   }
 
   // ── Same-device, secure store cleared (e.g. "Reset wallet") ───────────────
@@ -94,7 +165,8 @@ export async function loginWithPasskey(): Promise<LoginResult> {
       ]);
       const pkBytes = sdkPubKey && /^[0-9a-fA-F]{130}$/.test(sdkPubKey) ? new Uint8Array(Buffer.from(sdkPubKey, 'hex')) : null;
       void writeBreadcrumbs(feePayer.secret(), sdkAddress, pkBytes).catch(() => undefined);
-      return { address: sdkAddress, source: 'recovered' };
+      const sdkSweep = await recoverStrandedFeePayer(sdkAddress, feePayer.publicKey(), pkBytes);
+      return { address: sdkAddress, source: 'recovered', feePayerSweep: sdkSweep };
     }
     // PRF unavailable / cancelled — fall through to the discoverable flow,
     // which reports its own clearer errors.
@@ -120,6 +192,13 @@ export async function loginWithPasskey(): Promise<LoginResult> {
     );
   }
 
+  // ── Verify platform compatibility ──
+  // TODO(#1003): remove platform limitation check when multi-origin contract ships
+  const contractOrigin = await fetchContractOrigin(getActiveRpcUrl(), crumbs.walletAddress);
+  if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
+    throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
+  }
+
   // Persist to the app's secure store…
   await Promise.all([
     setWalletAddress(crumbs.walletAddress),
@@ -138,7 +217,13 @@ export async function loginWithPasskey(): Promise<LoginResult> {
   if (crumbs.publicKeyBytes) sdkWrites.push([SDK_PUBLIC_KEY, toHex(crumbs.publicKeyBytes)]);
   await AsyncStorage.multiSet(sdkWrites);
 
-  return { address: crumbs.walletAddress, source: 'recovered' };
+  const crumbSweep = await recoverStrandedFeePayer(
+    crumbs.walletAddress,
+    feePayer.publicKey(),
+    crumbs.publicKeyBytes,
+  );
+
+  return { address: crumbs.walletAddress, source: 'recovered', feePayerSweep: crumbSweep };
 }
 
 /**
@@ -191,6 +276,15 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
     throw new Error(SIGNER_MISMATCH_MESSAGE);
   }
 
+  // ── Verify platform compatibility ──
+  // A wallet deployed from web carries a web origin that cannot
+  // be signed from the native app until multi-origin check_auth ships (#1003).
+  // TODO(#1003): remove platform limitation check when multi-origin contract ships
+  const contractOrigin = await fetchContractOrigin(getActiveRpcUrl(), address);
+  if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
+    throw new Error(WRONG_PLATFORM_ERROR_MESSAGE);
+  }
+
   // Everything has been checked; only now do we adopt the wallet.
   const publicKeyHex = toHex(matchedPublicKey);
   const prfSeed = picked.prf && picked.prf.length >= 32 ? picked.prf.subarray(0, 32) : null;
@@ -215,7 +309,16 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
   // (serverless recovery). Best-effort, as at creation/recovery.
   void writeBreadcrumbs(feePayer.secret(), address, matchedPublicKey).catch(() => undefined);
 
-  return { address, recoverable };
+  // Only when the fee-payer is the PRF-derived one. Without PRF this is a
+  // fresh `Keypair.random()` that exists on this phone and nowhere else, so
+  // sweeping a legacy balance into it would strand the money harder than
+  // leaving it alone: the credential-id account can be re-derived by any
+  // build, that one cannot be re-derived at all.
+  const feePayerSweep: SweepOutcome = recoverable
+    ? await recoverStrandedFeePayer(address, feePayer.publicKey(), matchedPublicKey)
+    : { swept: false, reason: 'fee-payer-not-passkey-bound' };
+
+  return { address, recoverable, feePayerSweep };
 }
 
 /**
@@ -224,8 +327,11 @@ export async function loginWithAddress(rawAddress: string): Promise<AddressLogin
  * An assertion never reveals its public key, so possession is proven the other
  * way round: the signature is checked against every signer the wallet holds,
  * and a match means the asserting passkey owns that signer's private key.
+ *
+ * Exported so backup-file restore (V192 / #765) runs the same check V191
+ * introduces rather than inventing a second verification rule.
  */
-function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
+export function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]): Uint8Array | null {
   // WebAuthn signs SHA-256(authData ‖ SHA-256(clientDataJSON)).
   const clientDataHash = sha256(picked.clientDataJSON);
   const verificationData = new Uint8Array(picked.authData.length + clientDataHash.length);
@@ -248,8 +354,18 @@ function findMatchingSigner(picked: DiscoveredPasskey, signers: WalletSigner[]):
   return null;
 }
 
-/** Write the SDK's AsyncStorage keys, namespaced per network like walletStore. */
-async function writeSdkMirror(address: string, credentialId: string, publicKeyHex: string): Promise<void> {
+/**
+ * Write the SDK's AsyncStorage keys, namespaced per network like walletStore.
+ *
+ * Exported so backup-file restore (V192 / #765) uses this writer rather than a
+ * second copy of the suffix rule. One writer means the SDK keys cannot drift
+ * into a half-old-device / half-new-device wallet across flows.
+ */
+export async function writeSdkMirror(
+  address: string,
+  credentialId: string,
+  publicKeyHex: string,
+): Promise<void> {
   const suffix = getNetworkName() === 'mainnet' ? '_mainnet' : '';
   await AsyncStorage.multiSet([
     [`${SDK_ADDRESS}${suffix}`, address],

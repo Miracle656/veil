@@ -23,6 +23,8 @@ import {
 import { evaluatePrf } from '../lib/passkey';
 import { getNetwork } from '../lib/network';
 import { useWallet } from '../components/WalletProvider';
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import { WALLET_CREATION_LIMITATION_MESSAGE } from '../lib/platformLimitation';
 
 // Passkeys need the native module — unavailable in Expo Go.
 const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
@@ -383,6 +385,15 @@ export default function CreateWallet() {
         ) : (
           <>
             <View style={styles.spacer} />
+            {/* TODO(#1003): remove platform limitation warning when multi-origin contract ships */}
+            <View
+              testID="platform-limitation-notice"
+              style={styles.platformNotice}
+            >
+              <Text style={styles.platformNoticeText}>
+                {WALLET_CREATION_LIMITATION_MESSAGE}
+              </Text>
+            </View>
             {!IN_EXPO_GO && (
               <Pressable
                 testID="create-passkey-button"
@@ -533,4 +544,20 @@ const createStyles = (colors: ThemeColors) =>
     addr: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 15 },
     fund: { fontFamily: fontFamily.bodyMedium, fontSize: 13, marginTop: 8 },
     pressed: { opacity: 0.7 },
+    platformNotice: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      marginTop: 10,
+    },
+    platformNoticeText: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 17,
+      textAlign: 'center',
+    },
   });

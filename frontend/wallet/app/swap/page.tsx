@@ -5,6 +5,7 @@ import { getUsdcIssuer } from '@/lib/network'
 import { inclusionFee } from '@/lib/fees'
 import { fetchPlatformFee } from '@/lib/platformFee'
 import { canAffordSdexSwapFee } from '@/lib/sdexSwapFeeAttach'
+import { loadPayingAccount } from '@/lib/horizonError'
 import { PageHeader, Card, SectionLabel, Pill } from '@/components/ui/primitives'
 import {
   assetKey,
@@ -413,7 +414,7 @@ export default function SwapPage() {
       }
 
       // ── Classic SDEX fallback ──
-      const account = await server.loadAccount(signerPubKey)
+      const account = await loadPayingAccount(() => server.loadAccount(signerPubKey))
       const source = classicAsset(route.from)
       const dest = classicAsset(route.to)
 
@@ -471,7 +472,10 @@ export default function SwapPage() {
           nativeAmountIn: sourceAmount,
           feeAmount: platformFee.amount,
           perOpBidStroops: Number(inclusionFee()),
-          opsWithoutFee: txBuilder.build().operations.length,
+          // Counted, never built: build() moves the account's sequence number
+          // on, so building here and again below sent a number the network
+          // had not reached and every such swap came back tx_bad_seq.
+          opsWithoutFee: addsTrustline ? 2 : 1,
           addsTrustline,
         })
       ) {
