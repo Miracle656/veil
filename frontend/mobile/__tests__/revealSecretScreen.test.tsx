@@ -101,7 +101,7 @@ function fireAppState(state: 'background' | 'active') {
 }
 
 import RevealSecretScreen from '../app/settings/reveal-secret';
-import { createTestnetWallet, importTestnetWallet } from '../lib/testnetWallet';
+import { createClassicWallet, importClassicWallet } from '../lib/classicWallet';
 import { setPasskeyCredential, setSignerSecret, setWalletAddress } from '../lib/walletStore';
 
 type Instance = { props: Record<string, unknown>; children: (Instance | string)[] };
@@ -203,7 +203,7 @@ it('offers a smart wallet the backup path instead', async () => {
 // ── The gate comes before the key ───────────────────────────────────────────────
 
 it('states the consequences, with the reveal button disabled until they are acknowledged', async () => {
-  const created = await createTestnetWallet();
+  const created = await createClassicWallet();
   const { root } = await render();
 
   const gate = root.findByProps({ testID: 'secret-export-consequences' });
@@ -224,7 +224,7 @@ it('states the consequences, with the reveal button disabled until they are ackn
 });
 
 it('reveals nothing when the unlock is dismissed', async () => {
-  await createTestnetWallet();
+  await createClassicWallet();
   mockAuth.success = false;
   mockAuth.error = 'UserCancel';
 
@@ -239,7 +239,7 @@ it('reveals nothing when the unlock is dismissed', async () => {
 });
 
 it('refuses to reveal on a device with no lock to reveal behind', async () => {
-  await createTestnetWallet();
+  await createClassicWallet();
   mockAuth.level = 0; // nothing enrolled
 
   const { root } = await render();
@@ -257,7 +257,7 @@ it('refuses to reveal on a device with no lock to reveal behind', async () => {
 // ── The reveal, and its end ─────────────────────────────────────────────────────
 
 it('shows the full key behind the lock, then takes it back', async () => {
-  const created = await createTestnetWallet();
+  const created = await createClassicWallet();
   const secret = mockStore.get(SECRET_KEY);
   if (!secret) throw new Error('expected a stored key');
 
@@ -283,7 +283,7 @@ it('shows the full key behind the lock, then takes it back', async () => {
 });
 
 it('conceals the key when the app is backgrounded or the screen loses focus', async () => {
-  await createTestnetWallet();
+  await createClassicWallet();
   const secret = mockStore.get(SECRET_KEY);
   if (!secret) throw new Error('expected a stored key');
 
@@ -306,7 +306,7 @@ it('conceals the key when the app is backgrounded or the screen loses focus', as
 });
 
 it('asks the lock again for a second reveal', async () => {
-  await createTestnetWallet();
+  await createClassicWallet();
   const { root } = await render();
 
   await ackAndReveal(root);
@@ -324,7 +324,7 @@ it('asks the lock again for a second reveal', async () => {
 // ── The round trip, seen from the screen ────────────────────────────────────────
 
 it('shows a key that reproduces the wallet when imported back', async () => {
-  const created = await createTestnetWallet();
+  const created = await createClassicWallet();
   const { root, unmount } = await render();
   await ackAndReveal(root);
   const secret = text(root.findByProps({ testID: 'secret-revealed-value' }));
@@ -346,7 +346,7 @@ it('shows a key that reproduces the wallet when imported back', async () => {
   // same wallet again — which is the whole point of revealing it.
   await renderer.act(async () => {
     orphan.unmount();
-    await importTestnetWallet(secret);
+    await importClassicWallet(secret);
   });
 
   const { root: restored } = await render();

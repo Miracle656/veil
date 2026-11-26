@@ -7,6 +7,7 @@ import { Horizon, Keypair } from '@stellar/stellar-sdk'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { getNetwork, getUsdcIssuer } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
+import { PasskeyCeremonyError, isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import {
   buildChangeTrustTx,
   canRemoveTrustline,
@@ -226,7 +227,16 @@ export default function AssetsPage() {
         setPendingAsset(null)
         await loadAccount()
       } catch (err) {
-        setStatus({ kind: 'error', message: errorMessage(err) })
+        // Dismissing the prompt changes nothing on chain, so it is not an
+        // error state on the trustline screen either.
+        if (isPasskeyCancellation(err)) {
+          setStatus({ kind: 'idle' })
+          return
+        }
+        setStatus({
+          kind: 'error',
+          message: err instanceof PasskeyCeremonyError ? err.message : errorMessage(err),
+        })
       }
     },
     [server, loadAccount],

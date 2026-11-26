@@ -43,13 +43,29 @@ stellar contract fetch \
 sha256sum factory.wasm
 # 3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853
 
-# 2. Rebuild the same artifact from this repository, in Docker, and compare.
+# 2. Rebuild the same artifact, in Docker, from the commit that was deployed.
+git checkout ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2
 ./scripts/reproducible-build.sh
 ```
 
-Both produce `3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853`
-— the value committed in `contracts/expected-hashes.json`. The wallet contract
-the factory deploys verifies the same way, as `b485f817…59ea5`.
+Both produce `3a6756d28de795177be28c2359347e57ea4c244cbe609b86facec00ef1abb853`.
+The wallet contract the factory deploys verifies the same way, as
+`b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5`.
+
+Deployed contracts cannot be upgraded, so once contract changes land, `main`
+builds different hashes from the ones on mainnet. `contracts/expected-hashes.json`
+tracks the current build (checked on every PR); `contracts/deployments.json`
+records what is actually deployed and the commit that built it. To check the
+ledger against that record in one step:
+
+```bash
+npm ci && npm run verify:deployed
+```
+
+It reads the factory's executable hash, re-hashes the bytecode stored on chain,
+reads the wallet WASM hash the factory deploys from, and checks both against
+`expected-hashes.json` at the deployed commit. A weekly workflow
+(`.github/workflows/deployed-hashes.yml`) runs the same check.
 
 A source-verified contract is the difference between "here is our code" and
 "here is the code that is running."
@@ -156,7 +172,7 @@ veil/
 │   │   ├── vue/                   # Vue 3 composable — binds the same core to refs (invisible-wallet-sdk/vue)
 │   │   ├── angular/               # Angular DI service + provideVeil — standalone-compatible (invisible-wallet-sdk/angular)
 │   │   ├── webauthn.ts            # WebAuthn provider interface + web/browser implementation
-│   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkey) — Metro auto-resolves
+│   │   ├── webauthn.native.ts     # React Native implementation (react-native-passkeys) — Metro auto-resolves
 │   │   ├── utils.ts               # Crypto utilities (DER→raw, pubkey extraction, SHA256, computeWalletAddress)
 │   │   └── index.ts               # Package exports
 │   └── package.json
@@ -296,7 +312,7 @@ The SDK ships a platform-split WebAuthn layer.  Metro automatically resolves
 #### Install peer dependencies
 
 ```bash
-npm install react-native-passkey @react-native-async-storage/async-storage
+npm install react-native-passkeys @react-native-async-storage/async-storage
 # iOS only — re-run pod install after adding the native module:
 npx pod-install
 ```

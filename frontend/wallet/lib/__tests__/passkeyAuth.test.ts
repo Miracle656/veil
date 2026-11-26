@@ -6,6 +6,11 @@ import { TextEncoder, TextDecoder } from 'util'
 Object.assign(globalThis, { TextEncoder, TextDecoder })
 
 import { requirePasskey, passkeyErrorMessage } from '../passkeyAuth'
+import {
+  PASSKEY_CANCELLED_MESSAGE,
+  PasskeyCeremonyError,
+  classifyPasskeyError,
+} from '../passkeyOutcome'
 
 describe('passkeyErrorMessage', () => {
   it('hides the WebAuthn spec URL when the ceremony is cancelled or timed out', () => {
@@ -13,16 +18,28 @@ describe('passkeyErrorMessage', () => {
       'The operation either timed out or was not allowed. See: https://www.w3.org/TR/webauthn-2/#sctn-privacy-considerations-client.',
       'NotAllowedError',
     )
-    expect(passkeyErrorMessage(err)).toBe(
-      "The passkey was cancelled, timed out, or isn't on this device. Try again.",
-    )
+    expect(passkeyErrorMessage(err)).toBe(PASSKEY_CANCELLED_MESSAGE)
     expect(passkeyErrorMessage(err)).not.toMatch(/w3\.org/)
+    expect(classifyPasskeyError(err)).toBe('cancelled')
   })
 
   it('maps AbortError the same way', () => {
     expect(passkeyErrorMessage(new DOMException('The operation was aborted.', 'AbortError'))).toBe(
-      "The passkey was cancelled, timed out, or isn't on this device. Try again.",
+      PASSKEY_CANCELLED_MESSAGE,
     )
+  })
+
+  it('explains a browser without passkey support as a refusal', () => {
+    const err = new DOMException('Passkeys are not supported here.', 'NotSupportedError')
+    expect(classifyPasskeyError(err)).toBe('refused')
+    expect(passkeyErrorMessage(err)).toMatch(/does not support passkeys/i)
+    expect(passkeyErrorMessage(err)).toMatch(/browser and device/i)
+  })
+
+  it('explains a SecurityError as a relying-party refusal', () => {
+    const err = new DOMException('The relying party ID is not a registrable domain.', 'SecurityError')
+    expect(classifyPasskeyError(err)).toBe('refused')
+    expect(passkeyErrorMessage(err)).toMatch(/same address/i)
   })
 
   it('keeps a non-passkey error readable without injecting unlock copy', () => {
@@ -100,7 +117,7 @@ describe('requirePasskey', () => {
   describe('prerequisites', () => {
     it('should throw error when no passkey is registered (localStorage empty)', async () => {
       await expect(requirePasskey()).rejects.toThrow(
-        'No passkey found. Please register the wallet first.'
+        'No passkey found. Register the wallet first, then try again.'
       )
       expect(mockCredentialsGet).not.toHaveBeenCalled()
     })
@@ -108,7 +125,7 @@ describe('requirePasskey', () => {
     it('should throw error when credential ID is not found in localStorage', async () => {
       localStorageMock.setItem('some_other_key', 'value')
       await expect(requirePasskey()).rejects.toThrow(
-        'No passkey found. Please register the wallet first.'
+        'No passkey found. Register the wallet first, then try again.'
       )
       expect(mockCredentialsGet).not.toHaveBeenCalled()
     })
@@ -182,34 +199,62 @@ describe('requirePasskey', () => {
       localStorageMock.setItem('invisible_wallet_key_id', 'dGVzdF9jcmVkZW50aWFsX2lk')
     })
 
-    it('should reject with user-friendly message when user cancels (assertion is null)', async () => {
+    it('should reject with a cancellation outcome when the assertion is null', async () => {
       mockCredentialsGet.mockResolvedValue(null)
 
-      await expect(requirePasskey()).rejects.toThrow(
-        'Passkey verification was cancelled.'
-      )
+      await expect(requirePasskey()).rejects.toThrow(PASSKEY_CANCELLED_MESSAGE)
+      await expect(requirePasskey()).rejects.toBeInstanceOf(PasskeyCeremonyError)
     })
 
-    it('should reject with user-friendly message when assertion is undefined', async () => {
+    it('should reject with a cancellation outcome when the assertion is undefined', async () => {
       mockCredentialsGet.mockResolvedValue(undefined)
 
-      await expect(requirePasskey()).rejects.toThrow(
-        'Passkey verification was cancelled.'
-      )
+      await expect(requirePasskey()).rejects.toMatchObject({ outcome: 'cancelled' })
     })
 
-    it('should reject with NotAllowedError when user denies biometric permission', async () => {
+    it('should classify a NotAllowedError as cancellation, not failure', async () => {
       const notAllowedError = new DOMException('User denied permission (NotAllowedError)', 'NotAllowedError')
       mockCredentialsGet.mockRejectedValue(notAllowedError)
 
-      await expect(requirePasskey()).rejects.toThrow('NotAllowedError')
+      await expect(requirePasskey()).rejects.toMatchObject({
+        outcome: 'cancelled',
+        message: PASSKEY_CANCELLED_MESSAGE,
+      })
     })
 
-    it('should reject when credentials.get throws SecurityError', async () => {
+    it('should classify a SecurityError as an authenticator refusal with a next step', async () => {
       const securityError = new DOMException('Security error (SecurityError)', 'SecurityError')
       mockCredentialsGet.mockRejectedValue(securityError)
 
-      await expect(requirePasskey()).rejects.toThrow('SecurityError')
+      await expect(requirePasskey()).rejects.toMatchObject({ outcome: 'refused' })
+      await expect(requirePasskey()).rejects.toThrow(/same address/i)
+    })
+
+    it('should keep a genuine failure distinct from cancellation', async () => {
+      mockCredentialsGet.mockRejectedValue(new Error('The signing request was interrupted'))
+
+      await expect(requirePasskey()).rejects.toMatchObject({ outcome: 'failed' })
+      await expect(requirePasskey()).rejects.toThrow(/Nothing was sent/i)
+    })
+
+    it('should reject an axios-style timeout as a failure, not a cancellation', async () => {
+      // The prompt reported neither NotAllowedError nor AbortError; only the
+      // wording mentions a timeout, which is not the ceremony's own signal.
+      mockCredentialsGet.mockRejectedValue(new Error('timeout of 30000ms exceeded'))
+
+      await expect(requirePasskey()).rejects.toMatchObject({ outcome: 'failed' })
+      await expect(requirePasskey()).rejects.not.toMatchObject({ outcome: 'cancelled' })
+    })
+
+    it('should still call a WebAuthn timeout a cancellation, by name', async () => {
+      mockCredentialsGet.mockRejectedValue(
+        new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'),
+      )
+
+      await expect(requirePasskey()).rejects.toMatchObject({
+        outcome: 'cancelled',
+        message: PASSKEY_CANCELLED_MESSAGE,
+      })
     })
   })
 
@@ -285,7 +330,7 @@ describe('requirePasskey', () => {
       await expect(requirePasskey()).resolves.toBeUndefined()
 
       mockCredentialsGet.mockResolvedValueOnce(null)
-      await expect(requirePasskey()).rejects.toThrow('Passkey verification was cancelled.')
+      await expect(requirePasskey()).rejects.toThrow(PASSKEY_CANCELLED_MESSAGE)
 
       mockCredentialsGet.mockResolvedValueOnce({ id: 'test-id' })
       await expect(requirePasskey()).resolves.toBeUndefined()

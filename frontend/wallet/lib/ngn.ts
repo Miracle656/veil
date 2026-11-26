@@ -542,12 +542,128 @@ export interface BillStatus {
   wallet: string
   description: string
   stale?: boolean
+  token?: string
+  prepaidToken?: string
+  units?: string
 }
 
 export function getBillStatus(customerRef: string, orderId: string): Promise<BillStatus> {
   return call<BillStatus>(
     `/ngn/bills/${encodeURIComponent(orderId)}?customerRef=${encodeURIComponent(customerRef)}`,
   )
+}
+
+export interface MeterVerification {
+  valid: boolean
+  customerName?: string
+  accountHolderName?: string
+  address?: string
+  meterNumber?: string
+  disco?: string
+  meterType?: 'prepaid' | 'postpaid'
+  minimumAmount?: number
+  error?: string
+}
+
+export async function verifyMeter(params: {
+  disco: string
+  meterNumber: string
+  meterType?: 'prepaid' | 'postpaid'
+  customerRef?: string
+}): Promise<MeterVerification> {
+  return call<MeterVerification>('/ngn/bills/electricity/verify', {
+    method: 'POST',
+    body: params,
+  })
+}
+
+export interface BillCustomerLookup {
+  valid: boolean
+  customerName?: string
+  accountHolderName?: string
+  address?: string
+  meterNumber?: string
+  currentPackage?: string
+  dueDate?: string
+  meterType?: 'prepaid' | 'postpaid'
+  minimumAmount?: number
+  error?: string
+}
+
+export function lookupBillCustomer(params: {
+  billCategory: BillCategory | string
+  provider: string
+  customerId: string
+  customerRef?: string
+  meterType?: string
+}): Promise<BillCustomerLookup> {
+  return call<BillCustomerLookup>('/ngn/bills/lookup', {
+    method: 'POST',
+    body: params,
+  })
+}
+
+// ─── Bill Lookups ───────────────────────────────────────────────────────────
+
+export interface CableTvLookup {
+  customerName: string
+  currentPackage: string
+  dueDate: string
+  availablePackages: Array<{
+    id: string
+    name: string
+    price: number
+  }>
+}
+
+export interface BettingLookup {
+  accountName: string
+  accountStatus: string
+  balance?: number
+}
+
+/**
+ * Look up a cable TV smartcard before purchase.
+ *
+ * Returns customer name, current package, due date, and available packages.
+ * This allows the user to confirm details before spending.
+ */
+export function lookupCableTv(params: {
+  provider: string
+  smartcardNumber: string
+}): Promise<CableTvLookup> {
+  return call<CableTvLookup>('/ngn/bills/lookup/cabletv', { method: 'POST', body: params })
+}
+
+/**
+ * Look up a betting account ID before purchase.
+ *
+ * Returns account name and status. Supported only where the provider
+ * offers account ID verification.
+ */
+export function lookupBetting(params: {
+  provider: string
+  accountId: string
+}): Promise<BettingLookup> {
+  return call<BettingLookup>('/ngn/bills/lookup/betting', { method: 'POST', body: params })
+}
+
+/**
+ * Check if a specific bill category is available.
+ *
+ * Returns false if the provider is unreachable (outage), true otherwise.
+ * This allows us to show an outage message instead of hiding the category.
+ */
+export async function isBillCategoryAvailable(category: BillCategory): Promise<boolean> {
+  try {
+    // Try a lightweight operation to check availability
+    // For now, we check the main naira availability as a proxy
+    // In the future, this could be more category-specific
+    await getOnrampRate('usdc')
+    return true
+  } catch {
+    return false
+  }
 }
 
 export type BillTerminalOutcome = 'done' | 'failed' | 'pending'
@@ -567,7 +683,6 @@ export function classifyBillStatus(status: string): BillTerminalOutcome {
   if (/fail|refund|revers|cancel/.test(s)) return 'failed'
   return 'pending'
 }
-
 
 /** Whether the rails are open at all. USDC on purpose — the XLM rate additionally
  *  depends on a live order book, so asking for it would hide the whole naira

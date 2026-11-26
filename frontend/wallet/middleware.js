@@ -16,6 +16,7 @@ const REGISTERED_ISSUER_ORIGINS = [
   "https://circle.com",
   "https://stellar.org",
   "https://aqua.network",
+  "https://etherfuse.com",
 ];
 
 const configuredOrigins = [

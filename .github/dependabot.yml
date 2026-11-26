@@ -54,6 +54,22 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types: ["version-update:semver-major"]
+      # Expo SDK 54 pins these; `expo install` owns them, not Dependabot.
+      # A "minor" bump here is not minor: 428446c1 moved react-native 0.81.5
+      # to 0.88.0 as part of the minor-and-patch group, which dropped
+      # StyleSheet.absoluteFillObject (silently un-positioning three styles)
+      # and react-native/jest-preset (killing all 1,321 tests). Move these
+      # only by upgrading the Expo SDK and running `expo install --fix`.
+      - dependency-name: "expo"
+      - dependency-name: "expo-*"
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "@types/react"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-*"
+      - dependency-name: "@react-native-community/*"
+      - dependency-name: "@react-native-async-storage/*"
+      - dependency-name: "jest-expo"
 
   - package-ecosystem: "npm"
     directory: "/frontend/website"

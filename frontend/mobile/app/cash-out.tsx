@@ -18,6 +18,7 @@ import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { NIGERIAN_BANKS, bankName } from '../lib/nigerianBanks';
+import { consumeCashOutHandoff } from '../lib/cashOutHandoff';
 import {
   OfframpTimeout,
   OfframpUnavailable,
@@ -40,6 +41,7 @@ import { getWalletAddress } from '../lib/walletStore';
 import { loadHoldings, type Holding } from '../lib/holdings';
 import { errorMessage } from '../lib/errorMessage';
 import { NotEnoughToSend, spendAsset } from '../lib/spendAsset';
+import { isPasskeyCancellation } from '../lib/passkeyOutcome';
 import { useWallet } from '../components/WalletProvider';
 
 /** Circle's USDC on mainnet — the only asset Linq's Stellar leg credits. */
@@ -101,6 +103,7 @@ export default function CashOutScreen() {
   const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const [handoff] = useState(consumeCashOutHandoff);
 
   // Linq's Stellar leg is mainnet only. Their deposit wallets are mainnet
   // accounts and the asset they credit is Circle's mainnet USDC
@@ -118,9 +121,11 @@ export default function CashOutScreen() {
   // rate meant a failed fetch showed "Fetching the current rate..." forever,
   // with no error and nothing to retry — the screen looked busy rather than
   // broken.
-  const [rate, setRate] = useState<number | null>(null);
-  const [rateState, setRateState] = useState<'loading' | 'ready' | 'failed'>('loading');
-  const [amountNGN, setAmountNGN] = useState('');
+  const [rate, setRate] = useState<number | null>(handoff?.rate ?? null);
+  const [rateState, setRateState] = useState<'loading' | 'ready' | 'failed'>(
+    handoff ? 'ready' : 'loading',
+  );
+  const [amountNGN, setAmountNGN] = useState(handoff ? String(handoff.amountNGN) : '');
 
   // What the wallet can actually cash out. Read through loadHoldings so it is
   // the COMBINED figure: a smart wallet holds USDC in two places — the
@@ -174,6 +179,13 @@ export default function CashOutScreen() {
       });
       setPayHash(hash);
     } catch (err) {
+      // Dismissing the passkey leaves the order where it was, unpaid and
+      // unmarked. Nothing on chain moved, so there is nothing to report.
+      if (isPasskeyCancellation(err)) {
+        setError(null);
+        setSendableInstead(null);
+        return;
+      }
       if (err instanceof NotEnoughToSend && err.available > 0 && err.available >= err.requested * 0.9) {
         // Floor to the stroop, so the offer never exceeds what is there.
         setSendableInstead(Math.floor(err.available * 1e7) / 1e7);
@@ -532,13 +544,24 @@ export default function CashOutScreen() {
             </View>
 
             {rateState === 'failed' ? (
-              <Pressable onPress={loadRate} accessibilityRole="button">
-                <Text style={styles.error}>
-                  Couldn&apos;t reach the rate service. Tap to try again.
-                </Text>
-              </Pressable>
+              <>
+                <Pressable onPress={loadRate} accessibilityRole="button">
+                  <Text style={styles.error}>
+                    Couldn&apos;t reach the rate service. Tap to try again.
+                  </Text>
+                </Pressable>
+                {rate !== null ? (
+                  <Text style={styles.hint}>
+                    Last rate from your chat: ₦{rate.toLocaleString('en-US')} per USDC. Refresh before continuing.
+                  </Text>
+                ) : null}
+              </>
             ) : rateState === 'loading' ? (
-              <Text style={styles.hint}>Fetching the current rate…</Text>
+              <Text style={styles.hint}>
+                {rate === null
+                  ? 'Fetching the current rate…'
+                  : `Rate ₦${rate.toLocaleString('en-US')} per USDC — refreshing the live rate.`}
+              </Text>
             ) : (
               <Text style={styles.hint}>
                 Rate ₦{rate?.toLocaleString('en-US')} per USDC — indicative. The rate is

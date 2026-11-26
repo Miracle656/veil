@@ -224,6 +224,14 @@ plugin config.
 - `lib/passkey.ts` — device passkey signer for dApp requests.
 - `lib/webauthn.ts` — WebAuthn encoding and DER signature conversion (unit-tested).
 - `lib/polyfills.ts` — React Native shims WalletConnect and the Stellar SDK need.
+- `app/dapps.tsx` — the dApp directory; the only way into the in-app browser.
+- `app/dapp.tsx` — the browser shell: allow-list gate, origin chrome, injected provider, approval queue.
+- `lib/dappAllowlist.ts` — the origins Veil will load, with their display names.
+- `lib/dappNavigation.ts` — pure navigation/popup decisions for that shell (unit-tested).
+- `lib/dappProvider.ts` — the SEP-43 script injected into the page, plus the request envelope it speaks (unit-tested).
+- `lib/dappProviderBridge.ts` — the app side of that envelope: origin checks, approval, signing, replies (unit-tested).
+- `lib/transactionRequestDetails.ts` — decodes a transaction or auth entry far enough to show it honestly (unit-tested).
+- `components/DappApprovalModal.tsx` — the sheet that answers a provider request.
 
 Native `ios/` and `android/` folders are generated on demand (via prebuild/EAS) and
 are gitignored, along with `node_modules/` and `.expo/`.
@@ -363,6 +371,64 @@ Passkeys need platform association before they resolve on a device: an
 `associatedDomains` entry (`webcredentials:<rp-id>`) for iOS and a matching
 `assetlinks.json` on the domain for Android. `EXPO_PUBLIC_PASSKEY_RP_ID` must be
 the same relying-party id the wallet's passkey was registered against.
+
+## The dApp browser provider
+
+`app/dapp.tsx` loads one allow-listed origin at a time, and a dApp in that page
+finds a wallet the way it does anywhere else: `window.freighterApi`, plus
+`window.veil` as the same object. The script in `lib/dappProvider.ts` is injected
+before the page's own scripts run, and it installs itself only when the document's
+origin is exactly the origin the user granted — a page the WebView lands on that
+is not the approved one gets no provider at all, and an iframe never gets one.
+
+The surface follows SEP-0043 rather than a private shape, because that is the
+standard the wallet contract already speaks through WalletConnect: `getAddress`,
+`getNetwork`, `signTransaction(xdr, opts)` and `signAuthEntry(authEntry, opts)`
+map onto the same signing code paths `lib/walletConnect.ts` uses today.
+`isApproved`, `connect()` and `request({ method: … })` answer the Freighter-style
+discovery every dApp tries first, and `getAddresses` is the plural form of the
+same disclosure. A call that fails rejects its promise with the SEP-43 error
+object rather than resolving it, because every dApp around it reads a resolved
+value as a signature it got.
+`signMessage` deliberately returns the SEP-43 "invalid request" error: Veil's
+signed-message format embeds the passkey credential id, and nothing about the
+credential may be reachable from the page.
+
+Every call becomes one `postMessage` envelope, answered by
+`lib/dappProviderBridge.ts`, and the bridge checks the origin again per message
+using the frame URL the WebView reports — the page's own claim about who it is
+counts for nothing. Address disclosure needs the `address_disclosure` grant and
+asks for it once per site. Signing needs `transaction_signing` and asks **every
+single time**, even for a site that already holds the grant: a remembered grant
+means the site may ask, never that it may sign. What the sheet shows is the dApp's
+directory name and its real origin, and the request decoded by
+`lib/transactionRequestDetails.ts` — contract address in full, function name,
+amount and destination for a payment. A request that cannot be decoded is labelled
+as such and never presented as safe. Closing the browser, navigating away, or
+having a navigation blocked all decline whatever is still queued, so no page keeps
+a promise hanging.
+
+Two things the provider will not do, on purpose:
+
+- It signs a transaction but never submits one. `opts.submit` is refused, as are a
+  `networkPassphrase` that is not the network this wallet is on, an `opts.address`
+  naming a wallet other than the one on this device, a fee-bump envelope, a
+  multi-operation envelope, and any operation that is not a single
+  `invokeHostFunction` call. A transaction whose source is a contract wallet other
+  than this device's is refused outright rather than merely labelled. A dApp that
+  needs any of that can still have the wallet sign the authorization entry and
+  assemble the result itself.
+- Nothing secret ever enters the message. The page sees an address, a network
+  name, and signed XDR. The fee-payer seed, the passkey credential id, and the
+  DER-to-raw signature work all stay on the app side of the bridge, and the reply
+  is injected as one escaped JSON string.
+
+`signAuthEntry` accepts both shapes in the wild: SEP-43's single base64 entry and
+Freighter's array. Each entry is validated on its own (it must carry a
+`sorobanCredentialsAddress` credential for this device's wallet address), one
+sheet is shown per call, and every entry in an accepted batch is signed with the
+same ceremony `signXdrPayload` uses, because the contract's `__check_auth` cannot
+tell the two doors apart.
 
 ## Deep linking
 

@@ -150,11 +150,21 @@ describe('isUserRejection', () => {
   it('recognises a decline rather than a failure', () => {
     expect(isUserRejection(new Error('USER_REJECTED'))).toBe(true);
     expect(isUserRejection(new Error('NotAllowedError: the request was denied'))).toBe(true);
-    expect(isUserRejection(new Error('The operation was cancelled.'))).toBe(true);
+    // The cancellation is recognised by its WebAuthn name, which is what the
+    // prompt actually reports; the wording alone is not evidence of a decline.
+    expect(isUserRejection(new DOMException('The operation was cancelled.', 'AbortError'))).toBe(true);
+    expect(isUserRejection({ message: 'The operation was cancelled by the user' })).toBe(true);
   });
 
   it('treats genuine failures as failures', () => {
     expect(isUserRejection(new Error('Simulation failed: trap'))).toBe(false);
     expect(isUserRejection('network unreachable')).toBe(false);
+  });
+
+  it('does not read a network timeout as the user declining', () => {
+    // A dApp told "user rejected" stops asking; a Horizon timeout is a failure.
+    expect(isUserRejection(new Error('timeout of 30000ms exceeded'))).toBe(false);
+    expect(isUserRejection(new Error('request timed out'))).toBe(false);
+    expect(isUserRejection(new Error('The sheet was dismissed'))).toBe(false);
   });
 });

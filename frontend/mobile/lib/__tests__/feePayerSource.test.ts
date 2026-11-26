@@ -34,6 +34,7 @@ jest.mock('../walletStore', () => ({
 jest.mock('../passkey', () => ({
   evaluatePrf: (...a: unknown[]) => mockEvaluatePrf(...a),
 }));
+jest.mock('../classicWallet', () => ({ fundWithFriendbot: jest.fn(async () => false) }));
 jest.mock('../testnetWallet', () => ({ fundWithFriendbot: jest.fn(async () => false) }));
 jest.mock('../walletBreadcrumbs', () => ({ writeBreadcrumbs: jest.fn(async () => undefined) }));
 

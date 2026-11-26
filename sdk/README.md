@@ -14,7 +14,7 @@ Optional peer dependencies based on your framework:
 - **React**: `npm install react react-dom @tanstack/react-query`
 - **Vue 3**: `npm install vue`
 - **Angular**: `npm install @angular/core`
-- **React Native / Expo**: `npm install react-native react-native-passkey`
+- **React Native / Expo**: `npm install react-native react-native-passkeys`
 
 ---
 

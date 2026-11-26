@@ -9,12 +9,17 @@
  * switch, so no control on this screen is a placebo.
  */
 
-import { useMemo, useSyncExternalStore } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useSyncExternalStore, useState } from 'react';
+import { ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { useTheme } from '../../hooks/useTheme';
 import { getNetworkName, subscribeToNetwork } from '../../lib/network';
 import { getPrivacySettingsOptions } from '../../lib/privacy/settings';
+import {
+  getSentryDsn,
+  getSentryOptIn,
+  setSentryOptIn,
+} from '../../lib/sentry';
 import type { ThemeColors } from '../../lib/theme';
 
 export default function PrivacySettingsScreen() {
@@ -50,7 +55,76 @@ export default function PrivacySettingsScreen() {
           </View>
         </View>
       ))}
+
+      <CrashReportOptIn />
     </ScrollView>
+  );
+}
+
+/**
+ * Crash reports (#442) — the mobile twin of the web wallet's opt-in Sentry
+ * toggle.
+ *
+ * This is the section's one real switch, unlike the badge rows above: it
+ * changes app behaviour on tap, and takes effect immediately, not at next
+ * launch. It renders nothing when the build was never given a DSN — a control
+ * that cannot do anything is exactly the placebo this screen's header comment
+ * rules out.
+ */
+function CrashReportOptIn() {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  // Read the stored choice after mount — AsyncStorage is async, and the row
+  // must render either way rather than suspending the screen.
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getSentryOptIn().then((value) => {
+      if (!cancelled) setEnabled(value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!getSentryDsn()) return null;
+
+  const toggle = (next: boolean) => {
+    // Optimistic: the stored flag is written first thing inside
+    // setSentryOptIn, so the visible state and the effective one move together.
+    setEnabled(next);
+    void setSentryOptIn(next);
+  };
+
+  return (
+    <View>
+      <Text style={styles.sectionLabel}>CRASH REPORTS</Text>
+      <Text style={styles.sectionBody}>
+        Share anonymous crash reports when something breaks. Off by default. {''}
+        Addresses, secrets and amounts are stripped before anything leaves the phone.
+      </Text>
+      <View
+        style={styles.row}
+        accessible
+        accessibilityLabel={`Anonymous crash reports: ${enabled ? 'On' : 'Off'}`}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: enabled }}
+      >
+        <View style={styles.rowCopy}>
+          <Text style={styles.rowLabel}>Anonymous crash reports</Text>
+          <Text style={styles.rowDetail}>
+            {enabled ? 'On — errors are sent, scrubbed of wallet data.' : 'Off — nothing leaves this phone.'}
+          </Text>
+        </View>
+        <Switch
+          value={enabled}
+          onValueChange={toggle}
+          testID="crash-reports-toggle"
+          trackColor={{ false: colors.border, true: colors.accent }}
+        />
+      </View>
+    </View>
   );
 }
 

@@ -41,7 +41,7 @@ const DEFAULT_POOL_IDS: Record<'mainnet' | 'testnet', string> = {
   testnet: '',
 }
 
-function configuredPoolIds(): string[] {
+export function configuredPoolIds(): string[] {
   const name = getNetwork().name
   // Per-network first, then the shared variable, then the built-in default.
   // Next.js inlines NEXT_PUBLIC_* at build time and only when referenced

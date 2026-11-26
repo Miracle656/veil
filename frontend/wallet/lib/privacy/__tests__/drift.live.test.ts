@@ -10,9 +10,13 @@
  *
  * Environment:
  *   SPP_DRIFT_LIVE=1          run the check
- *   SPP_DRIFT_WARN_ONLY=1     report drift / unreachable upstream but do not fail
+ *   SPP_DRIFT_WARN_ONLY=1     report drift but do not fail (PR runs)
  *   SPP_DRIFT_REPORT=<path>   on drift, also write the report here (the workflow files an issue from it)
  *   SPP_SDK_REPORT=<path>     same, for the stale-SDK finding
+ *
+ * An unreachable upstream never fails the job in either mode: it is reported
+ * as UNKNOWN via a workflow warning annotation (#1153). Only a genuine
+ * disagreement between the pin and upstream is drift.
  */
 
 import { writeFileSync } from 'fs'
@@ -21,6 +25,18 @@ import { SPP_UPSTREAM_DEPLOYMENTS_URL, checkSppDrift, checkSppSdkFreshness } fro
 
 const live = process.env.SPP_DRIFT_LIVE === '1'
 const warnOnly = process.env.SPP_DRIFT_WARN_ONLY === '1'
+
+/**
+ * An unreachable upstream is an UNKNOWN result, never drift and never a red
+ * run (#1153): only "upstream disagrees with our pin" is drift. The direct
+ * stdout write puts a GitHub `::warning::` annotation at column 0 (jest would
+ * prefix and indent console output, which Actions then ignores), so the
+ * outage stays visible on the run and in the step summary without failing it.
+ */
+function reportUnknown(message: string): void {
+  process.stdout.write(`::warning title=SPP drift check::UNKNOWN — ${message}\n`)
+  console.warn(message)
+}
 
 ;(live ? it : it.skip)('pinned SPP testnet config matches upstream deployments.json', async () => {
   const result = await checkSppDrift()
@@ -38,13 +54,13 @@ const warnOnly = process.env.SPP_DRIFT_WARN_ONLY === '1'
   }
 
   if (result.status === 'upstream-unreachable') {
-    // Not drift: no report file is written, so the workflow does not open an issue for it.
-    const message = `Upstream SPP deployments unreachable: ${result.error}`
-    if (warnOnly) {
-      console.warn(message)
-      return
-    }
-    throw new Error(message)
+    // UNKNOWN, not drift (#1153): an unreachable upstream says nothing about
+    // whether our pin matches it, so it must not fail the job the same way a
+    // real disagreement does — that is what taught people to re-run this check
+    // instead of reading it. The annotation keeps the outage visible on the
+    // run; no report file is written, so the workflow files no issue either.
+    reportUnknown(`Upstream SPP deployments unreachable: ${result.error}`)
+    return
   }
 
   expect(result.status).toBe('in-sync')
@@ -76,12 +92,9 @@ const warnOnly = process.env.SPP_DRIFT_WARN_ONLY === '1'
   }
 
   if (result.status === 'upstream-unreachable') {
-    const message = `Could not check SPP SDK freshness: ${result.error}`
-    if (warnOnly) {
-      console.warn(message)
-      return
-    }
-    throw new Error(message)
+    // UNKNOWN, not staleness — same reasoning as the address check above.
+    reportUnknown(`Could not check SPP SDK freshness: ${result.error}`)
+    return
   }
 
   expect(result.status).toBe('in-sync')

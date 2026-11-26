@@ -12,6 +12,7 @@ import { knownDepositAddresses } from '../lib/offramp';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
+import { useReverseName } from '../hooks/useReverseName';
 
 // ── Props ───────────────────────────────────────────────────────────────────
 
@@ -39,6 +40,15 @@ export interface ActivityFeedProps {
 /** Truncate an address the way every Stellar explorer does. */
 function shortAddress(value: string): string {
   return value.length > 12 ? `${value.slice(0, 6)}…${value.slice(-6)}` : value;
+}
+
+function CounterpartyText({ address, style }: { address: string; style: any }) {
+  const { name } = useReverseName(address);
+  return (
+    <Text style={style} numberOfLines={1}>
+      {name ?? shortAddress(address)}
+    </Text>
+  );
 }
 
 /**
@@ -131,9 +141,7 @@ export default function ActivityFeed({
         </View>
 
         <View style={styles.rowLeft}>
-          <Text style={styles.rowCounterparty} numberOfLines={1}>
-            {shortAddress(item.counterparty)}
-          </Text>
+          <CounterpartyText address={item.counterparty} style={styles.rowCounterparty} />
           <View style={styles.rowMetaLine}>
             <Text style={styles.rowLabel}>
               {cashedOut ? '🏦 ' : swapped ? '⇄ ' : received ? '↓ ' : '↑ '}

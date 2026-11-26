@@ -1,6 +1,7 @@
 'use client'
 import { isNonSafariIOS } from '@/lib/iosBrowser'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
+import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,6 +34,7 @@ import { getDueSchedules, updateSchedule, advanceNextRun, type PaymentSchedule }
 import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
+import { mapOperations, mergeHistory, HISTORY_MAX_ROWS, HISTORY_PAGE_SIZE, type HorizonOperation } from '@/lib/walletHistory'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
@@ -43,19 +45,11 @@ const network = getNetwork()
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 import type { WalletAsset } from '@/lib/walletTypes'
+import { mergeAssetBalances, readContractAssetBalances } from '@/lib/contractAssets'
+import { movableWalletAssets, type IssuedWalletAsset } from '@/lib/moveFromWallet'
+import { moveAssetToSpending } from '@/lib/moveToSpending'
 
 // ── Shared types ─────────────────────────────────────────────────────────────
-
-type HorizonOp = {
-  id: string; type: string
-  from?: string; to?: string; funder?: string; account?: string
-  amount?: string; starting_balance?: string
-  asset_type?: string; asset_code?: string; asset_issuer?: string
-  source_amount?: string
-  source_asset_type?: string; source_asset_code?: string
-  created_at: string; transaction_hash: string
-  transaction?: { memo?: string }
-}
 
 type WraithTransfer = {
   id: number; eventType: string; fromAddress: string | null
@@ -64,44 +58,6 @@ type WraithTransfer = {
 }
 
 type WraithPage = { transfers: WraithTransfer[], next_cursor?: string | null }
-
-function mapHorizonOps(ops: HorizonOp[], signerPublicKey: string): import('@/components/TxDetailSheet').TxRecord[] {
-  return ops
-    .filter(p => p.type === 'payment' || p.type === 'create_account' || p.type === 'path_payment_strict_send')
-    .map(p => {
-      if (p.type === 'create_account') {
-        return {
-          id: p.id, type: 'received' as const,
-          amount: p.starting_balance ?? '0', asset: 'XLM',
-          counterparty: p.funder ?? 'Friendbot',
-          timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
-          hash: p.transaction_hash,
-        }
-      }
-      if (p.type === 'path_payment_strict_send') {
-        const srcAsset = p.source_asset_type === 'native' ? 'XLM' : (p.source_asset_code ?? 'XLM')
-        const dstAsset = p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? '')
-        return {
-          id: p.id, type: 'swapped' as const,
-          amount: p.source_amount ?? '0', asset: srcAsset,
-          destAmount: p.amount ?? '0', destAsset: dstAsset,
-          counterparty: 'Stellar DEX',
-          timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
-          hash: p.transaction_hash,
-        }
-      }
-      return {
-        id: p.id,
-        type: p.from === signerPublicKey ? 'sent' as const : 'received' as const,
-        amount: p.amount ?? '0',
-        asset: p.asset_type === 'native' ? 'XLM' : (p.asset_code ?? ''),
-        counterparty: p.from === signerPublicKey ? (p.to ?? '') : (p.from ?? ''),
-        timestamp: Math.floor(new Date(p.created_at).getTime() / 1000),
-        hash: p.transaction_hash,
-        memo: p.transaction?.memo,
-      }
-    })
-}
 
 // ── Module-level cache ────────────────────────────────────────────────────────
 // Survives component unmount/remount within the SPA so navigating away and
@@ -142,6 +98,12 @@ function DashboardPageContent() {
   const [isSweeping, setIsSweeping]         = useState(false)
   const [sweepError, setSweepError]         = useState<string | null>(null)
   const [sweepDismissed, setSweepDismissed] = useState(false)
+  // Issued assets (USDC…) sitting in the wallet contract, which the web Send,
+  // Swap and Pay screens cannot spend until they are moved.
+  const [walletHeld, setWalletHeld]         = useState<IssuedWalletAsset[]>([])
+  const [movingAsset, setMovingAsset]       = useState<string | null>(null)
+  const [moveError, setMoveError]           = useState<string | null>(null)
+  const [moveDismissed, setMoveDismissed]   = useState(false)
   const [showConnectDapp, setShowConnectDapp] = useState(false)
   const [connectToast, setConnectToast] = useState<string | null>(null)
   const [sep24Modal, setSep24Modal] = useState<'deposit' | 'withdraw' | null>(null)
@@ -262,7 +224,7 @@ function DashboardPageContent() {
     // Establish the fee-payer for this session (idempotent, fire-and-forget).
     // PRF wallets keep the seed in sessionStorage only — never copied to
     // localStorage — so the lock protects it at rest (ADR 0003, C3).
-    void ensureFeePayer().then(() => {
+    void ensureFeePayer(undefined, { passive: true }).then(() => {
       // After the fee-payer is established, check whether a silent PRF→legacy
       // downgrade occurred (issue #629). Show a banner if so.
       setShowPrfDowngrade(isFeePayerPrfDowngrade(getFeePayerDiagnostics()))
@@ -336,16 +298,21 @@ function DashboardPageContent() {
           .filter(b => b.asset_type !== 'native' && parseFloat(b.balance) > 0)
           .map(b => ({ code: b.asset_code, issuer: b.asset_issuer, balance: b.balance }))
 
-        // Transaction history (fee-payer account)
-        const paymentsPage = await horizonServer
-          .payments()
+        // Transaction history. Operations, not payments: the payments feed
+        // leaves out contract calls, so cash-outs and anything else the wallet
+        // contract did never showed here. See lib/walletHistory.ts.
+        const operationsPage = await horizonServer
+          .operations()
           .forAccount(signerPublicKey)
-          .limit(20)
+          .limit(HISTORY_PAGE_SIZE)
           .order('desc')
           .call()
 
-        horizonNextRef.current = paymentsPage.records.length >= 20 ? paymentsPage.next : null
-        txRecords = mapHorizonOps(paymentsPage.records as HorizonOp[], signerPublicKey)
+        horizonNextRef.current = operationsPage.records.length >= HISTORY_PAGE_SIZE ? operationsPage.next : null
+        txRecords = mapOperations(
+          operationsPage.records as unknown as HorizonOperation[],
+          [signerPublicKey, walletAddress],
+        )
       } catch { /* not yet funded */ }
     }
 
@@ -390,12 +357,9 @@ function DashboardPageContent() {
           })),
         ]
 
-        // Merge Wraith records with Horizon records, deduplicate by hash, sort newest first
-        const merged = [...wraithRecords, ...txRecords]
-          .filter((tx, i, arr) => arr.findIndex(t => t.hash === tx.hash) === i)
-          .sort((a, b) => b.timestamp - a.timestamp)
-          .slice(0, 30)
-        txRecords = merged
+        // Join the two sources. Never by transaction hash alone: a send and
+        // its fee share one, and that is how the send used to go missing.
+        txRecords = mergeHistory(txRecords, wraithRecords).slice(0, HISTORY_MAX_ROWS)
       } catch { /* Wraith offline — fall back to Horizon only */ }
     }
 
@@ -419,10 +383,17 @@ function DashboardPageContent() {
     }
 
     // ── 5. Combine and display ───────────────────────────────────────────────
+    // XLM was already summed across the contract and the fee-payer; every
+    // other asset came from the fee-payer alone. So USDC sitting in the wallet
+    // contract was invisible, and a wallet could show plenty while the
+    // contract that actually spends it held nothing — which is exactly what
+    // happened the first time somebody tried to buy a name.
+    const contractAssets = await readContractAssetBalances(walletAddress, otherAssets)
+    setWalletHeld(movableWalletAssets(contractAssets))
     const totalXlm = (contractXlm + feePayerXlm).toFixed(7)
     const finalAssets: WalletAsset[] = [
       { code: 'XLM', issuer: null, balance: totalXlm },
-      ...otherAssets,
+      ...mergeAssetBalances(otherAssets, contractAssets),
     ]
     cachedAssets = finalAssets
     setAssets(finalAssets)
@@ -467,8 +438,10 @@ function DashboardPageContent() {
       if (horizonNextRef.current) {
         try {
           const page = await horizonNextRef.current()
-          additionalRecords.push(...mapHorizonOps(page.records as HorizonOp[], signerPublicKey))
-          horizonNextRef.current = page.records.length >= 20 ? page.next : null
+          additionalRecords.push(
+            ...mapOperations(page.records as unknown as HorizonOperation[], [signerPublicKey, walletAddress]),
+          )
+          horizonNextRef.current = page.records.length >= HISTORY_PAGE_SIZE ? page.next : null
         } catch { /* Horizon unavailable */ }
       }
 
@@ -593,12 +566,18 @@ function DashboardPageContent() {
       if (!feePayer) throw new Error('No passkey found. Please register again.')
       const signerPublicKey = feePayer.publicKey()
 
-      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
-      if (!friendbotUrl) {
+      if (getNetwork().name !== 'testnet') {
         await fetchData()
         setFundingError(
           `Fee-payer restored. Fund ${signerPublicKey} with XLM from an external wallet to send or swap on mainnet.`
         )
+        return
+      }
+
+      const friendbotUrl = buildFriendbotUrl(signerPublicKey)
+      if (!friendbotUrl) {
+        await fetchData()
+        setFundingError('Friendbot is unavailable.')
         return
       }
 
@@ -627,43 +606,8 @@ function DashboardPageContent() {
     setIsSweeping(true)
     setSweepError(null)
     try {
-      const signerSecret = walletSession.getItem('veil_signer_secret')
-        || walletLocal.getItem('veil_signer_secret')
-      if (!signerSecret) throw new Error('Signing key not found. Return to dashboard and tap "Set up fee-payer".')
-      const feePayerKp = Keypair.fromSecret(signerSecret)
-
-      const localSignAuthEntry = async (payload: Uint8Array): Promise<WebAuthnSignature | null> => {
-        const keyId        = walletLocal.getItem('invisible_wallet_key_id')
-        const publicKeyHex = walletLocal.getItem('invisible_wallet_public_key')
-        if (!keyId || !publicKeyHex) throw new Error('No passkey found. Please register the wallet first.')
-
-        const challenge  = payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) as ArrayBuffer
-        const normalized = keyId.replace(/-/g, '+').replace(/_/g, '/')
-        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
-        const credIdBin  = atob(padded)
-        const credId     = Uint8Array.from(credIdBin, c => c.charCodeAt(0))
-
-        const assertion = await navigator.credentials.get({
-          publicKey: {
-            challenge,
-            allowCredentials: [{ id: credId, type: 'public-key' }],
-            userVerification: 'required',
-          },
-        }) as PublicKeyCredential | null
-
-        if (!assertion) return null
-
-        const response   = assertion.response as AuthenticatorAssertionResponse
-        const rawSig     = derToRawSignature(response.signature)
-        const publicKeyBytes = hexToUint8Array(publicKeyHex)
-
-        return {
-          publicKey:      publicKeyBytes,
-          authData:       new Uint8Array(response.authenticatorData),
-          clientDataJSON: new Uint8Array(response.clientDataJSON),
-          signature:      rawSig,
-        }
-      }
+      const feePayerKp = getFeePayerKeypair()
+      const localSignAuthEntry = buildSignAuthEntry()
 
       // Moving the contract's own balance is a call `__check_auth` answers, so
       // the contract must exist. Wallets are deployed on first use; funds can
@@ -688,6 +632,28 @@ function DashboardPageContent() {
       )
     } finally {
       setIsSweeping(false)
+    }
+  }
+
+  // ── Move an issued asset (USDC…) from C... to the fee-payer ────────────────
+  // Same passkey-authorised transfer as the XLM sweep, with one step XLM does
+  // not need: a G account cannot receive an asset it has no trustline for.
+  const handleMoveAsset = async (asset: IssuedWalletAsset) => {
+    setMovingAsset(`${asset.code}:${asset.issuer}`)
+    setMoveError(null)
+    try {
+      await moveAssetToSpending(asset, walletAddress!, wallet.deploy)
+      setMoveDismissed(false)
+      await fetchData()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setMoveError(
+        msg.includes('NotAllowedError') || msg.includes('cancelled')
+          ? 'Passkey verification was cancelled. Please try again.'
+          : msg
+      )
+    } finally {
+      setMovingAsset(null)
     }
   }
 
@@ -868,6 +834,54 @@ function DashboardPageContent() {
         )}
 
 
+        {/* ── Move prompt: USDC (or another issued asset) held by the contract ── */}
+        {!loading && walletHeld.length > 0 && !moveDismissed && (
+          <div style={{
+            marginBottom: '1.5rem',
+            padding: '1rem 1.25rem',
+            background: 'var(--surface-md)',
+            border: '1px solid var(--border-dim)',
+            borderRadius: '12px',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <p style={{ fontSize: '0.875rem', color: 'var(--off-white)', fontWeight: 500, marginBottom: '0.375rem' }}>
+                Money in your wallet address
+              </p>
+              <button
+                onClick={() => setMoveDismissed(true)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-muted)', fontSize: '1rem', lineHeight: 1, padding: '0 0 0 0.5rem' }}
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.55)', marginBottom: '0.875rem', lineHeight: 1.5 }}>
+              Send, Swap and Pay use your spending wallet. Move this there to use it. You will be asked for your passkey.
+            </p>
+            {moveError && (
+              <p style={{ color: 'var(--teal)', fontSize: '0.75rem', marginBottom: '0.625rem' }}>{moveError}</p>
+            )}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+              {walletHeld.map((asset) => {
+                const key = `${asset.code}:${asset.issuer}`
+                return (
+                  <button
+                    key={key}
+                    className="btn-secondary"
+                    onClick={() => handleMoveAsset(asset)}
+                    disabled={movingAsset !== null}
+                    style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
+                  >
+                    {movingAsset === key
+                      ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                      : `Move ${asset.balance} ${asset.code} to spending wallet`}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ── Three-column layout: center + right rail ──
             The row container. `.vw-center-col` and `.vw-rail` were written as
             flex children and left as plain siblings, so they stacked and the
@@ -941,6 +955,7 @@ function DashboardPageContent() {
             currencyCode={currencyCode}
             fxRate={fxRate}
             hideAmounts={hideAmounts}
+            walletAddress={walletAddress}
           />
         )}
 
@@ -954,7 +969,7 @@ function DashboardPageContent() {
         <div className="vw-center-col">
           {/* ── Activity feed ── */}
           <div className="vw-panel" style={{ padding: '8px 26px 16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 4px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', padding: '20px 0 4px' }}>
               <div className="vw-label">Activity</div>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/activity')}>See all</button>
             </div>
@@ -1009,7 +1024,7 @@ function DashboardPageContent() {
             truth (#740). */}
         <div className="vw-rail">
           <div className="vw-panel" style={{ padding: '8px 28px 18px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '20px 0 6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px', padding: '20px 0 6px' }}>
               <div className="vw-label">Assets</div>
               <button className="vw-meta" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => router.push('/assets')}>Manage</button>
             </div>

@@ -83,7 +83,7 @@ const config: DocsThemeConfig = {
   footer: {
     content: (
       <span style={{ fontFamily: 'Inter, sans-serif', fontSize: '0.75rem', color: '#D6D2C4' }}>
-        © {new Date().getFullYear()} Veil — Powered by Stellar Soroban · WebAuthn / FIDO2 · MIT
+        © {new Date().getFullYear()} Veil, a product of Divinity Labs Limited (RC 10031131) · Powered by Stellar Soroban · WebAuthn / FIDO2 · MIT
       </span>
     ),
   },
