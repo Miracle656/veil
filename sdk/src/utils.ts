@@ -1,7 +1,5 @@
 export { computeWalletAddress } from './walletAddress';
 
-export { computeWalletAddress } from './walletAddress';
-
 // ── Buffer helpers ────────────────────────────────────────────────────────────
 
 export function bufferToHex(input: Uint8Array | ArrayBuffer): string {
