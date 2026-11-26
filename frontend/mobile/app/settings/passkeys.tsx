@@ -1,18 +1,24 @@
 /**
- * Passkeys — the keys that can authorise this wallet on chain.
+ * Passkeys — the keys that can authorise this wallet on chain, and adding one.
  *
- * Read-only, deliberately. The first version of this screen had an "Add a
- * passkey" button that called the SDK's `register()`, and that call overwrites
- * `invisible_wallet_key_id`, `invisible_wallet_address` and
- * `invisible_wallet_public_key` in AsyncStorage — the exact keys walletStore
- * reads. It would have repointed the device at a different wallet address and a
- * credential whose PRF derives a different fee-payer G-account, stranding the
- * money, and then failed anyway: the SDK builds a 4-element signature vector
- * where the contract requires 5, so `addSigner` cannot succeed from here.
+ * Adding a passkey here is NOT register(). The first version of this screen
+ * called the SDK's register(), which overwrites the wallet address, credential
+ * id and public key this device is bound to — repointing it at a new, empty
+ * wallet and a different fee payer — and then failed anyway, because the SDK
+ * sent a four-element signature where the contract requires five.
  *
- * Adding a second device needs the app to hold several credentials at once
- * without disturbing the primary binding. That is a piece of work, not a button,
- * so this screen shows what is registered and says plainly what is missing.
+ * Both halves are fixed underneath this screen:
+ *
+ *  - lib/addPasskeySigner creates the new credential under a fresh user handle,
+ *    keeps it in its own store (lib/additionalSigners, guarded so it cannot
+ *    write the primary binding), and submits `add_signer` approved by the
+ *    existing passkey through the same five-element ceremony every spend uses.
+ *  - The new key counts as added only once the wallet's on-chain signer list
+ *    shows it. Until then it is listed as "not finished", with a way to finish.
+ *
+ * The other device then uses "Sign in with wallet address" and its new passkey.
+ * The wallet contract stores one WebAuthn origin, so that device must run the
+ * Veil app on the same platform as this one; the screen says so up front.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -21,8 +27,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FlowHeader } from '../../components/FlowHeader';
 import { useTheme } from '../../hooks/useTheme';
+import { addPasskeySigner, finishPendingSigner } from '../../lib/addPasskeySigner';
+import { forgetPendingSigner, listAdditionalSigners, type AdditionalSigner } from '../../lib/additionalSigners';
 import { isWalletDeployed } from '../../lib/contractSpend';
 import { errorMessage } from '../../lib/errorMessage';
+import { passkeyFailureMessage } from '../../lib/passkeyOutcome';
 import { readSigners, type WalletSigner } from '../../lib/signers';
 import type { ThemeColors } from '../../lib/theme';
 import { getPasskeyPublicKey, getWalletAddress } from '../../lib/walletStore';
@@ -35,8 +44,23 @@ type LoadState =
   | { kind: 'undeployed' }
   | { kind: 'error'; message: string };
 
+type AddState =
+  | { kind: 'idle' }
+  /** The user has to read what adding does before it happens. */
+  | { kind: 'confirm' }
+  | { kind: 'working'; label: string }
+  | { kind: 'done'; message: string }
+  | { kind: 'error'; message: string };
+
 function shortKey(publicKey: string): string {
   return publicKey.length > 20 ? `${publicKey.slice(0, 10)}…${publicKey.slice(-8)}` : publicKey;
+}
+
+/** A failure message for the add flow; null when the user simply cancelled. */
+function addFailure(error: unknown): string | null {
+  const passkey = passkeyFailureMessage(error);
+  if (passkey === null) return null;
+  return passkey || errorMessage(error);
 }
 
 export default function PasskeysScreen() {
@@ -44,12 +68,15 @@ export default function PasskeysScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [signers, setSigners] = useState<WalletSigner[]>([]);
+  const [saved, setSaved] = useState<AdditionalSigner[]>([]);
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
+  const [add, setAdd] = useState<AddState>({ kind: 'idle' });
   const [thisDeviceKey, setThisDeviceKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
     try {
+      setSaved(await listAdditionalSigners().catch(() => []));
       const address = await getWalletAddress();
       if (!address) {
         setState({ kind: 'error', message: 'No wallet on this device yet.' });
@@ -74,6 +101,61 @@ export default function PasskeysScreen() {
       .catch(() => undefined);
   }, [load]);
 
+  const runAdd = useCallback(async () => {
+    setAdd({ kind: 'working', label: 'Create the new passkey, then approve with this one…' });
+    try {
+      const { signer } = await addPasskeySigner();
+      setAdd(
+        signer.status === 'active'
+          ? { kind: 'done', message: `Added as passkey #${signer.signerIndex}. Your wallet address and fee account are unchanged.` }
+          : { kind: 'done', message: 'Sent. The wallet has not listed the new passkey yet — use “Finish adding” below in a moment.' },
+      );
+    } catch (err) {
+      const message = addFailure(err);
+      setAdd(message === null ? { kind: 'idle' } : { kind: 'error', message });
+    } finally {
+      void load();
+    }
+  }, [load]);
+
+  const runFinish = useCallback(
+    async (credentialId: string) => {
+      setAdd({ kind: 'working', label: 'Checking the wallet’s signers…' });
+      try {
+        const { signer } = await finishPendingSigner(credentialId);
+        setAdd(
+          signer.status === 'active'
+            ? { kind: 'done', message: `Added as passkey #${signer.signerIndex}.` }
+            : { kind: 'done', message: 'Still not listed on the wallet. Try again in a moment.' },
+        );
+      } catch (err) {
+        const message = addFailure(err);
+        setAdd(message === null ? { kind: 'idle' } : { kind: 'error', message });
+      } finally {
+        void load();
+      }
+    },
+    [load],
+  );
+
+  const runForget = useCallback(
+    async (credentialId: string) => {
+      try {
+        await forgetPendingSigner(credentialId);
+        setAdd({ kind: 'idle' });
+      } catch (err) {
+        setAdd({ kind: 'error', message: errorMessage(err) });
+      } finally {
+        void load();
+      }
+    },
+    [load],
+  );
+
+  const savedByKey = useMemo(() => new Map(saved.map((s) => [s.publicKey, s])), [saved]);
+  const pending = saved.filter((s) => s.status === 'pending');
+  const busy = add.kind === 'working';
+
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
       <View style={styles.header}>
@@ -94,7 +176,8 @@ export default function PasskeysScreen() {
             <Text style={styles.cardTitle}>Not on chain yet</Text>
             <Text style={styles.hint}>
               This wallet is created on chain the first time it spends. Your passkey already
-              controls it; the signer list appears here after that first transaction.
+              controls it; the signer list appears here after that first transaction, and you can
+              add a second passkey then.
             </Text>
           </View>
         ) : state.kind === 'error' ? (
@@ -112,14 +195,15 @@ export default function PasskeysScreen() {
         ) : (
           <View style={styles.card}>
             {signers.map((signer) => {
-              const isThisDevice =
-                thisDeviceKey !== null && signer.publicKey.toLowerCase() === thisDeviceKey;
+              const key = signer.publicKey.toLowerCase();
+              const isThisDevice = thisDeviceKey !== null && key === thisDeviceKey;
+              const isAdded = savedByKey.has(key);
               return (
                 <View key={signer.index} style={styles.signerRow}>
                   <View style={styles.signerText}>
                     <Text style={styles.signerTitle}>
                       Passkey #{signer.index}
-                      {isThisDevice ? ' · this device' : ''}
+                      {isThisDevice ? ' · this device' : isAdded ? ' · added from here' : ''}
                     </Text>
                     <Text style={styles.mono}>{shortKey(signer.publicKey)}</Text>
                   </View>
@@ -132,10 +216,102 @@ export default function PasskeysScreen() {
           </View>
         )}
 
+        {pending.length > 0 ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Not finished</Text>
+            <Text style={styles.hint}>
+              These passkeys were created but the wallet does not list them yet, so they cannot
+              sign. Finishing checks the wallet first and never adds a key twice.
+            </Text>
+            {pending.map((signer) => (
+              <View key={signer.credentialId} style={styles.pendingRow}>
+                <Text style={styles.mono}>{shortKey(signer.publicKey)}</Text>
+                <View style={styles.rowActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void runFinish(signer.credentialId)}
+                    style={({ pressed }) => [styles.secondary, styles.flex, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.secondaryText}>Finish adding</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={busy}
+                    onPress={() => void runForget(signer.credentialId)}
+                    style={({ pressed }) => [styles.secondary, styles.flex, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.secondaryText}>Forget</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : null}
+
+        {state.kind === 'ready' ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Add another device</Text>
+            {add.kind === 'confirm' ? (
+              <>
+                <Text style={styles.hint}>
+                  This adds a second passkey to this same wallet. It does not replace the passkey on
+                  this phone, and your wallet address and fee account stay exactly as they are.
+                </Text>
+                <Text style={styles.hint}>
+                  1. Your phone asks where to save the new passkey — pick the other phone, tablet or
+                  security key.{'\n'}2. Approve with this phone&apos;s passkey. A small network fee
+                  is paid from your fee account.{'\n'}3. On the other device, open Veil and choose
+                  “Sign in with wallet address”.
+                </Text>
+                <Text style={styles.hint}>
+                  The other device must run the Veil app on the same kind of phone as this one: the
+                  wallet accepts passkeys from one app platform only, and the web wallet cannot sign
+                  for it.
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => void runAdd()}
+                  style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.primaryText}>Add a second passkey</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setAdd({ kind: 'idle' })}
+                  style={({ pressed }) => [styles.secondary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.secondaryText}>Cancel</Text>
+                </Pressable>
+              </>
+            ) : add.kind === 'working' ? (
+              <>
+                <ActivityIndicator color={colors.accent} />
+                <Text style={styles.hint}>{add.label}</Text>
+              </>
+            ) : (
+              <>
+                {add.kind === 'done' ? <Text style={styles.hint}>{add.message}</Text> : null}
+                {add.kind === 'error' ? <Text style={styles.error}>{add.message}</Text> : null}
+                <Text style={styles.hint}>
+                  Give another phone, tablet or security key its own passkey for this wallet, so
+                  losing one device does not lock you out.
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setAdd({ kind: 'confirm' })}
+                  style={({ pressed }) => [styles.secondary, pressed && styles.pressed]}
+                >
+                  <Text style={styles.secondaryText}>Add a passkey</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        ) : null}
+
         <Text style={styles.footnote}>
-          Registering a second device isn&apos;t available yet — it needs the app to hold more than
-          one passkey at a time, which it can&apos;t do safely today. Until then, your encrypted
-          backup (Settings → Wallet backup) is what restores this wallet on a new phone.
+          Your encrypted backup (Settings → Wallet backup) still restores this wallet on a new phone
+          if every passkey is lost.
         </Text>
       </ScrollView>
     </SafeAreaView>
@@ -157,6 +333,7 @@ const createStyles = (colors: ThemeColors) =>
     },
     cardTitle: { fontFamily: fontFamily.bodySemiBold, fontSize: 16, color: colors.textStrong },
     hint: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.textMuted },
+    error: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.danger },
     signerRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -166,6 +343,16 @@ const createStyles = (colors: ThemeColors) =>
     signerText: { flex: 1, gap: 3 },
     signerTitle: { fontFamily: fontFamily.bodyMedium, fontSize: 15, color: colors.textPrimary },
     mono: { fontFamily: fontFamily.address, fontSize: 12, color: colors.textMuted },
+    pendingRow: { gap: 8 },
+    rowActions: { flexDirection: 'row', gap: 8 },
+    flex: { flex: 1 },
+    primary: {
+      alignItems: 'center',
+      paddingVertical: 12,
+      borderRadius: 100,
+      backgroundColor: colors.accent,
+    },
+    primaryText: { fontFamily: fontFamily.bodySemiBold, fontSize: 14, color: colors.onAccent },
     secondary: {
       alignItems: 'center',
       paddingVertical: 11,

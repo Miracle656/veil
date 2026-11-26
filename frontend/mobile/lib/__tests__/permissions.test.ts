@@ -449,6 +449,108 @@ describe('signXdrForOrigin', () => {
   });
 });
 
+describe('alwaysPrompt', () => {
+  // What the injected provider runs on: a remembered grant is a standing
+  // permission to reach the prompt, never permission to sign. Without this, the
+  // second transaction a site asked for would go through without a human.
+  it('asks the user every time, even when the scope is already granted', async () => {
+    const { bridge } = await loadBridge();
+    const { prompt, seen } = scriptedPrompt(true);
+    const request = {
+      origin: 'https://swap.example',
+      scope: 'transaction_signing' as const,
+      prompt,
+      alwaysPrompt: true,
+    };
+
+    await bridge.authorizeDappRequest(request);
+    await bridge.authorizeDappRequest(request);
+    await bridge.authorizeDappRequest(request);
+
+    expect(seen).toHaveLength(3);
+  });
+
+  it('still stores the grant, so a site that has asked once is listed and revocable', async () => {
+    const { bridge, permissions } = await loadBridge();
+    const { prompt } = scriptedPrompt(true);
+
+    await bridge.authorizeDappRequest({
+      origin: 'https://swap.example',
+      scope: 'transaction_signing',
+      prompt,
+      alwaysPrompt: true,
+    });
+
+    expect(permissions.isOriginPermissionGranted('https://swap.example', 'transaction_signing')).toBe(true);
+  });
+
+  it('reports the earlier grant to the prompt, so the sheet can say "this site may ask"', async () => {
+    const { bridge } = await loadBridge();
+    const asked: { grantedAt: number | null }[] = [];
+    const recordingPrompt = jest.fn(async (request: { grantedAt: number | null }) => {
+      asked.push({ grantedAt: request.grantedAt });
+      return true;
+    });
+
+    await bridge.authorizeDappRequest({
+      origin: 'https://swap.example',
+      scope: 'transaction_signing',
+      prompt: recordingPrompt,
+      alwaysPrompt: true,
+    });
+    await bridge.authorizeDappRequest({
+      origin: 'https://swap.example',
+      scope: 'transaction_signing',
+      prompt: recordingPrompt,
+      alwaysPrompt: true,
+    });
+
+    expect(asked[0].grantedAt).toBeNull();
+    expect(typeof asked[1].grantedAt).toBe('number');
+  });
+
+  it('declining one alwaysPrompt request signs nothing and revokes nothing', async () => {
+    const { bridge, permissions } = await loadBridge();
+    const approve = scriptedPrompt(true);
+    const decline = scriptedPrompt(false);
+    const request = {
+      origin: 'https://swap.example',
+      scope: 'transaction_signing' as const,
+      alwaysPrompt: true,
+    };
+
+    await bridge.authorizeDappRequest({ ...request, prompt: approve.prompt });
+    await expect(
+      bridge.signXdrForOrigin({ ...request, prompt: decline.prompt }, 'xdr-1')
+    ).rejects.toBeInstanceOf(bridge.DappRequestRejected);
+
+    expect(mockSignXdrPayload).not.toHaveBeenCalled();
+    // A single "no" is not a revocation — the site may ask again.
+    expect(permissions.isOriginPermissionGranted('https://swap.example', 'transaction_signing')).toBe(
+      true
+    );
+  });
+
+  it('carries the decoded request into the prompt, and nowhere else', async () => {
+    const { bridge } = await loadBridge();
+    const seen: { details?: unknown }[] = [];
+    const prompt = jest.fn(async (request: { details?: unknown }) => {
+      seen.push(request);
+      return true;
+    });
+
+    await bridge.authorizeDappRequest({
+      origin: 'https://swap.example',
+      scope: 'transaction_signing',
+      prompt,
+      alwaysPrompt: true,
+      details: { operationType: 'contract', contractAddress: 'CABC', functionName: 'transfer' },
+    });
+
+    expect(seen[0].details).toMatchObject({ functionName: 'transfer' });
+  });
+});
+
 describe('formatGrantedAt', () => {
   it('renders the day the grant was made', async () => {
     const { formatGrantedAt } = await loadPermissions();
