@@ -902,7 +902,7 @@ export default function AirtimeScreen() {
                 • The {naira(ngn)} airtime may already have arrived on {phoneDigits}.
               </Text>
               <Text style={styles.hint}>
-                • Check the recipient&apos;s phone balance (dial your network&apos;s balance code) or ask them directly.
+                • Check the recipient's phone balance (dial your network's balance code) or ask them directly.
               </Text>
               <Text style={styles.hint}>
                 • If the airtime has not arrived, contact support with reference{' '}

@@ -632,7 +632,7 @@ export default function CableTvScreen() {
                 • The subscription may already have been activated for smartcard {smartcardDigits}.
               </Text>
               <Text style={styles.hint}>
-                • Check your provider&apos;s app or website, or wait for a confirmation SMS.
+                • Check your provider's app or website, or wait for a confirmation SMS.
               </Text>
               <Text style={styles.hint}>
                 • If the subscription has not arrived, contact support with reference{' '}

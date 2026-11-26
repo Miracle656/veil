@@ -214,8 +214,15 @@ export async function recordTakenOut(network: string, address: string, code: Ear
   await saveLedger(ledger);
 }
 
-/** What was earned, never below zero (a position can read a hair under principal after rounding). */
+/**
+ * What was earned: current value minus principal. Negative when the position is
+ * worth less than what went in; that is shown as a loss, never hidden as zero.
+ */
 export function earnedStroops(valueStroops: bigint, principalStroops: bigint): bigint {
-  const earned = valueStroops - principalStroops;
-  return earned > 0n ? earned : 0n;
+  return valueStroops - principalStroops;
+}
+
+/** True when a Savings failure message means the pool is full (supply cap or utilization limit). */
+export function isPoolFullError(message: string): boolean {
+  return /\butilization\b|\bsupply cap\b|\b(?:exceed(?:s|ed)?|over|reached)\b[^.]{0,30}\bcap\b/i.test(message);
 }

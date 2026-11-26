@@ -172,9 +172,21 @@ export async function loadBlendPools(): Promise<BlendPool[]> {
  * chain, so the honest figure is the position's current value.
  */
 export async function loadBlendPositions(userAddress: string): Promise<BlendPosition[]> {
-  const poolIds = configuredPoolIds();
-  if (poolIds.length === 0) return [];
+  return (await loadBlendPositionsChecked(userAddress)).positions;
+}
 
+/**
+ * Same read as loadBlendPositions, but says whether every pool answered.
+ * `complete: false` means at least one pool failed to load, so `positions` may
+ * be missing money that is really there and must not be read as "nothing saved".
+ */
+export async function loadBlendPositionsChecked(
+  userAddress: string
+): Promise<{ positions: BlendPosition[]; complete: boolean }> {
+  const poolIds = configuredPoolIds();
+  if (poolIds.length === 0) return { positions: [], complete: true };
+
+  let complete = true;
   const positions = await Promise.all(
     poolIds.map(async (poolId): Promise<BlendPosition[]> => {
       try {
@@ -197,12 +209,13 @@ export async function loadBlendPositions(userAddress: string): Promise<BlendPosi
           .filter((item): item is BlendPosition => item !== null);
       } catch (error) {
         console.warn(`[blend] failed loading positions for pool ${poolId}:`, error);
+        complete = false;
         return [];
       }
     })
   );
 
-  return positions.flat();
+  return { positions: positions.flat(), complete };
 }
 
 interface SupplyParams {

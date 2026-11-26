@@ -25,6 +25,7 @@ import type { BlendPool, BlendPosition } from '../blend';
 import {
   earnedStroops,
   formatStroops,
+  isPoolFullError,
   loadLedger,
   parseAmountToStroops,
   pickReserve,
@@ -122,9 +123,25 @@ describe('parseAmountToStroops', () => {
 });
 
 describe('earnedStroops', () => {
-  it('is value minus principal and never negative', () => {
+  it('is value minus principal, and a loss stays negative', () => {
     expect(earnedStroops(1050n, 1000n)).toBe(50n);
-    expect(earnedStroops(999n, 1000n)).toBe(0n);
+    expect(earnedStroops(999n, 1000n)).toBe(-1n);
+    expect(formatStroops(earnedStroops(999n, 1000n), 6)).toBe('-0.000000');
+    expect(formatStroops(earnedStroops(9_000_000n, 10_000_000n), 6)).toBe('-0.100000');
+  });
+});
+
+describe('isPoolFullError', () => {
+  it('matches a full pool', () => {
+    expect(isPoolFullError('Pool utilization too high')).toBe(true);
+    expect(isPoolFullError('Supply cap reached')).toBe(true);
+    expect(isPoolFullError('amount exceeds the cap')).toBe(true);
+  });
+  it('does not match unrelated errors that merely contain "cap"', () => {
+    expect(isPoolFullError('Cannot reach the network')).toBe(false);
+    expect(isPoolFullError('Signing key not found')).toBe(false);
+    expect(isPoolFullError('capability not supported')).toBe(false);
+    expect(isPoolFullError('Escape sequence invalid')).toBe(false);
   });
 });
 

@@ -26,7 +26,7 @@ import {
   buildBlendSupplyXdr,
   buildBlendWithdrawXdr,
   loadBlendPools,
-  loadBlendPositions,
+  loadBlendPositionsChecked,
   type BlendPool,
   type EarnAsset,
 } from '../lib/blend';
@@ -36,6 +36,7 @@ import { isPasskeyCancellation, PasskeyCeremonyError } from '../lib/passkeyOutco
 import {
   earnedStroops,
   formatStroops,
+  isPoolFullError,
   parseAmountToStroops,
   pickReserve,
   poolsHolding,
@@ -70,8 +71,7 @@ type Step = 'home' | 'add' | 'adding' | 'added' | 'take-out' | 'taking-out' | 't
 function describeFailure(error: unknown): string {
   if (error instanceof PasskeyCeremonyError) return error.message;
   const message = errorMessage(error);
-  const lower = message.toLowerCase();
-  if (lower.includes('utilization') || lower.includes('cap')) {
+  if (isPoolFullError(message)) {
     return 'Savings is full right now, so it cannot take more money. Try again later.';
   }
   return message;
@@ -93,6 +93,10 @@ export default function SavingsRoute() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showWhere, setShowWhere] = useState(false);
+  /** The last read of the pools failed, so what is on screen may be out of date. */
+  const [readFailed, setReadFailed] = useState(false);
+  /** At least one complete read has landed, so an empty list really means nothing saved. */
+  const [hasRead, setHasRead] = useState(false);
 
   const [asset, setAsset] = useState<EarnAsset>('USDC');
   const [amount, setAmount] = useState('');
@@ -109,10 +113,18 @@ export default function SavingsRoute() {
     async (address: string, withPools: boolean) => {
       const [nextPools, positions] = await Promise.all([
         withPools ? loadBlendPools() : Promise.resolve<BlendPool[] | null>(null),
-        loadBlendPositions(address),
+        loadBlendPositionsChecked(address),
       ]);
       if (nextPools) setPools(nextPools.filter((pool) => pool.reserves.length > 0));
-      const next = savingsBalances(positions);
+      // A failed read says nothing about what is saved: keep what is on screen
+      // and leave the principal record alone.
+      if (!positions.complete) {
+        setReadFailed(true);
+        return;
+      }
+      setReadFailed(false);
+      setHasRead(true);
+      const next = savingsBalances(positions.positions);
       setBalances(next);
       setPrincipal(await syncPrincipal(network.name, address, next, ASSETS));
     },
@@ -293,7 +305,8 @@ export default function SavingsRoute() {
   }
 
   const takeOutBalance = balances.find((b) => b.code === takeOutAsset) ?? null;
-  const isEmpty = !loading && balances.length === 0;
+  const isEmpty = !loading && hasRead && balances.length === 0;
+  const unreadable = !loading && !hasRead && readFailed;
 
   return (
     <Screen edges={['top']}>
@@ -320,6 +333,22 @@ export default function SavingsRoute() {
             <View style={styles.centered}>
               <ActivityIndicator color={colors.accent} />
             </View>
+          ) : null}
+
+          {step === 'home' && unreadable ? (
+            <Card variant="md" style={styles.card}>
+              <Text style={[typography.heading, styles.cardTitle]}>We couldn&apos;t load your savings</Text>
+              <Text style={styles.body}>
+                Your money has not moved. Check your connection and try again.
+              </Text>
+              <Button label="Try again" onPress={() => void onRefresh()} />
+            </Card>
+          ) : null}
+
+          {step === 'home' && !loading && hasRead && readFailed ? (
+            <Text style={[styles.muted, styles.warning]}>
+              Couldn&apos;t refresh just now. These figures may be out of date.
+            </Text>
           ) : null}
 
           {step === 'home' && isEmpty ? (
@@ -357,9 +386,12 @@ export default function SavingsRoute() {
                       {mask(formatStroops(balance.valueStroops, 2))} {balance.code}
                     </Text>
                     <View style={styles.rowBetween}>
-                      <Text style={styles.muted}>Earned so far</Text>
-                      <Text style={styles.earned} accessibilityLabel={`${balance.code} earned so far`}>
-                        +{mask(formatStroops(earned, 6))} {balance.code}
+                      <Text style={styles.muted}>{earned < 0n ? 'Down so far' : 'Earned so far'}</Text>
+                      <Text
+                        style={[styles.earned, earned < 0n && styles.warning]}
+                        accessibilityLabel={`${balance.code} ${earned < 0n ? 'down so far' : 'earned so far'}`}
+                      >
+                        {earned < 0n ? '' : '+'}{mask(formatStroops(earned, 6))} {balance.code}
                       </Text>
                     </View>
                     <View style={styles.actions}>

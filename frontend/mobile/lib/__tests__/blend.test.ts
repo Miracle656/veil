@@ -48,7 +48,7 @@ jest.mock('@blend-capital/blend-sdk', () => ({
   RequestType: { Supply: 2, Withdraw: 3 },
 }));
 
-import { loadBlendPools, loadBlendPositions, withdrawAllAmount } from '../blend';
+import { loadBlendPools, loadBlendPositions, loadBlendPositionsChecked, withdrawAllAmount } from '../blend';
 
 type ReserveStub = { assetId: string; supply: bigint; apy: number };
 
@@ -225,6 +225,19 @@ describe('blend', () => {
       mockPoolV1Load.mockRejectedValue(new Error('rpc down'));
 
       await expect(loadBlendPositions('GUSER')).resolves.toEqual([]);
+    });
+
+    it('tells a failed read apart from an empty one', async () => {
+      process.env['EXPO_PUBLIC_BLEND_POOL_IDS'] = 'CPOOL1';
+      mockPoolV2Load.mockRejectedValue(new Error('rpc down'));
+      mockPoolV1Load.mockRejectedValue(new Error('rpc down'));
+      await expect(loadBlendPositionsChecked('GUSER')).resolves.toEqual({ positions: [], complete: false });
+
+      mockPoolV2Load.mockReset();
+      mockPoolV2Load.mockResolvedValue(
+        poolStub({ id: 'CPOOL1', reserves: [{ assetId: 'CUSDC', supply: 1_000n, apy: 0.04 }], supply: {} })
+      );
+      await expect(loadBlendPositionsChecked('GUSER')).resolves.toEqual({ positions: [], complete: true });
     });
   });
 
