@@ -7,10 +7,10 @@ import { Horizon, Keypair, TransactionBuilder, type Transaction } from '@stellar
  * Same server, same protocol (`packages/agent`), same three-step onboarding and
  * role-aware suggestions. What differs is everything the phone forces:
  *
- *   - The transport lives in `lib/agentSocket.ts` and reconnects with backoff,
- *     because a mobile socket dies routinely — backgrounding the app is enough.
- *     The screen shows connection state instead of pretending it is always up.
- *   - A message typed while the socket is down is queued rather than dropped,
+ *   - The transport lives in `lib/agentClient.ts` and uses HTTPS POST with
+ *     retry and exponential backoff, because a mobile network connection
+ *     drops routinely — backgrounding the app is enough.
+ *   - A message composed while offline is queued rather than dropped,
  *     so the reply arrives late rather than never.
  *   - The web page renders agent markdown with `dangerouslySetInnerHTML`. React
  *     Native has no innerHTML, so `renderInline` below turns the same `**bold**`
@@ -70,9 +70,8 @@ import { fontFamily } from '../../theme/typography';
  * transaction on screen rather than to a generic "are you there" challenge. A
  * declined prompt leaves the proposal unsigned and the funds where they were.
  *
- * Ported from `frontend/wallet/app/agent/page.tsx`. The socket wiring below is
- * deliberately minimal — the durable client, history and reconnect policy belong
- * in `lib/agentSocket.ts` (backlog #65).
+ * Ported from `frontend/wallet/app/agent/page.tsx`. The HTTPS POST transport
+ * and retry logic live in `lib/agentClient.ts`.
  */
 
 const SUGGESTIONS = [
