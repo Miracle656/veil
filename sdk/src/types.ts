@@ -32,6 +32,10 @@ export type {
     DeployResult,
     /** Result of a successful `addSigner()`. */
     AddSignerResult,
+    /** Options for `registerAdditionalSigner()`. */
+    RegisterAdditionalSignerOptions,
+    /** Result of `registerAdditionalSigner()`. */
+    RegisterAdditionalSignerResult,
     /** Result of a successful `rotateSigner()`. */
     RotateSignerResult,
     /** One entry from `getSigners()`. */

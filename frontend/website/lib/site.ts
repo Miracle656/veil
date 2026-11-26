@@ -19,6 +19,17 @@ export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL ?? 'https://www.usevei
 )
 
 export const SITE_NAME = 'Veil'
+
+/** The company behind Veil, as it appears on its CAC certificate. */
+export const LEGAL_ENTITY_NAME = 'Divinity Labs Limited'
+export const LEGAL_RC = '10031131'
+export const LEGAL_ENTITY = `Veil is a product of ${LEGAL_ENTITY_NAME}, a company registered in Nigeria (RC ${LEGAL_RC}).`
+/**
+ * Where people write to us, including requests about their personal data.
+ * The Terms and the Privacy Policy both print this, so it must be a mailbox
+ * somebody reads.
+ */
+export const SUPPORT_EMAIL = 'support@useveilapp.xyz'
 export const WALLET_URL = 'https://app.useveilapp.xyz'
 export const DOCS_URL = 'https://docs.useveilapp.xyz'
 export const REPO_URL = 'https://github.com/Miracle656/veil'

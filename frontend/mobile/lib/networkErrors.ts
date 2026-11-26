@@ -18,6 +18,8 @@
 import { xdr } from '@stellar/stellar-sdk';
 
 import { horizonErrorMessage, TRANSACTION_CODES } from './horizonError';
+// TODO(#1003): remove platform limitation warning when multi-origin contract ships
+import { WRONG_PLATFORM_ERROR_MESSAGE } from './platformLimitation';
 
 const FALLBACK = 'The network rejected this transaction. Nothing was sent.';
 
@@ -111,6 +113,10 @@ export function friendlyHostError(detail: string): string | null {
     return SAC_ERRORS['10'];
   }
   const contract = detail.match(/Error\(Contract, #(\d+)\)/);
+  if ((contract && contract[1] === '9') || /OriginMismatch/.test(detail)) {
+    // TODO(#1003): remove platform limitation warning when multi-origin contract ships
+    return WRONG_PLATFORM_ERROR_MESSAGE;
+  }
   if (contract && /\btransfer\b/.test(detail) && SAC_ERRORS[contract[1]]) return SAC_ERRORS[contract[1]];
   if (/Error\(Auth,/.test(detail)) {
     return "The wallet's passkey signature wasn't accepted for this transaction. Try again.";

@@ -43,10 +43,20 @@ import {
   type NairaCoin,
   type OnrampOrder,
 } from '@/lib/ngn'
+import {
+  DELIVERED_COIN,
+  XLM_KEPT_BACK,
+  convertPath,
+  loadBuyWant,
+  rememberBuyWant,
+  type BuyWant,
+} from '@/lib/nairaBuy'
 
 type Step = 'amount' | 'pay' | 'done'
 
-const COINS: { id: NairaCoin; label: string }[] = [
+// What the person wants to hold. The naira service delivers XLM only, so
+// choosing USDC buys XLM and then offers the conversion (lib/nairaBuy.ts).
+const COINS: { id: BuyWant; label: string }[] = [
   { id: 'usdc', label: 'USDC' },
   { id: 'xlm', label: 'XLM' },
 ]
@@ -60,7 +70,8 @@ export default function BuyWithNairaPage() {
   const [customerRef, setCustomerRef] = useState<string | null>(null)
   const [deliveryAddress, setDeliveryAddress] = useState<string | null>(null)
 
-  const [coin, setCoin] = useState<NairaCoin>('usdc')
+  const [want, setWant] = useState<BuyWant>('usdc')
+  const coin: NairaCoin = DELIVERED_COIN
   const [ngn, setNgn] = useState('')
   const [rate, setRate] = useState<number | null>(null)
   const [step, setStep] = useState<Step>('amount')
@@ -80,6 +91,7 @@ export default function BuyWithNairaPage() {
     // app and came back has an account number to pay and a clock running on it.
     const pending = loadOnrampOrder()
     if (pending) {
+      setWant(loadBuyWant())
       setOrder(pending)
       setStep('pay')
     }
@@ -103,7 +115,7 @@ export default function BuyWithNairaPage() {
     // The classic G-account Linq can actually pay. `ensureFeePayer` is
     // idempotent and already runs on the dashboard, so this is usually a
     // cache read rather than a fresh ceremony.
-    void ensureFeePayer()
+    void ensureFeePayer(undefined, { passive: true })
       .then((kp) => setDeliveryAddress(kp?.publicKey() ?? null))
       .catch(() => setDeliveryAddress(null))
   }, [])
@@ -173,6 +185,7 @@ export default function BuyWithNairaPage() {
         coin,
       })
       rememberOnrampOrder(created)
+      rememberBuyWant(want)
       setOrder(created)
       setStep('pay')
     } catch (err) {
@@ -180,7 +193,7 @@ export default function BuyWithNairaPage() {
     } finally {
       setBusy(false)
     }
-  }, [customerRef, deliveryAddress, amountNgn, coin])
+  }, [customerRef, deliveryAddress, amountNgn, coin, want])
 
   if (mainnetOnly) {
     return (
@@ -236,9 +249,9 @@ export default function BuyWithNairaPage() {
                 <button
                   key={c.id}
                   type="button"
-                  onClick={() => setCoin(c.id)}
+                  onClick={() => setWant(c.id)}
                   className={`px-4 py-2 rounded-pill text-[13px] border transition-colors ${
-                    coin === c.id
+                    want === c.id
                       ? 'bg-gold text-near-black border-gold font-semibold'
                       : 'border-border-dim text-white/60 hover:text-white/80'
                   }`}
@@ -259,6 +272,12 @@ export default function BuyWithNairaPage() {
                 ? 'Fetching the current rate…'
                 : `You get ≈ ${estimated ? estimated.toFixed(coin === 'xlm' ? 4 : 2) : '0.00'} ${coin.toUpperCase()} @ ₦${rate.toLocaleString('en-NG')} / ${coin.toUpperCase()}`}
             </p>
+            {want === 'usdc' && (
+              <p className="text-[12px] leading-relaxed text-white/45 mt-2">
+                Naira buys XLM first. When it arrives you convert it to USDC here, in one more
+                step. The USDC you end up with depends on the price at that moment.
+              </p>
+            )}
             {!deliveryAddress && (
               <p className="text-[12px] text-white/40 mt-2">
                 Setting up the account that receives your crypto…
@@ -305,7 +324,26 @@ export default function BuyWithNairaPage() {
             <p className="text-[13px] leading-relaxed text-white/55 mb-5">
               Your naira landed and the payout has been sent to your wallet.
             </p>
-            <PrimaryAction onClick={() => router.push('/dashboard')}>Back to wallet</PrimaryAction>
+            {want === 'usdc' && order ? (
+              <>
+                <p className="text-[13px] leading-relaxed text-white/55 mb-5">
+                  You asked for USDC. Give the XLM a minute to arrive, then convert it. About{' '}
+                  {XLM_KEPT_BACK} XLM stays behind to keep your account open and pay network fees.
+                </p>
+                <PrimaryAction onClick={() => router.push(convertPath(order.amountStableCoin))}>
+                  Convert to USDC
+                </PrimaryAction>
+                <button
+                  type="button"
+                  onClick={() => router.push('/dashboard')}
+                  className="block w-full text-center text-[13px] text-white/50 hover:text-white/80 mt-4"
+                >
+                  Keep it as XLM
+                </button>
+              </>
+            ) : (
+              <PrimaryAction onClick={() => router.push('/dashboard')}>Back to wallet</PrimaryAction>
+            )}
           </Card>
         )}
       </div>
