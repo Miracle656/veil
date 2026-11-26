@@ -32,5 +32,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     page('/products/agent', 0.6),
     page('/products/lens', 0.5),
     page('/products/wraith', 0.5),
+    page('/terms', 0.3),
+    page('/privacy', 0.3),
   ]
 }
