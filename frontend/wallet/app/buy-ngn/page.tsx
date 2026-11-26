@@ -21,7 +21,7 @@
  *     Linq pays by classic operation, which cannot name a contract.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 import { Card, PageHeader, PrimaryAction, SectionLabel } from '@/components/ui/primitives'
@@ -51,8 +51,24 @@ import {
   rememberBuyWant,
   type BuyWant,
 } from '@/lib/nairaBuy'
+import {
+  AutoConvertError,
+  approveAutoConvert,
+  autoConvertToUsdc,
+  markAutoConverted,
+  shouldAutoConvert,
+  type AutoConvertResult,
+} from '@/lib/nairaAutoConvert'
+import { horizonErrorMessage } from '@/lib/horizonError'
+import { requirePasskey } from '@/lib/passkeyAuth'
 
 type Step = 'amount' | 'pay' | 'done'
+/** Where the automatic XLM → USDC swap is, once the order has settled. */
+type Convert =
+  | { state: 'idle' }
+  | { state: 'working' }
+  | { state: 'done'; result: AutoConvertResult }
+  | { state: 'failed'; reason: string }
 
 // What the person wants to hold. The naira service delivers XLM only, so
 // choosing USDC buys XLM and then offers the conversion (lib/nairaBuy.ts).
@@ -79,6 +95,31 @@ export default function BuyWithNairaPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [secondsLeft, setSecondsLeft] = useState(0)
+  const [convert, setConvert] = useState<Convert>({ state: 'idle' })
+  /** One swap per order, whatever React does with the effect below. */
+  const convertStarted = useRef(false)
+
+  // The order settled and the person approved the conversion when they placed
+  // it: wait for the XLM, then swap it to USDC. A failure leaves the XLM where
+  // it is and falls back to the Convert button.
+  useEffect(() => {
+    if (step !== 'done' || !order || want !== 'usdc') return
+    if (convertStarted.current || !shouldAutoConvert(order.orderId)) return
+    convertStarted.current = true
+    setConvert({ state: 'working' })
+    void autoConvertToUsdc(order.amountStableCoin)
+      .then((result) => {
+        markAutoConverted(order.orderId, result.hash)
+        setConvert({ state: 'done', result })
+      })
+      .catch((err: unknown) => {
+        const reason =
+          err instanceof AutoConvertError
+            ? err.message
+            : horizonErrorMessage(err) ?? 'The swap did not go through. Your XLM is safe in your wallet.'
+        setConvert({ state: 'failed', reason })
+      })
+  }, [step, order, want])
 
   useEffect(() => {
     const local = isNairaVerified()
@@ -172,6 +213,20 @@ export default function BuyWithNairaPage() {
     if (!customerRef || !deliveryAddress || !(amountNgn > 0)) return
     setBusy(true)
     setError(null)
+    // Asked for first, while this is still the tap: browsers refuse a passkey
+    // prompt that comes after waiting on the network. Approving here is what
+    // lets the swap run by itself later. If the person closes the prompt, or
+    // this browser cannot show it, the order still goes ahead and they get
+    // the Convert button instead.
+    let approved = false
+    if (want === 'usdc') {
+      try {
+        await requirePasskey()
+        approved = true
+      } catch {
+        approved = false
+      }
+    }
     try {
       // Fetched again here, deliberately: the number locked into the order must
       // be the one quoted seconds ago, not one held while the user typed.
@@ -186,6 +241,7 @@ export default function BuyWithNairaPage() {
       })
       rememberOnrampOrder(created)
       rememberBuyWant(want)
+      if (approved) approveAutoConvert(created.orderId)
       setOrder(created)
       setStep('pay')
     } catch (err) {
@@ -274,8 +330,10 @@ export default function BuyWithNairaPage() {
             </p>
             {want === 'usdc' && (
               <p className="text-[12px] leading-relaxed text-white/45 mt-2">
-                Naira buys XLM first. When it arrives you convert it to USDC here, in one more
-                step. The USDC you end up with depends on the price at that moment.
+                Naira buys XLM first, and Veil swaps it to USDC for you as soon as it arrives.
+                You approve that now with your passkey. About {XLM_KEPT_BACK} XLM stays behind to
+                keep your account open and pay network fees. The USDC you end up with depends on
+                the price at that moment.
               </p>
             )}
             {!deliveryAddress && (
@@ -324,8 +382,27 @@ export default function BuyWithNairaPage() {
             <p className="text-[13px] leading-relaxed text-white/55 mb-5">
               Your naira landed and the payout has been sent to your wallet.
             </p>
-            {want === 'usdc' && order ? (
+            {want === 'usdc' && order && convert.state === 'working' ? (
+              <p className="text-[13px] leading-relaxed text-white/55">
+                Swapping your XLM to USDC. This can take a minute or two while the XLM arrives.
+                Keep this page open.
+              </p>
+            ) : want === 'usdc' && order && convert.state === 'done' ? (
               <>
+                <p className="text-[13px] leading-relaxed text-white/55 mb-5">
+                  Done. {convert.result.soldXlm.replace(/\.?0+$/, '')} XLM was swapped for about{' '}
+                  {Number(convert.result.quotedUsdc).toFixed(2)} USDC. The rest of the XLM stays in
+                  your wallet for fees.
+                </p>
+                <PrimaryAction onClick={() => router.push('/dashboard')}>Back to wallet</PrimaryAction>
+              </>
+            ) : want === 'usdc' && order ? (
+              <>
+                {convert.state === 'failed' && (
+                  <p role="alert" className="text-[13px] leading-relaxed text-[rgba(220,38,38,0.9)] mb-3">
+                    {convert.reason}
+                  </p>
+                )}
                 <p className="text-[13px] leading-relaxed text-white/55 mb-5">
                   You asked for USDC. Give the XLM a minute to arrive, then convert it. About{' '}
                   {XLM_KEPT_BACK} XLM stays behind to keep your account open and pay network fees.
