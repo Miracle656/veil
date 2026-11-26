@@ -17,6 +17,7 @@ import { useState } from 'react'
 import { PageHeader } from '@/components/ui/primitives'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useActivityFeed } from '@/lib/activityFeed'
+import { StellarIdenticon } from '@/components/StellarIdenticon'
 import { useReverseName } from '@/hooks/useReverseName'
 
 type Filter = 'all' | 'sent' | 'received' | 'swapped'
@@ -30,6 +31,17 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 function label(tx: TxRecord): string {
   return tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'
+}
+
+/** "6:02 AM" for today, "Nov 17, 2026" for any other day. */
+function when(timestamp: number): string {
+  if (!timestamp) return ''
+  const date = new Date(timestamp * 1000)
+  const today = new Date()
+  const sameDay = date.toDateString() === today.toDateString()
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function short(value: string): string {
@@ -46,9 +58,12 @@ function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
       className="vw-listrow"
       onClick={onSelect}
     >
-      <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-        <span style={{ fontSize: '14px', fontWeight: 500 }}>{label(tx)}</span>
-        <span className="vw-meta">{displayParty}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+        <StellarIdenticon address={tx.counterparty} />
+        <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+          <span style={{ fontSize: '14px', fontWeight: 500 }}>{label(tx)}</span>
+          <span className="vw-meta">{displayParty}</span>
+        </span>
       </span>
       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', flexShrink: 0 }}>
         {tx.type === 'swapped' ? (
@@ -68,6 +83,7 @@ function ActivityRow({ tx, onSelect }: { tx: TxRecord; onSelect: () => void }) {
             {tx.type === 'sent' ? '-' : '+'}{tx.amount} {tx.asset}
           </span>
         )}
+        <span className="vw-meta">{when(tx.timestamp)}</span>
       </span>
     </button>
   )

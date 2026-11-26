@@ -60,6 +60,7 @@ exports[`SDK API Surface should match the snapshot for main SDK exports 1`] = `
   "calculateAccountReserve: function(arity: 1)",
   "calculateSpendableAfterTrustline: function(arity: 1)",
   "claimEscrow: function(arity: 1)",
+  "claimEscrowWithFeeBump: function(arity: 1)",
   "classifySep43Error: function(arity: 1)",
   "clearBatchState: function(arity: 1)",
   "clearNetworkWalletKeys: function(arity: 1)",
