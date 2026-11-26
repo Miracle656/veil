@@ -10,25 +10,42 @@ import {
   fetchHeldAssets,
   loadWalletAddress,
   USDY_MAINNET_ISSUER,
+  USDT0_MAINNET_ISSUER,
   getRegisteredAsset,
   type HeldAsset,
 } from '../lib/assets';
 import { fetchPrice, formatUsd, usdValue } from '../lib/fetchPrice';
 import { getNetworkName } from '../lib/network';
-import { enableUsdy, AccountNotFunded, NotEnoughXlm } from '../lib/enableUsdc';
+import {
+  enableUsdc,
+  enableUsdy,
+  enableUsdt0,
+  removeTrustline,
+  AccountNotFunded,
+  NotEnoughXlm,
+  NonZeroBalanceError,
+} from '../lib/enableUsdc';
+import {
+  calculateSpendableAfterTrustline,
+  TRUSTLINE_RESERVE_COST_XLM,
+  TRUSTLINE_RESERVE_EXPLANATION,
+} from '../lib/reserves';
 
 type State =
   | { kind: 'loading' }
   | { kind: 'no-wallet' }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; assets: HeldAsset[]; prices: Record<string, number | null> };
+  | { kind: 'ready'; assets: HeldAsset[]; prices: Record<string, number | null>; xlmBalance: string };
 
 export default function AssetsScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [state, setState] = useState<State>({ kind: 'loading' });
   const [enablingUsdy, setEnablingUsdy] = useState(false);
-  const [usdyActionMessage, setUsdyActionMessage] = useState<string | null>(null);
+  const [enablingUsdt0, setEnablingUsdt0] = useState(false);
+  const [usdt0ActionMessage, setUsdt0ActionMessage] = useState<string | null>(null);
+  const [removingAsset, setRemovingAsset] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<{ text: string; tone: 'success' | 'error' } | null>(null);
 
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
@@ -49,7 +66,10 @@ export default function AssetsScreen() {
         }),
       );
 
-      setState({ kind: 'ready', assets, prices });
+      const nativeAsset = assets.find((a) => a.code === 'XLM');
+      const xlmBalance = nativeAsset?.balance ?? '0';
+
+      setState({ kind: 'ready', assets, prices, xlmBalance });
     } catch (err) {
       setState({ kind: 'error', message: errorMessage(err) });
     }
@@ -61,31 +81,88 @@ export default function AssetsScreen() {
 
   const handleEnableUsdy = useCallback(async () => {
     setEnablingUsdy(true);
-    setUsdyActionMessage(null);
+    setActionMessage(null);
     try {
       const txHash = await enableUsdy();
       if (txHash) {
-        setUsdyActionMessage(`USDY trustline enabled successfully! (Tx: ${txHash.slice(0, 8)}…)`);
+        setActionMessage({
+          text: `USDY trustline enabled successfully! ${TRUSTLINE_RESERVE_COST_XLM} XLM locked as reserve. (Tx: ${txHash.slice(0, 8)}…)`,
+          tone: 'success',
+        });
       } else {
-        setUsdyActionMessage('USDY trustline is already enabled.');
+        setActionMessage({ text: 'USDY trustline is already enabled.', tone: 'success' });
       }
       await load();
     } catch (err) {
       if (err instanceof NotEnoughXlm) {
-        setUsdyActionMessage(
-          `This account holds ${err.have} XLM. Adding a USDY trustline needs about 0.6 XLM of refundable reserve.`,
-        );
+        setActionMessage({
+          text: `This account holds ${err.have} XLM. Adding a USDY trustline needs about 0.6 XLM of refundable reserve.`,
+          tone: 'error',
+        });
       } else if (err instanceof AccountNotFunded) {
-        setUsdyActionMessage(
-          'This account does not exist on the network yet, so it cannot add a trustline.',
-        );
+        setActionMessage({
+          text: 'This account does not exist on the network yet, so it cannot add a trustline.',
+          tone: 'error',
+        });
       } else {
-        setUsdyActionMessage(errorMessage(err));
+        setActionMessage({ text: errorMessage(err), tone: 'error' });
       }
     } finally {
       setEnablingUsdy(false);
     }
   }, [load]);
+
+  const handleEnableUsdt0 = useCallback(async () => {
+    setEnablingUsdt0(true);
+    setUsdt0ActionMessage(null);
+    try {
+      const txHash = await enableUsdt0();
+      if (txHash) {
+        setUsdt0ActionMessage(`USDT0 trustline enabled successfully! (Tx: ${txHash.slice(0, 8)}…)`);
+      } else {
+        setUsdt0ActionMessage('USDT0 trustline is already enabled.');
+      }
+      await load();
+    } catch (err) {
+      if (err instanceof NotEnoughXlm) {
+        setUsdt0ActionMessage(
+          `This account holds ${err.have} XLM. Adding a USDT0 trustline needs about 0.6 XLM of refundable reserve.`,
+        );
+      } else if (err instanceof AccountNotFunded) {
+        setUsdt0ActionMessage(
+          'This account does not exist on the network yet, so it cannot add a trustline.',
+        );
+      } else {
+        setUsdt0ActionMessage(errorMessage(err));
+      }
+    } finally {
+      setEnablingUsdt0(false);
+    }
+  }, [load]);
+
+  const handleRemoveTrustline = useCallback(
+    async (code: string) => {
+      setRemovingAsset(code);
+      setActionMessage(null);
+      try {
+        const txHash = await removeTrustline(code);
+        setActionMessage({
+          text: `Removed ${code} trustline and returned ${TRUSTLINE_RESERVE_COST_XLM} XLM reserve to your spendable balance! (Tx: ${txHash.slice(0, 8)}…)`,
+          tone: 'success',
+        });
+        await load();
+      } catch (err) {
+        if (err instanceof NonZeroBalanceError) {
+          setActionMessage({ text: err.message, tone: 'error' });
+        } else {
+          setActionMessage({ text: errorMessage(err), tone: 'error' });
+        }
+      } finally {
+        setRemovingAsset(null);
+      }
+    },
+    [load],
+  );
 
   const hasUsdy = useMemo(() => {
     if (state.kind !== 'ready') return false;
@@ -94,9 +171,22 @@ export default function AssetsScreen() {
     );
   }, [state]);
 
+  const hasUsdt0 = useMemo(() => {
+    if (state.kind !== 'ready') return false;
+    return state.assets.some(
+      (a) => a.code.toUpperCase() === 'USDT0' && a.issuer === USDT0_MAINNET_ISSUER,
+    );
+  }, [state]);
+
   const usdyRegistered = getRegisteredAsset('USDY');
+  const usdt0Registered = getRegisteredAsset('USDT0');
 
   const onMainnet = getNetworkName() === 'mainnet';
+
+  const spendableImpact = useMemo(() => {
+    if (state.kind !== 'ready') return null;
+    return calculateSpendableAfterTrustline(state.xlmBalance, 1);
+  }, [state]);
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.container}>
@@ -106,18 +196,68 @@ export default function AssetsScreen() {
       </View>
       <Text style={styles.subtitle}>Every asset your wallet holds beyond XLM.</Text>
 
+      {state.kind === 'ready' && (
+        <View style={styles.spendableBanner}>
+          <Text style={styles.spendableLabel}>Spendable Balance</Text>
+          <Text style={styles.spendableValue}>{state.xlmBalance} XLM</Text>
+          <Text style={styles.spendableHint}>
+            {TRUSTLINE_RESERVE_EXPLANATION}
+          </Text>
+        </View>
+      )}
+
+      {/* Featured USDT0 One-Tap Trustline Action. Mainnet only — USDT0's issuer
+          does not exist on testnet. */}
+      {state.kind === 'ready' && !hasUsdt0 && onMainnet && (
+        <View style={styles.banner}>
+          <View style={styles.bannerInfo}>
+            <Text style={styles.bannerTitle}>Enable USDT0</Text>
+            <Text style={styles.bannerDescription}>
+              {usdt0Registered?.name ?? "Tether's USD stablecoin bridged to Stellar."}
+            </Text>
+            <Text style={styles.reserveNotice}>
+              Reserve cost: 0.5 XLM (locked, not spent — released if removed).
+            </Text>
+            <Text style={styles.disclosureText}>
+              Note: The issuer can freeze this balance or take it back.
+            </Text>
+          </View>
+          <Pressable
+            onPress={handleEnableUsdt0}
+            disabled={enablingUsdt0}
+            style={({ pressed }) => [
+              styles.enableButton,
+              (enablingUsdt0 || pressed) && styles.buttonPressed,
+            ]}
+          >
+            {enablingUsdt0 ? (
+              <ActivityIndicator size="small" color={colors.onAccent} />
+            ) : (
+              <Text style={styles.enableButtonText}>Enable USDT0</Text>
+            )}
+          </Pressable>
+        </View>
+      )}
+
+      {usdt0ActionMessage && <Text style={styles.actionNotice}>{usdt0ActionMessage}</Text>}
+
       {/* Featured USDY One-Tap Trustline Action. Mainnet only — USDY's issuer
           does not exist on testnet. */}
       {state.kind === 'ready' && !hasUsdy && onMainnet && (
-        <View style={styles.usdyBanner}>
-          <View style={styles.usdyInfo}>
-            <Text style={styles.usdyTitle}>Enable USDY</Text>
-            <Text style={styles.usdyDescription}>
+        <View style={styles.banner}>
+          <View style={styles.bannerInfo}>
+            <Text style={styles.bannerTitle}>Enable USDY</Text>
+            <Text style={styles.bannerDescription}>
               {usdyRegistered?.name ?? "Ondo's US Treasuries-backed, yield-bearing token."}
             </Text>
-            <Text style={styles.usdyReserveNotice}>
-              Reserve cost: 0.5 XLM refundable reserve required upfront.
+            <Text style={styles.reserveNotice}>
+              Reserve cost: 0.5 XLM (locked, not spent — released if removed).
             </Text>
+            {spendableImpact && (
+              <Text style={styles.reserveNotice}>
+                Projected spendable after: {spendableImpact.projectedSpendable} XLM
+              </Text>
+            )}
           </View>
           <Pressable
             onPress={handleEnableUsdy}
@@ -130,13 +270,17 @@ export default function AssetsScreen() {
             {enablingUsdy ? (
               <ActivityIndicator size="small" color={colors.onAccent} />
             ) : (
-              <Text style={styles.enableButtonText}>Enable USDY</Text>
+              <Text style={styles.enableButtonText}>Enable USDY ({TRUSTLINE_RESERVE_COST_XLM} XLM reserve)</Text>
             )}
           </Pressable>
         </View>
       )}
 
-      {usdyActionMessage && <Text style={styles.actionNotice}>{usdyActionMessage}</Text>}
+      {actionMessage && (
+        <Text style={[styles.actionNotice, actionMessage.tone === 'error' && styles.actionNoticeError]}>
+          {actionMessage.text}
+        </Text>
+      )}
 
       {state.kind === 'loading' && <ActivityIndicator color={colors.accent} style={styles.spinner} />}
 
@@ -158,13 +302,42 @@ export default function AssetsScreen() {
               const price = state.prices[key] ?? null;
               const val = usdValue(asset.balance, price);
               const formattedVal = formatUsd(val);
+              const isNonNative = asset.code !== 'XLM';
+              const canRemove = isNonNative && Number(asset.balance) === 0;
+              const isRemoving = removingAsset === asset.code;
 
               return (
-                <AssetRow
-                  key={key}
-                  asset={asset}
-                  usdValueFormatted={formattedVal !== '—' ? formattedVal : undefined}
-                />
+                <View key={key} style={styles.assetCard}>
+                  <AssetRow
+                    asset={asset}
+                    usdValueFormatted={formattedVal !== '—' ? formattedVal : undefined}
+                  />
+                  {isNonNative && (
+                    <View style={styles.trustlineFooter}>
+                      <Text style={styles.reserveTag}>Locked reserve: {TRUSTLINE_RESERVE_COST_XLM} XLM</Text>
+                      {canRemove ? (
+                        <Pressable
+                          onPress={() => void handleRemoveTrustline(asset.code)}
+                          disabled={isRemoving}
+                          style={({ pressed }) => [
+                            styles.removeButton,
+                            pressed && styles.buttonPressed,
+                          ]}
+                        >
+                          {isRemoving ? (
+                            <ActivityIndicator size="small" color={colors.danger} />
+                          ) : (
+                            <Text style={styles.removeButtonText}>Remove &amp; Reclaim {TRUSTLINE_RESERVE_COST_XLM} XLM</Text>
+                          )}
+                        </Pressable>
+                      ) : (
+                        <Text style={styles.refusalNote}>
+                          Non-zero balance: transfer funds out to reclaim reserve
+                        </Text>
+                      )}
+                    </View>
+                  )}
+                </View>
               );
             })}
           </View>
@@ -195,7 +368,7 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.textSecondary,
       fontSize: 15,
     },
-    usdyBanner: {
+    banner: {
       backgroundColor: colors.surface,
       borderColor: colors.border,
       borderWidth: 1,
@@ -203,23 +376,29 @@ const createStyles = (colors: ThemeColors) =>
       padding: 16,
       gap: 12,
     },
-    usdyInfo: {
+    bannerInfo: {
       gap: 4,
     },
-    usdyTitle: {
+    bannerTitle: {
       color: colors.textStrong,
       fontSize: 17,
       fontWeight: '700',
     },
-    usdyDescription: {
+    bannerDescription: {
       color: colors.textSecondary,
       fontSize: 13,
       lineHeight: 18,
     },
-    usdyReserveNotice: {
+    reserveNotice: {
       color: colors.accent,
       fontSize: 12,
       fontWeight: '600',
+      marginTop: 2,
+    },
+    disclosureText: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontStyle: 'italic',
       marginTop: 2,
     },
     enableButton: {
@@ -238,6 +417,32 @@ const createStyles = (colors: ThemeColors) =>
       fontSize: 14,
       fontWeight: '600',
     },
+    spendableBanner: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: 14,
+      padding: 16,
+      gap: 4,
+    },
+    spendableLabel: {
+      color: colors.textSecondary,
+      fontSize: 12,
+      fontWeight: '600',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    spendableValue: {
+      color: colors.textStrong,
+      fontSize: 22,
+      fontWeight: '700',
+    },
+    spendableHint: {
+      color: colors.textMuted,
+      fontSize: 12,
+      lineHeight: 16,
+      marginTop: 2,
+    },
     actionNotice: {
       color: colors.textPrimary,
       fontSize: 13,
@@ -246,6 +451,52 @@ const createStyles = (colors: ThemeColors) =>
       padding: 10,
       borderWidth: 1,
       borderColor: colors.border,
+    },
+    actionNoticeError: {
+      borderColor: 'rgba(220,38,38,0.35)',
+      backgroundColor: colors.dangerSurface,
+      color: colors.danger,
+    },
+    assetCard: {
+      backgroundColor: colors.surface,
+      borderColor: colors.border,
+      borderWidth: 1,
+      borderRadius: 14,
+      padding: 12,
+      gap: 8,
+    },
+    trustlineFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingTop: 8,
+      gap: 8,
+    },
+    reserveTag: {
+      color: colors.accent,
+      fontSize: 12,
+      fontWeight: '500',
+    },
+    removeButton: {
+      backgroundColor: colors.dangerSurface,
+      borderColor: 'rgba(220,38,38,0.35)',
+      borderWidth: 1,
+      borderRadius: 8,
+      paddingVertical: 6,
+      paddingHorizontal: 10,
+    },
+    removeButtonText: {
+      color: colors.danger,
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    refusalNote: {
+      color: colors.textMuted,
+      fontSize: 11,
+      flex: 1,
+      textAlign: 'right',
     },
     spinner: {
       marginTop: 8,

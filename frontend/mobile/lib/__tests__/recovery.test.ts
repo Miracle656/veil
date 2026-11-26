@@ -390,6 +390,11 @@ describe('simulationMessage', () => {
     expect(simulationMessage('HostError: Error(Contract, #22)')).toMatch(/no recovery key/i);
   });
 
+  it('names which recovery path holds the slot', () => {
+    expect(simulationMessage('HostError: Error(Contract, #28)')).toMatch(/guardian recovery is already pending/i);
+    expect(simulationMessage('HostError: Error(Contract, #29)')).toMatch(/server-assisted recovery is already pending/i);
+  });
+
   it('passes anything else through', () => {
     expect(simulationMessage('some rpc failure')).toBe('Simulation failed: some rpc failure');
   });

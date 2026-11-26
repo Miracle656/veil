@@ -238,7 +238,7 @@ export default function BuyPage() {
               <p style={{ color: 'var(--teal)', fontSize: '0.8125rem', marginBottom: '1rem' }}>{error}</p>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '2rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
               {ANCHORS.map(anchor => {
                 const Icon = ANCHOR_ICONS[anchor.id]
                 return (
@@ -265,6 +265,49 @@ export default function BuyPage() {
                   </button>
                 )
               })}
+            </div>
+
+            {/* ── USDY Tokenized Asset Explainer Card ── */}
+            <div
+              style={{
+                marginBottom: '2rem',
+                padding: '1.125rem 1.25rem',
+                background: 'rgba(253, 218, 36, 0.04)',
+                border: '1px solid rgba(253, 218, 36, 0.2)',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '1rem',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '0.6875rem', fontFamily: 'Anton, Impact, sans-serif', color: 'var(--gold)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                    Tokenized US Treasuries
+                  </span>
+                </div>
+                <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: 'var(--off-white)', marginBottom: '2px' }}>
+                  USDY (Ondo US Dollar Yield)
+                </p>
+                <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.4 }}>
+                  Understand what USDY is, how its value accrues, and its risks before buying.
+                </p>
+              </div>
+              <a
+                href="/assets/usdy"
+                className="btn btn-secondary"
+                style={{
+                  fontSize: '0.8125rem',
+                  padding: '6px 14px',
+                  whiteSpace: 'nowrap',
+                  textDecoration: 'none',
+                  flexShrink: 0,
+                  display: 'inline-block',
+                }}
+              >
+                Learn what USDY is →
+              </a>
             </div>
 
             {/* SEP-24 domain input */}

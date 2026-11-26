@@ -32,6 +32,9 @@ pub enum DataKey {
     RecoveryKey,
     /// Stores a PendingRecovery struct while a recovery-key request is in progress.
     RecoveryKeyPending,
+    /// Monotonically increasing counter used to allocate the next signer index.
+    /// Never decremented on removal, so indices are never reused.
+    NextSignerIndex,
 }
 
 #[contracttype]
@@ -55,15 +58,39 @@ pub fn init_signers(env: &Env, key: &BytesN<65>) {
     let mut signers: Map<u32, BytesN<65>> = Map::new(env);
     signers.set(0, key.clone());
     env.storage().instance().set(&DataKey::Signers, &signers);
+    env.storage().instance().set(&DataKey::NextSignerIndex, &1u32);
 }
 
 /// Add a new signer and return its index.
-pub fn add_signer(env: &Env, key: &BytesN<65>) -> u32 {
+///
+/// Index allocation uses a dedicated monotonic counter (`NextSignerIndex`)
+/// rather than `signers.len()`. We chose the counter over renumbering on
+/// removal because renumbering would silently change the meaning of every
+/// index a client has cached (e.g. a UI that shows "signer #2" and later
+/// asks to remove it). With a monotonic counter, an index, once handed out,
+/// always refers to the same key until that key is removed — and once
+/// removed, the index is never reused, so a stale cached index can never
+/// address a different signer. The trade-off is that indices become sparse
+/// and `signer_count` no longer equals `max_index + 1`; see `signer_count`.
+///
+/// Rejects (returns `None`) if the key is already a registered signer, to
+/// match the duplicate guard in `rotate_signer`.
+pub fn add_signer(env: &Env, key: &BytesN<65>) -> Option<u32> {
+    if has_signer(env, key) {
+        return None;
+    }
     let mut signers = get_signers(env);
-    let next_index = signers.len();
+    let next_index: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::NextSignerIndex)
+        .unwrap_or(0u32);
     signers.set(next_index, key.clone());
     env.storage().instance().set(&DataKey::Signers, &signers);
-    next_index
+    env.storage()
+        .instance()
+        .set(&DataKey::NextSignerIndex, &(next_index + 1));
+    Some(next_index)
 }
 
 /// Remove a signer by index. Returns true if the signer existed and was removed.
@@ -106,6 +133,13 @@ pub fn has_signer(env: &Env, key: &BytesN<65>) -> bool {
 }
 
 /// Get the number of registered signers.
+///
+/// This is the count of live entries in the map, NOT `max_index + 1`.
+/// Indices are sparse after any removal (see `add_signer`), so callers
+/// must not assume the count equals the highest index plus one. The
+/// last-signer guard in `remove_signer` relies on this being the true
+/// number of live signers, which `Map::len()` provides regardless of
+/// sparseness.
 pub fn signer_count(env: &Env) -> u32 {
     get_signers(env).len()
 }

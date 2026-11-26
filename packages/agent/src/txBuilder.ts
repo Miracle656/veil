@@ -12,6 +12,7 @@ import {
   scValToNative,
 } from '@stellar/stellar-sdk'
 import { HORIZON_URL, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
+import { getRegisteredAsset, isRegisteredIssuer } from './assets.js'
 
 // Network and endpoints come from one place (network.ts). Deciding them here
 // separately is how mainnet signing ended up paired with testnet Horizon.
@@ -161,8 +162,14 @@ export async function getBalances(
       feePayerXlm = parseFloat(balance.balance)
       result['XLM_feepayer'] = balance.balance
     } else {
-      const key = `${(balance as any).asset_code}:${(balance as any).asset_issuer}`
+      const code = (balance as any).asset_code
+      const issuer = (balance as any).asset_issuer
+      const key = `${code}:${issuer}`
       result[key] = balance.balance
+      const registered = getRegisteredAsset(code)
+      if (registered && isRegisteredIssuer(code, issuer)) {
+        result[registered.code] = balance.balance
+      }
     }
   }
 

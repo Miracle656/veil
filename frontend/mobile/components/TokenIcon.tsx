@@ -12,9 +12,9 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 // Bundled at build time by Metro.
 const XLM = require('../assets/tokens/xlm.png');
 const USDC = require('../assets/tokens/usdc.png');
-const EURC = require('../assets/tokens/eurc.png');
 
-const LOGOS: Record<string, number> = { XLM, USDC, EURC };
+
+const LOGOS: Record<string, number> = { XLM, USDC };
 
 export function TokenIcon({ code, size = 34 }: { code: string; size?: number }) {
   const upper = code.toUpperCase();

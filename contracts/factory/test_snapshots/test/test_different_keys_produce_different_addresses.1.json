@@ -74,6 +74,92 @@
         {
           "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "Deployed"
+                },
+                {
+                  "bytes": "07f9b2e3be6e3e7119a592103d62f0310144d18f7708ecbd3aef5d0ff4907a88"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "Deployed"
+                    },
+                    {
+                      "bytes": "07f9b2e3be6e3e7119a592103d62f0310144d18f7708ecbd3aef5d0ff4907a88"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "Deployed"
+                },
+                {
+                  "bytes": "550baec2e009d8c4ba938306605e9c55657d613e13ee25e208736c90567b6d88"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "Deployed"
+                    },
+                    {
+                      "bytes": "550baec2e009d8c4ba938306605e9c55657d613e13ee25e208736c90567b6d88"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          518400
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -104,32 +190,6 @@
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                         }
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "Deployed"
-                            },
-                            {
-                              "bytes": "07f9b2e3be6e3e7119a592103d62f0310144d18f7708ecbd3aef5d0ff4907a88"
-                            }
-                          ]
-                        },
-                        "val": "void"
-                      },
-                      {
-                        "key": {
-                          "vec": [
-                            {
-                              "symbol": "Deployed"
-                            },
-                            {
-                              "bytes": "550baec2e009d8c4ba938306605e9c55657d613e13ee25e208736c90567b6d88"
-                            }
-                          ]
-                        },
-                        "val": "void"
                       },
                       {
                         "key": {

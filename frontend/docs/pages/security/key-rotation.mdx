@@ -148,6 +148,35 @@ single new key — there is no overlap at any point. The trade-off is the
 `RECOVERY_DELAY_SECONDS` (3-day) timelock, during which a still-valid owner key
 can `cancel_recovery` to abort a malicious guardian.
 
+The reset is deliberate. Recovery is only needed when the owner cannot sign
+with *any* registered key, so every key present at that moment is lost or in
+someone else's hands; merging would let a thief who took one device keep a seat
+on the recovered wallet. `finalize_recovery` (the recovery-key path) resets the
+same way.
+
+#### One recovery at a time (#1182)
+
+The guardian path and the recovery-key path (`request_recovery` /
+`finalize_recovery`, 7-day timelock, used by the mobile app's SEP-30 flow)
+share **one recovery slot** on wallets built from the factory that shipped
+#1182:
+
+- Starting a recovery in either path fails while either has one pending, with
+  `GuardianRecoveryPending` (28) or `RecoveryKeyRequestPending` (29) naming the
+  path that holds the slot.
+- `cancel_recovery` and `cancel_recovery_request` both cancel whatever is
+  pending, in either path. After either succeeds, nothing is counting down.
+- `get_pending_recovery()` returns the pending path, the key it will install and
+  its unlock time, or nothing.
+
+**Wallets deployed earlier keep the old behaviour**, because the contract code
+cannot be changed. On those wallets both paths can be pending at once, each
+cancel only clears its own path, and both return the ambiguous
+`RecoveryAlreadyPending` (13) / `RecoveryNotPending` (14). An owner of such a
+wallet who is alerted to a recovery they did not start should call **both**
+`cancel_recovery` and `cancel_recovery_request`; a `RecoveryNotPending` from one
+of them is harmless and means only that that path was idle.
+
 ### 3. Locking down rotation operations
 
 | Control | Where enforced | Effect |

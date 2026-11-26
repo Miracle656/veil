@@ -20,9 +20,7 @@
         "backgroundColor": "#0f172a"
       }
     },
-    "plugins": [
-      "react-native-passkey"
-    ],
+    "plugins": [],
     "newArchEnabled": true
   }
 }

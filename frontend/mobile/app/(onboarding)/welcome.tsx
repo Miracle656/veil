@@ -99,6 +99,7 @@ export default function Welcome() {
         <Pressable
           onPress={handleRecover}
           accessibilityRole="button"
+          testID="welcome-recover"
           style={({ pressed }) => [styles.recoverBtn, pressed && styles.pressed]}
         >
           <Text style={styles.recoverLabel}>I already have a wallet</Text>

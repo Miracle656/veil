@@ -11,13 +11,22 @@ import { VeilTabBar } from '../../components/VeilTabBar';
 export default function TabsLayout() {
   return (
     <Tabs
-      tabBar={(props) => <VeilTabBar {...props} />}
+      tabBar={(props) => {
+        // The agent is a conversation, and a conversation wants the whole
+        // screen. A tab bar pinned under the composer also leaves nowhere for
+        // the keyboard to go — so the screen draws its own back control and
+        // takes the full height instead.
+        const focused = props.state.routes[props.state.index];
+        if (focused?.name === 'agent') return null;
+        return <VeilTabBar {...props} />;
+      }}
       screenOptions={{ headerShown: false }}
     >
       <Tabs.Screen name="dashboard" options={{ title: 'Home' }} />
       <Tabs.Screen name="earn" options={{ title: 'Earn' }} />
       <Tabs.Screen name="agent" options={{ title: 'Agent' }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
+      <Tabs.Screen name="prover-spike" options={{ href: null }} />
     </Tabs>
   );
 }

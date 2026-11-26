@@ -27,13 +27,14 @@ import {
   type EncryptedBackup,
   type WalletBackupMetadata,
 } from './backup';
+import { getNetwork } from './network';
 
 // Wallet credential keys written by the SDK (`useInvisibleWallet`).
 const ADDRESS_KEY = 'invisible_wallet_address';
 const PUBLIC_KEY_KEY = 'invisible_wallet_public_key';
-const SETTINGS_KEY = 'veil_wallet_settings';
-
-const TESTNET_PASSPHRASE = 'Test SDF Network ; September 2015';
+/** Non-secret wallet settings, mirrored from the web wallet. Wallet-derived: cleared on reset. */
+export const WALLET_SETTINGS_STORAGE_KEY = 'veil_wallet_settings';
+export const BACKUP_LAST_EXPORTED_KEY = 'veil_backup_last_exported_at';
 
 /** Sub-directory of the cache dir that exported envelopes are staged in. */
 const EXPORT_DIR_NAME = 'veil-backups';
@@ -44,7 +45,7 @@ export const BACKUP_FILE_EXTENSION = '.veilbackup.json';
 // ── Wallet state -> metadata ─────────────────────────────────────────────────────
 
 async function readSettings(): Promise<Record<string, unknown> | undefined> {
-  const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+  const raw = await AsyncStorage.getItem(WALLET_SETTINGS_STORAGE_KEY);
   if (!raw) return undefined;
   try {
     return JSON.parse(raw) as Record<string, unknown>;
@@ -72,6 +73,21 @@ export async function collectWalletMetadata(
   const publicKey = await AsyncStorage.getItem(PUBLIC_KEY_KEY);
   const signers = overrides.signers ?? (publicKey ? [{ index: 0, publicKey }] : []);
 
+  // The passphrase stamps which network the wallet lives on, so it must be the
+  // ACTIVE network's, never a hard-coded testnet value — a mainnet backup
+  // labelled with the testnet passphrase would restore into the wrong network
+  // context. Testnet resolves to `Networks.TESTNET` exactly as before; env and
+  // explicit overrides still win for deployments that need a custom value.
+  const networkPassphrase =
+    overrides.networkPassphrase
+    || process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim()
+    || getNetwork().networkPassphrase;
+  if (!networkPassphrase) {
+    throw new BackupError(
+      `No network passphrase is configured for ${getNetwork().displayName}.`
+    );
+  }
+
   return {
     version: 1,
     address,
@@ -79,10 +95,7 @@ export async function collectWalletMetadata(
     settings: overrides.settings ?? (await readSettings()),
     factoryAddress:
       overrides.factoryAddress || process.env['EXPO_PUBLIC_FACTORY_CONTRACT_ID']?.trim() || undefined,
-    networkPassphrase:
-      overrides.networkPassphrase
-      || process.env['EXPO_PUBLIC_NETWORK_PASSPHRASE']?.trim()
-      || TESTNET_PASSPHRASE,
+    networkPassphrase,
     rpId: overrides.rpId || process.env['EXPO_PUBLIC_RP_ID']?.trim() || undefined,
     createdAt: overrides.createdAt ?? Date.now(),
   };
@@ -189,7 +202,15 @@ export async function exportBackupToFile(
   const file = backend.files.get(id);
   if (!file) throw new BackupError('Backup was encrypted but no file was written');
 
+  await AsyncStorage.setItem(BACKUP_LAST_EXPORTED_KEY, String(Date.now()));
+
   return { id, encrypted, uri: file.uri, filename: file.name };
+}
+
+export async function getLastBackupExportedAt(): Promise<number | null> {
+  const raw = await AsyncStorage.getItem(BACKUP_LAST_EXPORTED_KEY);
+  const timestamp = raw ? Number(raw) : NaN;
+  return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : null;
 }
 
 /**
@@ -256,7 +277,7 @@ export async function persistRestoredState(metadata: WalletBackupMetadata): Prom
 
   const primary = metadata.signers[0]?.publicKey;
   if (primary) entries[PUBLIC_KEY_KEY] = primary;
-  if (metadata.settings) entries[SETTINGS_KEY] = JSON.stringify(metadata.settings);
+  if (metadata.settings) entries[WALLET_SETTINGS_STORAGE_KEY] = JSON.stringify(metadata.settings);
 
   // `multiSet` (array of [key, value] tuples) is the batch API in async-storage
   // 2.x (SDK 54); the record-shaped `setMany` only existed in 3.x.

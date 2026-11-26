@@ -8,10 +8,14 @@ node_modules/
 sdk/node_modules/
 sdk/dist/
 sdk/react/storybook-static/
+# Throwaway consumer that scripts/verify-exports.js installs the tarball into.
+sdk/.verify-consumer-*/
 
 # Frontend
 frontend/website/node_modules/
 frontend/website/.next/
+# TypeScript's incremental build cache ("incremental": true), not source.
+frontend/website/tsconfig.tsbuildinfo
 frontend/docs/node_modules/
 frontend/docs/.next/
 frontend/wallet/node_modules/
@@ -28,7 +32,14 @@ sdk/coverage/
 frontend/wallet/coverage/
 
 # Misc
+# `*.env` matches a name ENDING in .env, so it covers `.env` and
+# `production.env` but not `.env.local` or `.env.bak-1791206501` — and a
+# timestamped backup of a real env file is exactly the thing you least want
+# committed. One of those was staged by a `git add -A` and caught only by
+# reading the commit. Both shapes now.
 *.env
+.env*
+!.env.example
 .DS_Store
 build_error.txt
 TODO.md

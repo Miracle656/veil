@@ -200,6 +200,12 @@ input {
   background: rgba(0, 167, 181, 0.1);
 }
 
+.notice.warning {
+  border-color: rgba(253, 218, 36, 0.4);
+  background: rgba(253, 218, 36, 0.1);
+  color: #fef08a;
+}
+
 .grid {
   display: grid;
   gap: 14px;

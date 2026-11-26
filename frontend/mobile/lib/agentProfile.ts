@@ -38,6 +38,45 @@ export const LANGUAGES: readonly string[] = [
   'Korean', 'Arabic', 'Hindi', 'Russian', 'German', 'Turkish', 'Yoruba', 'Igbo', 'Swahili',
 ];
 
+/**
+ * How the agent is told to talk. `''` is a value in its own right — "Default" —
+ * and the web page stores it, so the empty string has to survive a round trip
+ * rather than being normalised away to "unset".
+ */
+export const PERSONAS: readonly { value: string; label: string; desc: string }[] = [
+  { value: '', label: 'Default', desc: 'Friendly and professional' },
+  { value: 'concise and direct', label: 'Concise', desc: 'Short answers, no fluff' },
+  { value: 'friendly and casual', label: 'Casual', desc: 'Relaxed, conversational tone' },
+  { value: 'detailed and educational', label: 'Teacher', desc: 'Explains concepts along the way' },
+  { value: 'witty and fun', label: 'Fun', desc: 'Light-hearted with personality' },
+];
+
+/** A profile with every field answered — what the settings screen edits. */
+export type CompleteProfile = Required<AgentUserProfile>;
+
+/**
+ * What an unanswered or fully reset profile looks like. Field for field this is
+ * what the web page resets to, so a profile carried between the two clients
+ * reads the same before anything has been chosen.
+ */
+export const DEFAULT_PROFILE: CompleteProfile = {
+  name: '',
+  language: 'English',
+  persona: '',
+  role: '',
+};
+
+/**
+ * The longest name the profile will hold, counted in code points so a name
+ * ending in an emoji is not measured in UTF-16 units.
+ *
+ * The web input carries no cap, so this is a bound the mobile side adds rather
+ * than one it inherits. A name is the only free-text field in the profile and it
+ * is interpolated into the agent's greeting and sent with every agent turn, so
+ * it is not the place to accept an unbounded string.
+ */
+export const MAX_NAME_LENGTH = 64;
+
 const ROLE_SUGGESTIONS: Record<AgentRole, readonly string[]> = {
   trader: ["What's my balance?", 'Best XLM/USDC rate?', 'Swap 100 XLM to USDC', 'Show recent trades'],
   investor: ["What's my balance?", 'Best XLM/USDC rate?', 'Show my portfolio', 'Any yield opportunities?'],
@@ -120,6 +159,89 @@ export function buildNotificationMessage(
   }
 }
 
+// ── Validation ──────────────────────────────────────────────────────────────────
+
+/**
+ * Drop the control characters out of a string and collapse its whitespace.
+ *
+ * A name is the one free-text field in the profile, and it is interpolated into
+ * the agent's greeting — so a pasted "Ada\nJailed for 3000" would ride along
+ * into every line the agent says, and into anything that ever prints the
+ * profile, as what looks like a second record. Nothing a person legitimately
+ * types into a name box is a control character, so they are removed rather
+ * than escaped or rejected. The same reasoning keeps a newline out of any log
+ * line the profile is ever written to.
+ */
+function scrub(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** Cut to {@link MAX_NAME_LENGTH} without splitting an astral character in half. */
+function bound(value: string): string {
+  const chars = Array.from(value);
+  return chars.length <= MAX_NAME_LENGTH ? value : chars.slice(0, MAX_NAME_LENGTH).join('');
+}
+
+/**
+ * Clean a name to something worth storing, or `''` when there is not one.
+ *
+ * Anything that is not a string — a stored number, `null`, an object — is not a
+ * name, and is treated as the absence of one rather than coerced into a string
+ * the greeting would then read out loud.
+ */
+export function normaliseName(value: unknown): string {
+  return typeof value === 'string' ? bound(scrub(value)) : '';
+}
+
+/** The stored role, or the unset default when it is not one the app offers. */
+export function normaliseRole(value: unknown): string {
+  return isAgentRole(value) ? value : DEFAULT_PROFILE.role;
+}
+
+/** The stored language, or English when it is not one the app offers. */
+export function normaliseLanguage(value: unknown): string {
+  return typeof value === 'string' && LANGUAGES.includes(value) ? value : DEFAULT_PROFILE.language;
+}
+
+/** The stored persona, or the Default one when it is not one the app offers. */
+export function normalisePersona(value: unknown): string {
+  const known = typeof value === 'string' && PERSONAS.some((p) => p.value === value);
+  return known ? (value as string) : DEFAULT_PROFILE.persona;
+}
+
+/**
+ * Coerce anything into a profile the settings screen can edit, answering every
+ * field from the web defaults where the input is silent.
+ *
+ * Both clients read and write {@link PROFILE_STORAGE_KEY}, so this is the point
+ * where a value one of them considers legitimate has to be accepted — including
+ * one a future build adds a choice for — and anything else is refused in favour
+ * of the default. Refusing, rather than passing it through, is what keeps an
+ * unknown role or a language the app cannot render out of the stored profile.
+ */
+export function normaliseProfile(input: unknown): CompleteProfile {
+  const raw = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
+  return {
+    name: normaliseName(raw.name),
+    language: normaliseLanguage(raw.language),
+    persona: normalisePersona(raw.persona),
+    role: normaliseRole(raw.role),
+  };
+}
+
+/**
+ * Why a name cannot be saved as typed, or `null` when it can.
+ *
+ * The input caps what can be typed, so this is the second line of defence for a
+ * value that arrived another way — a paste on a platform where `maxLength` does
+ * not bind, or a name an older web build stored with no cap at all.
+ */
+export function nameProblem(name: string): string | null {
+  if (typeof name !== 'string' || Array.from(name).length <= MAX_NAME_LENGTH) return null;
+  return `Use ${MAX_NAME_LENGTH} characters or fewer.`;
+}
+
 // ── Persistence ─────────────────────────────────────────────────────────────────
 
 /**
@@ -127,6 +249,12 @@ export function buildNotificationMessage(
  * which the screen treats as "needs onboarding" — the same recovery the web
  * page performs, and the right one: an unreadable profile is not worth an error
  * screen when re-asking three questions fixes it.
+ *
+ * What comes back is validated, and fields left unanswered stay absent rather
+ * than being filled in: `''` and "not set" mean the same thing to every reader
+ * here, and a caller asking for the profile wants to know what was actually
+ * stored. Use {@link normaliseProfile} for a full object to put in front of a
+ * form.
  */
 export async function loadProfile(): Promise<AgentUserProfile> {
   try {
@@ -134,18 +262,72 @@ export async function loadProfile(): Promise<AgentUserProfile> {
     if (!raw) return {};
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return {};
-    return parsed as AgentUserProfile;
+    return validatedSubset(parsed as AgentUserProfile);
   } catch {
     return {};
   }
 }
 
-/** Persist the profile, merged over whatever is already stored. */
+/**
+ * Keep the fields of a stored profile that carry a value, each one validated.
+ *
+ * Validated on the way out as well as in, so a profile another client — or an
+ * older build — wrote with an unknown role or an over-long name is repaired
+ * before the agent greets the user with it, rather than being re-saved as-is.
+ */
+function validatedSubset(profile: AgentUserProfile): AgentUserProfile {
+  const clean = normaliseProfile(profile);
+  const out: AgentUserProfile = {};
+  if (clean.name) out.name = clean.name;
+  if (clean.role) out.role = clean.role;
+  if (clean.persona) out.persona = clean.persona;
+  // A stored language is always written out, even when it is the default, so
+  // that reading the profile back cannot turn an answered field into a blank
+  // one. English is the one value that is both a default and a real answer.
+  if (clean.language !== DEFAULT_PROFILE.language || typeof profile.language === 'string') {
+    out.language = clean.language;
+  }
+  return out;
+}
+
+/**
+ * Persist the profile, merged over whatever is already stored.
+ *
+ * For callers that only know one field — the agent onboarding writing a name it
+ * just asked for. A screen showing every field wants {@link replaceProfile},
+ * which can also clear one.
+ */
 export async function saveProfile(profile: AgentUserProfile): Promise<AgentUserProfile> {
   const existing = await loadProfile();
-  const merged = { ...existing, ...profile };
+  const merged = { ...existing, ...validatedSubset(profile) };
   await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(merged));
   return merged;
+}
+
+/**
+ * Persist the whole profile, replacing what is stored, and return what was
+ * written.
+ *
+ * This is the settings screen's save: every field is on the form, so a merge
+ * would be wrong — clearing the name has to actually clear it, which a merge
+ * over the stored copy cannot do. The result is validated first, so a value the
+ * app does not offer cannot reach storage from here even by accident.
+ */
+export async function replaceProfile(profile: AgentUserProfile): Promise<CompleteProfile> {
+  const clean = normaliseProfile(profile);
+  await AsyncStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(clean));
+  return clean;
+}
+
+/**
+ * Forget the stored profile entirely.
+ *
+ * The web page resets by removing the key rather than writing a blank profile
+ * over it, and this matches that: the next reader sees no profile at all, so the
+ * agent re-onboards instead of reading an empty name as an answer.
+ */
+export async function resetProfile(): Promise<void> {
+  await AsyncStorage.removeItem(PROFILE_STORAGE_KEY);
 }
 
 /**

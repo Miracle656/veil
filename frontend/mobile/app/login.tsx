@@ -1,6 +1,6 @@
 import { errorMessage } from '../lib/errorMessage';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
@@ -9,8 +9,9 @@ import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
+import { RestoreBackupPanel } from '../components/RestoreBackupPanel';
 import { HexagonIcon } from '../components/icons';
-import { loginWithPasskey } from '../lib/passkeyLogin';
+import { loginWithAddress, loginWithPasskey } from '../lib/passkeyLogin';
 
 const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
@@ -18,8 +19,12 @@ const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.Store
  * Sign in with an existing wallet. The headline path is the passkey: one
  * fingerprint re-derives the fee-payer (PRF) and reads the on-chain
  * breadcrumbs, restoring the wallet even on a brand-new phone — as long as the
- * passkey itself synced (Google Password Manager / iCloud Keychain). The
- * recovery-server flow and raw-key import remain as fallbacks.
+ * passkey itself synced (Google Password Manager / iCloud Keychain). A wallet
+ * address is an equally valid way in: its signer set is public, so anyone who
+ * knows the address can prove possession of a registered passkey against it —
+ * no PRF required. A backup file is the third way in: it carries the `C…`
+ * address with nothing to type, verified the same way. The recovery-server
+ * flow and raw-key import remain as fallbacks.
  */
 export default function LoginScreen() {
   const router = useRouter();
@@ -28,12 +33,29 @@ export default function LoginScreen() {
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showAddress, setShowAddress] = useState(false);
+  const [address, setAddress] = useState('');
+  const [showRestore, setShowRestore] = useState(false);
 
   const handlePasskeyLogin = async () => {
     setBusy(true);
     setError(null);
     try {
       const result = await loginWithPasskey();
+      router.replace('/dashboard');
+      void result;
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAddressLogin = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await loginWithAddress(address);
       router.replace('/dashboard');
       void result;
     } catch (e) {
@@ -73,6 +95,67 @@ export default function LoginScreen() {
               </>
             )}
           </Pressable>
+        )}
+
+        <Pressable
+          testID="login-address-toggle"
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => setShowAddress((v) => !v)}
+          style={styles.linkBtn}
+        >
+          <Text style={styles.link}>{showAddress ? 'Hide address login' : 'I know my wallet address'}</Text>
+        </Pressable>
+
+        {showAddress && (
+          <View style={styles.card}>
+            <TextInput
+              testID="login-address-input"
+              style={styles.input}
+              value={address}
+              onChangeText={setAddress}
+              placeholder="C… (56 characters)"
+              placeholderTextColor={colors.textFaint}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              autoComplete="off"
+              editable={!busy}
+              onSubmitEditing={handleAddressLogin}
+            />
+            <Pressable
+              testID="login-address-submit"
+              accessibilityRole="button"
+              disabled={busy || address.trim().length === 0}
+              onPress={handleAddressLogin}
+              style={({ pressed }) => [styles.ctaSecondary, (busy || address.trim().length === 0) && styles.disabled, pressed && styles.pressed]}
+            >
+              {busy ? (
+                <ActivityIndicator color={colors.textPrimary} />
+              ) : (
+                <Text style={styles.ctaSecondaryText}>Sign in</Text>
+              )}
+            </Pressable>
+          </View>
+        )}
+
+        <Pressable
+          testID="login-restore-toggle"
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={() => setShowRestore((v) => !v)}
+          style={styles.linkBtn}
+        >
+          <Text style={styles.link}>{showRestore ? 'Hide backup restore' : 'Restore from a backup file'}</Text>
+        </Pressable>
+
+        {showRestore && (
+          <View style={styles.card} testID="login-restore-panel">
+            <RestoreBackupPanel
+              requireSignerMatch
+              testIDPrefix="login-restore"
+              onRestored={() => router.replace('/dashboard')}
+            />
+          </View>
         )}
 
         <Pressable accessibilityRole="button" onPress={() => router.push('/recover')} style={styles.linkBtn}>
@@ -118,6 +201,24 @@ const createStyles = (colors: ThemeColors) =>
     disabled: { opacity: 0.5 },
     pressed: { opacity: 0.85 },
     ctaText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
+    card: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 13,
+    },
+    input: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 14, padding: 0 },
+    ctaSecondary: {
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 100,
+      paddingVertical: 14,
+      alignItems: 'center',
+      marginTop: 12,
+    },
+    ctaSecondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodyMedium, fontSize: 14 },
     linkBtn: { alignItems: 'center', paddingVertical: 13 },
     link: { color: colors.accent, fontFamily: fontFamily.bodyMedium, fontSize: 14 },
     linkMuted: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },

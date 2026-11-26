@@ -11,7 +11,7 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import { InvisibleWalletCore } from './core';
 import type { InvisibleWallet, StorageAdapter, WalletConfig } from './core';
 
-// The public type surface is owned by ./core and re-exported here so that
+// The public type surface is owned by ./types and re-exported here so that
 // `invisible-wallet-sdk` keeps exporting it from the same module as before.
 export {
     RecoveryTimelockActive,
@@ -37,7 +37,7 @@ export type {
     WalletStateListener,
     InvisibleWalletActions,
     InvisibleWallet,
-} from './core';
+} from './types';
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 

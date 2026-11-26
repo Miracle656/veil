@@ -30,7 +30,7 @@ const { address, isDeployed, isPending, error, register, deploy, login, sendPaym
 
 async function createWallet() {
   await register('alice')                  // passkey prompt
-  await deploy(import.meta.env.VITE_FEE_PAYER_SECRET)
+  await deploy(feePayerSigner) // a TransactionSigner; see ../README.md
 }
 </script>
 

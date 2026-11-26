@@ -1,7 +1,10 @@
 # SEP-45 spike — Web Authentication for Contract Accounts
 
 **Status:** phase 1 complete (challenge fetched, decoded and verified against a live anchor).
-**Date:** 2026-08-24.
+Phase 2 client code (`frontend/wallet/lib/sep45.ts`) has landed — see
+["Phase 2 — what shipped"](#phase-2--what-shipped) below for exactly what is
+and is not verified.
+**Date:** 2026-08-24 (phase 1); updated 2026-09-27 (phase 2 code).
 
 ## Why this matters to Veil
 
@@ -78,23 +81,62 @@ passkey smart wallet that can authenticate to anchors *as itself*.
 4. **The unsigned entry carries `sigExpLedger: 0`.** The client sets the real expiration
    when it signs, exactly as it does for a normal contract invocation.
 
-## Phase 2 — what is left
+## Phase 2 — what shipped
 
-Signing requires a **testnet Veil wallet with a real passkey**, since the assertion is an
-interactive browser ceremony. The probe used the deployed testnet factory address as a
-stand-in to inspect the challenge; it cannot sign for it.
+`frontend/wallet/lib/sep45.ts` implements the full client side of the flow:
 
-Remaining work:
+- `fetchSep45Challenge` — GETs the anchor's `WEB_AUTH_FOR_CONTRACTS_ENDPOINT` and parses
+  the response, accepting both `authorization_entries`/`network_passphrase` (spec) and
+  `authorizationEntries`/`networkPassphrase` (the SDF test anchor's actual field names).
+- `signSep45Challenge` — finds the entry whose signature is still `scvVoid` (the wallet's,
+  regardless of its position in the array), then validates it before signing anything:
+  the challenge's network passphrase must match the wallet's configured network
+  (`WRONG_NETWORK`), the unsigned entry must be addressed to the caller's own wallet
+  address, and its invocation must be a `web_auth_verify` call on the anchor's declared
+  web-auth contract with no sub-invocations and `account` / `home_domain` arguments
+  matching the wallet and requested domain (`INVALID_CHALLENGE` otherwise). `__check_auth`
+  verifies the WebAuthn signature over the preimage hash and nothing about what is being
+  authorized, so this module has to check first — an anchor (or an MITM of the
+  `stellar.toml` fetch) could otherwise hand back a "challenge" invoking a token
+  `transfer` instead. Once validated, this builds the same
+  `HashIdPreimageSorobanAuthorization` the SDK's own `authorizeEntries` builds for a normal
+  contract call, hands the hash to the existing passkey `signAuthEntry` signer, and sets a
+  deliberate `sigExpLedger` (see `SEP45_SIGNATURE_EXPIRATION_LEDGERS` for the reasoning).
+  The anchor's own already-signed entry is passed through untouched.
+- `submitSep45Challenge` — POSTs both entries back and returns the JWT, mapping the
+  anchor's failure modes to a typed `Sep45Error` (`CHALLENGE_EXPIRED`,
+  `SIGNATURE_REJECTED`, `ANCHOR_ERROR`, `NETWORK_ERROR`, `INVALID_RESPONSE`,
+  `INVALID_CHALLENGE`, `WRONG_NETWORK`).
+- The returned JWT is a normal bearer token — `lib/__tests__/sep45.test.ts` has an
+  end-to-end (mocked) test showing it flow straight into `initiateDeposit` from
+  `lib/sep24.ts`, in place of the fee-payer's SEP-10 token.
 
-1. Deploy a testnet wallet and register a passkey against it.
-2. Sign entry 0 with the existing passkey signer, setting a sensible expiration ledger.
-3. Re-encode both entries and POST them back.
-4. Store the returned JWT and use it for SEP-6 / SEP-24 calls in place of the SEP-10
-   token the fee-payer currently obtains.
+The gotchas below were the reason phase 1 took as long as it did; phase 2 hit one more
+worth recording: **the top-level `@stellar/js-xdr` install and the copy `@stellar/stellar-sdk`
+depends on internally can be two different major versions** (3.x vs 4.x seen during this
+work), and their `XdrReader`/`XdrWriter` are not interchangeable — decoding with one
+version's reader against a `VarArray` built from the other's generated type throws deep
+inside js-xdr with an unhelpful error. Fix: pin `@stellar/js-xdr` in `package.json` to the
+same range `@stellar/stellar-sdk`'s own `stellar-base` dependency declares, so npm dedupes
+to one copy. Also: despite `__esModule: true`, the package has no `default` export, so
+`import jsXdr from '@stellar/js-xdr'` resolves to `undefined` under `esModuleInterop` — use
+`import * as jsXdr from '@stellar/js-xdr'` instead.
 
-Blocked on nothing but a testnet wallet — which is itself blocked on
-[#628](https://github.com/Miracle656/veil/issues/628), since switching the web wallet to
-testnet today can overwrite mainnet state.
+### What is **not** verified here
+
+The acceptance criteria for the issue this phase closes ask for the anchor's actual
+response to a signed challenge, pasted into the PR. That step is a real WebAuthn
+ceremony — a physical authenticator, a browser, user presence — against a live testnet
+wallet. It cannot run in a headless CI sandbox, and this change was authored in one, so:
+
+- **No live SDF-test-anchor JWT transcript accompanies this change.** Every test above
+  exercises the client logic with an injected passkey signer and a mocked anchor; the
+  code path is real, the network calls in the tests are not.
+- A maintainer (or CI with real browser + authenticator access) should run this once
+  against a funded testnet wallet and paste the anchor's `{"token": "..."}` response
+  (redacted) into a follow-up, per the acceptance criteria. Everything downstream of that
+  call — parsing, signing, submitting, and using the JWT for a SEP-24 call — is exercised
+  and passing in this PR; only the live ceremony itself is outstanding.
 
 ## Probe
 

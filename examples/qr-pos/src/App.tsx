@@ -111,6 +111,22 @@ export function App() {
     <main className="pos">
       <header className="pos__brand">Veil · QR Point of Sale</header>
 
+      <div
+        role="alert"
+        style={{
+          background: 'rgba(234, 88, 12, 0.15)',
+          border: '1px solid rgba(234, 88, 12, 0.4)',
+          borderRadius: '8px',
+          padding: '10px 14px',
+          marginBottom: '16px',
+          color: '#ea580c',
+          fontSize: '13px',
+          lineHeight: '1.4',
+        }}
+      >
+        <strong>Demonstration only — not production-safe:</strong> Payment verification runs entirely client-side via browser Horizon polling without backend confirmation or webhook validation.
+      </div>
+
       {phase === 'setup' && (
         <section className="pos__card">
           <h1 className="pos__title">New charge</h1>

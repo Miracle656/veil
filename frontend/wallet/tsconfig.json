@@ -11,6 +11,10 @@
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
+    "types": [
+      "node",
+      "jest"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
@@ -55,6 +59,9 @@
       ],
       "@veil/sep7": [
         "../../sdk/src/sep7"
+      ],
+      "@veil/dapps": [
+        "../mobile/lib/dappAllowlist"
       ],
       "react": [
         "./node_modules/@types/react"

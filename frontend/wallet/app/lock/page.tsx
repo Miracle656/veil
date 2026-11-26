@@ -145,6 +145,20 @@ export default function LockPage() {
         return
       }
 
+      // The wallet's stored WebAuthn origin is deliberately NOT checked here.
+      //
+      // Being bound to another platform stops this wallet *signing* on the web;
+      // it does not make the session invalid. Refusing the unlock turned that
+      // into a lockout: the passkey assertion above had already succeeded, and
+      // the holder still could not reach their own balances, history or
+      // settings — all of which are reads that work fine. #1003 shipped the
+      // warning as a gate here by mistake.
+      //
+      // The limitation is reported where it actually bites instead. Every
+      // signing path (walletConnect, sweepContractBalance, guardian) maps the
+      // contract's OriginMismatch (#9) through walletContractErrorMessage to
+      // the same sentence, at the moment the user tries to move funds.
+
       const existing = walletSession.getItem('invisible_wallet_address')
       if (existing && existing !== sessionAddress) {
         sessionStorage.clear()
@@ -176,9 +190,8 @@ export default function LockPage() {
       style={{ justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}
     >
       <div style={{ maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2.5rem' }}>
-        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
-          <NetworkSwitcher />
-        </div>
+        {/* The switcher must sit inside a landmark (axe "region" rule), so it
+            lives inside the main below rather than above it. */}
 
         <header style={{ padding: '1rem 1.25rem', display: 'flex', justifyContent: 'center' }}>
            {/* Veil wordmark — Anton ALL CAPS per Stellar brand manual */}
@@ -187,7 +200,10 @@ export default function LockPage() {
         </span>
         </header>
        
-        <main style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '2rem 1.25rem' }}>
+        <div style={{ width: '100%', maxWidth: 260, margin: '0 auto 1.75rem' }}>
+          <NetworkSwitcher />
+        </div>
         {/* Lock card */}
         <div
           className="card"

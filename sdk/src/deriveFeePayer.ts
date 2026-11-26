@@ -3,23 +3,42 @@ import { Keypair } from '@stellar/stellar-sdk';
 /**
  * Deterministically derive a fee-payer Ed25519 keypair from a WebAuthn credential ID.
  *
- * SECURITY (known limitation — see docs/adr/0003-fee-payer-key-from-webauthn-prf.md):
- * **The WebAuthn credential ID is not a secret.** It is stored in plaintext, is
- * returned in `allowCredentials` on every assertion, and is observable by any
- * relying party. This derivation therefore does **not** bind the resulting key
- * to a biometric: anyone who can read the credential ID can reconstruct this
- * exact keypair with no passkey prompt.
+ * SECURITY (known limitation — see docs/NON_PRF_FEE_PAYER_EXPOSURE.md and docs/adr/0003-fee-payer-key-from-webauthn-prf.md):
+ * **The WebAuthn credential ID is not a secret.**
  *
- * The blast radius is the G… fee account only — the C… contract holds the
- * funds — but this is weaker than a "no private keys" reading of the SDK would
- * suggest. Do not add callers that rely on this being passkey-bound, and do not
- * use it to derive anything that guards value. The planned replacement (ADR
- * 0003) derives the seed from a WebAuthn PRF output, a value only the passkey
- * can produce; see `FEE_PAYER_PRF_SALT` and the `prf-*` derivation modes.
+ * Exposure paths in practice:
+ * 1. Storage: The credential ID is stored in cleartext in client storage
+ *    (`invisible_wallet_key_id` in localStorage or mobile device storage). Any
+ *    script executing in the application origin (e.g. XSS), malicious browser
+ *    extension, or local disk inspection can read it directly.
+ * 2. Ceremonies: The credential ID is transmitted in `publicKey.allowCredentials`
+ *    on every WebAuthn assertion (unlock, transaction signing), visible to devtools,
+ *    DOM observers, and platform authenticators.
+ * 3. Scope: While WebAuthn scopes credentials to the Relying Party (RP ID) and does
+ *    not broadcast them across domains, within the client application origin the
+ *    credential ID is treated as a public descriptor, not a secret.
  *
- * This caveat travels with the function deliberately. It is now a public export
- * of this package, so a consumer reading only the signature would otherwise
- * have no way to learn any of the above.
+ * This derivation therefore does **not** bind the resulting key to a biometric:
+ * anyone who can read the credential ID can reconstruct this exact keypair with
+ * no passkey prompt.
+ *
+ * Blast radius:
+ * - Smart wallet (Soroban contract): The smart wallet's funds are guarded by the
+ *   passkey through contract `__check_auth`. Only the fee payer's gas balance
+ *   is exposed.
+ * - Keypair wallet: The account holds everything. Deriving a keypair wallet from
+ *   a credential ID results in total loss of funds.
+ *
+ * Current Architecture & Migration:
+ * - Passkey-bound wallets derive fee-payer keys using the WebAuthn PRF extension
+ *   (`evaluateFeePayerPrf` / `deriveFeePayerSeedFromPrf` using `FEE_PAYER_PRF_SALT`).
+ * - For authenticators without PRF support, new wallets generate a secure random
+ *   keypair (`Keypair.random()`) stored locally, stopping public-value derivation
+ *   where an alternative exists.
+ * - This function is retained strictly for backward compatibility: to probe and
+ *   preserve pre-existing legacy fee-payer accounts on-chain so existing funded
+ *   accounts are not stranded. Do not use it to establish new wallets or to derive
+ *   keys that guard value.
  *
  * The derivation uses HKDF (RFC 5869) with SHA-256:
  *   - IKM  = raw credential ID bytes

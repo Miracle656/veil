@@ -27,9 +27,9 @@ const wallet = createWalletStore({
 // <p>{$wallet.status} — {$wallet.walletAddress}</p>
 
 await wallet.register('alice');
-await wallet.deploy(feePayerSecret);
+await wallet.deploy(feePayerSigner);
 const sig = await wallet.sign(signaturePayload);
-await wallet.send(feePayerSecret, recipientAddress, amountInStroops);
+await wallet.send(feePayerSigner, recipientAddress, amountInStroops);
 ```
 
 A full SvelteKit example (register / dashboard / send routes) lives in

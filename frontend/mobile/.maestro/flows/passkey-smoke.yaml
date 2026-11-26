@@ -23,19 +23,20 @@ tags:
 - runFlow: ../subflows/launch-fresh.yaml
 
 - tapOn:
-    id: "welcome-get-started-button"
+    id: "welcome-create"
 - extendedWaitUntil:
     visible:
       id: "create-wallet-screen"
     timeout: 20000
 
+# The passkey path specifically — the keypair path is what the emulator suite
+# exercises; this one only runs where a real credential exists.
 - tapOn:
-    id: "create-wallet-button"
+    id: "create-passkey-button"
 
 # The system credential sheet is drawn by the OS, so it is matched by its text
-# rather than a testID, and it is optional: once registration is real
-# (backlog #25) the prompt is mandatory here, but the assertion must not fail
-# the flow against a build that still stubs it out.
+# rather than a testID. Optional because the ceremony may complete without a
+# visible sheet (e.g. already-unlocked face auth).
 - extendedWaitUntil:
     visible:
       text: "(?i)(face id|touch id|fingerprint|passkey|biometric)"
@@ -43,23 +44,31 @@ tags:
     optional: true
 
 # The operator authenticates. The generous timeout is the human in the loop.
+# The creation card renders the new address once the wallet is persisted; a
+# recovery-binding failure shows repair buttons there, which this smoke test
+# deliberately does not step through.
 - extendedWaitUntil:
     visible:
-      id: "create-wallet-success"
+      id: "create-wallet-address"
     timeout: 60000
 
 - tapOn:
     id: "create-wallet-continue-button"
+- runFlow: ../subflows/skip-tutorial.yaml
+- extendedWaitUntil:
+    visible:
+      id: "dashboard-screen"
+    timeout: 20000
 
-# Relaunch cold. Once the credential is persisted this is where the
-# unlock-with-passkey assertion goes — a passkey that only works in the session
-# that created it is the failure this smoke test exists to catch. Until then the
-# entry router lands back on create-wallet, which at least proves the app
-# restarts cleanly after the prompt.
+# Relaunch cold. The passkey wallet persists its address and passkey id, so
+# the entry router must come back to the dashboard, not to onboarding — a
+# credential that only authenticates the session that created it fails here.
+# (The inactivity lock arms on devices with enrolled biometrics, but only
+# after idle/background beyond its grace window, which a relaunch is not.)
 - stopApp
 - launchApp
 - runFlow: ../subflows/dismiss-offline.yaml
 - extendedWaitUntil:
     visible:
-      id: "create-wallet-screen"
+      id: "dashboard-screen"
     timeout: 30000

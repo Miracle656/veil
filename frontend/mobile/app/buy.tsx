@@ -2,6 +2,7 @@ import { errorMessage } from '../lib/errorMessage';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
+import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Pressable,
@@ -38,8 +39,19 @@ async function authenticate(
   webAuthEndpoint: string,
   account: string,
   networkPassphrase: string,
+  homeDomain: string,
+  signingKey: string | undefined,
 ): Promise<string | undefined> {
   if (!webAuthEndpoint) return undefined;
+
+  // An anchor that publishes no SIGNING_KEY cannot have its challenges checked,
+  // and an unchecked challenge is signed with this device's real key. Refuse
+  // rather than authenticate blind.
+  if (!signingKey) {
+    throw new Error(
+      `${homeDomain} publishes no SEP-10 SIGNING_KEY, so its sign-in request cannot be verified.`,
+    );
+  }
 
   const secret = await getSignerSecret();
   if (!secret) {
@@ -48,7 +60,14 @@ async function authenticate(
   const signerKeypair = Keypair.fromSecret(secret);
 
   return getSep10Jwt(webAuthEndpoint, account, networkPassphrase, async (params) =>
-    signSep10Challenge(params.challengeXdr, params.networkPassphrase, signerKeypair),
+    signSep10Challenge(
+      params.challengeXdr,
+      params.networkPassphrase,
+      signerKeypair,
+      homeDomain,
+      signingKey,
+      new URL(webAuthEndpoint).host,
+    ),
   );
 }
 
@@ -57,6 +76,7 @@ type Step = 'form' | 'connecting' | 'pending' | 'success' | 'error';
 const POLL_INTERVAL_MS = 5_000;
 
 export default function BuyScreen() {
+  const router = useRouter();
   const [anchorDomain, setAnchorDomain] = useState(DEFAULT_ANCHOR_DOMAIN);
   const [assetCode, setAssetCode] = useState('XLM');
   const [amount, setAmount] = useState('');
@@ -133,10 +153,18 @@ export default function BuyScreen() {
         transferServerUrl: server,
         webAuthEndpoint,
         networkPassphrase,
+        homeDomain,
+        signingKey,
       } = await discoverAnchorInfo(anchorDomain.trim());
       setTransferServerUrl(server);
 
-      const jwt = await authenticate(webAuthEndpoint, resolved, networkPassphrase);
+      const jwt = await authenticate(
+        webAuthEndpoint,
+        resolved,
+        networkPassphrase,
+        homeDomain,
+        signingKey,
+      );
 
       const deposit = await initiateDeposit(
         server,
@@ -292,6 +320,21 @@ export default function BuyScreen() {
         </Pressable>
       </View>
 
+      {/* USDY Explainer Card */}
+      <View style={styles.rwaCard}>
+        <Text style={styles.rwaTag}>TOKENIZED US TREASURIES</Text>
+        <Text style={styles.rwaTitle}>USDY (Ondo US Dollar Yield)</Text>
+        <Text style={styles.rwaDesc}>
+          Understand what USDY is, how its value accrues, and its key risks before swapping or buying.
+        </Text>
+        <Pressable
+          style={styles.rwaButton}
+          onPress={() => router.push('/token/usdy' as any)}
+        >
+          <Text style={styles.rwaButtonText}>Learn what USDY is →</Text>
+        </Pressable>
+      </View>
+
       {step === 'error' && error && <Text style={styles.error}>{error}</Text>}
     </ScrollView>
   );
@@ -416,5 +459,45 @@ const styles = StyleSheet.create({
     backgroundColor: '#450a0a',
     borderRadius: 8,
     padding: 10,
+  },
+  rwaCard: {
+    backgroundColor: 'rgba(253, 218, 36, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(253, 218, 36, 0.25)',
+    borderRadius: 12,
+    padding: 16,
+    gap: 6,
+    marginTop: 8,
+  },
+  rwaTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FDDA24',
+    letterSpacing: 0.8,
+  },
+  rwaTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  rwaDesc: {
+    fontSize: 13,
+    color: '#94a3b8',
+    lineHeight: 18,
+    marginBottom: 6,
+  },
+  rwaButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    alignSelf: 'flex-start',
+  },
+  rwaButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FDDA24',
   },
 });

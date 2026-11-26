@@ -212,7 +212,8 @@ export async function collectRecoverySignatures(
 
 // ── Server configuration ──────────────────────────────────────────────────────
 
-const RECOVERY_SERVERS_KEY = 'veil_recovery_servers';
+/** AsyncStorage key holding the remembered SEP-30 server list. Wallet-derived: cleared on reset. */
+export const RECOVERY_SERVERS_KEY = 'veil_recovery_servers';
 
 /**
  * Parse a configured server list.
@@ -606,7 +607,8 @@ export async function submitRecoveryTransaction(
 
 // ── Pending recovery, across app launches ─────────────────────────────────────
 
-const PENDING_RECOVERY_KEY = 'veil_pending_recovery_v1';
+/** AsyncStorage key holding a recovery waiting out its timelock. Wallet-derived: cleared on reset. */
+export const PENDING_RECOVERY_KEY = 'veil_pending_recovery_v1';
 
 /**
  * A recovery waiting out the contract's timelock.
@@ -771,6 +773,9 @@ const CONTRACT_ERRORS: Record<number, string> = {
   14: 'There is no pending recovery on this wallet to finalize.',
   15: 'The recovery timelock has not expired yet. Come back after the unlock date.',
   22: 'This wallet has no recovery key set, so server-assisted recovery is not available for it.',
+  // Wallets built after #1182: the guardian and recovery-key paths share one slot.
+  28: "A guardian recovery is already pending on this wallet, so a server-assisted recovery can't start until it finishes or is cancelled from a device that still has access.",
+  29: 'A server-assisted recovery is already pending on this wallet. Wait for it to finish, or cancel it from the device that still has access.',
 };
 
 /** Turn a simulation failure into something a user can act on. */

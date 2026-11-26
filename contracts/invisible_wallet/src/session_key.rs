@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Symbol};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env, Symbol, Val, Vec};
 use crate::WalletError;
 
 // Approximate seconds per Stellar ledger — used when converting a wall-clock
@@ -40,6 +40,37 @@ pub struct SessionKeyAcl {
     pub spent: i128,
     /// Unix timestamp (seconds) after which the key is no longer valid.
     pub expiry: u64,
+    /// Allowed recipients. **Empty means unconstrained** (the original
+    /// behaviour): the cap then bounds how much leaves, not where it goes.
+    /// When non-empty, a call whose payee is not in this list is rejected, and
+    /// so is any call whose payee cannot be determined.
+    pub payees: Vec<Address>,
+    /// Optional per-call ceiling, alongside the cumulative `amount_cap`.
+    /// `None` means a single call may spend the whole remaining budget.
+    pub per_call_max: Option<i128>,
+}
+
+/// What a call spends and who receives it, read per selector.
+///
+/// Defined once, in [`crate::sep41`], because the session-key budget and the
+/// per-key spend limit have to price the same call the same way.
+pub use crate::sep41::CallEffect;
+
+/// Reads the amount and payee out of a call's arguments using the argument
+/// layout of that specific selector (SEP-41 token interface).
+///
+/// The layout table lives in [`crate::sep41`] — see it for the per-selector
+/// argument positions.
+///
+/// An unknown selector, a wrong argument count or an argument of the wrong type
+/// is refused with `SessionKeyAclViolation` instead of being guessed at (the
+/// previous positional `args[2]` read silently produced `0` for these).
+pub fn extract_call_effect(
+    env: &Env,
+    selector: &Symbol,
+    args: &Vec<Val>,
+) -> Result<CallEffect, WalletError> {
+    crate::sep41::describe(env, selector, args).map_err(|_| WalletError::SessionKeyAclViolation)
 }
 
 #[contracttype]
@@ -101,6 +132,8 @@ pub fn revoke(env: &Env, key_id: &BytesN<32>) {
 ///   - the key exists and has not expired,
 ///   - `target` matches `acl.target_contract`,
 ///   - `selector` matches `acl.selector`, and
+///   - `amount <= acl.per_call_max` when a per-call maximum is set,
+///   - the payee is in `acl.payees` when that list is non-empty, and
 ///   - `acl.spent + amount <= acl.amount_cap` (cumulative budget not exceeded).
 ///
 /// On success the updated ACL (with incremented `spent`) is written back to
@@ -112,6 +145,7 @@ pub fn enforce(
     target: &Address,
     selector: &Symbol,
     amount: i128,
+    payee: Option<&Address>,
 ) -> Result<(), WalletError> {
     let mut acl = get_acl(env, key_id).ok_or(WalletError::SignerNotAuthorized)?;
 
@@ -129,6 +163,22 @@ pub fn enforce(
 
     if *selector != acl.selector {
         return Err(WalletError::SessionKeyAclViolation);
+    }
+
+    if let Some(max) = acl.per_call_max {
+        if amount > max {
+            return Err(WalletError::SessionKeyAclViolation);
+        }
+    }
+
+    // Payee constraint: only enforced when the key has an allow-list, so a key
+    // registered without one behaves exactly as before. With an allow-list, a
+    // call with no determinable payee (e.g. `burn`) is refused too.
+    if !acl.payees.is_empty() {
+        match payee {
+            Some(p) if acl.payees.contains(p) => {}
+            _ => return Err(WalletError::SessionKeyAclViolation),
+        }
     }
 
     // Cumulative budget check: reject if this call would push total spend over cap.
@@ -178,11 +228,16 @@ mod tests {
             amount_cap: 1_000_000,
             spent: 0,
             expiry: env.ledger().timestamp() + 10_000,
+            payees: Vec::new(env),
+            per_call_max: None,
         }
     }
 
     // ── Target enforcement ────────────────────────────────────────────────────
 
+    // Hazard: a session key scoped to one token contract must not be replayable
+    // against another. If this fails, a stolen session key can drain any contract
+    // the wallet holds, not just the one the owner scoped it to.
     #[test]
     fn acl_fields_enforced_target() {
         let (env, contract_id, target) = setup();
@@ -194,15 +249,18 @@ mod tests {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
             assert_eq!(
-                enforce(&env, &key_id, &other, &sel, 100),
+                enforce(&env, &key_id, &other, &sel, 100, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 100, None).is_ok());
         });
     }
 
     // ── Selector enforcement ──────────────────────────────────────────────────
 
+    // Hazard: a key scoped to `transfer` must not be usable for `approve` (or
+    // any other selector). If this fails, a key meant for a bounded transfer can
+    // grant an unbounded allowance instead.
     #[test]
     fn acl_fields_enforced_selector() {
         let (env, contract_id, target) = setup();
@@ -214,15 +272,18 @@ mod tests {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &other_sel, 100),
+                enforce(&env, &key_id, &target, &other_sel, 100, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, 100).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 100, None).is_ok());
         });
     }
 
     // ── Amount cap — per-call boundary ───────────────────────────────────────
 
+    // Hazard: a single call must not exceed the cumulative cap. If this fails,
+    // one oversized call can drain the entire budget in a single authorisation
+    // instead of being bounded by the remaining allowance.
     #[test]
     fn acl_fields_enforced_amount_cap_per_call() {
         let (env, contract_id, target) = setup();
@@ -237,18 +298,23 @@ mod tests {
                 amount_cap: 500,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 501),
+                enforce(&env, &key_id, &target, &sel, 501, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
-            assert!(enforce(&env, &key_id, &target, &sel, 500).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 500, None).is_ok());
         });
     }
 
     // ── Cumulative budget enforcement ─────────────────────────────────────────
 
+    // Hazard: the cap is cumulative, not per-call. If this fails, a key can
+    // spend its full cap on every call, so the "budget" is meaningless and the
+    // owner's total exposure is unbounded.
     #[test]
     fn cumulative_budget_enforced() {
         let (env, contract_id, target) = setup();
@@ -263,30 +329,35 @@ mod tests {
                 amount_cap: 1_000,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
             // First call: spend 600
-            assert!(enforce(&env, &key_id, &target, &sel, 600).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 600, None).is_ok());
             // spent is now 600; cap is 1_000 → 400 remaining
 
             // Second call: 401 exceeds remaining budget even though 401 < cap
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 401),
+                enforce(&env, &key_id, &target, &sel, 401, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
 
             // Second call: exactly 400 is still allowed
-            assert!(enforce(&env, &key_id, &target, &sel, 400).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 400, None).is_ok());
             // spent is now 1_000 = cap
 
             // Third call: budget exhausted, even amount=1 is rejected
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 1),
+                enforce(&env, &key_id, &target, &sel, 1, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
         });
     }
 
+    // Hazard: `spent` must be persisted between calls in the same auth loop.
+    // If this fails, each call sees a fresh zero and the cumulative cap is
+    // silently bypassed.
     #[test]
     fn spent_persists_across_calls() {
         let (env, contract_id, target) = setup();
@@ -301,17 +372,19 @@ mod tests {
                 amount_cap: 300,
                 spent: 0,
                 expiry: env.ledger().timestamp() + 10_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
-            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 100
-            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 200
-            enforce(&env, &key_id, &target, &sel, 100).unwrap(); // spent = 300
+            enforce(&env, &key_id, &target, &sel, 100, None).unwrap(); // spent = 100
+            enforce(&env, &key_id, &target, &sel, 100, None).unwrap(); // spent = 200
+            enforce(&env, &key_id, &target, &sel, 100, None).unwrap(); // spent = 300
 
             // Now fully exhausted
             let acl = get_acl(&env, &key_id).unwrap();
             assert_eq!(acl.spent, 300);
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 1),
+                enforce(&env, &key_id, &target, &sel, 1, None),
                 Err(WalletError::SessionKeyAclViolation)
             );
         });
@@ -319,6 +392,8 @@ mod tests {
 
     // ── Expiry enforcement ────────────────────────────────────────────────────
 
+    // Hazard: an expired session key must be rejected. If this fails, a key
+    // whose wall-clock window has closed can still authorise transfers forever.
     #[test]
     fn expired_key_rejected() {
         let (env, contract_id, target) = setup();
@@ -333,6 +408,8 @@ mod tests {
                 amount_cap: 1_000_000,
                 spent: 0,
                 expiry: 1_000,
+                payees: Vec::new(&env),
+                per_call_max: None,
             });
 
             let mut info = env.ledger().get();
@@ -340,7 +417,7 @@ mod tests {
             env.ledger().set(info);
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 100),
+                enforce(&env, &key_id, &target, &sel, 100, None),
                 Err(WalletError::SessionKeyExpired)
             );
         });
@@ -350,6 +427,9 @@ mod tests {
 
     use crate::auth::expiration::CLOCK_SKEW_TOLERANCE_SECS;
 
+    // Hazard: the grace window must not reject a key that is exactly at or just
+    // past expiry due to clock skew. If this fails, honest users are locked out
+    // of their own wallet by a few seconds of ledger drift.
     /// Register a key expiring at `expiry`, advance the ledger clock to `now`,
     /// and return the result of a minimal `enforce` call.
     fn enforce_at(env: &Env, contract_id: &Address, target: &Address, expiry: u64, now: u64)
@@ -365,20 +445,28 @@ mod tests {
                 amount_cap: 1_000_000,
                 spent: 0,
                 expiry,
+                payees: Vec::new(env),
+                per_call_max: None,
             });
             let mut info = env.ledger().get();
             info.timestamp = now;
             env.ledger().set(info);
-            enforce(env, &key_id, target, &sel, 1)
+            enforce(env, &key_id, target, &sel, 1, None)
         })
     }
 
+    // Hazard: the grace window must be inclusive at its boundary. If this
+    // fails, the documented tolerance is off by one and the skew case it exists
+    // to absorb is rejected.
     #[test]
     fn not_rejected_exactly_at_expiry() {
         let (env, contract_id, target) = setup();
         assert!(enforce_at(&env, &contract_id, &target, 1_000, 1_000).is_ok());
     }
 
+    // Hazard: the grace window must accept a key one second past expiry and
+    // right up to the tolerance edge. If this fails, the skew buffer is too
+    // small and legitimate calls are rejected.
     #[test]
     fn not_rejected_within_grace_window() {
         // One second past expiry — the skew case the tolerance exists to absorb.
@@ -392,6 +480,9 @@ mod tests {
         );
     }
 
+    // Hazard: the grace window must not extend indefinitely. If this fails, a
+    // key past the tolerance is still accepted and expiry is effectively
+    // unbounded.
     #[test]
     fn rejected_one_second_past_grace_window() {
         let (env, contract_id, target) = setup();
@@ -403,6 +494,9 @@ mod tests {
 
     // ── Unregistered key ──────────────────────────────────────────────────────
 
+    // Hazard: an unknown key id must not authorise anything. If this fails,
+    // anyone can forge a key id and spend from the wallet without the owner
+    // ever having registered a session key.
     #[test]
     fn unregistered_key_rejected() {
         let (env, contract_id, target) = setup();
@@ -411,7 +505,7 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 100),
+                enforce(&env, &key_id, &target, &sel, 100, None),
                 Err(WalletError::SignerNotAuthorized)
             );
         });
@@ -419,6 +513,8 @@ mod tests {
 
     // ── Revocation ────────────────────────────────────────────────────────────
 
+    // Hazard: revocation must take effect immediately. If this fails, an owner
+    // who revokes a compromised key cannot stop it from draining the wallet.
     #[test]
     fn revoked_key_rejected() {
         let (env, contract_id, target) = setup();
@@ -427,14 +523,187 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
-            assert!(enforce(&env, &key_id, &target, &sel, 1).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 1, None).is_ok());
 
             revoke(&env, &key_id);
 
             assert_eq!(
-                enforce(&env, &key_id, &target, &sel, 1),
+                enforce(&env, &key_id, &target, &sel, 1, None),
                 Err(WalletError::SignerNotAuthorized)
             );
         });
+    }
+
+    // ── Payee constraint, per-call max and per-selector extraction ────────────
+
+    // Hazard: a payee allow-list must reject unlisted recipients and calls with
+    // no determinable payee, and a rejected call must not consume budget. If
+    // this fails, a scoped key can redirect funds to an attacker's address.
+    use soroban_sdk::{vec, IntoVal};
+
+    fn scoped_acl(
+        env: &Env,
+        target: Address,
+        payees: Vec<Address>,
+        per_call_max: Option<i128>,
+    ) -> SessionKeyAcl {
+        SessionKeyAcl {
+            payees,
+            per_call_max,
+            ..base_acl(env, target, symbol_short!("transfer"))
+        }
+    }
+
+    // Hazard: any listed payee must be accepted, not just the first. If this
+    // fails, multi-recipient allow-lists silently reject valid recipients.
+    #[test]
+    fn payee_constraint_accepts_right_payee_rejects_wrong_payee() {
+        let (env, contract_id, target) = setup();
+        let right = Address::generate(&env);
+        let wrong = Address::generate(&env);
+        let key_id = mock_key_id(&env, 0x20);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), scoped_acl(&env, target.clone(), vec![&env, right.clone()], None));
+
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 10, Some(&wrong)),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            // A rejected call must not consume budget.
+            assert_eq!(get_acl(&env, &key_id).unwrap().spent, 0);
+            assert!(enforce(&env, &key_id, &target, &sel, 10, Some(&right)).is_ok());
+            // No determinable payee is refused when a constraint exists.
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 10, None),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+        });
+    }
+
+    // Hazard: an empty allow-list must mean "unconstrained", preserving the
+    // original behaviour. If this fails, keys registered without a list are
+    // locked out of every transfer.
+    #[test]
+    fn payee_allow_list_accepts_any_listed_payee() {
+        let (env, contract_id, target) = setup();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let key_id = mock_key_id(&env, 0x21);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), scoped_acl(&env, target.clone(), vec![&env, a.clone(), b.clone()], None));
+            assert!(enforce(&env, &key_id, &target, &sel, 1, Some(&a)).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 1, Some(&b)).is_ok());
+        });
+    }
+
+    // Hazard: `per_call_max` must bound a single call independently of the
+    // cumulative cap. If this fails, one call can spend the whole remaining
+    // budget even when the owner set a per-call ceiling.
+    #[test]
+    fn no_payee_constraint_allows_any_payee() {
+        let (env, contract_id, target) = setup();
+        let anyone = Address::generate(&env);
+        let key_id = mock_key_id(&env, 0x22);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), base_acl(&env, target.clone(), sel.clone()));
+            assert!(enforce(&env, &key_id, &target, &sel, 1, Some(&anyone)).is_ok());
+            assert!(enforce(&env, &key_id, &target, &sel, 1, None).is_ok());
+        });
+    }
+
+    // Hazard: `extract_call_effect` must read the payee and amount from the
+    // correct argument positions for `transfer`. If this fails, the ACL checks
+    // the wrong field and the payee/amount constraints are bypassed.
+    #[test]
+    fn per_call_max_rejects_single_large_call() {
+        let (env, contract_id, target) = setup();
+        let key_id = mock_key_id(&env, 0x23);
+        let sel = symbol_short!("transfer");
+
+        env.as_contract(&contract_id, || {
+            register(&env, key_id.clone(), scoped_acl(&env, target.clone(), Vec::new(&env), Some(100)));
+            assert_eq!(
+                enforce(&env, &key_id, &target, &sel, 101, None),
+                Err(WalletError::SessionKeyAclViolation)
+            );
+            assert!(enforce(&env, &key_id, &target, &sel, 100, None).is_ok());
+        });
+    }
+
+    // Hazard: each selector has its own argument layout. If this fails, a
+    // `transfer_from` or `approve` is read with `transfer`'s positions and the
+    // wrong address/amount is enforced.
+    #[test]
+    fn extract_transfer_reads_payee_and_amount() {
+        let env = Env::default();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+        let args: Vec<Val> = vec![&env, from.into_val(&env), to.clone().into_val(&env), 42i128.into_val(&env)];
+        let e = extract_call_effect(&env, &symbol_short!("transfer"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 42, payee: Some(to) });
+    }
+
+    // Hazard: unknown selectors and malformed args must be refused, not guessed
+    // at. If this fails, a wrong-typed amount is silently read as 0 and the
+    // budget check is bypassed.
+    #[test]
+    fn extract_other_selectors_use_their_own_layout() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let c = Address::generate(&env);
+
+        // transfer_from(spender, from, to, amount): payee is index 2, amount index 3.
+        let args: Vec<Val> = vec![&env, a.clone().into_val(&env), b.clone().into_val(&env), c.clone().into_val(&env), 7i128.into_val(&env)];
+        let e = extract_call_effect(&env, &Symbol::new(&env, "transfer_from"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 7, payee: Some(c.clone()) });
+
+        // approve(from, spender, amount, expiration_ledger)
+        let args: Vec<Val> = vec![&env, a.clone().into_val(&env), b.clone().into_val(&env), 9i128.into_val(&env), 100u32.into_val(&env)];
+        let e = extract_call_effect(&env, &symbol_short!("approve"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 9, payee: Some(b) });
+
+        // burn(from, amount): amount is index 1 and there is no payee.
+        let args: Vec<Val> = vec![&env, a.into_val(&env), 5i128.into_val(&env)];
+        let e = extract_call_effect(&env, &symbol_short!("burn"), &args).unwrap();
+        assert_eq!(e, CallEffect { amount: 5, payee: None });
+    }
+
+    #[test]
+    fn extract_refuses_unknown_selector_and_malformed_args() {
+        let env = Env::default();
+        let from = Address::generate(&env);
+        let to = Address::generate(&env);
+
+        let args: Vec<Val> = vec![&env, from.clone().into_val(&env), to.clone().into_val(&env), 1i128.into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("mint"), &args),
+            Err(WalletError::SessionKeyAclViolation)
+        );
+
+        // Too few / too many arguments.
+        let short: Vec<Val> = vec![&env, from.clone().into_val(&env), to.clone().into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("transfer"), &short),
+            Err(WalletError::SessionKeyAclViolation)
+        );
+        let long: Vec<Val> = vec![&env, from.clone().into_val(&env), to.clone().into_val(&env), 1i128.into_val(&env), 1i128.into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("transfer"), &long),
+            Err(WalletError::SessionKeyAclViolation)
+        );
+
+        // Amount of the wrong type is not silently read as 0.
+        let bad: Vec<Val> = vec![&env, from.into_val(&env), to.into_val(&env), symbol_short!("x").into_val(&env)];
+        assert_eq!(
+            extract_call_effect(&env, &symbol_short!("transfer"), &bad),
+            Err(WalletError::SessionKeyAclViolation)
+        );
     }
 }

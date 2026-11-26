@@ -4,11 +4,14 @@ import {
   SupportedNetworks,
   SupportedProtocols,
   TradeType,
+  type QuoteResponse,
 } from '@soroswap/sdk';
 import { Asset, Horizon, Keypair, Operation, TransactionBuilder } from '@stellar/stellar-sdk';
 
 import { inclusionFee } from './fees';
 import { getNetwork, getNetworkName } from './network';
+import { classicAsset, quoteMismatch, type SwapAsset } from './swapAssets';
+import { assertFeePayerCanCoverFee } from './feePayerCheck';
 
 const SOROSWAP_API_KEY = process.env['EXPO_PUBLIC_SOROSWAP_API_KEY']?.trim() || '';
 
@@ -34,12 +37,14 @@ export interface SwapQuote {
   priceImpact: number;
   path: string[];
   protocols: string[];
-  rawQuote: unknown;
+  rawQuote: QuoteResponse | null;
   ttl: number; // unix timestamp when the quote expires
 }
 
 export interface SwapParams {
+  /** SAC of the asset paid — derived from code:issuer (lib/swapAssets), never looked up by symbol. */
   tokenIn: string;
+  /** SAC of the asset received, derived the same way. */
   tokenOut: string;
   amountIn: string; // in stroops / base units as string
   slippageBps: number; // e.g. 50 = 0.5%
@@ -47,18 +52,29 @@ export interface SwapParams {
 }
 
 /**
- * Fetch a live swap quote from the Soroswap aggregator router.
- * Returns null when the SDK is unavailable or the pair has no liquidity.
+ * The outcome of asking the router. A `mismatch` — the router answered about
+ * a different asset than the SACs it was asked for — is never shown as a
+ * quote (#793).
  */
-export async function getSoroswapQuote(params: SwapParams): Promise<SwapQuote | null> {
-  try {
-    const client = getSoroswapClient();
-    if (!client) {
-      console.warn('[soroswap] EXPO_PUBLIC_SOROSWAP_API_KEY is missing; using SDEX fallback');
-      return null;
-    }
+export type SoroswapQuoteResult =
+  | { ok: true; quote: SwapQuote }
+  | { ok: false; kind: 'unavailable' | 'no-route' | 'mismatch'; reason: string };
 
-    const result = await client.quote({
+/** Fetch a live swap quote from the Soroswap aggregator router. */
+export async function getSoroswapQuote(params: SwapParams): Promise<SoroswapQuoteResult> {
+  const client = getSoroswapClient();
+  if (!client) {
+    console.warn('[soroswap] EXPO_PUBLIC_SOROSWAP_API_KEY is missing; using SDEX fallback');
+    return {
+      ok: false,
+      kind: 'unavailable',
+      reason: 'Swaps are unavailable: this build has no Soroswap API key configured.',
+    };
+  }
+
+  let result: QuoteResponse;
+  try {
+    result = await client.quote({
       assetIn: params.tokenIn,
       assetOut: params.tokenOut,
       amount: BigInt(params.amountIn),
@@ -71,21 +87,28 @@ export async function getSoroswapQuote(params: SwapParams): Promise<SwapQuote | 
       ],
       slippageBps: params.slippageBps,
     });
+  } catch (err) {
+    console.warn('[soroswap] getQuote failed:', err);
+    return { ok: false, kind: 'unavailable', reason: 'Quote failed. Check your connection.' };
+  }
 
-    if (!result?.amountOut) return null;
-    const routePlan = result.routePlan ?? [];
-    return {
+  if (!result?.amountOut)
+    return { ok: false, kind: 'no-route', reason: 'Soroswap found no route for this pair.' };
+  const mismatch = quoteMismatch(result, params.tokenIn, params.tokenOut);
+  if (mismatch) return { ok: false, kind: 'mismatch', reason: mismatch };
+
+  const routePlan = result.routePlan ?? [];
+  return {
+    ok: true,
+    quote: {
       amountOut: result.amountOut.toString(),
       priceImpact: Number(result.priceImpactPct || '0'),
       path: routePlan.flatMap((r) => r.swapInfo.path),
       protocols: [...new Set(routePlan.map((r) => r.swapInfo.protocol))],
       rawQuote: result,
       ttl: Date.now() + 30_000, // 30-second TTL
-    };
-  } catch (err) {
-    console.warn('[soroswap] getQuote failed:', err);
-    return null;
-  }
+    },
+  };
 }
 
 /**
@@ -103,7 +126,14 @@ export class SoroswapBuildError extends Error {
   }
 }
 
-export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string> {
+/**
+ * Build the swap from the quote the user reviewed — not a fresh one, which
+ * could route differently from what was shown.
+ */
+export async function buildSoroswapSwapXdr(
+  quote: QuoteResponse,
+  feePayerAddress: string
+): Promise<string> {
   try {
     const client = getSoroswapClient();
     if (!client) {
@@ -111,32 +141,21 @@ export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string> 
       // than reporting it as a failed build — it is a deployment gap, not
       // something the user did.
       throw new SoroswapBuildError(
-        'Swaps are unavailable: this build has no Soroswap API key configured.',
+        'Swaps are unavailable: this build has no Soroswap API key configured.'
       );
     }
 
-    const quote = await client.quote({
-      assetIn: params.tokenIn,
-      assetOut: params.tokenOut,
-      amount: BigInt(params.amountIn),
-      tradeType: TradeType.EXACT_IN,
-      protocols: [
-        SupportedProtocols.SOROSWAP,
-        SupportedProtocols.PHOENIX,
-        SupportedProtocols.AQUA,
-        SupportedProtocols.SDEX,
-      ],
-      slippageBps: params.slippageBps,
-    });
+    await assertFeePayerCanCoverFee(feePayerAddress);
 
     const build = await client.build({
       quote,
-      from: params.feePayerAddress,
-      to: params.feePayerAddress,
+      from: feePayerAddress,
+      to: feePayerAddress,
     });
 
     return build.xdr;
   } catch (err) {
+    if (err instanceof SoroswapBuildError) throw err;
     console.warn('[soroswap] buildSwapXdr failed:', err);
     // Rethrow with the underlying reason attached rather than returning null.
     //
@@ -150,56 +169,26 @@ export async function buildSoroswapSwapXdr(params: SwapParams): Promise<string> 
 }
 
 /**
- * Resolve a symbol to its Soroban contract address for the active network.
- * Native XLM is derived locally (it is never in any token list); other symbols
- * come from Soroswap's curated list, whose shape is `{ assets: [{ code,
- * issuer, contract, … }] }` with the network implied by the list itself
- * (mainnet). Testnet token routing goes through the classic DEX instead.
- */
-export async function resolveTokenAddress(symbol: string): Promise<string | null> {
-  const code = symbol.toUpperCase();
-  if (code === 'XLM') return Asset.native().contractId(getNetwork().networkPassphrase);
-  if (isTestnet()) return null;
-  return (await fetchListAsset(code))?.contract ?? null;
-}
-
-type ListAsset = { code?: string; issuer?: string; contract?: string };
-
-async function fetchListAsset(code: string): Promise<ListAsset | null> {
-  try {
-    const res = await fetch(
-      'https://raw.githubusercontent.com/soroswap/token-list/main/tokenList.json'
-    );
-    const list = await res.json();
-    const assets: ListAsset[] = list.assets ?? [];
-    return assets.find((t) => (t.code ?? '').toUpperCase() === code) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Make sure the spending account trusts the asset a swap will pay out. The
  * Soroswap router refuses to build a swap whose receiver lacks the destination
  * trustline ("Missing trustline in G… for asset: X"), and SAC payouts to a
  * G-account need one regardless. No-op for XLM and already-trusted assets.
- * The (code, issuer) pair comes from the same curated list the swap's contract
- * address does, so the trustline always matches what the router delivers.
+ * The asset is the registry-checked code:issuer the swap was quoted for — the
+ * same pair its SAC was derived from — so the trustline always matches what
+ * the router delivers. It used to be looked up by code in Soroswap's token
+ * list, which would trust whichever issuer that list happened to name (#793).
  * Note: a new trustline locks a further 0.5 XLM of base reserve.
  */
-export async function ensureSwapOutTrustline(signerSecret: string, code: string): Promise<void> {
-  const u = code.toUpperCase();
-  if (u === 'XLM' || isTestnet()) return;
-  const entry = await fetchListAsset(u);
-  if (!entry?.issuer) return; // unknown asset — let the router's own error surface
-  const asset = new Asset(u, entry.issuer);
+export async function ensureSwapOutTrustline(signerSecret: string, to: SwapAsset): Promise<void> {
+  if (!to.issuer || isTestnet()) return;
+  const asset = classicAsset(to);
 
   const network = getNetwork();
   const server = new Horizon.Server(network.horizonUrl);
   const kp = Keypair.fromSecret(signerSecret);
   const account = await server.loadAccount(kp.publicKey());
   const trusted = (account.balances as unknown as Array<Record<string, unknown>>).some(
-    (b) => b['asset_code'] === asset.getCode() && b['asset_issuer'] === asset.getIssuer(),
+    (b) => b['asset_code'] === asset.getCode() && b['asset_issuer'] === asset.getIssuer()
   );
   if (trusted) return;
 

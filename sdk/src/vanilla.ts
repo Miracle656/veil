@@ -1,7 +1,6 @@
 import {
     Account,
     Contract,
-    Keypair,
     rpc as SorobanRpc,
     Horizon,
     StrKey,
@@ -14,6 +13,7 @@ import {
 } from '@stellar/stellar-sdk';
 
 const HorizonServer = Horizon.Server;
+import { resolveSigner, signWith, type SignerInput } from './signer';
 import {
     bufferToHex,
     hexToUint8Array,
@@ -21,6 +21,7 @@ import {
     extractP256PublicKey,
     computeWalletAddress,
 } from './utils';
+import { assertionPublicKeyCandidates } from './crypto/assertionKey';
 
 // Re-export types from the main module
 export type {
@@ -154,8 +155,8 @@ export class InvisibleWallet {
         };
     }
 
-    async deploy(signerKeypair: Keypair | string, publicKeyBytes?: Uint8Array): Promise<DeployResult> {
-        const keypair = typeof signerKeypair === 'string' ? Keypair.fromSecret(signerKeypair) : signerKeypair;
+    async deploy(signerInput: SignerInput, publicKeyBytes?: Uint8Array): Promise<DeployResult> {
+        const signer = resolveSigner(signerInput);
         
         const pubkeyBytes = publicKeyBytes || (() => {
             const stored = localStorage.getItem('invisible_wallet_pubkey');
@@ -181,7 +182,7 @@ export class InvisibleWallet {
             // Not deployed yet, continue with deployment
         }
 
-        const account = await horizonServer.loadAccount(keypair.publicKey());
+        const account = await horizonServer.loadAccount(signer.publicKey);
         const factory = new Contract(this.config.factoryAddress);
 
         const tx = new TransactionBuilder(account, {
@@ -200,9 +201,9 @@ export class InvisibleWallet {
             .build();
 
         const prepared = await server.prepareTransaction(tx);
-        prepared.sign(keypair);
+        const signed = await signWith(prepared, signer, this.config.networkPassphrase);
 
-        const result = await server.sendTransaction(prepared);
+        const result = await server.sendTransaction(signed);
         if (result.status === 'ERROR') {
             throw new Error(`Deploy failed: ${result.errorResult}`);
         }
@@ -262,12 +263,17 @@ export class InvisibleWallet {
         }
 
         // Path 3: derive address from a passkey credential
-        // NOTE: Vanilla mode cannot easily extract the public key from a bare
-        // WebAuthn assertion without the SDK's webAuthnProvider abstraction.
-        // When only a credentialId is provided, we attempt a direct assertion
-        // and rely on the platform to surface the key.  For a reliable
-        // cross-device login, prefer the React hook which has full
-        // webAuthnProvider integration.
+        //
+        // An assertion carries a signature, not a key: `getPublicKey()` belongs to
+        // the *attestation* (registration) response, and the assertion response has
+        // no such method, so the previous reliance on it here could never resolve an
+        // address. The signing key is instead recovered from the signature itself
+        // (SEC1 ECDSA recovery — see sdk/src/crypto/assertionKey.ts), which works on
+        // every platform. Recovery is inherently two-way ambiguous for a raw r ‖ s
+        // signature, so the candidates below are each verified on-chain rather than
+        // trusted — matching the React/`core.ts` login path exactly.
+        const addressesToCheck: string[] = candidateAddress ? [candidateAddress] : [];
+
         if (!candidateAddress && options?.credentialId) {
             try {
                 const credIdBytes = Uint8Array.from(
@@ -288,46 +294,39 @@ export class InvisibleWallet {
 
                 if (assertion?.response) {
                     const response = assertion.response as AuthenticatorAssertionResponse;
-                    // Try to extract the P-256 public key from the response
-                    // getPublicKey() is not in the standard TS DOM typings but is
-                    // supported by Chrome/Edge and some browsers on assertion responses.
-                    const resp = response as any;
-                    if (typeof resp.getPublicKey === 'function') {
-                        const spkiBuffer: ArrayBuffer | null = resp.getPublicKey();
-                        if (spkiBuffer) {
-                            const cryptoKey = await crypto.subtle.importKey(
-                                'spki', spkiBuffer,
-                                { name: 'ECDSA', namedCurve: 'P-256' },
-                                true, ['verify']
-                            );
-                            const rawBuffer = await crypto.subtle.exportKey('raw', cryptoKey);
-                            const publicKeyBytes = new Uint8Array(rawBuffer);
-                            if (publicKeyBytes.length === 65) {
-                                candidateAddress = computeWalletAddress(
-                                    this.config.factoryAddress,
-                                    publicKeyBytes,
-                                    this.config.networkPassphrase
-                                );
-                            }
-                        }
+                    const candidates = assertionPublicKeyCandidates({
+                        authData:       new Uint8Array(response.authenticatorData),
+                        clientDataJSON: new Uint8Array(response.clientDataJSON),
+                        // The browser hands back DER; recovery needs raw r ‖ s.
+                        signature:      derToRawSignature(response.signature),
+                    });
+                    for (const publicKeyBytes of candidates) {
+                        addressesToCheck.push(computeWalletAddress(
+                            this.config.factoryAddress,
+                            publicKeyBytes,
+                            this.config.networkPassphrase
+                        ));
                     }
                 }
             } catch {
-                // Assertion cancelled or public key not available
+                // Assertion cancelled, or a signature that recovers no key at all.
             }
         }
 
-        if (!candidateAddress) return null;
+        if (!addressesToCheck.length) return null;
 
-        try {
-            await server.getContractData(candidateAddress, xdr.ScVal.scvLedgerKeyContractInstance());
-            this._address = candidateAddress;
-            this._isDeployed = true;
-            localStorage.setItem('invisible_wallet_address', candidateAddress);
-            return { walletAddress: candidateAddress };
-        } catch {
-            return null;
+        for (const addressToCheck of addressesToCheck) {
+            try {
+                await server.getContractData(addressToCheck, xdr.ScVal.scvLedgerKeyContractInstance());
+                this._address = addressToCheck;
+                this._isDeployed = true;
+                localStorage.setItem('invisible_wallet_address', addressToCheck);
+                return { walletAddress: addressToCheck };
+            } catch {
+                // Undeployed candidate — try the next one before giving up.
+            }
         }
+        return null;
     }
 
     async getNonce(): Promise<bigint> {

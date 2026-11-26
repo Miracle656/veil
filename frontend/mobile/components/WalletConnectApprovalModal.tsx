@@ -1,5 +1,4 @@
 import { errorMessage } from '../lib/errorMessage';
-import { TransactionBuilder } from '@stellar/stellar-sdk';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,77 +16,29 @@ import { useWalletConnect } from '../hooks/useWalletConnect';
 import { getNetwork } from '../lib/network';
 import { registerPasskeySigner } from '../lib/passkey';
 import {
+  describeTransactionXdr,
+  REQUEST_TYPE_LABELS,
+  type RequestDetails,
+} from '../lib/transactionRequestDetails';
+import {
   approveWalletConnectRequest,
   rejectWalletConnectRequest,
   type WalletConnectRequest,
 } from '../lib/walletConnect';
 import { extractRequestXdr, isUserRejection } from '../lib/walletConnectHelpers';
-
-type ParsedRequestDetails = {
-  operationType: 'payment' | 'contract' | 'unknown';
-  amount?: string;
-  destination?: string;
-  contractAddress?: string;
-  functionName?: string;
-};
+import { isPasskeyCancellation } from '../lib/passkeyOutcome';
 
 /**
- * Decode enough of the request for the user to judge it. Everything here is
- * best-effort: a request we cannot decode is presented as an unknown contract
- * interaction to review carefully, never as though it were safe.
+ * Decode enough of the request for the user to judge it — the same decoder the
+ * in-app dApp browser's approval sheet uses, so a request the user approves
+ * through WalletConnect and through the injected provider are described by one
+ * piece of code and read the same way. See `lib/transactionRequestDetails.ts`.
  */
-function parseRequestDetails(request: WalletConnectRequest | null): ParsedRequestDetails {
+function requestDetails(request: WalletConnectRequest | null): RequestDetails {
   const xdrString = request ? extractRequestXdr(request.params) : null;
-  if (!xdrString) return { operationType: 'unknown' };
-
-  try {
-    const tx = TransactionBuilder.fromXDR(xdrString, getNetwork().networkPassphrase);
-    const operation = (tx as any).operations?.[0];
-    if (!operation) return { operationType: 'unknown' };
-
-    if (operation.type === 'payment') {
-      return {
-        operationType: 'payment',
-        amount: typeof operation.amount === 'string' ? operation.amount : undefined,
-        destination: typeof operation.destination === 'string' ? operation.destination : undefined,
-      };
-    }
-
-    if (operation.type === 'invokeHostFunction') {
-      let contractAddress = '';
-      let functionName = '';
-      try {
-        const invokeContract = operation.func?.invokeContract?.();
-        const contractAddressValue = invokeContract?.contractAddress?.();
-        const functionNameValue = invokeContract?.functionName?.();
-        if (contractAddressValue && typeof contractAddressValue.toString === 'function') {
-          contractAddress = contractAddressValue.toString();
-        }
-        if (functionNameValue && typeof functionNameValue.toString === 'function') {
-          functionName = functionNameValue.toString();
-        }
-      } catch {
-        // Fall through to the safe "review carefully" messaging.
-      }
-
-      return {
-        operationType: 'contract',
-        contractAddress: contractAddress || undefined,
-        functionName: functionName || undefined,
-      };
-    }
-  } catch {
-    return { operationType: 'unknown' };
-  }
-
-  return { operationType: 'unknown' };
+  if (!xdrString) return { operationType: 'unknown', undecodable: true };
+  return describeTransactionXdr(xdrString, getNetwork().networkPassphrase);
 }
-
-const OPERATION_LABEL: Record<ParsedRequestDetails['operationType'], string> = {
-  payment: 'Payment',
-  contract: 'Contract call',
-  unknown: 'Unknown',
-};
 
 /**
  * The safety gate on WalletConnect: nothing a connected dApp asks for is signed
@@ -113,7 +64,7 @@ export function WalletConnectApprovalModal() {
     setError(null);
   }, [request?.id, request?.topic]);
 
-  const details = useMemo(() => parseRequestDetails(request), [request]);
+  const details = useMemo(() => requestDetails(request), [request]);
 
   const dappMetadata = useMemo(() => {
     if (!request?.topic) return null;
@@ -131,8 +82,10 @@ export function WalletConnectApprovalModal() {
       await approveWalletConnectRequest(request);
     } catch (approveError: unknown) {
       // A decline is a normal outcome: the dApp has already been told, and the
-      // request has left the queue, so there is nothing to report.
-      if (!isUserRejection(approveError)) {
+      // request has left the queue, so there is nothing to report. A passkey
+      // ceremony the user closed is that same decline, and it is recognised by
+      // its outcome rather than by any timeout wording.
+      if (!isUserRejection(approveError) && !isPasskeyCancellation(approveError)) {
         const message =
           errorMessage(approveError);
         setError(message || 'Failed to approve the request.');
@@ -184,7 +137,7 @@ export function WalletConnectApprovalModal() {
             </View>
 
             <View style={styles.card}>
-              <Field label="Operation type" value={OPERATION_LABEL[details.operationType]} strong />
+              <Field label="Operation type" value={REQUEST_TYPE_LABELS[details.operationType]} strong />
 
               {details.operationType === 'payment' && (
                 <>

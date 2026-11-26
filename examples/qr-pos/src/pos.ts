@@ -86,9 +86,11 @@ export function buildPayUri(params: PayUriParams): string {
   return `${SEP7_SCHEME}pay?${pairs.map(([k, v]) => `${k}=${encodeSep7(v)}`).join('&')}`
 }
 
-/** A short, URL-safe memo used to correlate a QR with its payment. */
+/** A short, URL-safe memo used to correlate a QR with its payment (cryptographically random). */
 export function generateMemo(): string {
-  const rand = Math.random().toString(36).slice(2, 8).toUpperCase()
+  const bytes = new Uint8Array(4)
+  crypto.getRandomValues(bytes)
+  const rand = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('').toUpperCase()
   return `POS-${rand}`
 }
 
@@ -121,8 +123,8 @@ function assetMatches(payment: HorizonPayment, target: ChargeTarget): boolean {
 
 /**
  * Returns the first payment that settles a charge: right destination, asset and
- * amount, created at/after the charge started. When a memo is supplied and the
- * transaction memo is available, it must also match.
+ * amount, created at/after the charge started. When a memo is supplied, the
+ * transaction memo must match.
  */
 export function matchPayment(
   payments: HorizonPayment[],
@@ -134,7 +136,7 @@ export function matchPayment(
     if (!payment.amount || !amountsEqual(payment.amount, target.amount)) continue
     if (!assetMatches(payment, target)) continue
     if (payment.created_at && payment.created_at < target.since) continue
-    if (target.memo && payment.transaction?.memo && payment.transaction.memo !== target.memo) {
+    if (target.memo && payment.transaction?.memo !== target.memo) {
       continue
     }
     return payment

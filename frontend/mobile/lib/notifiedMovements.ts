@@ -18,7 +18,8 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const SEEN_KEY = 'veil_notified_movements';
+/** AsyncStorage key holding the seen-notifications watermark. Wallet-derived: cleared on reset. */
+export const NOTIFIED_MOVEMENTS_KEY = 'veil_notified_movements';
 /** Enough to cover any plausible backlog; the feed itself only holds 50. */
 const SEEN_LIMIT = 300;
 
@@ -40,7 +41,7 @@ export function notifiedMovements(): Set<string> {
 export async function loadNotifiedMovements(): Promise<boolean> {
   diskRead ??= (async () => {
     try {
-      const raw = await AsyncStorage.getItem(SEEN_KEY);
+      const raw = await AsyncStorage.getItem(NOTIFIED_MOVEMENTS_KEY);
       if (raw === null) return false;
       const parsed: unknown = JSON.parse(raw);
       if (!Array.isArray(parsed)) return false;
@@ -56,7 +57,7 @@ export async function loadNotifiedMovements(): Promise<boolean> {
 
 export async function saveNotifiedMovements(): Promise<void> {
   try {
-    await AsyncStorage.setItem(SEEN_KEY, JSON.stringify([...seen].slice(-SEEN_LIMIT)));
+    await AsyncStorage.setItem(NOTIFIED_MOVEMENTS_KEY, JSON.stringify([...seen].slice(-SEEN_LIMIT)));
   } catch {
     /* storage full or unavailable: worst case a notification repeats */
   }

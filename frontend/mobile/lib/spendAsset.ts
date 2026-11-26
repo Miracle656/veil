@@ -4,12 +4,13 @@ import { fetchContractAssetBalance, getFeePayerAddress } from './activity';
 import { getFeePayerXlm, sendAssetFromContract } from './contractSpend';
 import { deployWalletIfNeeded, type DeployFn } from './deployWallet';
 import { planDeposit } from './depositPlan';
-import { feeBidXlm } from './fees';
 import { getNetwork } from './network';
 import { requirePasskey } from './passkey';
+import { fetchPlatformFee, type PlatformFee } from './platformFee';
 import { sendPayment } from './sendPayment';
 import { requireSigner } from './signer';
 import { getWalletAddress } from './walletStore';
+import { assertFeePayerCanCoverFee, feePayerMinimumXlm, FeePayerShort } from './feePayerCheck';
 
 /**
  * Send an asset, choosing the source the way the send screen does.
@@ -28,14 +29,6 @@ import { getWalletAddress } from './walletStore';
  */
 
 /**
- * XLM a spending account must have above its reserve to submit one
- * transaction: the fee bid, plus room for a Soroban resource fee.
- */
-function feeHeadroomXlm(): number {
-  return feeBidXlm() + 0.01;
-}
-
-/**
  * The wallet as a whole holds less than the amount. Carries what it does hold,
  * so a screen can offer to send that instead.
  */
@@ -50,15 +43,7 @@ export class NotEnoughToSend extends Error {
   }
 }
 
-/** The spending account cannot pay the network fee, whatever it is sending. */
-export class NeedsXlmForFee extends Error {
-  constructor(readonly spendingAddress: string) {
-    super(
-      `Your spending account needs a little XLM to pay the network fee. Send about 0.1 XLM to ${spendingAddress} and try again.`,
-    );
-    this.name = 'NeedsXlmForFee';
-  }
-}
+// Removed NeedsXlmForFee (now handled by feePayerCheck)
 
 function fmt(n: number): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 7 });
@@ -78,6 +63,49 @@ async function spendingAssetBalance(
   ).find((b) => b.asset_code === asset.code && b.asset_issuer === asset.issuer);
   if (!line) return null;
   return Math.max(0, Number(line.balance) - Number(line.selling_liabilities ?? '0'));
+}
+
+/**
+ * What `spendAsset` would charge for this payment, without sending anything.
+ *
+ * Exists so a screen can show the fee before the passkey prompt. A charge the
+ * user only discovers in their transaction history is not a fee, it is a
+ * surprise — and the amount shown has to be the amount taken, so the decision
+ * is made the same way in both places.
+ *
+ * Read-only, and it mirrors the branch below: the smart wallet pays no fee
+ * because a Soroban transaction has no room for a second operation, so only a
+ * payment from the spending account can carry one. If that branch changes,
+ * this has to change with it — hence the comment on both.
+ */
+export async function previewSpendFee(params: {
+  amount: string;
+  asset?: { code: string; issuer: string };
+}): Promise<PlatformFee | null> {
+  const { amount, asset } = params;
+  const amountNumber = Number(amount);
+  if (!Number.isFinite(amountNumber) || amountNumber <= 0) return null;
+
+  const feePayer = await getFeePayerAddress().catch(() => null);
+  if (!feePayer) return null;
+
+  const stored = await getWalletAddress().catch(() => null);
+  const contract = stored?.startsWith('C') ? stored : null;
+  const inWallet = contract ? await fetchContractAssetBalance(contract, asset).catch(() => 0) : 0;
+
+  // The free path: the smart wallet can cover it alone.
+  if (contract && inWallet > 0 && amountNumber <= inWallet) return null;
+
+  const fee = await fetchPlatformFee(asset?.code ?? 'XLM', amountNumber);
+  if (!fee) return null;
+
+  const inSpending = asset
+    ? await spendingAssetBalance(feePayer, asset).catch(() => null)
+    : (await getFeePayerXlm().catch(() => null))?.spendable ?? null;
+
+  // Not shown when it will not be charged.
+  if ((inSpending ?? 0) < amountNumber + Number(fee.amount)) return null;
+  return fee;
 }
 
 export async function spendAsset(params: {
@@ -102,11 +130,7 @@ export async function spendAsset(params: {
   // cannot cover the fee bid above its reserve, the network refuses with
   // tx_insufficient_balance, which reads as "not enough USDC" to anyone
   // holding plenty. Say what is actually missing, before building anything.
-  // A failed read (all zeros) is unknown, not empty: let the network decide.
-  const xlm = await getFeePayerXlm();
-  const xlmKnown = xlm.balance > 0 || xlm.reserve > 0;
-  const freeXlm = xlmKnown ? xlm.balance - xlm.reserve : Number.POSITIVE_INFINITY;
-  if (freeXlm < feeHeadroomXlm()) throw new NeedsXlmForFee(feePayer);
+  await assertFeePayerCanCoverFee(feePayer);
 
   const inWallet = contract ? await fetchContractAssetBalance(contract, asset) : 0;
 
@@ -146,8 +170,14 @@ export async function spendAsset(params: {
       throw new NotEnoughToSend(plan.available, amountNumber, code);
     }
     if (plan.kind === 'move' && contract) {
-      // Two transactions from the spending account now, so two fees.
-      if (freeXlm < 2 * feeHeadroomXlm()) throw new NeedsXlmForFee(feePayer);
+      // Two transactions from the spending account now, so two fees. The check
+      // above cleared one; raise the bar and reuse the same typed error, so a
+      // screen handles this the same way it handles the single-fee case.
+      const xlm = await getFeePayerXlm();
+      const xlmKnown = xlm.balance > 0 || xlm.reserve > 0;
+      const freeXlm = xlmKnown ? xlm.balance - xlm.reserve : Number.POSITIVE_INFINITY;
+      const neededForTwo = 2 * feePayerMinimumXlm();
+      if (freeXlm < neededForTwo) throw new FeePayerShort(feePayer, freeXlm, neededForTwo);
       await deployWalletIfNeeded(deploy, contract);
       await sendAssetFromContract(contract, feePayer, plan.amount, asset);
       passkeyShown = true;
@@ -173,6 +203,38 @@ export async function spendAsset(params: {
   // above has just asked for it.
   if (!passkeyShown) await requirePasskey();
   const signer = await requireSigner();
-  const result = await sendPayment(to, amount, signer, undefined, asset);
+
+  // The fee rides only on this path, and that is a product decision as much
+  // as a technical one.
+  //
+  // Technically: a transaction may hold at most one Soroban operation, so a
+  // SAC transfer out of the smart wallet above has no room for a second op,
+  // and charging there would mean a separate transaction — a second passkey
+  // prompt, and a window where one settles and the other does not.
+  //
+  // So spending from the smart wallet is free, and spending from the
+  // spending account carries the fee. Since `spendAsset` prefers the wallet
+  // whenever it can cover the amount, free is the ordinary case.
+  //
+  // Null whenever anything is wrong — unset, unreachable, malformed. A fee is
+  // a payment the user did not ask for, and no fee is always a better answer
+  // than a blocked transaction or a guessed amount.
+  // Denominated in whatever is being sent, so affording the payment means
+  // affording the fee: no second balance, no extra trustline, and no way for
+  // a missing fee asset to take the real payment down with it.
+  const fee = await fetchPlatformFee(code, amountNumber);
+  const feeAffordable = fee ? (inSpending ?? 0) >= amountNumber + Number(fee.amount) : false;
+
+  const result = await sendPayment(
+    to,
+    amount,
+    signer,
+    undefined,
+    asset,
+    undefined,
+    // Not charged when the balance would not cover both. Losing the thing
+    // they came to do, in order to collect ten cents, is a bad trade.
+    feeAffordable && fee ? fee : undefined,
+  );
   return result.hash;
 }

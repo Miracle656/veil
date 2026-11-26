@@ -7,6 +7,8 @@ export type FaucetConfig = {
   faucetSecretKey: string;
   faucetAmountXlm: string;
   cooldownSeconds: number;
+  destinationCooldownSeconds: number;
+  globalCap: number;
   horizonUrl: string;
   networkPassphrase: string;
 };
@@ -41,6 +43,8 @@ export function loadConfig(): FaucetConfig {
     faucetSecretKey: requireEnv('FAUCET_SECRET_KEY'),
     faucetAmountXlm: faucetAmount.toFixed(7),
     cooldownSeconds: readPositiveNumber('FAUCET_COOLDOWN_SECONDS', 86_400),
+    destinationCooldownSeconds: readPositiveNumber('FAUCET_DESTINATION_COOLDOWN_SECONDS', 86_400),
+    globalCap: readPositiveNumber('FAUCET_GLOBAL_CAP', 100),
     horizonUrl: process.env.HORIZON_URL?.trim() || 'https://horizon-testnet.stellar.org',
     networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE?.trim() || Networks.TESTNET,
   };

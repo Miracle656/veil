@@ -31,14 +31,13 @@ import {
   type Sep24TransactionStatus,
 } from '@/lib/sep24'
 import { getNetwork } from '@/lib/network'
+import { getDefaultAnchor } from '@/lib/anchors'
 import { beginTx, endTx } from '@/lib/txState'
 
 const Server = Horizon.Server
 const network = getNetwork()
 
-const DEFAULT_ANCHOR =
-  process.env.NEXT_PUBLIC_SEP24_ANCHORS?.split(',')[0]?.trim()
-  || 'testanchor.stellar.org'
+const DEFAULT_ANCHOR = getDefaultAnchor()
 
 const XLM_FEE_RESERVE = 1 // keep at least 1 XLM after withdrawal for base reserve + fees
 
@@ -189,6 +188,10 @@ export default function WithdrawPage() {
         setError(`Insufficient ${selectedAsset.code} balance.`); return
       }
     }
+    if (!anchor.trim()) {
+      setError('Enter an anchor domain.')
+      return
+    }
 
     setError(null)
     setStep('auth')
@@ -196,7 +199,13 @@ export default function WithdrawPage() {
       const info = await discoverAnchorInfo(anchor.trim())
       transferServerRef.current = info.transferServerUrl
 
-      const jwt = await getSep10Jwt(info.webAuthEndpoint, feePayerAddress, info.networkPassphrase)
+      const jwt = await getSep10Jwt(
+        info.webAuthEndpoint,
+        feePayerAddress,
+        info.networkPassphrase,
+        info.homeDomain,
+        info.signingKey,
+      )
       jwtRef.current = jwt
 
       const result = await initiateWithdraw(

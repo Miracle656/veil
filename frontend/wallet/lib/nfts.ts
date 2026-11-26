@@ -33,6 +33,8 @@ export interface NFTItem {
   standard: 'CAP-46'
   isFixture?: boolean
   collectionName?: string
+  /** If this token carries or is bound to a registered federation name. */
+  boundName?: string | null
   /** Ledger close time of the transfer that put this token in the wallet. */
   acquiredAt?: string
   txHash?: string
@@ -116,6 +118,27 @@ export interface FetchNFTsOptions {
   network?: string
   /** Injectable for tests. */
   fetchImpl?: typeof fetch
+  /**
+   * Called when the indexer says its answer is not current.
+   *
+   * An empty list has two meanings and they are not close: "you hold nothing"
+   * and "the thing that would know is not running". Wraith distinguishes them
+   * on every response — `stale`, `indexer_running`, `as_of_ledger` — and this
+   * module used to read none of them, so a stopped indexer rendered as an
+   * empty gallery. The mainnet indexer has in fact never started, so every
+   * mainnet holder has been told they own nothing.
+   */
+  onStale?: (meta: IndexerFreshness) => void
+}
+
+/** What the indexer says about how current its answer is. */
+export interface IndexerFreshness {
+  /** The answer may be behind the chain. */
+  stale: boolean
+  /** False when the indexer for this network is not running at all. */
+  running: boolean
+  /** Last ledger it managed to index, when it says. */
+  asOfLedger: number | null
 }
 
 /** Shortens a Stellar/Soroban address for display. */
@@ -128,6 +151,27 @@ export function truncateAddress(address: string, start = 6, end = 6): string {
 export function formatTokenId(id: string | number): string {
   const s = String(id)
   return s.startsWith('#') ? s : `#${s}`
+}
+
+/**
+ * Returns the federation name bound to a token, or null if the token carries no name.
+ * Checks explicit boundName, or traits with type 'Name', 'Federation Name', 'Domain Name', or 'Username'.
+ */
+export function getTokenBoundName(token: {
+  boundName?: string | null
+  attributes?: Array<{ trait_type?: string; value?: string | number }>
+}): string | null {
+  if (token.boundName && token.boundName.trim()) {
+    return token.boundName.trim()
+  }
+  const trait = token.attributes?.find(a => {
+    const type = (a.trait_type || '').trim().toLowerCase()
+    return type === 'name' || type === 'federation name' || type === 'domain name' || type === 'username'
+  })
+  if (trait && typeof trait.value === 'string' && trait.value.trim()) {
+    return trait.value.trim()
+  }
+  return null
 }
 
 /** IPFS pointers need a gateway before a browser can render them. */
@@ -169,6 +213,7 @@ async function fetchAllTransfers(
   walletAddress: string,
   network: string,
   doFetch: typeof fetch,
+  onStale?: (meta: IndexerFreshness) => void,
 ): Promise<WraithNftTransfer[]> {
   const PAGE = 200
   const MAX_PAGES = 10 // 2,000 transfers; past that the gallery is not the right tool
@@ -187,6 +232,16 @@ async function fetchAllTransfers(
     }
 
     const body = await res.json()
+
+    // Read before the rows: the reason the rows are empty is in the same body.
+    if (onStale && (body?.stale === true || body?.indexer_running === false)) {
+      onStale({
+        stale: body?.stale === true,
+        running: body?.indexer_running !== false,
+        asOfLedger: typeof body?.as_of_ledger === 'number' ? body.as_of_ledger : null,
+      })
+    }
+
     const rows: WraithNftTransfer[] = Array.isArray(body?.transfers) ? body.transfers : []
     all.push(...rows)
 
@@ -288,7 +343,7 @@ export async function fetchWalletNFTs(
     const network = options.network ?? (await import('./network')).getNetworkName()
 
     const held = currentHoldings(
-      await fetchAllTransfers(base, walletAddress, network, doFetch),
+      await fetchAllTransfers(base, walletAddress, network, doFetch, options.onStale),
       walletAddress,
     )
 

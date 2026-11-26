@@ -43,6 +43,31 @@ impl Factory {
         Ok(())
     }
 
+    /// Point FUTURE deployments at a new wallet implementation.
+    ///
+    /// Admin-gated with the same gate as `init` (the admin fixed at
+    /// construction). What it deliberately does NOT do: touch any wallet that
+    /// already exists. `deploy` reads the hash at call time to instantiate new
+    /// contracts, and a deployed wallet's code is pinned by its own contract
+    /// instance — the factory holds no pointer back to it. Counterfactual
+    /// addresses are untouched for the same reason: a wallet's address derives
+    /// from the factory address and the salt (SHA-256 of the public key),
+    /// never from the wasm hash, so an address computed before this call is
+    /// the address `deploy` still produces after it.
+    ///
+    /// Unlike `init`, this refuses to run before a first hash exists: `init`
+    /// stays the one place first installation happens, so its race-protection
+    /// story is unchanged.
+    pub fn set_wasm_hash(env: Env, new_hash: BytesN<32>) -> Result<(), FactoryError> {
+        let admin = storage::get_admin(&env).ok_or(FactoryError::NotInitialized)?;
+        admin.require_auth();
+        if !storage::has_wasm_hash(&env) {
+            return Err(FactoryError::NotInitialized);
+        }
+        storage::set_wasm_hash(&env, &new_hash);
+        Ok(())
+    }
+
     /// Deploy a new invisible_wallet for the given P-256 public key.
     /// Returns the Address of the newly deployed wallet.
     pub fn deploy(env: Env, public_key: BytesN<65>, rp_id: soroban_sdk::Bytes, origin: soroban_sdk::Bytes) -> Result<Address, FactoryError> {
@@ -94,6 +119,8 @@ fn sha2_hash(input: &[u8; 65]) -> [u8; 32] {
 
 #[cfg(test)]
 mod test {
+    extern crate std;
+    use soroban_sdk::testutils::{Ledger as _, storage::Persistent as _};
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Bytes, Env, BytesN};
 
@@ -172,6 +199,109 @@ mod test {
             client.try_init(&hash),
             Err(Ok(FactoryError::AlreadyInitialized))
         );
+    }
+
+    // ── set_wasm_hash (issue #1171) ───────────────────────────────────────
+
+    #[test]
+    fn test_set_wasm_hash_updates_the_stored_hash_under_admin_auth() {
+        let env = make_env();
+        let contract_id = register_factory(&env); // mocks all auths
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&dummy_wasm_hash(&env));
+
+        let new_hash = BytesN::from_array(&env, &[2u8; 32]);
+        client.set_wasm_hash(&new_hash);
+
+        // The call required exactly the admin's authorization.
+        let (who, _invocation) = env.auths().last().unwrap().clone();
+        env.as_contract(&contract_id, || {
+            assert_eq!(Some(who), storage::get_admin(&env));
+            assert_eq!(storage::get_wasm_hash(&env).unwrap(), new_hash);
+        });
+    }
+
+    #[test]
+    fn test_set_wasm_hash_rejects_non_admin() {
+        let env = make_env();
+        let admin = Address::generate(&env);
+        let contract_id = env.register(Factory, (admin.clone(),));
+        let client = FactoryClient::new(&env, &contract_id);
+        env.mock_all_auths();
+        client.init(&dummy_wasm_hash(&env));
+
+        // From here on, nobody's signature is mocked: the admin gate must fail
+        // the call outright, whoever submits it.
+        env.set_auths(&[]);
+        let new_hash = BytesN::from_array(&env, &[2u8; 32]);
+        assert!(client.try_set_wasm_hash(&new_hash).is_err());
+        env.mock_all_auths();
+        env.as_contract(&contract_id, || {
+            assert_eq!(storage::get_wasm_hash(&env).unwrap(), dummy_wasm_hash(&env));
+        });
+    }
+
+    #[test]
+    fn test_set_wasm_hash_before_init_fails() {
+        // `init` remains the only entry point that may install the FIRST hash.
+        let env = make_env();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        assert_eq!(
+            client.try_set_wasm_hash(&dummy_wasm_hash(&env)),
+            Err(Ok(FactoryError::NotInitialized))
+        );
+    }
+
+    #[test]
+    fn test_set_wasm_hash_changes_future_deploys_and_only_those() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        let mock_hash = install_mock_wallet(&env);
+        client.init(&mock_hash);
+
+        let key_a = valid_pub_key(&env);
+        let key_b = second_valid_pub_key(&env);
+        let rp_id = make_rp_id(&env);
+        let origin = make_origin(&env);
+
+        // The counterfactual address for key B, computed BEFORE any hash
+        // change: addresses derive from factory + salt, not from the hash.
+        let salt_b = BytesN::from_array(&env, &sha2_hash(&key_b.to_array()));
+        let predicted_b = env.as_contract(&contract_id, || {
+            env.deployer()
+                .with_address(env.current_contract_address(), salt_b.clone())
+                .deployed_address()
+        });
+
+        let wallet_a = client.deploy(&key_a, &rp_id, &origin);
+
+        // Point future deployments at a hash with no code behind it.
+        let missing_hash = BytesN::from_array(&env, &[9u8; 32]);
+        client.set_wasm_hash(&missing_hash);
+
+        // The already-deployed wallet is provably unaffected: it still runs
+        // its own code. If the factory change could reach back into deployed
+        // wallets, every user's wallet would brick on an upgrade.
+        let still_signer: bool = env.invoke_contract(
+            &wallet_a,
+            &symbol_short!("is_signer"),
+            (key_a.clone(),).into_val(&env),
+        );
+        assert!(still_signer);
+
+        // A NEW deployment reads the new hash — which resolves to nothing, so
+        // it fails. This is the proof deploy() takes the updated hash.
+        assert!(client.try_deploy(&key_b, &rp_id, &origin).is_err());
+
+        // Restore a real implementation: deployments work again, and key B
+        // lands exactly on the address predicted before any hash change.
+        client.set_wasm_hash(&mock_hash);
+        let wallet_b = client.deploy(&key_b, &rp_id, &origin);
+        assert_eq!(wallet_b, predicted_b);
+        assert_ne!(wallet_b, wallet_a);
     }
 
     // ── 1. Happy Path ─────────────────────────────────────────────────────
@@ -442,5 +572,209 @@ mod test {
             client.try_deploy(&pub_key, &rp_id, &origin),
             Err(Ok(FactoryError::AlreadyDeployed))
         );
+    }
+
+    // ── 7. Deployed-set scaling (persistent per-salt markers) ─────────────
+
+    /// Seed `n` distinct deployed markers straight through the storage layer.
+    /// Deploying this many real wallets is far too slow for a unit test, and
+    /// `mark_deployed` is exactly what `deploy` calls after a successful deploy.
+    fn seed_deployed(env: &Env, contract_id: &Address, n: u32) {
+        env.cost_estimate().budget().reset_unlimited();
+        env.as_contract(contract_id, || {
+            for i in 0..n {
+                let mut raw = [0u8; 32];
+                raw[..4].copy_from_slice(&i.to_be_bytes());
+                raw[31] = 0xAA; // never collides with a SHA-256 of a real key in practice
+                storage::mark_deployed(env, &BytesN::from_array(env, &raw));
+            }
+        });
+    }
+
+    /// Ledger bytes read + written by one deploy() call.
+    fn deploy_io_bytes(env: &Env, client: &FactoryClient, key: &BytesN<65>) -> (u32, u32, u64) {
+        env.cost_estimate().budget().reset_unlimited();
+        let _ = client.deploy(key, &make_rp_id(env), &make_origin(env));
+        let r = env.cost_estimate().resources();
+        let cpu = env.cost_estimate().budget().cpu_instruction_cost();
+        (r.read_bytes, r.write_bytes, cpu)
+    }
+
+    #[test]
+    fn test_deploy_cost_does_not_grow_with_existing_wallets() {
+        // Baseline: a deploy into an empty factory.
+        let env_a = make_env();
+        env_a.mock_all_auths();
+        let id_a = register_factory(&env_a);
+        let client_a = FactoryClient::new(&env_a, &id_a);
+        client_a.init(&install_mock_wallet(&env_a));
+        let (read_a, write_a, cpu_a) = deploy_io_bytes(&env_a, &client_a, &valid_pub_key(&env_a));
+
+        // Same deploy into a factory that already tracks 500 wallets. With the
+        // old instance-storage set this is well past the point where the
+        // instance entry dominates every call.
+        let env_b = make_env();
+        env_b.mock_all_auths();
+        let id_b = register_factory(&env_b);
+        let client_b = FactoryClient::new(&env_b, &id_b);
+        client_b.init(&install_mock_wallet(&env_b));
+        seed_deployed(&env_b, &id_b, 500);
+        let (read_b, write_b, cpu_b) = deploy_io_bytes(&env_b, &client_b, &valid_pub_key(&env_b));
+
+        std::println!(
+            "deploy cost, 0 existing: read={read_a}B write={write_a}B cpu={cpu_a}; \
+             500 existing: read={read_b}B write={write_b}B cpu={cpu_b}"
+        );
+
+        // Allow a small constant slack, but the metered ledger I/O must not scale with the number of existing wallets.
+        assert!(read_b <= read_a + 512, "read bytes grew: {read_a} -> {read_b}");
+        assert!(write_b <= write_a + 512, "write bytes grew: {write_a} -> {write_b}");
+        // CPU is printed but deliberately not asserted: the soroban test host's
+        // own bookkeeping over the (test-only) ledger snapshot makes it grow with
+        // the number of entries even when the on-chain footprint is constant.
+    }
+
+    #[test]
+    fn test_deploy_still_works_past_old_instance_limit() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&install_mock_wallet(&env));
+
+        // 500 markers is ~37 KB in the old instance entry — enough to show the
+        // growth the persistent markers remove.
+        seed_deployed(&env, &contract_id, 500);
+        env.cost_estimate().budget().reset_unlimited();
+
+        let pub_key = valid_pub_key(&env);
+        let wallet = client.deploy(&pub_key, &make_rp_id(&env), &make_origin(&env));
+        assert_ne!(wallet, contract_id);
+        assert_eq!(
+            client.try_deploy(&pub_key, &make_rp_id(&env), &make_origin(&env)),
+            Err(Ok(FactoryError::AlreadyDeployed))
+        );
+    }
+
+    #[test]
+    fn test_is_deployed_answers_for_early_wallet_after_many_deploys() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&install_mock_wallet(&env));
+
+        let pub_key = valid_pub_key(&env);
+        let _ = client.deploy(&pub_key, &make_rp_id(&env), &make_origin(&env));
+        let first_salt = BytesN::from_array(&env, &sha2_hash(&pub_key.to_array()));
+
+        seed_deployed(&env, &contract_id, 500);
+
+        env.as_contract(&contract_id, || {
+            assert!(storage::is_deployed(&env, &first_salt));
+            assert!(!storage::is_deployed(&env, &BytesN::from_array(&env, &[7u8; 32])));
+        });
+    }
+
+    #[test]
+    fn test_deployed_marker_is_persistent_and_has_long_ttl() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&install_mock_wallet(&env));
+        let pub_key = valid_pub_key(&env);
+        let _ = client.deploy(&pub_key, &make_rp_id(&env), &make_origin(&env));
+        let salt = BytesN::from_array(&env, &sha2_hash(&pub_key.to_array()));
+
+        env.as_contract(&contract_id, || {
+            let key = storage::DataKey::Deployed(salt.clone());
+            // Lives in persistent storage, not in the instance entry.
+            assert!(env.storage().persistent().has(&key));
+            assert!(!env.storage().instance().has(&key));
+            assert_eq!(
+                env.storage().persistent().get_ttl(&key),
+                storage::DEPLOYED_TTL_EXTEND_TO
+            );
+        });
+
+        // The instance entry (admin, wasm hash) has its own TTL that this change
+        // does not touch; keep it alive so the test isolates the marker's TTL.
+        env.ledger().with_mut(|l| {
+            l.max_entry_ttl = storage::DEPLOYED_TTL_EXTEND_TO * 3;
+        });
+        env.as_contract(&contract_id, || {
+            let ttl = storage::DEPLOYED_TTL_EXTEND_TO * 2;
+            env.storage().instance().extend_ttl(ttl, ttl);
+        });
+        // Advance past the bump threshold; a lookup re-extends the marker.
+        env.ledger().with_mut(|l| {
+            l.sequence_number += storage::DEPLOYED_TTL_EXTEND_TO - 100;
+        });
+        env.as_contract(&contract_id, || {
+            assert!(storage::is_deployed(&env, &salt));
+            let key = storage::DataKey::Deployed(salt.clone());
+            assert_eq!(
+                env.storage().persistent().get_ttl(&key),
+                storage::DEPLOYED_TTL_EXTEND_TO
+            );
+        });
+    }
+
+    /// ADR 0005 pins the multi-wallet salt scheme before anyone ships one:
+    /// index 0 is DEFINED as today's bare SHA-256(public_key) — not
+    /// SHA-256(public_key ‖ be32(0)) — so every existing wallet, including
+    /// every wallet holding money on mainnet, is retroactively index 0 of its
+    /// key without moving. If this test fails, a salt change has broken the
+    /// one compatibility invariant multi-wallet is allowed to rely on.
+    #[test]
+    fn multi_wallet_index_zero_salt_is_todays_salt() {
+        let env = make_env();
+        env.mock_all_auths();
+        let contract_id = register_factory(&env);
+        let client = FactoryClient::new(&env, &contract_id);
+        client.init(&install_mock_wallet(&env));
+
+        let key = valid_pub_key(&env);
+
+        // ADR 0005: salt(pk, 0) = SHA-256(pk), byte-identical to what
+        // deploy() computes today, predicted before the deploy happens.
+        let index_zero_salt = BytesN::from_array(&env, &sha2_hash(&key.to_array()));
+        let predicted = env.as_contract(&contract_id, || {
+            env.deployer()
+                .with_address(env.current_contract_address(), index_zero_salt.clone())
+                .deployed_address()
+        });
+
+        let deployed = client.deploy(&key, &make_rp_id(&env), &make_origin(&env));
+        assert_eq!(deployed, predicted, "index 0 must be today's address");
+
+        // And index 0 is NOT the concatenated form: SHA-256(pk ‖ be32(0))
+        // is a different salt. A naive implementation that concatenates for
+        // every index — zero included — would silently move every existing
+        // wallet to a new address.
+        fn sha2_hash_69(input: &[u8; 69]) -> [u8; 32] {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(input);
+            hasher.finalize().into()
+        }
+        let mut concatenated = [0u8; 69];
+        concatenated[..65].copy_from_slice(&key.to_array());
+        // The last four bytes stay 0x00000000 — be32(0).
+        assert_ne!(sha2_hash_69(&concatenated), sha2_hash(&key.to_array()));
+
+        // Index 1 under the scheme is a distinct salt and a distinct address.
+        let mut with_index_one = concatenated;
+        with_index_one[68] = 1; // be32(1)
+        let index_one_address = env.as_contract(&contract_id, || {
+            env.deployer()
+                .with_address(
+                    env.current_contract_address(),
+                    BytesN::from_array(&env, &sha2_hash_69(&with_index_one)),
+                )
+                .deployed_address()
+        });
+        assert_ne!(index_one_address, deployed);
     }
 }

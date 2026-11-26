@@ -7,6 +7,14 @@
  * single test runs. The package ships an official in-memory mock for exactly
  * this; registering it here is what lets those suites execute at all.
  */
-jest.mock('@react-native-async-storage/async-storage', () =>
-  require('@react-native-async-storage/async-storage/jest/async-storage-mock')
-);
+jest.mock('@react-native-async-storage/async-storage', () => {
+  try {
+    return require('@react-native-async-storage/async-storage/jest');
+  } catch {
+    try {
+      return require('@react-native-async-storage/async-storage/jest/async-storage-mock');
+    } catch {
+      return require('@react-native-async-storage/async-storage/lib/module/jest/AsyncStorageMock.js');
+    }
+  }
+});

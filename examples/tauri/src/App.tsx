@@ -91,6 +91,10 @@ function App() {
       </header>
 
       <main className="content">
+        <div className="alert warning" style={{ gridColumn: '1 / -1', margin: 0, fontSize: '0.875rem', lineHeight: 1.5 }}>
+          <strong>⚠️ Demonstration only — not production-safe:</strong> This app generates ECDSA private keys in software and writes raw, unencrypted private key bytes directly to disk (<code>private_key.bin</code>) instead of storing keys in hardware-backed secure storage (such as the OS Secure Enclave, TPM, or Keychain). Production desktop applications must use hardware-backed or OS-encrypted key storage.
+        </div>
+
         <section className="card">
           <h2>Passkey wallet demo</h2>
           <p className="description">

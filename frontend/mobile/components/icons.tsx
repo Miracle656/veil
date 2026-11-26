@@ -81,6 +81,16 @@ export function SwapIcon({ size, color = 'currentColor', strokeWidth = 1.9 }: Ic
   );
 }
 
+/** Buy — a credit card shape, for buying crypto with naira. */
+export function BuyIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Rect x="2" y="5" width="20" height="14" rx="2.5" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M2 10h20" stroke={color} strokeWidth={strokeWidth} />
+    </Base>
+  );
+}
+
 /** QR-scan viewfinder — the "scan a recipient" affordance. */
 export function ScanIcon({ size, color = 'currentColor', strokeWidth = 1.9 }: IconProps) {
   return (
@@ -128,15 +138,6 @@ export function HexagonIcon({ size, color = 'currentColor', strokeWidth = 1.8, f
   return (
     <Base size={size}>
       <Path d="M7.7 4h8.6L21 12l-4.7 8H7.7L3 12z" fill={filled ? color : 'none'} stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
-    </Base>
-  );
-}
-
-export function BuyIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
-  return (
-    <Base size={size}>
-      <Rect x="2" y="5" width="20" height="14" rx="2.5" stroke={color} strokeWidth={strokeWidth} />
-      <Path d="M2 10h20" stroke={color} strokeWidth={strokeWidth} />
     </Base>
   );
 }
@@ -359,6 +360,21 @@ export function EarnIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_S
 }
 
 /** Plus — the universal pay/send action on the tab bar. */
+/** A close cross. Drawn rather than typed, so it has the same stroke weight
+ *  and optical centre as every other icon — `×` as text sits high and thin. */
+export function CloseIcon({ size, color = 'currentColor', strokeWidth = 2.2 }: IconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M6 6l12 12M18 6L6 18"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
+}
+
 export function PlusIcon({ size, color = 'currentColor', strokeWidth = 2.2 }: IconProps) {
   return (
     <Base size={size}>
@@ -455,6 +471,100 @@ export function GridIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_S
       <Rect x="14" y="4" width="6" height="6" rx="1.5" stroke={color} strokeWidth={strokeWidth} />
       <Rect x="4" y="14" width="6" height="6" rx="1.5" stroke={color} strokeWidth={strokeWidth} />
       <Rect x="14" y="14" width="6" height="6" rx="1.5" stroke={color} strokeWidth={strokeWidth} />
+    </Base>
+  );
+}
+
+/** Shield — privacy / shielding action (protect funds into private pool). */
+export function ShieldIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Path
+        d="M12 3L4 6.5v5c0 4.4 3.4 8.5 8 9.5 4.6-1 8-5.1 8-9.5v-5L12 3z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </Base>
+  );
+}
+
+/** Shield with check — shielding complete / private balance confirmed. */
+export function ShieldCheckIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Path
+        d="M12 3L4 6.5v5c0 4.4 3.4 8.5 8 9.5 4.6-1 8-5.1 8-9.5v-5L12 3z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <Path d="M9 12l2 2 4-4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </Base>
+  );
+}
+
+/** Lock — private/encrypted state. */
+export function LockIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Rect x="5" y="11" width="14" height="10" rx="2" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M8 11V7a4 4 0 0 1 8 0v4" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </Base>
+  );
+}
+
+/** Arrow emerging from a shield — unshield / withdraw from private pool. */
+export function UnshieldIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Path
+        d="M12 3L4 6.5v5c0 4.4 3.4 8.5 8 9.5 4.6-1 8-5.1 8-9.5v-5L12 3z"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+      <Path d="M12 9v6M9 12l3 3 3-3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" />
+    </Base>
+  );
+}
+
+/** A circled "i" — used beside an explanation, never beside an error. */
+export function InfoIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="12" cy="12" r="9" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M12 11v5" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+      <Path d="M12 8h.01" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </Base>
+  );
+}
+
+/** Magnifier — the search affordance in a filter field. */
+export function SearchIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="11" cy="11" r="7" stroke={color} strokeWidth={strokeWidth} />
+      <Path d="M21 21l-4.3-4.3" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" />
+    </Base>
+  );
+}
+
+/** One person — the "pick from contacts" affordance, not the plural UsersIcon. */
+export function ContactIcon({ size, color = 'currentColor', strokeWidth = DEFAULT_STROKE }: IconProps) {
+  return (
+    <Base size={size}>
+      <Circle cx="12" cy="8" r="4" stroke={color} strokeWidth={strokeWidth} />
+      <Path
+        d="M4 21a8 8 0 0 1 16 0"
+        stroke={color}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </Base>
   );
 }

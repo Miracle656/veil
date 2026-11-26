@@ -20,7 +20,8 @@ Maestro drives a real app on a real (or virtual) device instead of a browser.
     launch-fresh.yaml      cold start from wiped state
     dismiss-offline.yaml   get past the offline screen if the network is not up
     skip-tutorial.yaml     dismiss the first-run tutorial (backlog #27)
-    open-dashboard.yaml    reach the dashboard tab from a wiped install
+    create-testnet-wallet.yaml  onboard a real testnet keypair wallet
+    open-dashboard.yaml    reach the dashboard from a wiped install
 ```
 
 ## Running
@@ -58,12 +59,13 @@ flows cannot leak state into each other and their order never matters. A wiped
 install has no wallet address and no `veil_seen_welcome`, so `app/index.tsx`
 routes it to the welcome screen — that is the fixed starting point.
 
-**Reaching the tabs takes a deep link, for now.** `app/index.tsx` only routes to
-`/dashboard` once a wallet address is in secure storage, and the placeholder
-create-wallet screen does not persist one yet (backlog #25). `open-dashboard.yaml`
-opens `veil://send` to mount the tab navigator and moves across the tab bar from
-there. When registration starts persisting an address, that subflow is the one
-place to change.
+**Reaching the dashboard means creating a wallet.** `app/index.tsx` routes to
+`/dashboard` only once an address *and* a signer exist in secure storage, and
+`/dashboard` is not one of the deep-linkable routes (`lib/deepLinks.ts`
+forwards only pay/send/receive/create-wallet). So `open-dashboard.yaml`
+onboards through the UI: `create-testnet-wallet.yaml` takes the keypair path
+(not the passkey one — an emulator has no enrolled biometric), persists a real
+testnet account, and dismisses the first-run tutorial on the way in.
 
 **The offline screen is defended against.** `ConnectivityGate` pushes `/offline`
 whenever NetInfo positively reports no usable connection, and a freshly booted
@@ -103,13 +105,13 @@ logic lands:
 
 | Flow | Asserted now | Extends to |
 | --- | --- | --- |
-| `create-wallet` | welcome entry points, creation tap-through, wallet-created state, entry routing on relaunch | real passkey registration and factory deploy (backlog #25) |
-| `send` | route, recipient validation, submit gating, link-driven prefill | fee estimation, signing, submission |
-| `receive` | address, copy confirmation, share affordance, tab round-trip | requested-amount rendering in the SEP-7 QR |
-| `dashboard` | tutorial skip and its persistence, quick-action routing | balance and activity feed once the wallet is wired |
+| `create-wallet` | welcome entry points, the testnet keypair creation path, the persisted wallet surviving a relaunch | the passkey creation path (device-tagged, as in `passkey-smoke`) |
+| `send` | route, recipient validation, the slide-to-confirm gating, link-driven prefill | fee estimation, signing, submission |
+| `receive` | address, copy confirmation, share/save affordances, warm and cold re-entry | requested-amount rendering in the SEP-7 QR |
+| `dashboard` | tutorial skip and its persistence, the balance card's routes to send/receive | balance and activity feed once the wallet is wired |
 | `deep-link` | routing for all three schemes, both launch paths, fallback | SEP-7 validation and confirmation (backlog #38) |
 | `passkey-smoke` | prompt raised, app recovers | unlock-with-passkey after a cold restart |
 
-Where a flow asserts behaviour that is only correct because a feature is
-unfinished — the create-wallet flow returning to itself instead of the dashboard,
-for instance — the file says so, and names the assertion that replaces it.
+Where a flow's assertion exists only because a feature is unfinished — the
+receive screen ignoring the requested `amount` parameter, for instance — the
+file says so, and names the assertion that replaces it.
