@@ -18,7 +18,6 @@ export interface RegisteredAsset {
   issuerName: string
   homeDomain?: string
   network: 'mainnet' | 'testnet' | 'all'
-  kind: 'treasury' | 'fund' | 'equity' | 'stablecoin' | 'native'
   /**
    * For tokenized sovereign debt, the government whose debt the token
    * represents. A structured registry fact the explainer can name even when
@@ -126,10 +125,6 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     code: 'CETES',
     issuer: ETHERFUSE_MAINNET_ISSUER,
     name: 'Etherfuse CETES',
-  CETES: {
-    code: 'CETES',
-    issuer: ETHERFUSE_MAINNET_ISSUER,
-    name: 'Mexican Treasury Certificates',
     issuerName: 'Etherfuse',
     homeDomain: 'etherfuse.com',
     network: 'mainnet',
@@ -141,7 +136,6 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     code: 'USTRY',
     issuer: ETHERFUSE_MAINNET_ISSUER,
     name: 'Etherfuse USTRY',
-    name: 'US Treasury Notes',
     issuerName: 'Etherfuse',
     homeDomain: 'etherfuse.com',
     network: 'mainnet',
@@ -153,7 +147,6 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
     code: 'TESOURO',
     issuer: ETHERFUSE_MAINNET_ISSUER,
     name: 'Etherfuse TESOURO',
-    name: 'Brazilian Treasury',
     issuerName: 'Etherfuse',
     homeDomain: 'etherfuse.com',
     network: 'mainnet',
@@ -207,7 +200,6 @@ export const ASSET_REGISTRY: Record<string, RegisteredAsset> = {
  */
 export function horizonAssetType(code: string): 'credit_alphanum4' | 'credit_alphanum12' {
   return code.length > 4 ? 'credit_alphanum12' : 'credit_alphanum4'
-  },
 }
 
 export function getRegisteredAsset(
