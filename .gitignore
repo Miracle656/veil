@@ -8,6 +8,8 @@ node_modules/
 sdk/node_modules/
 sdk/dist/
 sdk/react/storybook-static/
+# Throwaway consumer that scripts/verify-exports.js installs the tarball into.
+sdk/.verify-consumer-*/
 
 # Frontend
 frontend/website/node_modules/

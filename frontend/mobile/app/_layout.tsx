@@ -12,6 +12,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { StyleSheet } from 'react-native';
 
@@ -110,6 +111,13 @@ export default function RootLayout() {
           the wallet is untouched. */}
       <ErrorBoundary>
       <SafeAreaProvider>
+        {/* The app is edge-to-edge, which means Android no longer resizes the
+            window when the keyboard opens — so React Native's own
+            KeyboardAvoidingView has nothing to react to and silently does
+            nothing. This provider reads the real inset from the platform,
+            which is the only thing that still tells the truth once the window
+            stops changing size. */}
+        <KeyboardProvider>
         <BottomSheetModalProvider>
           <ConnectivityProvider>
             <WalletProvider>
@@ -137,6 +145,7 @@ export default function RootLayout() {
             </WalletProvider>
           </ConnectivityProvider>
         </BottomSheetModalProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
       </ErrorBoundary>
     </GestureHandlerRootView>

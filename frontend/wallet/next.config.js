@@ -93,6 +93,30 @@ const withPWA = require("next-pwa")({
   fallbacks: {
     document: "/offline",
   },
+  // Everything in public/ is precached on install by default, which for the
+  // Veil-ians art is 7 MB of JPEGs downloaded by every visitor whether or not
+  // they ever open the collection — on the mobile data this wallet is mostly
+  // used over, that is the install, not a detail of it.
+  //
+  // They are still cached, just on demand: the runtime rule below keeps a
+  // capped number of them after they have actually been looked at.
+  publicExcludes: ["!masquerade/**/*"],
+  runtimeCaching: [
+    ...require("next-pwa/cache"),
+    {
+      urlPattern: /\/masquerade\/.*\.(?:jpg|json)$/i,
+      handler: "CacheFirst",
+      options: {
+        cacheName: "veil-ians",
+        // CacheFirst, because a figure's art and metadata are immutable: the
+        // file at 07.jpg is figure seven forever, and a token pointing at a
+        // changed image would be a different thing from the one somebody
+        // bought.
+        expiration: { maxEntries: 48, maxAgeSeconds: 60 * 60 * 24 * 30 },
+        cacheableResponse: { statuses: [0, 200] },
+      },
+    },
+  ],
 });
 
 module.exports = withPWA(nextConfig);
