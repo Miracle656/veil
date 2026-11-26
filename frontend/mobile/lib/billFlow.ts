@@ -100,10 +100,20 @@ export function canContinueBillForm(params: {
 /**
  * Map a `getBillStatus` status string to the bill flow's terminal state, or
  * `'pending'` while the vend is still in flight.
+ *
+ * `settled` and `disbursed` are in the success list because they are the words
+ * Linq actually ends a vend with. Without them a delivered, paid-for top-up
+ * classified as `pending` and the screen waited for it forever. wraith now
+ * appends "(completed)" for installed apps that predate this
+ * (`billStatusForClients`), but a client that can read the provider's own word
+ * should not need the translation.
  */
 export function classifyBillPollStatus(status: string): 'done' | 'failed' | 'pending' {
-  if (/complete|success|delivered/i.test(status)) return 'done';
-  if (/fail|refund|revers|cancel/i.test(status)) return 'failed';
+  // Checked before the success test: "settlement_pending" and "refund_pending"
+  // both contain a terminal word and are not terminal.
+  if (/pending|processing|awaiting|queued|initiated|progress/i.test(status)) return 'pending';
+  if (/complete|success|delivered|settled|disbursed/i.test(status)) return 'done';
+  if (/fail|refund|revers|cancel|expire|timeout/i.test(status)) return 'failed';
   return 'pending';
 }
 

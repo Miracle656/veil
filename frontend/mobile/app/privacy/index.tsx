@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Link, Stack } from 'expo-router';
 
+import { FlowHeader } from '../../components/FlowHeader';
 import { Card, Screen } from '../../components/ui';
 import { useTheme } from '../../hooks/useTheme';
 import { fontFamily } from '../../theme/typography';
@@ -21,7 +22,7 @@ export default function PrivacyIndexScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ headerShown: false }} />
-      <Text style={styles.title}>Privacy</Text>
+      <FlowHeader title="Privacy" />
       <Text style={styles.body}>
         Shielded payments and the proving infrastructure behind them.
       </Text>
@@ -43,12 +44,6 @@ export default function PrivacyIndexScreen() {
 
 const createStyles = (colors: ReturnType<typeof useTheme>['colors']) =>
   StyleSheet.create({
-    title: {
-      fontFamily: fontFamily.heading,
-      fontSize: 28,
-      lineHeight: 34,
-      color: colors.textStrong,
-    },
     body: {
       fontFamily: fontFamily.body,
       fontSize: 16,

@@ -145,6 +145,20 @@ export default function LockPage() {
         return
       }
 
+      // The wallet's stored WebAuthn origin is deliberately NOT checked here.
+      //
+      // Being bound to another platform stops this wallet *signing* on the web;
+      // it does not make the session invalid. Refusing the unlock turned that
+      // into a lockout: the passkey assertion above had already succeeded, and
+      // the holder still could not reach their own balances, history or
+      // settings — all of which are reads that work fine. #1003 shipped the
+      // warning as a gate here by mistake.
+      //
+      // The limitation is reported where it actually bites instead. Every
+      // signing path (walletConnect, sweepContractBalance, guardian) maps the
+      // contract's OriginMismatch (#9) through walletContractErrorMessage to
+      // the same sentence, at the moment the user tries to move funds.
+
       const existing = walletSession.getItem('invisible_wallet_address')
       if (existing && existing !== sessionAddress) {
         sessionStorage.clear()
