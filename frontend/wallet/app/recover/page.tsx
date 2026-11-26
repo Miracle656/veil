@@ -14,12 +14,6 @@ import {
 } from '@stellar/stellar-sdk'
 import { deriveP256KeyPair } from '@/lib/recovery'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
-// TODO(#1003): remove platform limitation check when multi-origin contract ships
-import {
-  fetchContractOrigin,
-  isWrongPlatformOrigin,
-  WRONG_PLATFORM_ERROR_MESSAGE,
-} from '@/lib/platformLimitation'
 
 const network = getNetwork()
 
@@ -146,14 +140,19 @@ export default function RecoverPage() {
         )
       }
 
-      // ── 3b. Verify platform compatibility ────────────────────────────────
-      // A wallet deployed from native mobile carries an android: origin that cannot
-      // be signed from the browser until multi-origin check_auth ships (#1003).
-      // TODO(#1003): remove platform limitation check when multi-origin contract ships
-      const contractOrigin = await fetchContractOrigin(network.rpcUrl, walletAddress)
-      if (contractOrigin && isWrongPlatformOrigin(contractOrigin)) {
-        throw new Error(WRONG_PLATFORM_ERROR_MESSAGE)
-      }
+      // The wallet's stored WebAuthn origin is deliberately NOT checked here.
+      //
+      // A wallet made in the mobile app cannot sign for its *contract* on the
+      // web. That is not a reason to refuse the recovery: the passkey above has
+      // just been proved against the contract's own signer, and the spending
+      // account is an ordinary Stellar account whose key this passkey rebuilds
+      // and which the web signs for perfectly well. Refusing here locked a user
+      // out of 31 USDC on 2026-11-14: the phone app had adopted a new spending
+      // account after a reinstall, and this page was the only other way in.
+      //
+      // The lock page had the same gate removed in 18669291 for the same
+      // reason. The limitation is reported where it bites: every contract
+      // signing path maps OriginMismatch through walletContractErrorMessage.
 
       // ── 4. Restore localStorage + session ────────────────────────────────
       walletLocal.setItem('invisible_wallet_address',    walletAddress)
