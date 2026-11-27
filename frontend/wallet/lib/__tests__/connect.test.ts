@@ -5,6 +5,7 @@ import {
   decodePending,
   encodePending,
   getConnectApp,
+  isAllowedContract,
   isAllowedOrigin,
   parseConnectRequest,
   referenceMemo,
@@ -201,5 +202,131 @@ describe('the hand-off to the Send screen', () => {
     const q = new URLSearchParams(sendPathFor(request({ asset: 'XLM' }), ISSUER).split('?')[1])
     expect(q.get('asset')).toBeNull()
     expect(q.get('issuer')).toBeNull()
+  })
+})
+
+describe('contract calls (invoke)', () => {
+  const invoke = (over: Record<string, unknown> = {}) => ({
+    type: 'invoke',
+    id: ID,
+    contract: C_ADDRESS,
+    method: 'join_challenge',
+    args: [
+      { type: 'address', value: C_ADDRESS },
+      { type: 'u32', value: '7' },
+      { type: 'i128', value: '50000000' },
+    ],
+    ...over,
+  })
+  const reason = (raw: unknown) => {
+    const r = parseConnectRequest(raw)
+    return r.ok ? null : r.reason
+  }
+
+  it('accepts a well-formed call and keeps only the fields it knows', () => {
+    const r = parseConnectRequest(invoke({ extra: 'dropped', xdr: 'AAAA' }))
+    expect(r).toEqual({
+      ok: true,
+      request: {
+        type: 'invoke',
+        id: ID,
+        contract: C_ADDRESS,
+        method: 'join_challenge',
+        args: [
+          { type: 'address', value: C_ADDRESS },
+          { type: 'u32', value: '7' },
+          { type: 'i128', value: '50000000' },
+        ],
+      },
+    })
+  })
+
+  it('accepts a call with no arguments', () => {
+    const r = parseConnectRequest(invoke({ args: undefined }))
+    expect(r.ok && r.request.type === 'invoke' && r.request.args).toEqual([])
+  })
+
+  it('refuses a contract that is an account, or not an address', () => {
+    expect(reason(invoke({ contract: G_ADDRESS }))).toMatch(/contract/)
+    expect(reason(invoke({ contract: 'C123' }))).toMatch(/contract/)
+  })
+
+  it('refuses a function name that is not a symbol', () => {
+    for (const method of ['', 'has space', 'x'.repeat(33), '9lives', 'a-b', 42]) {
+      expect(reason(invoke({ method }))).toMatch(/function name/)
+    }
+  })
+
+  it('refuses arguments that are not what their type says', () => {
+    const bad: [string, unknown][] = [
+      ['u32', '-1'],
+      ['u32', '4294967296'],
+      ['i32', '2147483648'],
+      ['u64', '18446744073709551616'],
+      ['i128', '170141183460469231731687303715884105728'],
+      ['u128', '1.5'],
+      ['address', 'not-an-address'],
+      ['bool', 'yes'],
+      ['symbol', 'has space'],
+      ['bytes', 'abc'],
+      ['string', 'x'.repeat(257)],
+      ['u32', 7],
+      ['vec', '[]'],
+    ]
+    for (const [type, value] of bad) {
+      expect(reason(invoke({ args: [{ type, value }] }))).toMatch(/Argument 1/)
+    }
+  })
+
+  it('accepts the largest and smallest values each number type holds', () => {
+    const edge: [string, string][] = [
+      ['u32', '4294967295'],
+      ['i32', '-2147483648'],
+      ['u64', '18446744073709551615'],
+      ['i128', '-170141183460469231731687303715884105728'],
+      ['u128', '340282366920938463463374607431768211455'],
+    ]
+    for (const [type, value] of edge) {
+      expect(reason(invoke({ args: [{ type, value }] }))).toBeNull()
+    }
+  })
+
+  it('refuses too many arguments, or arguments that are not a list', () => {
+    expect(reason(invoke({ args: Array(13).fill({ type: 'u32', value: '1' }) }))).toMatch(/at most 12/)
+    expect(reason(invoke({ args: 'u32:1' }))).toMatch(/not a list/)
+  })
+
+  it('survives being stored and read back', () => {
+    const parsed = parseConnectRequest(invoke())
+    if (!parsed.ok) throw new Error(parsed.reason)
+    const origin = CONNECT_APPS.stakesync.origins[0]
+    const back = decodePending(encodePending({ appId: 'stakesync', origin, request: parsed.request }))
+    expect(back?.request).toEqual(parsed.request)
+  })
+
+  describe('which contracts an app may ask for', () => {
+    const app = { id: 'fit', name: 'Fit', origins: ['https://fit.example'], contracts: { testnet: [C_ADDRESS] } }
+
+    it('allows only a listed contract, on the network it is listed for', () => {
+      expect(isAllowedContract(app, 'testnet', C_ADDRESS)).toBe(true)
+      expect(isAllowedContract(app, 'mainnet', C_ADDRESS)).toBe(false)
+      expect(isAllowedContract(app, 'testnet', 'C' + 'D'.repeat(55))).toBe(false)
+    })
+
+    it('allows nothing for an app with no list', () => {
+      expect(isAllowedContract({ id: 'x', name: 'X', origins: [] }, 'mainnet', C_ADDRESS)).toBe(false)
+    })
+
+    it('no live or partner-test app may call any contract it likes', () => {
+      for (const listed of [...Object.values(CONNECT_APPS), ...Object.values(CONNECT_TEST_APPS)]) {
+        expect(listed.anyContract).toBeUndefined()
+      }
+    })
+
+    it('the local demo app may, and only exists when demo is allowed', () => {
+      expect(getConnectApp('demo')).toBeNull()
+      const demo = getConnectApp('demo', true)
+      expect(demo && isAllowedContract(demo, 'mainnet', C_ADDRESS)).toBe(true)
+    })
   })
 })

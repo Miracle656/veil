@@ -11,6 +11,7 @@
  * Three requests exist:
  *   connect — share this wallet's address with the app
  *   pay     — hand a payment to the normal Send screen, already filled in
+ *   invoke  — approve one call to one of the app's own contracts
  *   fund    — open "Buy with naira"
  *   cashout — open the person's own "Cash out" to their bank
  *
@@ -21,8 +22,10 @@
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
+import { ConnectInvoke } from '@/components/ConnectInvoke'
 import {
   getConnectApp,
+  isAllowedContract,
   isAllowedOrigin,
   parseConnectRequest,
   readyMessage,
@@ -241,6 +244,38 @@ function Connect() {
         <Mono>{address}</Mono>
         <button className="btn-gold" onClick={shareAddress}>Share address</button>
         <button className="btn-ghost" onClick={cancel}>Cancel</button>
+      </Shell>
+    )
+  }
+
+  if (request.type === 'invoke') {
+    // Asked for here, with the network the wallet is on right now: the list is
+    // per network, and a stored request may be read back on another one.
+    if (!isAllowedContract(app, getNetworkName(), request.contract)) {
+      return (
+        <Shell>
+          <Title>This request cannot be used.</Title>
+          <p style={{ opacity: 0.8 }}>
+            {app.name} is not set up to use this contract with Veil on this network.
+          </p>
+          <Mono>{request.contract}</Mono>
+          <button className="btn-ghost" onClick={cancel}>Close</button>
+        </Shell>
+      )
+    }
+    return (
+      <Shell>
+        <ConnectInvoke
+          app={app}
+          request={request}
+          wallet={address}
+          onCancel={cancel}
+          onDone={(result) => {
+            const delivered = answer(pending, result)
+            clearPending()
+            close(delivered ? 'Done. Taking you back.' : `Done. ${app.name} is no longer open, so go back to it and check there.`)
+          }}
+        />
       </Shell>
     )
   }

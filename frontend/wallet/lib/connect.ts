@@ -1,6 +1,7 @@
 /**
  * Veil Connect (pilot): another app opens a Veil window to learn a user's
- * wallet address, ask for a payment, or let the user add money.
+ * wallet address, ask for a payment, ask the user to approve a call to the
+ * app's own contract, or let the user add money.
  *
  * How the two sides trust each other
  * ----------------------------------
@@ -29,7 +30,18 @@ export type ConnectApp = {
   name: string
   /** Exact origins allowed to send requests and receive results. */
   origins: string[]
+  /**
+   * The contracts this app may ask a user to call, per network, written in
+   * full. An app with no list cannot ask for a contract call at all. Adding a
+   * contract here is an approval step like adding the app: read the contract
+   * first, because the user will be asked to approve what it does.
+   */
+  contracts?: Partial<Record<ConnectNetwork, string[]>>
+  /** Any contract may be asked for. Only ever set on the local demo app. */
+  anyContract?: boolean
 }
+
+export type ConnectNetwork = 'mainnet' | 'testnet'
 
 /**
  * Apps allowed to use Veil Connect. Adding an app here is the approval step:
@@ -62,6 +74,7 @@ const DEMO_APP: ConnectApp = {
   id: 'demo',
   name: 'Demo app',
   origins: ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:8080'],
+  anyContract: true,
 }
 
 export function getConnectApp(id: string | null | undefined, allowDemo = false): ConnectApp | null {
@@ -76,9 +89,33 @@ export function isAllowedOrigin(app: ConnectApp, origin: string): boolean {
   return app.origins.includes(origin)
 }
 
+/**
+ * May this app ask a user to call this contract on this network?
+ *
+ * The list is the whole answer. Without it an approved app could ask a user
+ * to approve a call to any contract on the network, including a token's own
+ * `transfer`, and the only thing between the user and that would be how
+ * carefully they read one screen.
+ */
+export function isAllowedContract(app: ConnectApp, network: ConnectNetwork, contract: string): boolean {
+  if (app.anyContract === true) return true
+  return (app.contracts?.[network] ?? []).includes(contract)
+}
+
 // ── Requests ────────────────────────────────────────────────────────────────
 
 export type ConnectAsset = 'USDC' | 'XLM'
+
+/** The kinds of value a contract call may carry. Lists and maps are not in the pilot. */
+export const INVOKE_ARG_TYPES = [
+  'address', 'bool', 'u32', 'i32', 'u64', 'i64', 'u128', 'i128', 'string', 'symbol', 'bytes',
+] as const
+export type InvokeArgType = (typeof INVOKE_ARG_TYPES)[number]
+
+/** One argument. The value is always text, so a large number survives JSON unchanged. */
+export type InvokeArg = { type: InvokeArgType; value: string }
+
+export const MAX_INVOKE_ARGS = 12
 
 export type ConnectRequest =
   | { type: 'connect'; id: string }
@@ -87,6 +124,10 @@ export type ConnectRequest =
   // and no bank: an app never moves a person's money to a bank through Veil.
   | { type: 'cashout'; id: string }
   | { type: 'pay'; id: string; to: string; amount: string; asset: ConnectAsset; reference: string }
+  // Ask the person to approve one call to one of the app's own contracts.
+  // Veil builds the transaction itself from these three fields; an app never
+  // hands Veil a ready-made transaction to sign.
+  | { type: 'invoke'; id: string; contract: string; method: string; args: InvokeArg[] }
 
 export type ParsedRequest =
   | { ok: true; request: ConnectRequest }
@@ -98,6 +139,64 @@ const ADDRESS = /^[GC][A-Z2-7]{55}$/
 const AMOUNT = /^\d{1,12}(\.\d{1,7})?$/
 const REFERENCE = /^[A-Za-z0-9_-]{1,64}$/
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,64}$/
+
+const CONTRACT = /^C[A-Z2-7]{55}$/
+/** A Soroban function name is a symbol: up to 32 of these characters. */
+const METHOD = /^[A-Za-z_][A-Za-z0-9_]{0,31}$/
+const SYMBOL = /^[A-Za-z0-9_]{1,32}$/
+const WHOLE_NUMBER = /^-?\d{1,78}$/
+const HEX = /^([0-9a-fA-F]{2}){0,1024}$/
+const MAX_STRING = 256
+
+const INT_BITS: Partial<Record<InvokeArgType, { bits: number; signed: boolean }>> = {
+  u32: { bits: 32, signed: false },
+  i32: { bits: 32, signed: true },
+  u64: { bits: 64, signed: false },
+  i64: { bits: 64, signed: true },
+  u128: { bits: 128, signed: false },
+  i128: { bits: 128, signed: true },
+}
+
+/** Why one argument cannot be used, or null when it is fine. */
+function argProblem(type: InvokeArgType, value: string): string | null {
+  const int = INT_BITS[type]
+  if (int) {
+    if (!WHOLE_NUMBER.test(value)) return 'is not a whole number'
+    const n = BigInt(value)
+    const min = int.signed ? -(1n << BigInt(int.bits - 1)) : 0n
+    const max = int.signed ? (1n << BigInt(int.bits - 1)) - 1n : (1n << BigInt(int.bits)) - 1n
+    return n < min || n > max ? `does not fit in ${type}` : null
+  }
+  if (type === 'address') return ADDRESS.test(value) ? null : 'is not a Stellar address'
+  if (type === 'bool') return value === 'true' || value === 'false' ? null : 'is not true or false'
+  if (type === 'symbol') return SYMBOL.test(value) ? null : 'is not a symbol'
+  if (type === 'bytes') return HEX.test(value) ? null : 'is not hex'
+  return value.length <= MAX_STRING ? null : `is longer than ${MAX_STRING} characters`
+}
+
+function parseInvokeArgs(raw: unknown): { ok: true; args: InvokeArg[] } | { ok: false; reason: string } {
+  if (raw === undefined) return { ok: true, args: [] }
+  if (!Array.isArray(raw)) return { ok: false, reason: 'The call arguments are not a list.' }
+  if (raw.length > MAX_INVOKE_ARGS) {
+    return { ok: false, reason: `A call can carry at most ${MAX_INVOKE_ARGS} arguments.` }
+  }
+  const args: InvokeArg[] = []
+  for (let i = 0; i < raw.length; i++) {
+    const a = raw[i] as Record<string, unknown> | null
+    const type = a && typeof a === 'object' ? a.type : undefined
+    const value = a && typeof a === 'object' ? a.value : undefined
+    if (typeof type !== 'string' || !(INVOKE_ARG_TYPES as readonly string[]).includes(type)) {
+      return { ok: false, reason: `Argument ${i + 1} has a type Veil does not carry.` }
+    }
+    if (typeof value !== 'string') {
+      return { ok: false, reason: `Argument ${i + 1} must be given as text.` }
+    }
+    const problem = argProblem(type as InvokeArgType, value)
+    if (problem) return { ok: false, reason: `Argument ${i + 1} ${problem}.` }
+    args.push({ type: type as InvokeArgType, value })
+  }
+  return { ok: true, args }
+}
 
 /** A Stellar text memo holds 28 bytes. A reference is plain ASCII, so 28 characters. */
 export const MEMO_TEXT_MAX = 28
@@ -135,6 +234,18 @@ export function parseConnectRequest(raw: unknown): ParsedRequest {
   if (r.type === 'connect') return { ok: true, request: { type: 'connect', id } }
   if (r.type === 'fund') return { ok: true, request: { type: 'fund', id } }
   if (r.type === 'cashout') return { ok: true, request: { type: 'cashout', id } }
+  if (r.type === 'invoke') {
+    const { contract, method } = r
+    if (typeof contract !== 'string' || !CONTRACT.test(contract)) {
+      return refuse('The contract is not a Stellar contract address.')
+    }
+    if (typeof method !== 'string' || !METHOD.test(method)) {
+      return refuse('The function name is not a valid contract function name.')
+    }
+    const parsed = parseInvokeArgs(r.args)
+    if (!parsed.ok) return refuse(parsed.reason)
+    return { ok: true, request: { type: 'invoke', id, contract, method, args: parsed.args } }
+  }
   if (r.type !== 'pay') return refuse('The request asks for something Veil does not do.')
 
   const { to, amount, reference } = r
@@ -175,6 +286,21 @@ export type ConnectResult =
   // `memo` is the text memo on the payment: the reference, or null when the
   // reference was too long to carry (see referenceMemo).
   | { ok: true; type: 'pay'; hash: string; reference: string; network: string; from: string; memo: string | null }
+  // `signer` is the wallet address (C…) that approved the call, the one
+  // `connect` shares. `from` is the spending account (G…) that carried the
+  // transaction and paid its fee. `result` is what the contract returned, as
+  // base64 XDR (an ScVal), or null when it returned nothing readable.
+  | {
+      ok: true
+      type: 'invoke'
+      hash: string
+      network: string
+      contract: string
+      method: string
+      signer: string
+      from: string
+      result: string | null
+    }
   | { ok: true; type: 'fund' }
   | { ok: true; type: 'cashout' }
   | { ok: false; error: 'cancelled' | 'refused'; reason?: string }
