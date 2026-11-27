@@ -312,11 +312,13 @@ export function getOrderStatus(orderId: string, accessToken?: string): Promise<O
 /** AsyncStorage key holding the in-flight cash-out order. Wallet-derived: cleared on reset. */
 export const OFFRAMP_ACTIVE_ORDER_KEY = 'veil_offramp_active_order';
 
-/** The pointer to an order in flight: its id, and the token needed to read it. */
+/** The pointer to an order in flight: its id, token, and transaction hash once paid. */
 export interface ActiveOrder {
   id: string;
   /** Absent for an order created before the backend issued tokens. */
   token?: string;
+  /** Transaction hash once the deposit has been paid from the wallet. */
+  payHash?: string;
 }
 
 /**
@@ -329,11 +331,19 @@ export interface ActiveOrder {
  * for one pointer, and a token left behind by a reset that cleared only the id
  * is a worse outcome than the one this would be guarding against.
  */
-export async function rememberActiveOrder(orderId: string, accessToken?: string): Promise<void> {
+export async function rememberActiveOrder(
+  orderId: string,
+  accessToken?: string,
+  payHash?: string,
+): Promise<void> {
   try {
     await AsyncStorage.setItem(
       OFFRAMP_ACTIVE_ORDER_KEY,
-      JSON.stringify({ id: orderId, ...(accessToken ? { token: accessToken } : {}) }),
+      JSON.stringify({
+        id: orderId,
+        ...(accessToken ? { token: accessToken } : {}),
+        ...(payHash ? { payHash } : {}),
+      }),
     );
   } catch {
     // Losing the pointer is survivable — the order still settles server-side —
@@ -358,8 +368,12 @@ export async function activeOrder(): Promise<ActiveOrder | null> {
     try {
       const parsed = JSON.parse(raw) as unknown;
       if (parsed && typeof parsed === 'object' && typeof (parsed as ActiveOrder).id === 'string') {
-        const { id, token } = parsed as ActiveOrder;
-        return { id, ...(typeof token === 'string' && token ? { token } : {}) };
+        const { id, token, payHash } = parsed as ActiveOrder;
+        return {
+          id,
+          ...(typeof token === 'string' && token ? { token } : {}),
+          ...(typeof payHash === 'string' && payHash ? { payHash } : {}),
+        };
       }
       // Valid JSON that is not our record (a bare numeric id, say): treat the
       // original text as the id, which is what it was before this was JSON.

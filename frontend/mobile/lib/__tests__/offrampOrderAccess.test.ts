@@ -58,6 +58,29 @@ describe('offramp order access', () => {
       await expect(activeOrder()).resolves.toEqual({ id: ORDER_ID, token: TOKEN });
     });
 
+    it('saves the deposit transaction hash with the order', async () => {
+      const { rememberActiveOrder, activeOrder } = require('../offramp');
+      await rememberActiveOrder(ORDER_ID, TOKEN, '0xabc123');
+      await expect(activeOrder()).resolves.toEqual({
+        id: ORDER_ID,
+        token: TOKEN,
+        payHash: '0xabc123',
+      });
+    });
+
+    it('updates an active order to remember the payHash after payment', async () => {
+      const { rememberActiveOrder, activeOrder } = require('../offramp');
+      await rememberActiveOrder(ORDER_ID, TOKEN);
+      await expect(activeOrder()).resolves.toEqual({ id: ORDER_ID, token: TOKEN });
+
+      await rememberActiveOrder(ORDER_ID, TOKEN, '0xdef456');
+      await expect(activeOrder()).resolves.toEqual({
+        id: ORDER_ID,
+        token: TOKEN,
+        payHash: '0xdef456',
+      });
+    });
+
     it('reads back an order stored before tokens existed', async () => {
       // An app update does not clear this key. Someone mid-cash-out when they
       // updated has a bare id sitting here, and dropping it would mean the
@@ -65,6 +88,12 @@ describe('offramp order access', () => {
       store[ACTIVE_ORDER_KEY] = ORDER_ID;
       const { activeOrder } = require('../offramp');
       await expect(activeOrder()).resolves.toEqual({ id: ORDER_ID });
+    });
+
+    it('reads back an order stored with token but no payHash (intermediate shape)', async () => {
+      store[ACTIVE_ORDER_KEY] = JSON.stringify({ id: ORDER_ID, token: TOKEN });
+      const { activeOrder } = require('../offramp');
+      await expect(activeOrder()).resolves.toEqual({ id: ORDER_ID, token: TOKEN });
     });
 
     it('stores an order the backend issued no token for', async () => {
