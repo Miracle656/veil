@@ -141,7 +141,7 @@ export default function TransactionsScreen() {
         {/* End of the list, below the rows — never in the tab row above. */}
         {older === 'error' ? (
           <View style={styles.olderBox}>
-            <Text style={styles.olderError}>Couldn't load older transactions.</Text>
+            <Text style={styles.olderError}>Couldn&apos;t load older transactions.</Text>
             <Pressable
               onPress={() => void loadOlder()}
               accessibilityRole="button"

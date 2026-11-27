@@ -304,7 +304,7 @@ describe('the cursor follows the last row actually shown', () => {
     expect(second.records.map((r) => r.id)).toEqual(['op-3']);
   });
 
-  it('keeps the newest classic row when a smart-wallet merge would drop them all', async () => {
+  it('keeps every row when a smart-wallet merge would drop all classic rows', async () => {
     const contract = contractAddress();
     const feePayer = randomAccount();
     mockGetFeePayerAddress.mockResolvedValue(feePayer);
@@ -329,9 +329,12 @@ describe('the cursor follows the last row actually shown', () => {
 
     const first = await loadHorizonActivityPage(contract, 2);
 
-    // Both contract events are newer than the classic rows, but dropping every
-    // classic row would leave the cursor with nothing to resume from.
-    expect(first.records.map((r) => r.id)).toEqual(['event-1', 'op-1']);
+    // Both contract events are newer than the classic rows. Making room for a
+    // classic row must not replace the oldest row on screen (event-2): contract
+    // rows cannot be paged, so a replaced one would never be shown again. The
+    // page runs one row long instead, and the cursor still has a shown classic
+    // operation to resume from.
+    expect(first.records.map((r) => r.id)).toEqual(['event-1', 'event-2', 'op-1']);
     expect(first.nextCursor).toBe('token-1');
 
     builder.call.mockResolvedValueOnce({
@@ -340,5 +343,8 @@ describe('the cursor follows the last row actually shown', () => {
     const second = await loadHorizonActivityPage(contract, 2, first.nextCursor!);
 
     expect(second.records.map((r) => r.id)).toEqual(['op-2']);
+    const ids = [...first.records, ...second.records].map((r) => r.id);
+    expect(ids).toEqual(['event-1', 'event-2', 'op-1', 'op-2']);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

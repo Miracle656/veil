@@ -437,13 +437,12 @@ export async function loadHorizonActivityPage(
   let kept = merged.slice(0, limit);
   if (classic.records.length > 0 && !kept.some((r) => classic.rowTokens.has(r.id))) {
     // The trim dropped every classic row. Contract rows cannot be paged, so
-    // keep the newest classic row in place of the oldest row rather than lose
-    // it: the cursor then has a shown classic operation to resume from instead
-    // of jumping over rows that were built but never displayed.
-    const newestClassic = classic.records[0]!;
-    kept = [...kept.slice(0, Math.max(0, limit - 1)), newestClassic].sort(
-      (a, b) => b.timestamp - a.timestamp,
-    );
+    // dropping one to make room would lose it for good; instead keep the newest
+    // classic row as one extra row. Exceeding the limit by one in this rare case
+    // is safe because the cursor below resumes after that classic row, so older
+    // classic rows still arrive on the next page and every contract row shown
+    // here stays reachable on screen.
+    kept = [...kept, classic.records[0]!].sort((a, b) => b.timestamp - a.timestamp);
   }
   // Resume after the oldest classic row still on screen: classic rows the trim
   // removed are older than it, so the next page returns them instead of
