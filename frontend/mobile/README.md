@@ -82,21 +82,21 @@ changes nothing on the device — there is no partial restore.
 ## Agent chat
 
 `/agent` is the mobile client for the Claude-powered assistant in
-`packages/agent`. It speaks the same WebSocket protocol as the web wallet's
+`packages/agent`. It speaks the same protocol as the web wallet's
 `/agent` page — `chat` and `clear_history` out, `thinking` / `response` /
 `error` / `history_cleared` back — and shares its storage keys, so the profile
 you set up in the browser carries over.
 
-Point it at a server with `EXPO_PUBLIC_AGENT_WS_URL` (defaults to
-`ws://localhost:3001`).
+Point it at a server with `EXPO_PUBLIC_AGENT_URL` (defaults to
+`https://app.useveilapp.xyz/api/agent`).
 
-The transport lives in `lib/agentSocket.ts`, separated from the screen because a
-phone's socket drops constantly — backgrounding the app is enough. It reconnects
-with jittered exponential backoff, queues anything composed while offline and
-flushes it on reconnect, and tracks in-flight requests: the agent server keeps no
-outbox, so a reply interrupted by a drop is gone, and the screen says so instead
-of spinning forever. Every external dependency (socket constructor, timers,
-jitter) is injectable, which is how the reconnect paths are tested.
+The transport lives in `lib/agentClient.ts`, separated from the screen because a
+phone's network connection drops constantly — backgrounding the app is enough. It
+sends one HTTPS POST per message, carrying the recent conversation, and waits for
+the reply. There is no retry and no queue: the agent server keeps no outbox, so a
+request interrupted by a drop has failed, and the screen says so instead of
+spinning forever, leaving the user to send it again. The external dependencies
+are injectable, which is how the failure paths are tested.
 
 ## Recovery (SEP-30)
 
@@ -140,7 +140,7 @@ it at the service before running:
 
 ```bash
 # frontend/mobile/.env.local
-EXPO_PUBLIC_AGENT_WS_URL=ws://localhost:3001
+EXPO_PUBLIC_AGENT_URL=https://app.useveilapp.xyz/api/agent
 ```
 
 The agent can read, explain, and propose — it cannot move funds. Each message type
