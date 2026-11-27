@@ -1,317 +1,268 @@
-import { inclusionFee } from './fees'
 import {
   Account,
   Address,
-  BASE_FEE,
-  Contract,
-  Keypair,
-  StrKey,
   TransactionBuilder,
-  nativeToScVal,
   rpc as SorobanRpc,
-  scValToNative,
   xdr,
 } from '@stellar/stellar-sdk'
-
-import type {
-  Network as BlendNetwork,
+import {
+  Backstop,
+  BackstopContractV2,
+  BackstopPoolUser,
+  BackstopPoolUserEst,
+  BackstopPoolV2,
+  type Network,
 } from '@blend-capital/blend-sdk'
 
+import { inclusionFee } from './fees'
+import { configuredPoolIds } from './blend'
 import { getNetwork } from './network'
-import { walletLocal, walletSession } from '@/lib/walletStorage'
 
-const STROOPS_PER_LP = 10_000_000n
+/**
+ * Blend backstop: the first-loss deposit a user makes into a lending pool.
+ *
+ * Read side loads from the ledger through the Blend SDK, which is how the
+ * figures are derived for the mobile client too — `tokens`, `totalSpotValue`
+ * and `emissions` come from the same `BackstopPoolUserEst.build` call, so the
+ * two clients cannot drift on the arithmetic.
+ *
+ * Write side **builds XDR only**, the same split `lib/blend.ts` uses. The
+ * screen hands the XDR to `signAndSubmitSorobanXdr`, which is the wallet's one
+ * Soroban signing path (simulate, assemble, sign, poll). Building a second
+ * simulate/assemble/sign sequence here is how CR-1 — signing whatever auth
+ * entries the RPC hands back — would propagate into a new money path.
+ */
 
-/** Default Blend backstop + pool on mainnet. Overridable via env. */
-function backstopId(): string {
+const STROOPS_PER_SHARE = 10_000_000n
+
+/**
+ * Backstop contract per network. Mainnet has been deployed since v2; testnet
+ * has no Blend deployment (the same reason `lib/blend.ts` leaves its testnet
+ * pool id empty), so the value is only ever what an operator configures.
+ */
+const DEFAULT_BACKSTOP_IDS: Record<'mainnet' | 'testnet', string> = {
+  mainnet: 'CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7',
+  testnet: '',
+}
+
+export function configuredBackstopId(): string {
+  const name = getNetwork().name
+  // Next.js inlines NEXT_PUBLIC_* only when referenced literally.
+  const perNetwork =
+    name === 'mainnet'
+      ? process.env.NEXT_PUBLIC_BLEND_BACKSTOP_ID_MAINNET
+      : process.env.NEXT_PUBLIC_BLEND_BACKSTOP_ID_TESTNET
+
   return (
+    perNetwork?.trim() ||
     process.env.NEXT_PUBLIC_BLEND_BACKSTOP_ID?.trim() ||
-    (getNetwork().name === 'mainnet'
-      ? 'CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7'
-      : process.env.NEXT_PUBLIC_BLEND_BACKSTOP_ID_TESTNET?.trim() || '')
+    DEFAULT_BACKSTOP_IDS[name === 'mainnet' ? 'mainnet' : 'testnet']
   )
 }
 
-function poolId(): string {
-  return (
-    process.env.NEXT_PUBLIC_BLEND_POOL_ID?.trim() ||
-    (getNetwork().name === 'mainnet'
-      ? 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD'
-      : process.env.NEXT_PUBLIC_BLEND_POOL_ID_TESTNET?.trim() || '')
-  )
+export interface BackstopQueuedWithdrawal {
+  /** LP tokens this queued entry will release, in whole tokens. */
+  amount: number
+  /** Unix seconds when this entry can be withdrawn. */
+  exp: number
 }
 
 export interface BackstopPosition {
   backstopId: string
   poolId: string
   userId: string
-  /** LP (backstop token) shares currently deposited, excluding queued. */
-  shares: string
-  /** Estimated underlying LP-token amount of the position. */
-  tokens: number
+  /** Shares still deposited, as the raw i128 the contract stores. */
+  shares: bigint
+  /** Current value of those shares in LP tokens — not the amount deposited. */
+  shareValue: number
+  /** The same value split into its BLND and USDC legs. */
   blnd: number
   usdc: number
-  /** Current share value of the position, in LP-token units. */
-  shareValue: number
-  /** Emissions accrued, reported separately from the position value. */
+  /** Emissions accrued, in BLND. Reported apart from the position value. */
   emissions: number
-  /** Queued withdrawals. */
-  queued: Array<{ amount: number; exp: number }>
+  queued: BackstopQueuedWithdrawal[]
+  /** LP tokens currently queued, across every entry. */
   totalQueued: number
-  totalUnlockedQueued: number
+  /** Queued LP tokens whose 17-day lock has expired and can be withdrawn. */
+  unlockedQueued: number
+  /** Raw shares withdrawable right now, for a "withdraw all" amount. */
+  unlockedShares: bigint
 }
 
-export interface BackstopDetails {
-  backstopId: string
-  poolId: string
-  position: BackstopPosition | null
-}
-
-function blendNetwork(): BlendNetwork {
+function blendNetwork(): Network {
   const net = getNetwork()
   return { rpc: net.rpcUrl, passphrase: net.networkPassphrase }
 }
 
-export function lpToStroops(value: string): bigint {
+/** LP shares carry the same 7 decimals as every other Stellar amount. */
+export function sharesToStroops(value: string): bigint {
   const amount = value.trim()
   if (!/^\d+(?:\.\d{0,7})?$/.test(amount)) {
     throw new Error('Enter a valid amount with no more than 7 decimal places.')
   }
   const [whole, fraction = ''] = amount.split('.')
-  const stroops = BigInt(whole) * STROOPS_PER_LP + BigInt(fraction.padEnd(7, '0'))
-  if (stroops <= 0n) throw new Error('Amount must be greater than zero.')
+  const stroops = BigInt(whole) * STROOPS_PER_SHARE + BigInt(fraction.padEnd(7, '0'))
+  if (stroops <= 0n) {
+    throw new Error('Amount must be greater than zero.')
+  }
   return stroops
 }
 
-export function stroopsToLp(stroops: bigint): string {
+export function stroopsToShares(stroops: bigint): string {
   const negative = stroops < 0n
   const absolute = negative ? -stroops : stroops
-  const whole = absolute / STROOPS_PER_LP
-  const fraction = (absolute % STROOPS_PER_LP).toString().padStart(7, '0').replace(/0+$/, '')
+  const whole = absolute / STROOPS_PER_SHARE
+  const fraction = (absolute % STROOPS_PER_SHARE)
+    .toString()
+    .padStart(7, '0')
+    .replace(/0+$/, '')
   return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`
 }
 
-function getSigner(secret?: string): Keypair {
-  const stored =
-    typeof window === 'undefined'
-      ? null
-      : walletSession.getItem('veil_signer_secret') || walletLocal.getItem('veil_signer_secret')
-  const resolved = secret?.trim() || stored
-  if (!resolved) throw new Error('Signing key not found. Unlock the wallet again.')
-  try {
-    return Keypair.fromSecret(resolved)
-  } catch {
-    throw new Error('Signing key is invalid.')
-  }
-}
-
-function validateAddress(value: string): string {
+function requireAddress(value: string, label: string): string {
   const address = value.trim()
   try {
     Address.fromString(address)
   } catch {
-    throw new Error('Enter a valid Stellar address.')
+    throw new Error(`${label} is not a valid Stellar address.`)
   }
   return address
 }
 
-async function waitForTransaction(server: SorobanRpc.Server, hash: string) {
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    const result = await server.getTransaction(hash)
-    if (result.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-      if (result.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
-        throw new Error(`Backstop transaction failed with status ${result.status}.`)
-      }
-      return result
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000))
-  }
-  throw new Error('Backstop transaction timed out. Check its status on Stellar Explorer.')
-}
-
-async function submitOperation(operation: xdr.Operation, signer: Keypair): Promise<string> {
-  const network = getNetwork()
-  const server = new SorobanRpc.Server(network.rpcUrl)
-  const account = await server.getAccount(signer.publicKey())
-  const transaction = new TransactionBuilder(account, {
-    fee: inclusionFee(),
-    networkPassphrase: network.networkPassphrase,
-  })
-    .addOperation(operation)
-    .setTimeout(60)
-    .build()
-
-  const simulation = await server.simulateTransaction(transaction)
-  if (SorobanRpc.Api.isSimulationError(simulation)) {
-    throw new Error(`Backstop simulation failed: ${simulation.error}`)
-  }
-
-  const assembled = SorobanRpc.assembleTransaction(transaction, simulation).build()
-  assembled.sign(signer)
-
-  const submitted = await server.sendTransaction(assembled)
-  if (submitted.status === 'ERROR') {
-    throw new Error(`Backstop transaction was rejected: ${submitted.errorResult?.toXDR('base64') ?? 'unknown error'}`)
-  }
-
-  await waitForTransaction(server, submitted.hash)
-  return submitted.hash
-}
-
-async function buildOp(backstop: string, method: 'deposit' | 'queueWithdrawal' | 'dequeueWithdrawal' | 'withdraw', from: string, pool: string, amount: bigint): Promise<xdr.Operation> {
-  const { BackstopContractV2 } = await import('@blend-capital/blend-sdk')
-  const client = new BackstopContractV2(backstop)
-  let opXdr: string
-  const args = { from, pool_address: pool, amount }
-  switch (method) {
-    case 'deposit':
-      opXdr = client.deposit(args)
-      break
-    case 'queueWithdrawal':
-      opXdr = client.queueWithdrawal(args)
-      break
-    case 'dequeueWithdrawal':
-      opXdr = client.dequeueWithdrawal(args)
-      break
-    case 'withdraw':
-      opXdr = client.withdraw(args)
-      break
-  }
-  return xdr.Operation.fromXDR(opXdr, 'base64')
-}
-
-export async function depositToBackstop(params: {
+/**
+ * Load one pool's backstop position for a user.
+ *
+ * `emissions` is whatever BLND the backstop has accrued to the deposit since
+ * the last claim. It is deliberately a separate field rather than folded into
+ * `shareValue`: the deposit is first-loss capital whose value can fall, while
+ * emissions are a reward that has already been earned.
+ */
+export async function loadBackstopPosition(params: {
   backstopId?: string
-  poolId?: string
-  amountLp?: string
-  amount?: string
-  signerSecret?: string
-}): Promise<string> {
-  const network = getNetwork()
-  const signer = getSigner(params.signerSecret)
-  const bs = validateAddress(params.backstopId || backstopId())
-  const pool = validateAddress(params.poolId || poolId())
-  const amountStr = params.amountLp || params.amount || params.shares || params.value || params.lpAmount || params.depositAmount || ''
-  const amount = lpToStroops(amountStr)
-  const from = signer.publicKey()
-  const op = await buildOp(bs, 'deposit', from, pool, amount)
-  return submitOperation(op, signer)
-}
-
-export async function queueBackstopWithdrawal(params: {
-  backstopId?: string
-  poolId?: string
-  amountShares?: string
-  amount?: string
-  signerSecret?: string
-}): Promise<string> {
-  const signer = getSigner(params.signerSecret)
-  const bs = validateAddress(params.backstopId || backstopId())
-  const pool = validateAddress(params.poolId || poolId())
-  const amountStr = params.amountShares || params.amount || params.shares || params.value || params.withdrawAmount || params.queueAmount || ''
-  const amount = lpToStroops(amountStr)
-  const from = signer.publicKey()
-  const op = await buildOp(bs, 'queueWithdrawal', from, pool, amount)
-  return submitOperation(op, signer)
-}
-
-export async function cancelBackstopWithdrawal(params: {
-  backstopId?: string
-  poolId?: string
-  amountShares?: string
-  amount?: string
-  signerSecret?: string
-}): Promise<string> {
-  const signer = getSigner(params.signerSecret)
-  const bs = validateAddress(params.backstopId || backstopId())
-  const pool = validateAddress(params.poolId || poolId())
-  const amountStr = params.amountShares || params.amount || params.shares || params.value || params.withdrawAmount || params.queueAmount || ''
-  const amount = lpToStroops(amountStr)
-  const from = signer.publicKey()
-  const op = await buildOp(bs, 'dequeueWithdrawal', from, pool, amount)
-  return submitOperation(op, signer)
-}
-
-export async function withdrawFromBackstop(params: {
-  backstopId?: string
-  poolId?: string
-  amountShares?: string
-  amount?: string
-  signerSecret?: string
-}): Promise<string> {
-  const signer = getSigner(params.signerSecret)
-  const bs = validateAddress(params.backstopId || backstopId())
-  const pool = validateAddress(params.poolId || poolId())
-  const amountStr = params.amountShares || params.amount || params.shares || params.value || params.withdrawAmount || params.queueAmount || ''
-  const amount = lpToStroops(amountStr)
-  const from = signer.publicKey()
-  const op = await buildOp(bs, 'withdraw', from, pool, amount)
-  return submitOperation(op, signer)
-}
-
-export async function fetchBackstopPosition(params?: {
-  backstopId?: string
-  poolId?: string
-  userId?: string
-}): Promise<BackstopPosition | null> {
-  const bs = validateAddress(params?.backstopId || backstopId())
-  const pool = validateAddress(params?.poolId || poolId())
-  const userId = params?.userId || (typeof window !== 'undefined' ? (walletSession.getItem('invisible_wallet_address') || walletLocal.getItem('veil_signer_public_key') || '') : '')
-  if (!userId) return null
-
+  poolId: string
+  userId: string
+}): Promise<BackstopPosition> {
+  const backstopId = requireAddress(params.backstopId ?? configuredBackstopId(), 'Backstop')
+  const poolId = requireAddress(params.poolId, 'Pool')
+  const userId = requireAddress(params.userId, 'Wallet')
   const net = blendNetwork()
-  const { Backstop, BackstopPoolV2, BackstopPoolUser, BackstopPoolUserEst } = await import('@blend-capital/blend-sdk')
-  const backstop = await Backstop.load(net, bs)
-  const poolData = await BackstopPoolV2.load(net, bs, pool)
-  const user = await BackstopPoolUser.load(net, bs, pool, userId)
-  const est = BackstopPoolUserEst.build(backstop, poolData, user)
 
-  const position: BackstopPosition & Record<string, unknown> = {
-    backstopId: bs,
-    poolId: pool,
+  const [backstop, pool] = await Promise.all([
+    Backstop.load(net, backstopId),
+    BackstopPoolV2.load(net, backstopId, poolId),
+  ])
+  const user = await BackstopPoolUser.load(net, backstopId, poolId, userId)
+  const est = BackstopPoolUserEst.build(backstop, pool, user)
+
+  return {
+    backstopId,
+    poolId,
     userId,
-    shares: user.balance.shares.toString(),
-    balance: user.balance.shares.toString(),
-    tokens: est.tokens,
+    shares: user.balance.shares,
+    shareValue: est.totalSpotValue,
     blnd: est.blnd,
     usdc: est.usdc,
-    shareValue: est.totalSpotValue,
-    currentValue: est.totalSpotValue,
-    positionValue: est.totalSpotValue,
-    totalSpotValue: est.totalSpotValue,
-    value: est.totalSpotValue,
     emissions: est.emissions,
-    emissionsEarned: est.emissions,
-    queued: est.q4w.map((q) => ({ amount: q.amount, exp: q.exp })),
-    q4w: est.q4w.map((q) => ({ amount: q.amount, exp: q.exp })),
+    queued: est.q4w.map((entry) => ({ amount: entry.amount, exp: entry.exp })),
     totalQueued: est.totalQ4W,
-    totalQ4W: est.totalQ4W,
-    totalUnlockedQueued: est.totalUnlockedQ4W,
-    totalUnlockedQ4W: est.totalUnlockedQ4W,
+    unlockedQueued: est.totalUnlockedQ4W,
+    unlockedShares: user.balance.unlockedQ4W,
   }
-  return position as BackstopPosition
 }
 
-export async function fetchBackstopDetails(params?: { backstopId?: string; poolId?: string; userId?: string }): Promise<BackstopDetails> {
-  const bs = params?.backstopId || backstopId()
-  const pool = params?.poolId || poolId()
-  const position = await fetchBackstopPosition({ backstopId: bs, poolId: pool, userId: params?.userId })
-  return { backstopId: bs, poolId: pool, position }
+/** Load the position for every configured pool, skipping pools not backstopped. */
+export async function loadBackstopPositions(
+  userId: string,
+  poolIds: string[] = configuredPoolIds(),
+): Promise<BackstopPosition[]> {
+  const loaded = await Promise.all(
+    poolIds.map(async (poolId): Promise<BackstopPosition | null> => {
+      try {
+        return await loadBackstopPosition({ poolId, userId })
+      } catch (err) {
+        console.warn(`[backstop] failed loading position for pool ${poolId}:`, err)
+        return null
+      }
+    }),
+  )
+  return loaded.filter((position): position is BackstopPosition => position !== null)
 }
 
-// Aliases for compatibility with possible naming in hidden tests / callers.
-export const depositBackstop = depositToBackstop
-export const backstopDeposit = depositToBackstop
-export const queueWithdrawal = queueBackstopWithdrawal
-export const queueBackstop = queueBackstopWithdrawal
-export const backstopQueueWithdrawal = queueBackstopWithdrawal
-export const cancelWithdrawal = cancelBackstopWithdrawal
-export const cancelBackstop = cancelBackstopWithdrawal
-export const backstopCancelWithdrawal = cancelBackstopWithdrawal
-export const dequeueBackstopWithdrawal = cancelBackstopWithdrawal
-export const withdrawBackstop = withdrawFromBackstop
-export const backstopWithdraw = withdrawFromBackstop
-export const executeBackstopWithdrawal = withdrawFromBackstop
-export const getBackstopPosition = fetchBackstopPosition
-export const loadBackstopPosition = fetchBackstopPosition
-export const backstopPosition = fetchBackstopPosition
+interface BackstopActionParams {
+  backstopId?: string
+  poolId: string
+  /** The G… account the transaction is built for and signs with. */
+  sourceAddress: string
+  /** The address whose deposit is moved. Same account in this wallet. */
+  from: string
+  amountStroops: bigint
+}
+
+async function buildBackstopActionXdr(
+  method: 'deposit' | 'queueWithdrawal' | 'dequeueWithdrawal' | 'withdraw',
+  params: BackstopActionParams,
+): Promise<string> {
+  const net = getNetwork()
+  const backstopId = requireAddress(params.backstopId ?? configuredBackstopId(), 'Backstop')
+  const poolId = requireAddress(params.poolId, 'Pool')
+  const from = requireAddress(params.from, 'Wallet')
+  const source = requireAddress(params.sourceAddress, 'Source account')
+  if (params.amountStroops <= 0n) {
+    throw new Error('Amount must be greater than zero.')
+  }
+
+  const rpc = new SorobanRpc.Server(net.rpcUrl)
+  const sourceAccount = await rpc.getAccount(source)
+  const client = new BackstopContractV2(backstopId)
+  const args = { from, pool_address: poolId, amount: params.amountStroops }
+
+  const operation = xdr.Operation.fromXDR(
+    method === 'deposit'
+      ? client.deposit(args)
+      : method === 'queueWithdrawal'
+        ? client.queueWithdrawal(args)
+        : method === 'dequeueWithdrawal'
+          ? client.dequeueWithdrawal(args)
+          : client.withdraw(args),
+    'base64',
+  )
+
+  const transaction = new TransactionBuilder(
+    new Account(sourceAccount.accountId(), sourceAccount.sequenceNumber()),
+    { fee: inclusionFee(), networkPassphrase: net.networkPassphrase },
+  )
+    .addOperation(operation)
+    .setTimeout(30)
+    .build()
+
+  const simulation = await rpc.simulateTransaction(transaction)
+  if (SorobanRpc.Api.isSimulationError(simulation)) {
+    throw new Error(`Backstop ${method} simulation failed: ${simulation.error}`)
+  }
+
+  return SorobanRpc.assembleTransaction(transaction, simulation).build().toXDR()
+}
+
+/** Deposit BLND:USDC LP tokens into a pool's backstop. `amount` is LP tokens. */
+export function buildBackstopDepositXdr(params: BackstopActionParams): Promise<string> {
+  return buildBackstopActionXdr('deposit', params)
+}
+
+/** Start the 17-day withdrawal queue. `amount` is shares. */
+export function buildBackstopQueueWithdrawalXdr(params: BackstopActionParams): Promise<string> {
+  return buildBackstopActionXdr('queueWithdrawal', params)
+}
+
+/**
+ * Cancel a queued withdrawal and return those shares to the depositing
+ * position. The contract's method is `dequeue_withdrawal`; the SDK and the
+ * screens call it "cancel" because that is what it does to the user's queue.
+ */
+export function buildBackstopCancelWithdrawalXdr(params: BackstopActionParams): Promise<string> {
+  return buildBackstopActionXdr('dequeueWithdrawal', params)
+}
+
+/** Release queued shares once their lock has expired. `amount` is shares. */
+export function buildBackstopWithdrawXdr(params: BackstopActionParams): Promise<string> {
+  return buildBackstopActionXdr('withdraw', params)
+}

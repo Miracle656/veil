@@ -43,6 +43,7 @@ describe('NAV_MAIN', () => {
     '/buy-ngn',
     '/cashout',
     '/earn',
+    '/backstop',
     '/bills',
     '/dapps',
     '/agent',
@@ -57,8 +58,9 @@ describe('NAV_MAIN', () => {
   )
 
   // The count is pinned so an addition is a decision rather than a drift. It
-  // went from ten to eleven when /names landed, which a drawer can carry —
-  // every entry has a visible label — where the old ten-glyph strip could not.
+  // went from ten to eleven when /names landed, and to twelve when the Blend
+  // backstop screen landed, which a drawer can carry — every entry has a
+  // visible label — where the old ten-glyph strip could not.
   it('lists every primary destination and no more', () => {
     expect(NAV_MAIN).toHaveLength(expectedDestinations.length)
   })
