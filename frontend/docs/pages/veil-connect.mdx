@@ -1,0 +1,312 @@
+---
+title: Veil Connect
+description: Use a person's Veil wallet from your web app — connect, take a payment, call your own contract, and let them cash out to a bank — with a passkey and no browser extension.
+---
+
+import { Callout, Steps } from "nextra/components";
+
+# Veil Connect
+
+Veil Connect lets your web app use a person's Veil wallet. There is no
+extension to install. Your app opens a Veil window; the person creates or
+unlocks their wallet there with a fingerprint, face or screen lock; your app
+gets an answer back.
+
+<Callout type="info">
+Veil Connect is in **pilot**. Apps are added one at a time, amounts are
+limited, and the interface may still change. To be added, see
+[Getting your app registered](#getting-your-app-registered).
+</Callout>
+
+## What you can do
+
+| Call | The person sees | You get |
+|---|---|---|
+| `connect()` | "Share your wallet address with *your app*?" | `{ address, network }` |
+| `pay({...})` | Who is asking, how much, to which address, then Veil's Send screen | `{ hash, reference, network, from, memo }` |
+| `invoke({...})` | Which contract and function, the values, and any money it takes from them | `{ hash, network, contract, method, signer, from, result }` |
+| `addMoney()` | "Buy with naira" in Veil | `{ type: 'fund' }` once they are on their way |
+| `cashOut()` | "Cash out" in Veil: their USDC to their own bank, as naira | `{ type: 'cashout' }` once they are on their way |
+
+Each person has their own wallet. Veil never holds your money, and you never
+hold a key to anyone's wallet. Every payment and every contract call is
+approved by the person with their passkey.
+
+## Quick start
+
+```html
+<script src="https://app.useveilapp.xyz/connect.js"></script>
+<script>
+  const veil = VeilConnect.init({ app: 'your-app-id' })
+
+  connectButton.onclick = async () => {
+    const { address } = await veil.connect()
+    // address is the person's wallet: a C… contract address
+  }
+</script>
+```
+
+Three things to know before you write more:
+
+- **Call from a click or tap.** Browsers block a window opened any other way.
+- **A call that does not complete rejects** with an error whose `code` is
+  `cancelled` (the person closed the window or pressed Cancel), `refused`
+  (Veil would not take the request; read `message`), or `blocked` (the browser
+  blocked the window).
+- **A result is a claim from the browser.** Your server must check it on the
+  network before acting. See [Verify on your server](#verify-on-your-server).
+
+## Two addresses, and why it matters
+
+A Veil wallet has two addresses, and mixing them up is the most common
+integration mistake.
+
+| | Starts with | What it is | Where you see it |
+|---|---|---|---|
+| **Wallet** | `C…` | The person's wallet. Controlled by their passkey. Never changes. | `address` from `connect()`, `signer` from `invoke()` |
+| **Spending account** | `G…` | Carries transactions and pays network fees. | `from` in `pay()` and `invoke()` results |
+
+- Identify a person by their **wallet** address.
+- A `pay()` payment **leaves from the spending account**. Do not expect the
+  sender to be the address `connect()` gave you.
+- Pay a person out to their **wallet** address. See
+  [Paying a person](#paying-a-person).
+
+## Taking a payment
+
+```js
+const { hash, reference, from, memo } = await veil.pay({
+  to: depositAddress,     // your full Stellar address, G… or C…
+  amount: '20',           // a string, at most 7 decimals
+  asset: 'USDC',          // 'USDC' (default) or 'XLM'
+  reference: 'order-123', // 1–64 letters, digits, "-" or "_"
+})
+// Send hash + reference to YOUR server and verify there.
+```
+
+- One payment may be at most **1000** (USDC or XLM) during the pilot.
+- Your `reference` is written on the payment as a text memo when it is **28
+  characters or fewer**. A longer one is not cut to fit: no memo is written,
+  and `memo` in the result is `null`. Keep references short, and keep personal
+  details out of them, because a memo is public.
+- The person may pay a small Veil fee **on top of** your amount. You always
+  receive the full amount you asked for.
+
+## Calling your own contract
+
+`invoke()` asks the person to approve one call to one of your contracts. Use
+it for anything that is more than a plain payment: joining a challenge,
+staking, claiming a reward.
+
+```js
+const { address } = await veil.connect()
+
+const { hash, result } = await veil.invoke({
+  contract: 'C…',               // your contract, registered for your app id
+  method: 'join_challenge',
+  args: [
+    { type: 'address', value: address },
+    { type: 'u32', value: 7 },
+    { type: 'i128', value: '50000000' },   // 5 USDC: amounts have 7 decimals
+  ],
+})
+```
+
+You pass a contract, a function name and typed values, and Veil builds the
+transaction. Veil does not sign a ready-made transaction handed to it by an
+app.
+
+### Argument types
+
+| Type | Value | Example |
+|---|---|---|
+| `address` | A full `G…` or `C…` address | `{ type: 'address', value: address }` |
+| `bool` | `true` or `false` | `{ type: 'bool', value: true }` |
+| `u32`, `i32` | A whole number | `{ type: 'u32', value: 7 }` |
+| `u64`, `i64`, `u128`, `i128` | A whole number, **as a string** | `{ type: 'i128', value: '50000000' }` |
+| `string` | Up to 256 characters | `{ type: 'string', value: 'morning run' }` |
+| `symbol` | Up to 32 letters, digits or `_` | `{ type: 'symbol', value: 'gold' }` |
+| `bytes` | Hex, no `0x` | `{ type: 'bytes', value: 'deadbeef' }` |
+
+At most 12 arguments. Lists, maps and structs are not carried yet. If your
+function needs one, tell us.
+
+### Writing your contract for Veil
+
+Ask for approval from the address `connect()` gave you. It is a contract
+address, and `require_auth()` on it is answered by the person's passkey.
+
+```rust
+pub fn join_challenge(env: Env, user: Address, challenge: u32, stake: i128) {
+    user.require_auth();
+
+    // Take the stake from the user. They approve this together with
+    // join_challenge, in one prompt. `usdc` is the token contract's address,
+    // which your contract stores when it is set up.
+    token::Client::new(&env, &usdc).transfer(&user, &env.current_contract_address(), &stake);
+    // ...
+}
+```
+
+- Take tokens with the token's `transfer`, as above. **Do not use `approve`
+  and `transfer_from`**: Veil refuses any call that gives a contract a
+  standing allowance.
+- Keep the amount within the pilot limit: 1000 USDC or 1000 XLM per request.
+- The person needs a little XLM in their spending account for the network
+  fee. If they have none, Veil tells them to add some. Veil adds no fee of its
+  own to a contract call.
+
+### What the person sees
+
+Before they are asked for their passkey, Veil works out what your call would
+really do and shows it:
+
+- your app's name, the contract and the function;
+- every value you sent;
+- every token amount leaving their wallet, and the full address it goes to;
+- the network fee;
+- on request, the full list of calls they are approving.
+
+### What Veil always refuses
+
+Whatever your contract does, Veil will not ask the person to approve:
+
+- a contract that is not registered for your app on that network;
+- `approve` on any token;
+- any call into the person's own wallet contract;
+- deploying a contract;
+- more than 1000 XLM or 1000 USDC leaving in one request;
+- a call that needs approval from an address that is not the person's.
+
+If what the call would do changes between the screen the person read and the
+moment they approve, nothing is signed and they are asked to start again.
+
+### The result
+
+| Field | Meaning |
+|---|---|
+| `hash` | The transaction hash. Verify it on your server. |
+| `signer` | The wallet (`C…`) that approved. The same address `connect()` gives. |
+| `from` | The spending account (`G…`) that carried the transaction. |
+| `result` | What your function returned, as base64 XDR of an `ScVal`, or `null`. |
+| `contract`, `method`, `network` | What was called, and where. |
+
+Decode `result` with the Stellar SDK:
+
+```js
+import { xdr, scValToNative } from '@stellar/stellar-sdk'
+
+const value = result ? scValToNative(xdr.ScVal.fromXDR(result, 'base64')) : null
+```
+
+## Adding money and cashing out
+
+```js
+await veil.addMoney()   // opens "Buy with naira" in Veil
+await veil.cashOut()    // opens "Cash out" in Veil
+```
+
+Both hand the person over to Veil and resolve once they are on their way. You
+do not pass an amount or bank details, and you do not see them. The person
+chooses both inside Veil.
+
+Adding naira is available to people in Nigeria and includes Veil's own
+identity check the first time.
+
+## Verify on your server
+
+<Callout type="warning">
+Everything your page receives comes from the person's browser. Treat it as a
+claim, not a fact. Never credit a payment, start a subscription or record a
+contract call on the browser's word alone.
+</Callout>
+
+### A payment
+
+<Steps>
+
+### Look the hash up
+
+For example `GET https://horizon.stellar.org/transactions/<hash>/operations`.
+Check the transaction succeeded.
+
+### Check where the money went
+
+It must be the **right asset**, the **right amount**, **to your address**. For
+USDC that means the code `USDC` **and** the issuer
+`GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`.
+
+- If your address is a `G…` account, look for a `payment` operation and check
+  its `to`, `asset_code`, `asset_issuer` and `amount`.
+- If your address is a `C…` contract, look for an `invoke_host_function`
+  operation and check its `asset_balance_changes` list.
+
+Match by **destination**, not by sender. The same transaction can hold a
+second, smaller payment to another address: that is Veil's fee. Credit the
+payment to your address and ignore every other operation.
+
+### Check the memo
+
+It must be a text memo equal to your reference. That is what ties a hash to
+one order.
+
+### Accept each hash once
+
+Store it with the reference and refuse a repeat. Check `network` is `mainnet`.
+
+</Steps>
+
+### A contract call
+
+Look the hash up, check the transaction succeeded, and check it called
+**your contract** and **your function**. Then read what happened from your
+contract's own state or events, not from `result`. Accept each hash once.
+
+## Paying a person
+
+To send someone money, for example a withdrawal from your app, pay the
+**wallet** address `connect()` gave you.
+
+- Use the USDC token contract's `transfer(from, to, amount)`. On mainnet that
+  contract is `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`. A
+  classic `payment` operation cannot pay a `C…` address.
+- Amounts have 7 decimal places: send `amount × 10^7`.
+- The transfer lands as soon as your transaction succeeds. The wallet needs
+  no trustline and no XLM to receive, and Veil charges nothing to receive.
+- The address never changes, and it cannot be moved to another person.
+- One person can have more than one wallet. Pay the address they linked, and
+  let them link again with `connect()` if they change wallets.
+
+## Getting your app registered
+
+Veil accepts requests only from apps it knows, and only from each app's own
+web address. That is what stops someone asking for a payment in your app's
+name from a link in a chat.
+
+Send us:
+
+1. **Who you are** and what your app does.
+2. **Your web addresses**, exactly as they appear in the browser, for example
+   `https://yourapp.com` and `https://www.yourapp.com`.
+3. **For testing**, the local address you develop on, for example
+   `http://localhost:3000`. You get a separate test app id for it, shown to
+   people as "*Your app* (test)".
+4. **If you call contracts**, the contract id on each network and its source.
+   We read a contract before registering it, because your users will be asked
+   to approve what it does.
+
+You get back an app id to pass to `VeilConnect.init`.
+
+<Callout type="warning">
+A test app id talks to the **live** wallet. Payments made with it are real.
+Use small amounts.
+</Callout>
+
+## Not available yet
+
+- Signing a ready-made transaction.
+- Contract calls whose arguments are lists, maps or structs.
+- More than one contract call in a single approval.
+- Paying without the passkey each time.
+- A webhook to your server. Verify by hash.
+- Native mobile apps. This is for web apps in a browser.
