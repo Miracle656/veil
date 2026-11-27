@@ -13,6 +13,13 @@
  * A push token is a capability: anyone holding it can send this device a
  * notification through Expo. It is never logged in full ({@link redactPushToken}).
  *
+ * Remote push is OFF unless the build sets `EXPO_PUBLIC_REMOTE_PUSH` to `1` or
+ * `true` ({@link isRemotePushEnabled}). Until the registry route (#1274) exists
+ * and users are asked separately for remote push, a build without the flag only
+ * asks for notification permission (which local notifications need) and never
+ * fetches a push token or calls the registry. That keeps people who allowed
+ * local payment alerts from being enrolled in remote push without being asked.
+ *
  * Push tokens do not exist in Expo Go from SDK 54 onward; this needs a
  * development build or one of the release APKs.
  */
@@ -32,6 +39,8 @@ export type PushRegistrationResult =
   | { status: 'unsupported' }
   /** The user refused, or has not granted, notification permission. */
   | { status: 'denied' }
+  /** Remote push is switched off in this build (the default); no token, no request. */
+  | { status: 'disabled' }
   /** The build carries no EAS project id (Expo Go, or a build made outside EAS). */
   | { status: 'no-project-id' }
   /** A token was obtained but this build has no registry to give it to. */
@@ -45,6 +54,18 @@ export interface PushDeviceRegistration {
   platform: 'ios' | 'android';
   appVersion: string;
   locale: string;
+}
+
+/**
+ * Whether this build may fetch a push token and register it. Off by default:
+ * only an explicit `1` or `true` turns it on, so an unset, empty or mistyped
+ * value keeps remote push off.
+ */
+export function isRemotePushEnabled(
+  value: string | undefined = process.env['EXPO_PUBLIC_REMOTE_PUSH'],
+): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true';
 }
 
 type ConstantsLike = {
@@ -117,6 +138,7 @@ export async function registerPushDevice(
 export interface PushRegistrationDeps {
   platform?: string;
   requestPermission?: () => Promise<boolean>;
+  remotePushEnabled?: () => boolean;
   projectId?: () => string | null;
   getToken?: (projectId: string) => Promise<string>;
   register?: (registration: PushDeviceRegistration) => Promise<boolean>;
@@ -127,6 +149,7 @@ export interface PushRegistrationDeps {
 const defaultDeps: Required<PushRegistrationDeps> = {
   platform: Platform.OS,
   requestPermission: requestNotificationPermissions,
+  remotePushEnabled: () => isRemotePushEnabled(),
   projectId: () => resolveProjectId(),
   getToken: async (projectId) => (await Notifications.getExpoPushTokenAsync({ projectId })).data,
   register: (registration) => registerPushDevice(registration),
@@ -152,6 +175,10 @@ export async function ensurePushRegistration(
   } catch (err) {
     return failed(deps, 'permission check', err);
   }
+
+  // Permission above is shared with local notifications and is still needed.
+  // Everything remote stops here unless the build switched it on.
+  if (!deps.remotePushEnabled()) return { status: 'disabled' };
 
   const projectId = deps.projectId();
   if (!projectId) {

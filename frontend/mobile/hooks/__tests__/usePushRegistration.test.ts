@@ -56,7 +56,7 @@ describe('maybeRegisterForPush', () => {
     expect(d.watch).toHaveBeenCalledTimes(1);
   });
 
-  it.each([['denied'], ['unsupported'], ['no-project-id']] as const)(
+  it.each([['denied'], ['unsupported'], ['no-project-id'], ['disabled']] as const)(
     'does not watch for rotation after %s, since there is nothing to re-register',
     async (status) => {
       const d = deps({ status } as PushRegistrationResult);

@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 
 import {
   ensurePushRegistration,
+  isRemotePushEnabled,
   redactPushToken,
   registerPushDevice,
   resolveProjectId,
@@ -26,6 +27,7 @@ function happy(overrides: PushRegistrationDeps = {}) {
   const deps: PushRegistrationDeps = {
     platform: 'android',
     requestPermission: async () => true,
+    remotePushEnabled: () => true,
     projectId: () => 'project-id',
     getToken,
     register,
@@ -56,7 +58,45 @@ describe('resolveProjectId', () => {
   });
 });
 
+describe('isRemotePushEnabled', () => {
+  it('is off when the build does not set the flag', () => {
+    expect(isRemotePushEnabled(undefined)).toBe(false);
+    expect(isRemotePushEnabled('')).toBe(false);
+  });
+
+  it('is on only for an explicit 1 or true', () => {
+    expect(isRemotePushEnabled('1')).toBe(true);
+    expect(isRemotePushEnabled('true')).toBe(true);
+    expect(isRemotePushEnabled(' TRUE ')).toBe(true);
+  });
+
+  it('stays off for anything else, so a typo never enables it', () => {
+    for (const value of ['0', 'false', 'yes', 'on', 'ture']) {
+      expect(isRemotePushEnabled(value)).toBe(false);
+    }
+  });
+});
+
 describe('ensurePushRegistration', () => {
+  it('with remote push off (the default), asks for permission but fetches no token and sends nothing', async () => {
+    const requestPermission = jest.fn(async () => true);
+    const { deps, getToken, register } = happy({ remotePushEnabled: () => false, requestPermission });
+
+    await expect(ensurePushRegistration(deps)).resolves.toEqual({ status: 'disabled' });
+    expect(requestPermission).toHaveBeenCalledTimes(1); // local notifications still need it
+    expect(getToken).not.toHaveBeenCalled();
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('is off by default when the build sets no flag', async () => {
+    const { deps, getToken, register } = happy();
+    delete deps.remotePushEnabled; // use the real default; the test build sets no flag
+
+    await expect(ensurePushRegistration(deps)).resolves.toEqual({ status: 'disabled' });
+    expect(getToken).not.toHaveBeenCalled();
+    expect(register).not.toHaveBeenCalled();
+  });
+
   it('registers the token with platform, version and locale', async () => {
     const { deps, register } = happy();
 
