@@ -133,4 +133,47 @@ describe('offramp order access', () => {
       expect(err).not.toBeInstanceOf(OfframpOrderUnreadable);
     });
   });
+
+  describe('deposit addresses subscription', () => {
+    it('notifies subscribers when a new deposit address is remembered', async () => {
+      const {
+        rememberDepositAddress,
+        subscribeDepositAddresses,
+        knownDepositAddresses,
+      } = require('../offramp');
+
+      const listener = jest.fn();
+      const unsubscribe = subscribeDepositAddresses(listener);
+
+      const address1 = 'GBTEST1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234';
+      await rememberDepositAddress(address1);
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith([address1]);
+      await expect(knownDepositAddresses()).resolves.toEqual([address1]);
+
+      // Remembering the same address should not notify again or duplicate
+      await rememberDepositAddress(address1);
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      // Remembering a second address adds it to the front and notifies
+      const address2 = 'GBTEST9876543210ZYXWVUTSRQPONMLKJIHGFEDCBA4321';
+      await rememberDepositAddress(address2);
+      expect(listener).toHaveBeenCalledTimes(2);
+      expect(listener).toHaveBeenCalledWith([address2, address1]);
+      await expect(knownDepositAddresses()).resolves.toEqual([address2, address1]);
+
+      unsubscribe();
+
+      // After unsubscribe, no further notifications
+      const address3 = 'GBTEST0000000000AAAAAAAAAAAAAAAAAAAAAAAAAAAA0000';
+      await rememberDepositAddress(address3);
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns empty array when storage is empty', async () => {
+      const { knownDepositAddresses } = require('../offramp');
+      await expect(knownDepositAddresses()).resolves.toEqual([]);
+    });
+  });
 });

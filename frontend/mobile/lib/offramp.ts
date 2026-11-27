@@ -395,6 +395,31 @@ export async function forgetActiveOrder(): Promise<void> {
 /** AsyncStorage key holding deposit addresses sent to. Wallet-derived: cleared on reset. */
 export const OFFRAMP_DEPOSIT_ADDRESSES_KEY = 'veil_offramp_deposit_addresses';
 
+export type DepositAddressesListener = (addresses: string[]) => void;
+
+const depositAddressesListeners = new Set<DepositAddressesListener>();
+
+/**
+ * Subscribe to newly remembered deposit addresses so views like ActivityFeed
+ * can update "Sent" to "Cashed out" immediately without requiring an app restart.
+ */
+export function subscribeDepositAddresses(listener: DepositAddressesListener): () => void {
+  depositAddressesListeners.add(listener);
+  return () => {
+    depositAddressesListeners.delete(listener);
+  };
+}
+
+function notifyDepositAddresses(addresses: string[]): void {
+  for (const listener of depositAddressesListeners) {
+    try {
+      listener(addresses);
+    } catch {
+      // Listener errors must not crash caller
+    }
+  }
+}
+
 export async function rememberDepositAddress(address: string): Promise<void> {
   try {
     const known = await knownDepositAddresses();
@@ -403,6 +428,7 @@ export async function rememberDepositAddress(address: string): Promise<void> {
     // the oldest entries are the least likely to still be on screen.
     const next = [address, ...known].slice(0, 50);
     await AsyncStorage.setItem(OFFRAMP_DEPOSIT_ADDRESSES_KEY, JSON.stringify(next));
+    notifyDepositAddresses(next);
   } catch {
     // Labelling is a nicety; never let it fail an order.
   }
