@@ -217,6 +217,9 @@ export default function OnboardingPage() {
               <button id="onboarding-recover" className="btn-ghost" onClick={() => router.push('/recover')}>
                 Recover existing wallet
               </button>
+              <button id="onboarding-sign-in" className="btn-ghost" onClick={() => router.push('/sign-in')}>
+                Sign in with wallet address or backup
+              </button>
               <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.5)', textAlign: 'center', marginTop: '0.5rem', lineHeight: 1.5 }}>
                 By creating or recovering a wallet you agree to our{' '}
                 {/* Underlined: a link told apart from its sentence by colour alone
