@@ -14,7 +14,7 @@
  *   3. The sponsor (Veil, server-side — the SPONSOR_SECRET_KEY role from
  *      frontend/wallet/app/api/sponsor-trustline/route.ts) creates the
  *      ephemeral account under CAP-33 sponsorship.
- *   4. One transaction, signed only with the ephemeral secret from the link
+ *   3. One transaction, signed only with the ephemeral secret from the link
  *      and fee-bumped by the sponsor, then:
  *        - claims the balance,
  *        - moves the money into the recipient's (undeployed) C… wallet via
@@ -23,6 +23,14 @@
  *          simulated with a random G… — Node cannot run a WebAuthn PRF),
  *        - merges itself back into the sponsor, releasing the borrowed
  *          base reserve. Nothing is stranded.
+ *   4. Submits real transactions from the SEEDED FEE PAYER: the product-
+ *      shaped wallet deploy (factory.deploy) and a classic payment, both
+ *      fee-paid out of the fee payer's own spendable seed — proving the
+ *      seed actually buys gas (a 1 XLM seed would be all reserve: minimum
+ *      balance is two base reserves = 1 XLM, zero spendable, nothing to
+ *      pay a fee with). The deploy is observed to be blocked on testnet by
+ *      the stale factory contract (see the OBSERVED note in main()); the
+ *      payment proves the spendable XLM is real money the fee payer moves.
  *   5. Verifies the recipient wallet's balance, measures exactly what the
  *      sponsor paid per claim in XLM, and demonstrates reclaim after the
  *      deadline on a second, never-claimed link.
@@ -52,7 +60,7 @@ import {
   nativeToScVal,
   scValToNative,
 } from '@stellar/stellar-sdk';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
@@ -65,25 +73,60 @@ const FACTORY_ID = 'CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA';
 
 const NATIVE_SAC = Asset.native().contractId(NETWORK_PASSPHRASE);
 const LINK_AMOUNT_XLM = '25';   // XLM the sender puts in the link
-const FEE_PAYER_SEED_XLM = '1'; // XLM carved out for the recipient's fee payer
+// XLM carved out for the recipient's fee payer. MUST exceed the account
+// minimum balance — two base reserves = 1 XLM, all locked. An account
+// created with exactly 1 XLM has zero spendable and cannot pay a fee.
+// 2 XLM = 1 XLM locked reserve + 1 XLM spendable gas.
+const FEE_PAYER_SEED_XLM = '2';
 const LINK_AMOUNT_STROOPS = BigInt(Math.round(parseFloat(LINK_AMOUNT_XLM) * 1e7));
 const SEED_STROOPS = BigInt(Math.round(parseFloat(FEE_PAYER_SEED_XLM) * 1e7));
 const CLAIM_DEADLINE_SECONDS = 90; // short so the reclaim demo finishes quickly
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The sandbox this spike is developed in drops connections intermittently
+// (ETIMEDOUT); retry plain fetches a few times so a flake doesn't kill a run.
+const fetchRetry = async (url, tries = 10) => {
+  for (let i = 1; ; i++) {
+    try { return await fetch(url); }
+    catch (e) {
+      if (i >= tries) throw e;
+      console.log(`  (fetch attempt ${i} failed: ${e.cause?.code ?? e.message} — retrying)`);
+      await sleep(1500);
+    }
+  }
+};
+
 const server = new Horizon.Server(HORIZON_URL);
 const rpc = new SorobanRpc.Server(RPC_URL);
+// The sandbox this spike is developed in drops connections intermittently
+// (ETIMEDOUT on connect) — retry network-level failures on both SDK clients
+// so a flake doesn't kill a mid-run ledger state. Errors WITH a response
+// (real protocol answers) are never retried.
+for (const client of [server.httpClient, rpc.httpClient]) {
+  client.interceptors.response.use(undefined, async (err) => {
+    const cfg = err.config ?? {};
+    cfg.__retries ??= 0;
+    if (err.response || cfg.__retries >= 10) throw err;
+    cfg.__retries += 1;
+    let host = '';
+    try { host = new URL(cfg.url, cfg.baseURL).host; } catch { /* unparseable */ }
+    console.log(`  (network flake: retrying ${cfg.method} ${host} — attempt ${cfg.__retries})`);
+    await sleep(3000);
+    return client.request(cfg);
+  });
+}
 const sha256 = (b) => createHash('sha256').update(b).digest();
 const nativeBalance = async (account) =>
   parseFloat((await server.accounts().accountId(account).call()).balances
     .find((b) => b.asset_type === 'native').balance);
 
 async function fundWithFriendbot(label, keypair) {
-  const res = await fetch(`${FRIENDBOT}?addr=${keypair.publicKey()}`);
+  const res = await fetchRetry(`${FRIENDBOT}?addr=${keypair.publicKey()}`);
   if (!res.ok) throw new Error(`friendbot failed for ${label}: ${res.status}`);
   // The faucet is eventually consistent — poll until Horizon knows the account.
   for (let i = 1; i <= 15; i++) {
     try { return await nativeBalance(keypair.publicKey()); } catch { /* not yet */ }
-    await new Promise((r) => setTimeout(r, 1000));
+    await sleep(1000);
   }
   throw new Error(`account for ${label} never appeared on Horizon`);
 }
@@ -131,6 +174,7 @@ async function main() {
   console.log('═'.repeat(72));
 
   let claimCharged = 0n, transferCharged = 0n, mergeCharged = 0n, bracketCharged = 0n;
+  let feePayerFees = 0n; // what the fee payer itself paid: deploy attempt + payment fee + 0.1 XLM moved
 
   // ── Cast the actors ────────────────────────────────────────────────────
   const sponsor = Keypair.random(); // Veil's SPONSOR_SECRET_KEY role (server-only)
@@ -144,10 +188,14 @@ async function main() {
   const ephemeral = Keypair.random();
 
   // The recipient: a passkey wallet that exists nowhere yet. Derive the
-  // counterfactual address exactly as the SDK does, from a synthetic
-  // 65-byte P-256 public key (Node has no WebAuthn; the product flow runs
-  // the standard create-wallet screen to mint this credential).
-  const p256Key = Buffer.concat([Buffer.from([0x04]), randomBytes(64)]);
+  // counterfactual address exactly as the SDK does, from a REAL generated
+  // P-256 key — the factory validates the key on-curve at deploy time
+  // (contracts/factory/src/validation.rs), so a throwaway byte string will
+  // not do. Node has no WebAuthn PRF, so the fee-payer G… stays random.
+  const { publicKey: p256Pub } = await crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign'],
+  );
+  const p256Key = new Uint8Array(await crypto.subtle.exportKey('raw', p256Pub));
   const recipientWallet = computeWalletAddress(FACTORY_ID, p256Key);
   // The recipient's fee-payer G… account is PRF-derived from the same passkey
   // (ADR 0003). Simulated here with a random key — the derivation lives
@@ -164,6 +212,12 @@ async function main() {
   } catch (e) {
     if (!/not found|404/i.test(String(e))) throw e;
   }
+  let walletDeployedBefore = false;
+  try {
+    await rpc.getContractData(recipientWallet, xdr.ScVal.scvLedgerKeyContractInstance());
+    walletDeployedBefore = true;
+  } catch { /* no contract instance on-ledger — expected */ }
+  if (walletDeployedBefore) throw new Error('recipient wallet unexpectedly deployed before the claim');
   const balanceBeforeClaim = await sacBalance(sponsor, recipientWallet);
   if (balanceBeforeClaim !== 0n) throw new Error('recipient wallet unexpectedly funded');
   console.log('recipient verified absent: no G… account, zero SAC balance, wallet not deployed');
@@ -240,8 +294,9 @@ async function main() {
     .addOperation(Operation.createAccount({
       destination: recipientFeePayer.publicKey(),
       // Creates the PRF-derived fee-payer G… account with seed XLM of
-      // spendable balance; the 0.5 XLM base reserve is also paid by the
-      // ephemeral out of the link amount (documented in the cost table).
+      // balance. The account minimum — two base reserves = 1 XLM — is
+      // part of that and is locked from day one; only the remainder is
+      // spendable gas. A 1 XLM seed would leave zero spendable.
       startingBalance: FEE_PAYER_SEED_XLM,
     }))
     .setTimeout(180)
@@ -310,17 +365,83 @@ async function main() {
   const claimSponsorCost = sponsorBeforeTx - sponsorAfterTx;
   console.log(`  sponsor net cost: ${claimSponsorCost.toFixed(7)} XLM (includes reserve released back by the merge)`);
 
-  // ── 4. Confirm the recipient's balance ─────────────────────────────────
+  // ── 4. One real transaction from the seeded fee payer ─────────────────
+  // This is the step that makes "the fee payer can transact" more than an
+  // assertion about balances: a 1 XLM seed would be ENTIRELY reserve (the
+  // account minimum is two base reserves = 1 XLM) with zero spendable, so
+  // no fee could ever be paid.
+  //
+  // The product-shaped proof would be the wallet deploy itself
+  // (factory.deploy — no Soroban auth needed, no passkey ceremony; the
+  // same shape as sdk/src/core.ts deploy(), whose source account is also
+  // the fee payer). OBSERVED on testnet (2026-11-26/27, deterministic
+  // across four runs and four fresh keys, valid and invalid keys alike):
+  // the deployed testnet factory CAUK4… traps on EVERY `deploy` call —
+  // (WasmVm, InvalidAction) / "VM call trapped: UnreachableCodeReached" —
+  // even for an off-curve key that should return a clean
+  // FactoryError::InvalidPublicKey. The simulation below cannot succeed,
+  // so there is no resource envelope to submit with and the deploy cannot
+  // be sent on testnet today. The repo already records the testnet factory
+  // as stale relative to expected-hashes.json (docs/SCF_STRATEGY.md,
+  // "known gaps" #1); this is that gap biting, not a conclusion about the
+  // claim design. Mainnet's factory verifies.
+  const feePayerAccount = await server.loadAccount(recipientFeePayer.publicKey());
+  const deployTx = new TransactionBuilder(feePayerAccount, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+    .addOperation(new Contract(FACTORY_ID).call(
+      'deploy',
+      nativeToScVal(p256Key, { type: 'bytes' }),
+      nativeToScVal('veil.xyz', { type: 'string' }),
+      nativeToScVal('https://app.veil.xyz', { type: 'string' }),
+    ))
+    .setTimeout(30)
+    .build();
+  try {
+    const sim = await rpc.simulateTransaction(deployTx);
+    console.log(`4  wallet deploy via the testnet factory: ${SorobanRpc.Api.isSimulationError(sim) ? `simulation fails deterministically — ${sim.error}` : 'simulated fine (factory has been fixed since 2026-11-27 — re-run to submit)'}`);
+  } catch (e) {
+    console.log(`4  wallet deploy simulation: ${e.message}`);
+  }
+
+  // The submitted proof instead: a plain classic transaction FROM the fee
+  // payer, paying its own fee and 0.1 XLM out of the spendable seed. This
+  // is the minimum the claim flow needs from the fee payer even before the
+  // wallet deploys — a fee-payer that can actually pay fees.
+  const payUnsigned = new TransactionBuilder(await server.loadAccount(recipientFeePayer.publicKey()),
+    { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+    .addOperation(Operation.payment({
+      destination: sponsor.publicKey(),
+      asset: Asset.native(),
+      amount: '0.1',
+    }))
+    .setTimeout(30)
+    .build();
+  payUnsigned.sign(recipientFeePayer);
+  const payRes = await server.submitTransaction(payUnsigned);
+  if (!payRes.successful) throw new Error(`fee-payer payment failed: ${payRes.hash}`);
+  const payCharged = BigInt(payRes.fee_charged);
+  feePayerFees += payCharged + 1_000_000n; // fee + the 0.1 XLM payment
+  console.log(`4b fee-payer payment: ${payRes.hash} (0.1 XLM to the sponsor, charged ${payCharged} stroops) — the spendable seed is real`);
+
+  // ── 5. Confirm the recipient's balance ─────────────────────────────────
   // expected wallet balance: link amount minus the fee-payer seed. The
-  // createAccount startingBalance INCLUDES the 0.5 XLM base reserve (0.5 of
-  // it is spendable gas for the fee payer, 0.5 locked forever).
+  // createAccount startingBalance includes the account minimum — two base
+  // reserves = 1 XLM, locked — so the seed must clear that minimum with
+  // real spendable gas on top.
   const expectedWallet = LINK_AMOUNT_STROOPS - SEED_STROOPS;
   const walletBalance = await sacBalance(sponsor, recipientWallet);
   console.log(`recipient wallet balance: ${walletBalance} stroops (expected ${expectedWallet})`);
   if (walletBalance !== expectedWallet) throw new Error('recipient wallet balance mismatch');
   const feePayerXlm = await nativeBalance(recipientFeePayer.publicKey());
-  if (feePayerXlm < parseFloat(FEE_PAYER_SEED_XLM)) throw new Error('fee payer not seeded');
-  console.log(`recipient fee payer funded: ${feePayerXlm} XLM`);
+  const feePayerStroops = BigInt(Math.round(feePayerXlm * 1e7));
+  const MIN_BALANCE_STROOPS = 10_000_000n; // two base reserves of 0.5 XLM
+  const expectedFeePayer = SEED_STROOPS - feePayerFees;
+  if (feePayerStroops !== expectedFeePayer) {
+    throw new Error(`fee payer balance mismatch: ${feePayerStroops} vs expected ${expectedFeePayer}`);
+  }
+  if (feePayerStroops - MIN_BALANCE_STROOPS <= 0n) {
+    throw new Error('fee payer has no spendable balance above the reserve');
+  }
+  console.log(`recipient fee payer: ${feePayerXlm} XLM total · ${Number(feePayerStroops - MIN_BALANCE_STROOPS) / 1e7} XLM spendable above the 1 XLM reserve (seed ${FEE_PAYER_SEED_XLM} − 1 XLM reserve − 0.1 XLM payment − ${(Number(feePayerFees - 1_000_000n) / 1e7).toFixed(7)} XLM fees)`);
   try {
     await nativeBalance(ephemeral.publicKey());
     throw new Error('ephemeral account should have been merged away');
@@ -329,7 +450,7 @@ async function main() {
   }
   console.log('ephemeral account merged away — nothing stranded');
 
-  // ── 5. Reclaim + expiry on a second, never-claimed link ────────────────
+  // ── 6. Reclaim + expiry on a second, never-claimed link ────────────────
   const reclaimDeadline = Math.floor(Date.now() / 1000) + 15;
   const claimants2 = [
     new Claimant(ephemeral.publicKey(), Claimant.predicateUnconditional()),
@@ -358,10 +479,12 @@ async function main() {
   const reclaimed = await server.submitTransaction(reclaimTx);
   console.log(`sender reclaimed the expired link (${reclaimed.hash}) — reclaim + expiry proven`);
 
-  // ── 6. The cost ledger ─────────────────────────────────────────────────
-  const sponsorEnd = await nativeBalance(sponsor.publicKey());
+  // ── 7. The cost ledger ─────────────────────────────────────────────────
   const senderEnd = await nativeBalance(sender.publicKey());
-  const sponsorNet = sponsorStart - sponsorEnd; // fees for both sponsor txs + transient reserve (returned)
+  // Sponsor cost is measured at the end of the claim (before the fee
+  // payer's 0.1 XLM payment lands in the sponsor's account, which would
+  // otherwise read as negative cost).
+  const sponsorNet = sponsorStart - sponsorAfterTx; // fees for both sponsor txs + transient reserve (returned)
   // Sender paid its own link-creation fees; the claimed 25 left for good,
   // the reclaimed 5 came back.
   const senderFees = senderStart - senderEnd - parseFloat(LINK_AMOUNT_XLM);
@@ -371,6 +494,7 @@ async function main() {
   console.log(`  · claim+seed fee-bump             : ${claimCharged} stroops charged`);
   console.log(`  · SAC transfer fee-bump           : ${transferCharged} stroops charged (2 × ${transferInner.fee} inner: inclusion + resource fee)`);
   console.log(`  · merge fee-bump                  : ${mergeCharged} stroops charged`);
+  console.log(`fee payer's own spend        : ${(Number(feePayerFees - 1_000_000n) / 1e7).toFixed(7)} XLM fees + 0.1 XLM payment, from its spendable seed (not Veil's cost)`);
   console.log(`SENDER cost for 2 links    : ${senderFees.toFixed(7)} XLM (both link amounts settled: 25 claimed, 5 reclaimed)`);
   console.log(`elapsed                    : ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   console.log('═'.repeat(72));
@@ -378,7 +502,9 @@ async function main() {
 
 main().catch((e) => {
   console.error('SPIKE FAILED:', e?.message ?? e);
+  if (e?.cause) console.error('cause:', e.cause?.message ?? e.cause?.code ?? e.cause);
   const codes = e?.response?.data?.extras?.result_codes ?? e?.extras?.result_codes;
   if (codes) console.error('result_codes:', JSON.stringify(codes, null, 2));
+  if (process.env.SPIKE_DEBUG) console.error(e);
   process.exit(1);
 });
