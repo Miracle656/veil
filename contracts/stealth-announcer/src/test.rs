@@ -3,7 +3,9 @@
 extern crate std;
 
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, token, vec, Address, Bytes, BytesN, Env, IntoVal,
+    symbol_short,
+    testutils::{Address as _, Events as _},
+    token, Address, Bytes, BytesN, Env, IntoVal, Symbol,
 };
 
 use crate::{StealthAnnouncer, StealthAnnouncerClient, ANNOUNCEMENT_VERSION};
@@ -24,17 +26,25 @@ fn publishes_versioned_announcement_with_filterable_view_tag() {
 
     assert_eq!(token_client.balance(&contract_id), 0);
     client.announce(&ephemeral_public_key, &view_tag, &sealed_note);
-    assert_eq!(token_client.balance(&contract_id), 0);
 
+    // The test host exposes the events of the most recent invocation, so read
+    // them immediately after `announce` rather than after another contract call.
     let events = env.events().all();
     assert_eq!(events.len(), 1);
     let event = events.get(0).unwrap();
+
+    assert_eq!(event.1.len(), 2);
+    let topic_name: Symbol = event.1.get(0).unwrap().into_val(&env);
+    let topic_view_tag: BytesN<1> = event.1.get(1).unwrap().into_val(&env);
+    assert_eq!(topic_name, symbol_short!("announce"));
+    assert_eq!(topic_view_tag, view_tag);
+
+    let data: (u32, BytesN<32>, Bytes) = event.2.into_val(&env);
     assert_eq!(
-        event.1,
-        vec![&env, symbol_short!("announce"), view_tag.clone()]
+        data,
+        (ANNOUNCEMENT_VERSION, ephemeral_public_key, sealed_note)
     );
-    assert_eq!(
-        event.2,
-        (ANNOUNCEMENT_VERSION, ephemeral_public_key, sealed_note).into_val(&env)
-    );
+
+    // The announcer only announces: it never takes custody of funds.
+    assert_eq!(token_client.balance(&contract_id), 0);
 }
