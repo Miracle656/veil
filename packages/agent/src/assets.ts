@@ -35,6 +35,8 @@ export const USDC_MAINNET_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAP
 export const USDC_TESTNET_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
 export const EURC_MAINNET_ISSUER = 'GDHU6WRG4IEQXM5NZ4BMPKOXHW76MZM4Y2IEMFDVXBSDP6SJY4ITNPP2'
 export const AQUA_MAINNET_ISSUER = 'GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA'
+// Verified against mainnet Horizon on 2026-09-24 (issue #795). The SAC is
+// derived from the issuer in assets.test.ts rather than trusted as pasted.
 export const USDT0_MAINNET_ISSUER = 'GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q'
 export const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
 export const ETHERFUSE_MAINNET_ISSUER = 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC'
@@ -285,12 +287,20 @@ export async function fetchAssetDisclosure(
 
 /**
  * Assets the agent will vouch for, keyed by code and pinned by ISSUER.
+ *
+ * An asset code is not an identity. Eight different issuers publish `USDT0` on
+ * mainnet, and the genuine one is the only one without a stellar.toml, so a
+ * code match is seven-to-one against you. Nothing here (or anywhere in the
+ * agent) may call a holding "verified" because its code matches; the issuer
+ * has to match too.
  */
 export interface VerifiedAsset {
   code: string
   issuer: string
+  /** Stellar Asset Contract id, only where it is pinned and asserted in tests. */
   sac?: string
   name: string
+  /** What the issuer can do to a holder, when the agent should say so. */
   issuerControls?: { clawback: boolean; freeze: boolean }
 }
 
@@ -316,6 +326,18 @@ const REGISTRY: Record<StellarNetwork, Record<string, VerifiedAsset>> = {
   },
 }
 
+/**
+ * Every registered entry, flattened, so a test can assert over all of them
+ * rather than over the handful that happen to be exported as constants.
+ *
+ * This exists because an invalid issuer has reached a PR four times. The
+ * checks that should have caught it did not: the parity tests compare the
+ * three copies of the registry to each other, so an address that is wrong
+ * identically in all three passes, and the per-constant StrKey assertions
+ * only cover the constants someone remembered to add. Iterating the registry
+ * means a *new* asset is covered the moment it is added, by nobody's
+ * discipline.
+ */
 export const ALL_REGISTERED_ASSETS: ReadonlyArray<{
   network: StellarNetwork
   asset: VerifiedAsset

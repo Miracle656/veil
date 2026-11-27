@@ -26,8 +26,6 @@ module.exports = {
   ),
   moduleNameMapper: {
     ...(expoPreset.moduleNameMapper ?? {}),
-    '^@veil/agent/assets$': '<rootDir>/../../packages/agent/src/assets.ts',
-    '^@stellar/stellar-sdk$': '<rootDir>/node_modules/@stellar/stellar-sdk',
     // `registryParity.test.ts` imports `../wallet/lib/assets.ts` to compare the
     // two asset registries, which is the point of the test — a registry that
     // agrees with itself proves nothing.
