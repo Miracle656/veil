@@ -278,7 +278,7 @@ export async function submitAsWallet(
     if (rpc.Api.isSimulationError(recorded)) throw new Error(`Recording simulation failed: ${recorded.error}`);
     const success = recorded as rpc.Api.SimulateTransactionSuccessResponse;
     const allowed = hostFunctionCalls(unsigned);
-    const { sequence } = await server._getLatestLedger();
+    const { sequence } = await server.getLatestLedger();
     const validUntil = sequence + 60;
 
     let signedEntries: xdr.SorobanAuthorizationEntry[] = [];
@@ -514,7 +514,7 @@ export async function balanceOf(tokenId: string, holder: string): Promise<bigint
 
 /** The ledger's own clock, in unix seconds. */
 export async function ledgerTime(): Promise<bigint> {
-    const latest = await server._getLatestLedger();
+    const latest = await server.getLatestLedger();
     return BigInt(latest.closeTime);
 }
 

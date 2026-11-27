@@ -173,7 +173,7 @@ describe('a session key on the deployed wallet code, on a real network', () => {
     });
 
     it('a different function on the same token contract (approve) is refused', async () => {
-        const { sequence } = await net.server._getLatestLedger();
+        const { sequence } = await net.server.getLatestLedger();
         const result = await sessionCall(token, 'approve', [
             new Address(wallet).toScVal(),
             new Address(stranger.publicKey()).toScVal(),
