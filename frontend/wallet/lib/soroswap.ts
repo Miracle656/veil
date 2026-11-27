@@ -14,7 +14,12 @@ const IS_TESTNET = net.networkPassphrase === Networks.TESTNET
 
 const SOROSWAP_API_KEY = process.env.NEXT_PUBLIC_SOROSWAP_API_KEY?.trim() || ''
 
-function getSoroswapClient(): SoroswapSDK | null {
+/**
+ * The one Soroswap client configuration. Liquidity (lib/soroswapLiquidity)
+ * uses this rather than building its own, so the router and network can never
+ * drift between the two flows.
+ */
+export function getSoroswapClient(): SoroswapSDK | null {
   if (!SOROSWAP_API_KEY) {
     return null
   }
@@ -22,6 +27,11 @@ function getSoroswapClient(): SoroswapSDK | null {
     apiKey: SOROSWAP_API_KEY,
     defaultNetwork: IS_TESTNET ? SupportedNetworks.TESTNET : SupportedNetworks.MAINNET,
   })
+}
+
+/** The Soroswap network id for the wallet's active network. */
+export function getSoroswapNetwork(): SupportedNetworks {
+  return IS_TESTNET ? SupportedNetworks.TESTNET : SupportedNetworks.MAINNET
 }
 
 export interface SwapQuote {
