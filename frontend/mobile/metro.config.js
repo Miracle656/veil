@@ -53,6 +53,7 @@ config.resolver.extraNodeModules = {
 // cannot see, because tsc is the only thing that looks at tsconfig.
 config.resolver.alias = {
   ...config.resolver.alias,
+  '@veil/agent/assets': path.resolve(monorepoRoot, 'packages/agent/src/assets.ts'),
   '@/components': path.resolve(projectRoot, 'components'),
   '@/assets': path.resolve(projectRoot, 'assets'),
   '@': projectRoot,

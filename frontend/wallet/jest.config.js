@@ -33,6 +33,8 @@ const config = {
     '^@/(.*)$':         '<rootDir>/$1',
     '^@veil/utils$':    '<rootDir>/../../sdk/src/utils',
     '^@veil/sdk$':      '<rootDir>/../../sdk/src/index',
+    '^@veil/agent/assets$': '<rootDir>/../../packages/agent/src/assets',
+    '^@stellar/stellar-sdk$': '<rootDir>/node_modules/@stellar/stellar-sdk',
     '^@veil/events$':   '<rootDir>/../../sdk/src/events',
     '^@veil/recovery$': '<rootDir>/../../sdk/src/recovery/sep30',
     '^@veil/backup$':   '<rootDir>/../../sdk/src/backup',

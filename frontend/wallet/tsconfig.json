@@ -36,6 +36,9 @@
       "@veil/agent-core": [
         "../../packages/agent/src/handler"
       ],
+      "@veil/agent/assets": [
+        "../../packages/agent/src/assets"
+      ],
       "@veil/agent-llm": [
         "../../packages/agent/src/llm"
       ],
