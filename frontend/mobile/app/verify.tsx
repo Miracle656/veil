@@ -57,13 +57,29 @@ type Stage = 'who' | 'nin' | 'rejected' | 'done';
 
 const NIN_LENGTH = 11;
 
+/**
+ * The route to hand the user back to, or null when the param is not a route.
+ *
+ * It arrives from a navigation param, which means it can be anything a deep
+ * link put there. Returning `//host.example` or `https://…` to the navigator
+ * would send them out of the app instead of back to their airtime purchase, so
+ * anything that is not a plain in-app path is dropped and the caller falls
+ * back to its default destination.
+ */
+function inAppPath(raw: string | string[] | undefined): Href | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value || !value.startsWith('/')) return null;
+  if (value.includes('//') || value.includes('\\') || value.includes(':')) return null;
+  return value as Href;
+}
+
 export default function VerifyScreen() {
   const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const params = useLocalSearchParams<{ returnTo?: string; summary?: string; label?: string }>();
-  const returnTo = (params.returnTo as Href) || ('/dashboard' as Href);
+  const returnTo = inAppPath(params.returnTo) ?? ('/dashboard' as Href);
   const summary = params.summary ?? '';
   const label = params.label ?? 'where you were';
 
@@ -255,7 +271,14 @@ export default function VerifyScreen() {
   }, [customerRef, nin, firstName, lastName, email, phone, mainnetOnly]);
 
   const finish = useCallback(() => {
-    router.replace(returnTo);
+    // `dismissTo`, not `replace`. The rail that pushed here is still on the
+    // stack with the form half-filled: replacing would lay a second, empty
+    // copy of it on top of this one, and the purchase they came to finish
+    // would be gone — the exact loss this screen exists to prevent. When
+    // `/verify` was entered cold there is nothing to dismiss, and expo-router
+    // replaces the current screen with the target, which is the other thing
+    // wanted.
+    router.dismissTo(returnTo);
   }, [router, returnTo]);
 
   const stepOfTwo = stage === 'who' ? 1 : 2;
