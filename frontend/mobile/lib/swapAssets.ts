@@ -36,7 +36,7 @@ export interface SwapAsset {
  * so `swapDestinations` drops it on testnet, where the issuer account does not
  * exist and a trustline would fail with op_no_issuer.
  */
-export const SWAP_DEST_CODES = ['USDC', 'USDT0', 'USDY'] as const;
+export const SWAP_DEST_CODES = ['USDC', 'USDT0', 'USDY', 'EURC', 'AQUA'] as const;
 
 export const NATIVE: SwapAsset = { code: 'XLM', issuer: null };
 

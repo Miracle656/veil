@@ -103,10 +103,16 @@ const addr = (a: string): xdr.ScVal => nativeToScVal(a, { type: 'address' });
  * never says a name is taken and never says one is free, so nothing can be
  * bought and nothing explains why.
  *
- * `walletAddress` distinguishes a name this wallet already holds from one
- * somebody else does, which the registry does not answer in one call.
+ * `own` distinguishes a name this user already holds from one somebody else
+ * does, which the registry does not answer in one call. It takes every address
+ * the user has: a name bought on the web by a phone-made wallet points at the
+ * spending account, and reading only the smart wallet called that user's own
+ * name "somebody else's".
  */
-export async function nameState(name: string, walletAddress?: string): Promise<NameState> {
+export async function nameState(
+  name: string,
+  own?: string | readonly string[],
+): Promise<NameState> {
   const id = namesContractId();
   if (!id) return 'unknown';
 
@@ -119,9 +125,10 @@ export async function nameState(name: string, walletAddress?: string): Promise<N
   if (code === 1) return 'in_recovery';
   if (code !== 0) return 'unknown';
 
-  if (!walletAddress) return 'taken';
+  const mine = (typeof own === 'string' ? [own] : (own ?? [])).filter(Boolean);
+  if (mine.length === 0) return 'taken';
   const holder = await simulateRead(id, 'resolve', [str(name)]);
-  return holder === walletAddress ? 'yours' : 'taken';
+  return typeof holder === 'string' && mine.includes(holder) ? 'yours' : 'taken';
 }
 
 /**

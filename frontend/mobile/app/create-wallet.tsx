@@ -11,7 +11,13 @@ import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
-import { createClassicWallet, importClassicWallet, type CreatedWallet } from '../lib/classicWallet';
+import { createTestnetWallet, importTestnetWallet, type CreatedWallet } from '../lib/testnetWallet';
+import {
+  CREDENTIAL_ALREADY_EXISTS_MESSAGE,
+  NO_CREDENTIAL_PROVIDER_MESSAGE,
+  isExcludedCredentialExists,
+  isNoCredentialProvider,
+} from '../lib/passkey';
 import {
   createPasskeyWallet,
   recreatePasskeyWallet,
@@ -22,14 +28,13 @@ import {
 } from '../lib/passkeyWallet';
 import { evaluatePrf } from '../lib/passkey';
 import { getNetwork } from '../lib/network';
+import { SDK_KEY_ID, getSdkItem } from '../lib/sdkStorage';
 import { useWallet } from '../components/WalletProvider';
-// TODO(#1003): remove platform limitation warning when multi-origin contract ships
-import { WALLET_CREATION_LIMITATION_MESSAGE } from '../lib/platformLimitation';
 
 // Passkeys need the native module — unavailable in Expo Go.
 const IN_EXPO_GO = Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 
-type Status = 'idle' | 'busy' | 'prf-warning' | 'created' | 'error';
+type Status = 'idle' | 'busy' | 'prf-warning' | 'created' | 'error' | 'already-registered';
 
 function shortAddr(a: string): string {
   return a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-6)}` : a;
@@ -96,6 +101,18 @@ export default function CreateWallet() {
     setError(null);
     setPendingPrf(null);
     try {
+      // A credential id already stored for this network means a passkey was
+      // registered here and the run that made it did not finish — the SDK
+      // records the id during registration, before the wallet is deployed.
+      // Registering again cannot work: that id goes out as
+      // `excludeCredentials`, the passkey really is on the device, and the
+      // platform refuses. People hit this on their FIRST wallet and read
+      // 'you already have an account' as the app being broken, when signing
+      // in with that same passkey works and gives them their wallet.
+      if (await getSdkItem(SDK_KEY_ID)) {
+        setStatus('already-registered');
+        return;
+      }
       const res = await createPasskeyWallet(wallet);
       if (res.status === 'created') {
         setResult(res.wallet);
@@ -105,7 +122,14 @@ export default function CreateWallet() {
         setStatus('prf-warning');
       }
     } catch (e) {
-      setError(errorMessage(e));
+      // This path reported `errorMessage(e)` raw while `run()` below mapped
+      // the same two errors to something actionable, so the passkey button —
+      // the one almost everybody uses — surfaced Android's own wording.
+      if (isExcludedCredentialExists(e)) {
+        setStatus('already-registered');
+        return;
+      }
+      setError(isNoCredentialProvider(e) ? NO_CREDENTIAL_PROVIDER_MESSAGE : errorMessage(e));
       setStatus('error');
     }
   }
@@ -155,9 +179,54 @@ export default function CreateWallet() {
       setResult(await fn());
       setStatus('created');
     } catch (e) {
-      setError(errorMessage(e));
+      // Android's own words here are "createCredentialAsync no provider
+      // dependencies found", which reads as a bug in this app's build. It is
+      // not: the phone has no passkey provider enabled. Say what to do.
+      setError(
+        isNoCredentialProvider(e)
+          ? NO_CREDENTIAL_PROVIDER_MESSAGE
+          : isExcludedCredentialExists(e)
+            ? CREDENTIAL_ALREADY_EXISTS_MESSAGE
+            : errorMessage(e),
+      );
       setStatus('error');
     }
+  }
+
+  // A passkey for this network already exists on the device, so creation is
+  // impossible and sign-in is the whole answer. Previously this arrived as an
+  // error paragraph telling people to reset their wallet in Settings — advice
+  // that destroys a perfectly good wallet, offered to someone whose wallet was
+  // fine and one tap away.
+  if (status === 'already-registered') {
+    return (
+      <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="create-wallet-already-registered-screen">
+        <View style={styles.body}>
+          <FlowHeader title="You already have a wallet" />
+          <Text style={styles.caption}>
+            This device already holds a Veil passkey for this network, so a second
+            one cannot be created over it. That passkey is your wallet — sign in
+            with it and everything is where you left it.
+          </Text>
+          <View style={styles.spacer} />
+          <Pressable
+            testID="create-wallet-sign-in-instead"
+            accessibilityRole="button"
+            onPress={() => router.replace('/login')}
+            style={({ pressed }) => [styles.cta, pressed && styles.pressed]}
+          >
+            <Text style={styles.ctaText}>Sign in with my passkey</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setStatus('idle')}
+            style={styles.linkBtn}
+          >
+            <Text style={styles.link}>Go back</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   if (status === 'prf-warning' && pendingPrf) {
@@ -373,7 +442,7 @@ export default function CreateWallet() {
             <Pressable
               accessibilityRole="button"
               disabled={status === 'busy' || secret.trim().length < 56}
-              onPress={() => run(() => importClassicWallet(secret))}
+              onPress={() => run(() => importTestnetWallet(secret))}
               style={({ pressed }) => [styles.cta, (status === 'busy' || secret.trim().length < 56) && styles.disabled, pressed && styles.pressed]}
             >
               {status === 'busy' ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.ctaText}>Import wallet</Text>}
@@ -385,15 +454,33 @@ export default function CreateWallet() {
         ) : (
           <>
             <View style={styles.spacer} />
-            {/* TODO(#1003): remove platform limitation warning when multi-origin contract ships */}
-            <View
-              testID="platform-limitation-notice"
-              style={styles.platformNotice}
-            >
-              <Text style={styles.platformNoticeText}>
-                {WALLET_CREATION_LIMITATION_MESSAGE}
-              </Text>
-            </View>
+            {/* Said here, where it can still be acted on, because tapping
+                through to the biometric prompt is irreversible in the only
+                way that matters: a reinstall leaves local storage empty, so
+                nothing on this device knows about the wallet the passkey
+                already opens, `excludeCredentials` goes out empty, and the
+                authenticator mints a SECOND passkey without a murmur. One
+                user did exactly that and spent a day stranded from a funded
+                mainnet wallet. Creating cannot find an existing wallet; only
+                signing in can. */}
+            {!IN_EXPO_GO && (
+              <View style={styles.card} testID="create-wallet-new-wallet-notice">
+                <Text style={styles.caption}>
+                  This makes a brand-new wallet. If you have used Veil before —
+                  on this phone, or with this Google or iCloud account — sign in
+                  instead: creating here will not find that wallet, and your
+                  funds stay in the one you already have.
+                </Text>
+                <Pressable
+                  testID="create-wallet-sign-in-link"
+                  accessibilityRole="button"
+                  onPress={() => router.replace('/login')}
+                  style={styles.linkBtn}
+                >
+                  <Text style={styles.link}>I have used Veil before — sign in</Text>
+                </Pressable>
+              </View>
+            )}
             {!IN_EXPO_GO && (
               <Pressable
                 testID="create-passkey-button"
@@ -405,11 +492,24 @@ export default function CreateWallet() {
                 {status === 'busy' ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.ctaText}>Create with passkey</Text>}
               </Pressable>
             )}
+            {/* A random keypair is a testnet affordance, and on mainnet it is a
+                trap. `createTestnetWallet` makes a random classic account and
+                funds it from Friendbot — which does not exist on mainnet, so
+                the wallet arrives empty, unfunded, with no passkey, no smart
+                contract and no way to recover it. It sat here as a peer of the
+                passkey button, one tap away, relabelled "Use a classic keypair
+                instead", and a tester who hit a passkey error took it: his
+                wallet was a G-address reading "not active on the network yet",
+                and it silently became the source of his naira customer
+                reference. Offered only where Friendbot can actually fund it,
+                and in Expo Go, where there is no passkey module and this is the
+                only way to get a wallet at all. */}
+            {(IN_EXPO_GO || getNetwork().friendbotUrl) && (
             <Pressable
               testID="create-wallet-button"
               accessibilityRole="button"
               disabled={status === 'busy'}
-              onPress={() => run(createClassicWallet)}
+              onPress={() => run(createTestnetWallet)}
               style={({ pressed }) => [
                 IN_EXPO_GO ? styles.cta : styles.ctaSecondary,
                 status === 'busy' && styles.disabled,
@@ -420,14 +520,11 @@ export default function CreateWallet() {
                 <ActivityIndicator color={colors.onAccent} />
               ) : (
                 <Text style={IN_EXPO_GO ? styles.ctaText : styles.ctaSecondaryText}>
-                  {IN_EXPO_GO
-                    ? 'Create testnet wallet'
-                    : getNetwork().friendbotUrl
-                      ? 'Use a testnet keypair instead'
-                      : 'Use a classic keypair instead'}
+                  {IN_EXPO_GO ? 'Create testnet wallet' : 'Use a testnet keypair instead'}
                 </Text>
               )}
             </Pressable>
+            )}
             <Pressable accessibilityRole="button" onPress={() => setImporting(true)} style={styles.linkBtn}>
               <Text style={styles.link}>I already have a secret key</Text>
             </Pressable>
@@ -544,20 +641,4 @@ const createStyles = (colors: ThemeColors) =>
     addr: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 15 },
     fund: { fontFamily: fontFamily.bodyMedium, fontSize: 13, marginTop: 8 },
     pressed: { opacity: 0.7 },
-    platformNotice: {
-      backgroundColor: colors.surface,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 12,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
-      marginTop: 10,
-    },
-    platformNoticeText: {
-      color: colors.textSecondary,
-      fontFamily: fontFamily.body,
-      fontSize: 12,
-      lineHeight: 17,
-      textAlign: 'center',
-    },
   });

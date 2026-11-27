@@ -8,8 +8,15 @@
  *
  * States are visually distinct: a skeleton while loading, a dashed empty card
  * when the indexer answers with nothing, and a red error card (with a Retry
- * button) when the indexer is missing or unreachable. Image/metadata failures
- * degrade to a placeholder tile, never a crash.
+ * button) when the indexer is missing or unreachable AND the chain read lists
+ * nothing either. When only the indexer fails, the Veil-ians the chain lists
+ * are shown under a line saying the rest could not be loaded. Image/metadata
+ * failures degrade to a placeholder tile, never a crash.
+ *
+ * Framed like every other destination — `SafeAreaView` + `FlowHeader` — rather
+ * than `ScreenScaffold`, which also wrapped this screen's `FlatList` in its own
+ * `ScrollView`: a virtualised list inside a scroller renders every row at once
+ * and fights it for the gesture.
  *
  * Read-only: nothing here signs, so the walletConnect signing path is untouched.
  */
@@ -22,18 +29,18 @@ import {
   Modal,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { ScreenScaffold } from '../components/ScreenScaffold';
+import { FlowHeader } from '../components/FlowHeader';
 import { useTheme } from '../hooks/useTheme';
 import { errorMessage } from '../lib/errorMessage';
-import { fetchOwnedVeilIans } from '../lib/veilIansOwned';
+import { loadGallery } from '../lib/nftGallery';
 import {
-  fetchWalletNFTs,
   formatTokenId,
   IndexerNotConfiguredError,
   truncateAddress,
@@ -41,7 +48,7 @@ import {
 } from '../lib/nfts';
 import type { ThemeColors } from '../lib/theme';
 import { useNetwork } from '../hooks/useNetwork';
-import { getWalletAddress } from '../lib/walletStore';
+import { getOwnAddresses, listOwn } from '../lib/ownAddresses';
 import { fontFamily } from '../theme/typography';
 
 type State =
@@ -49,7 +56,7 @@ type State =
   | { kind: 'no-wallet' }
   | { kind: 'unconfigured'; message: string }
   | { kind: 'error'; message: string }
-  | { kind: 'ready'; items: NFTItem[] };
+  | { kind: 'ready'; items: NFTItem[]; indexerError: string | null };
 
 function NftImage({ item, size }: { item: NFTItem; size: 'grid' | 'detail' }) {
   const [failed, setFailed] = useState(false);
@@ -90,22 +97,15 @@ export default function NFTsScreen() {
   const load = useCallback(async () => {
     setState({ kind: 'loading' });
     try {
-      const address = await getWalletAddress();
-      if (!address) {
+      const own = await getOwnAddresses();
+      if (!own.wallet) {
         setState({ kind: 'no-wallet' });
         return;
       }
-      // The indexer, and the chain for Veil's own collection. The indexer is
-      // the only thing that can enumerate a collection nobody told us about;
-      // it is NOT the authority on one whose address we ship — see
-      // `lib/veilIansOwned.ts` for the chain of failures that taught us.
-      const [indexed, onChain] = await Promise.all([
-        fetchWalletNFTs(address),
-        fetchOwnedVeilIans(address).catch(() => [] as NFTItem[]),
-      ]);
-      const seen = new Set(indexed.map((i) => `${i.contractId}:${i.tokenId}`));
-      const items = [...indexed, ...onChain.filter((i) => !seen.has(`${i.contractId}:${i.tokenId}`))];
-      setState({ kind: 'ready', items });
+      // The indexer merged with the chain read of Veil's own collection, for
+      // the smart wallet AND the spending account: what the web wallet buys
+      // for a phone-made wallet lands on the second. See `lib/nftGallery.ts`.
+      setState({ kind: 'ready', ...(await loadGallery(listOwn(own))) });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {
         setState({ kind: 'unconfigured', message: err.message });
@@ -122,22 +122,15 @@ export default function NFTsScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const address = await getWalletAddress();
-      if (!address) {
+      const own = await getOwnAddresses();
+      if (!own.wallet) {
         setState({ kind: 'no-wallet' });
         return;
       }
-      // The indexer, and the chain for Veil's own collection. The indexer is
-      // the only thing that can enumerate a collection nobody told us about;
-      // it is NOT the authority on one whose address we ship — see
-      // `lib/veilIansOwned.ts` for the chain of failures that taught us.
-      const [indexed, onChain] = await Promise.all([
-        fetchWalletNFTs(address),
-        fetchOwnedVeilIans(address).catch(() => [] as NFTItem[]),
-      ]);
-      const seen = new Set(indexed.map((i) => `${i.contractId}:${i.tokenId}`));
-      const items = [...indexed, ...onChain.filter((i) => !seen.has(`${i.contractId}:${i.tokenId}`))];
-      setState({ kind: 'ready', items });
+      // The indexer merged with the chain read of Veil's own collection, for
+      // the smart wallet AND the spending account: what the web wallet buys
+      // for a phone-made wallet lands on the second. See `lib/nftGallery.ts`.
+      setState({ kind: 'ready', ...(await loadGallery(listOwn(own))) });
     } catch (err) {
       if (err instanceof IndexerNotConfiguredError) {
         setState({ kind: 'unconfigured', message: err.message });
@@ -216,6 +209,14 @@ export default function NFTsScreen() {
         columnWrapperStyle={styles.row}
         contentContainerStyle={styles.grid}
         testID="nft-grid"
+        ListHeaderComponent={
+          state.indexerError ? (
+            <Text style={styles.notice} testID="nft-partial-notice">
+              Showing your Veil-ians, read from the network. Other collections could not be
+              loaded right now. Pull down to try again.
+            </Text>
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -257,29 +258,23 @@ export default function NFTsScreen() {
   };
 
   return (
-    <ScreenScaffold
-      eyebrow="CAP-46"
-      title="NFTs"
-      description="The CAP-46 tokens this wallet holds — the same items the web gallery shows."
-      testID="nfts-screen"
-    >
-      <SafeAreaView edges={[]} style={styles.flex}>
-        {renderBody()}
-      </SafeAreaView>
+    <SafeAreaView style={styles.screen} edges={['top']} testID="nfts-screen">
+      <View style={styles.header}>
+        <FlowHeader title="NFTs" />
+      </View>
+      <View style={styles.body}>{renderBody()}</View>
 
       <Modal visible={selected !== null} animationType="slide" onRequestClose={() => setSelected(null)}>
         <SafeAreaView style={styles.modalRoot} edges={['top', 'bottom']}>
-          <Pressable
-            onPress={() => setSelected(null)}
-            accessibilityRole="button"
-            accessibilityLabel="Close NFT details"
-            hitSlop={12}
-            style={styles.closeRow}
-          >
-            <Text style={styles.closeLabel}>← Back</Text>
-          </Pressable>
+          <View style={styles.header}>
+            <FlowHeader title={selected?.name ?? 'NFT'} onBack={() => setSelected(null)} />
+          </View>
           {selected ? (
-            <View style={styles.modalBody} testID="nft-detail-view">
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.modalBody}
+              testID="nft-detail-view"
+            >
               <NftImage item={selected} size="detail" />
               <Text style={styles.detailCollection}>{selected.collectionName ?? 'Soroban CAP-46 NFT'}</Text>
               <Text style={styles.detailTitle}>{selected.name}</Text>
@@ -310,19 +305,34 @@ export default function NFTsScreen() {
               ) : (
                 <Text style={styles.muted}>This token publishes no traits.</Text>
               )}
-            </View>
+            </ScrollView>
           ) : null}
         </SafeAreaView>
       </Modal>
-    </ScreenScaffold>
+    </SafeAreaView>
   );
 }
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    flex: { flex: 1 },
+    screen: { flex: 1, backgroundColor: colors.background },
+    header: { paddingHorizontal: 20, paddingTop: 16 },
+    body: { flex: 1, paddingHorizontal: 20, paddingTop: 16 },
     center: { alignItems: 'center', gap: 12, paddingVertical: 48 },
-    muted: { color: colors.textMuted, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+    muted: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: 'center',
+    },
+    notice: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 18,
+      marginBottom: 14,
+    },
     pressed: { opacity: 0.7 },
     emptyCard: {
       alignItems: 'center',
@@ -332,7 +342,7 @@ const createStyles = (colors: ThemeColors) =>
       borderWidth: 1,
       borderStyle: 'dashed',
       borderColor: colors.border,
-      borderRadius: 20,
+      borderRadius: 16,
       backgroundColor: colors.surface,
     },
     emptyTitle: {
@@ -348,28 +358,42 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 24,
       borderWidth: 1,
       borderColor: colors.danger,
-      borderRadius: 20,
+      borderRadius: 16,
       backgroundColor: colors.dangerSurface,
     },
-    errorTitle: { color: colors.danger, fontSize: 18, fontWeight: '700', textAlign: 'center' },
-    errorBody: { color: colors.textSecondary, fontSize: 14, lineHeight: 20, textAlign: 'center' },
+    errorTitle: {
+      color: colors.danger,
+      fontFamily: fontFamily.heading,
+      fontSize: 18,
+      textAlign: 'center',
+    },
+    errorBody: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 20,
+      textAlign: 'center',
+    },
     retryButton: {
       backgroundColor: colors.danger,
-      borderRadius: 10,
+      borderRadius: 14,
       paddingVertical: 10,
       paddingHorizontal: 24,
       marginTop: 8,
     },
-    retryLabel: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+    // No token means "ink on danger": textStrong inverts with the theme and
+    // would go near-black on red in light mode. White is the contrast-correct
+    // value on this surface in both themes.
+    retryLabel: { color: '#FFFFFF', fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
     ghostButton: {
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: 10,
+      borderRadius: 14,
       paddingVertical: 10,
       paddingHorizontal: 24,
       marginTop: 8,
     },
-    ghostLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '600' },
+    ghostLabel: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 14 },
     grid: { gap: 12, paddingBottom: 32 },
     row: { gap: 12 },
     card: {
@@ -392,8 +416,18 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceMd,
     },
     fallbackGlyph: { color: colors.accent, fontSize: 28 },
-    fallbackName: { color: colors.textPrimary, fontSize: 13, fontWeight: '600', textAlign: 'center' },
-    fallbackHint: { color: colors.textMuted, fontSize: 11, textAlign: 'center' },
+    fallbackName: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
+      textAlign: 'center',
+    },
+    fallbackHint: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 11,
+      textAlign: 'center',
+    },
     tokenBadge: {
       position: 'absolute',
       top: 8,
@@ -403,21 +437,25 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 8,
       paddingVertical: 3,
     },
-    tokenBadgeLabel: { color: '#FDDA24', fontSize: 12, fontWeight: '700' },
+    // A token id is an identifier, so it takes the mono face like every other
+    // one in the app. The gold comes from the token rather than a literal, so
+    // it follows the theme instead of staying dark-mode gold on a light build.
+    tokenBadgeLabel: { color: colors.accent, fontFamily: fontFamily.address, fontSize: 12 },
     cardBody: { padding: 12, gap: 2 },
+    // The house eyebrow: Anton caps, 0.8 tracking, muted. It was teal — a
+    // colour the palette reserves for a good outcome, which a collection name
+    // is not.
     collection: {
-      color: colors.positive,
+      color: colors.textMuted,
+      fontFamily: fontFamily.accent,
       fontSize: 11,
-      fontWeight: '700',
       textTransform: 'uppercase',
-      letterSpacing: 0.6,
+      letterSpacing: 0.8,
     },
-    cardTitle: { color: colors.textStrong, fontSize: 15, fontWeight: '600' },
+    cardTitle: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
     contract: { color: colors.textMuted, fontSize: 12, fontFamily: fontFamily.address },
     modalRoot: { flex: 1, backgroundColor: colors.background },
-    closeRow: { paddingHorizontal: 20, paddingVertical: 12 },
-    closeLabel: { color: colors.textPrimary, fontSize: 15, fontWeight: '600' },
-    modalBody: { paddingHorizontal: 20, paddingBottom: 32, gap: 10 },
+    modalBody: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 32, gap: 10 },
     detailImage: { width: '100%', aspectRatio: 1, borderRadius: 12, backgroundColor: colors.surfaceMd },
     detailFallback: {
       width: '100%',
@@ -430,14 +468,19 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.surfaceMd,
     },
     detailCollection: {
-      color: colors.positive,
+      color: colors.textMuted,
+      fontFamily: fontFamily.accent,
       fontSize: 12,
-      fontWeight: '700',
       textTransform: 'uppercase',
       letterSpacing: 0.8,
     },
     detailTitle: { fontFamily: fontFamily.heading, fontSize: 26, color: colors.textStrong },
-    detailDesc: { color: colors.textSecondary, fontSize: 14, lineHeight: 20 },
+    detailDesc: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      lineHeight: 20,
+    },
     propsBox: {
       backgroundColor: colors.surface,
       borderWidth: 1,
@@ -447,8 +490,8 @@ const createStyles = (colors: ThemeColors) =>
       gap: 8,
     },
     propRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12 },
-    propKey: { color: colors.textMuted, fontSize: 13 },
-    propValue: { color: colors.textPrimary, fontSize: 13, fontWeight: '600' },
+    propKey: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },
+    propValue: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 13 },
     mono: { fontFamily: fontFamily.address },
     traits: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     trait: {
@@ -461,6 +504,17 @@ const createStyles = (colors: ThemeColors) =>
       minWidth: '47%',
       flexGrow: 1,
     },
-    traitKey: { color: colors.textMuted, fontSize: 11, textTransform: 'uppercase' },
-    traitValue: { color: colors.textPrimary, fontSize: 13, fontWeight: '600', marginTop: 2 },
+    traitKey: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.accent,
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    traitValue: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 13,
+      marginTop: 2,
+    },
   });

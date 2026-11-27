@@ -61,6 +61,11 @@ export {
     assertionPublicKeyCandidates,
 } from './crypto/assertionKey';
 export type { AssertionMaterial } from './crypto/assertionKey';
+// The auth-entry guard is part of the public surface, not an internal of
+// `core.ts`: every client that puts a passkey in front of a simulation needs
+// the same refusal, and the mobile WalletConnect path and the browser wallet
+// both import it rather than growing their own copy.
+export * from './authEntryGuard';
 export * from './signMessage';
 export * from './bulkPayout';
 export * from './counterfactual';

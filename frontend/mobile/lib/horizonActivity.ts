@@ -3,6 +3,7 @@ import { Address, Asset, Horizon, StrKey, scValToNative, xdr, rpc as SorobanRpc 
 import { getNetwork } from './network';
 import { getFeePayerAddress } from './activity';
 import type { TxRecord } from './activityFeed';
+import { isDustAmount } from './dust';
 
 /** Trim a Horizon amount ("2500.0000000") to a clean grouped number. */
 function fmt(raw: string | undefined): string {
@@ -143,11 +144,13 @@ async function loadContractSacActivity(addresses: string[], limit: number): Prom
         const from = String(scValToNative(topic[1]!));
         const to = String(scValToNative(topic[2]!));
         const stroops = scValToNative(ev.value) as bigint;
+        const amountNum = Number(stroops) / 10_000_000;
         const sent = mine.has(from);
         fresh.push({
           id: ev.id,
           type: sent ? 'sent' : 'received',
-          amount: (Number(stroops) / 10_000_000).toLocaleString('en-US', { maximumFractionDigits: 4 }),
+          amount: amountNum.toLocaleString('en-US', { maximumFractionDigits: 4 }),
+          isDust: isDustAmount(amountNum),
           // The SAC puts the asset in the fourth topic ("native", or
           // "CODE:ISSUER"), which is why the filters above reserve a slot for
           // it. Hardcoding XLM here labelled every USDC movement as XLM.
@@ -216,6 +219,7 @@ function invocationToRecord(
       ...base,
       type: 'swapped',
       amount: fmt(from.amount),
+      isDust: isDustAmount(from.amount),
       asset: assetOfChange(from),
       counterparty: String(to.from ?? 'unknown'),
       destAmount: fmt(to.amount),
@@ -224,11 +228,11 @@ function invocationToRecord(
   }
   if (sent.length > 0) {
     const c = sent[0]!;
-    return { ...base, type: 'sent', amount: fmt(c.amount), asset: assetOfChange(c), counterparty: String(c.to ?? 'unknown') };
+    return { ...base, type: 'sent', amount: fmt(c.amount), isDust: isDustAmount(c.amount), asset: assetOfChange(c), counterparty: String(c.to ?? 'unknown') };
   }
   if (received.length > 0) {
     const c = received[0]!;
-    return { ...base, type: 'received', amount: fmt(c.amount), asset: assetOfChange(c), counterparty: String(c.from ?? 'unknown') };
+    return { ...base, type: 'received', amount: fmt(c.amount), isDust: isDustAmount(c.amount), asset: assetOfChange(c), counterparty: String(c.from ?? 'unknown') };
   }
   return null; // nothing of ours moved (e.g. a pure read, or a deploy)
 }
@@ -285,10 +289,12 @@ async function loadClassicActivity(account: string, mine: Set<string>, limit: nu
 
     if (type === 'payment') {
       const sent = r['from'] === account;
+      const rawAmount = r['amount'] as string;
       out.push({
         id,
         type: sent ? 'sent' : 'received',
-        amount: fmt(r['amount'] as string),
+        amount: fmt(rawAmount),
+        isDust: isDustAmount(rawAmount),
         asset: assetOf(r['asset_type'] as string, r['asset_code'] as string),
         counterparty: String((sent ? r['to'] : r['from']) ?? 'unknown'),
         timestamp,
@@ -296,10 +302,12 @@ async function loadClassicActivity(account: string, mine: Set<string>, limit: nu
       });
     } else if (type === 'create_account') {
       const sent = r['funder'] === account;
+      const rawAmount = r['starting_balance'] as string;
       out.push({
         id,
         type: sent ? 'sent' : 'received',
-        amount: fmt(r['starting_balance'] as string),
+        amount: fmt(rawAmount),
+        isDust: isDustAmount(rawAmount),
         asset: 'XLM',
         counterparty: String((sent ? r['account'] : r['funder']) ?? 'unknown'),
         timestamp,
@@ -307,10 +315,12 @@ async function loadClassicActivity(account: string, mine: Set<string>, limit: nu
       });
     } else if (type.startsWith('path_payment')) {
       const sent = r['from'] === account;
+      const rawAmount = (r['source_amount'] as string) ?? (r['amount'] as string);
       out.push({
         id,
         type: 'swapped',
-        amount: fmt((r['source_amount'] as string) ?? (r['amount'] as string)),
+        amount: fmt(rawAmount),
+        isDust: isDustAmount(rawAmount),
         asset: assetOf(r['source_asset_type'] as string, r['source_asset_code'] as string),
         counterparty: String((sent ? r['to'] : r['from']) ?? 'unknown'),
         timestamp,

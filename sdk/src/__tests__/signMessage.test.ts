@@ -64,11 +64,14 @@ describe('signMessage()', () => {
         const hash = await computeDomainHash(message);
         const { sig, credentialId } = await generateSignedWebAuthnSig(hash);
 
-        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig), credentialId);
+        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig));
 
         expect(signed.version).toBe(1);
         expect(signed.domain).toBe('VEIL_SIGNED_MESSAGE_V1');
-        expect(signed.credentialId).toBe(credentialId);
+        // CR-3: the credential ID is the input the legacy fee-payer derivation
+        // consumes, and this object is handed to whichever site asked for it.
+        expect(signed.credentialId).toBeUndefined();
+        expect(JSON.stringify(signed)).not.toContain(credentialId);
         expect(signed.messageHash).toHaveLength(64);
 
         expect(await verifyMessage(message, signed)).toBe(true);
@@ -78,7 +81,7 @@ describe('signMessage()', () => {
         const message = new TextEncoder().encode('hello veil');
         const hash = await computeDomainHash(message);
         const { sig, credentialId } = await generateSignedWebAuthnSig(hash);
-        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig), credentialId);
+        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig));
 
         expect(await verifyMessage(new TextEncoder().encode('hello veil tampered'), signed)).toBe(false);
     });
@@ -87,7 +90,7 @@ describe('signMessage()', () => {
         const message = new TextEncoder().encode('hello veil');
         const hash = await computeDomainHash(message);
         const { sig, credentialId } = await generateSignedWebAuthnSig(hash);
-        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig), credentialId);
+        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig));
 
         const sigHex = signed.signature;
         const mutated = sigHex.slice(0, -2) + (sigHex.slice(-2) === 'ff' ? '00' : 'ff');
@@ -96,18 +99,41 @@ describe('signMessage()', () => {
         expect(await verifyMessage(message, tampered)).toBe(false);
     });
 
-    it('credentialId check — expectedCredentialId mismatch returns false', async () => {
+    it('binds to the public key, which is what identifies the credential', async () => {
+        const message = new TextEncoder().encode('hello veil');
+        const hash = await computeDomainHash(message);
+        const { sig } = await generateSignedWebAuthnSig(hash);
+        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig));
+
+        // Unbound: passes.
+        expect(await verifyMessage(message, signed)).toBe(true);
+        // Wrong key: fails.
+        expect(await verifyMessage(message, signed, undefined, 'deadbeef')).toBe(false);
+        // Right key: passes.
+        expect(await verifyMessage(message, signed, undefined, signed.publicKey)).toBe(true);
+    });
+
+    it('fails closed when asked to bind a current message by credential ID', async () => {
+        // Nothing emits the field any more, so there is nothing to match. The
+        // caller asked for a binding and must not be told it held.
         const message = new TextEncoder().encode('hello veil');
         const hash = await computeDomainHash(message);
         const { sig, credentialId } = await generateSignedWebAuthnSig(hash);
-        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig), credentialId);
+        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig));
 
-        // Without expectedCredentialId: passes (field is informational)
-        expect(await verifyMessage(message, signed)).toBe(true);
-        // Wrong expectedCredentialId: fails
-        expect(await verifyMessage(message, signed, 'wrong-credential-id')).toBe(false);
-        // Correct expectedCredentialId: passes
-        expect(await verifyMessage(message, signed, credentialId)).toBe(true);
+        expect(await verifyMessage(message, signed, credentialId)).toBe(false);
+    });
+
+    it('still verifies a message signed by a build that emitted credentialId', async () => {
+        const message = new TextEncoder().encode('hello veil');
+        const hash = await computeDomainHash(message);
+        const { sig, credentialId } = await generateSignedWebAuthnSig(hash);
+        const signed = await signMessage(message, jest.fn().mockResolvedValue(sig));
+        const legacy: SignedMessage = { ...signed, credentialId };
+
+        expect(await verifyMessage(message, legacy)).toBe(true);
+        expect(await verifyMessage(message, legacy, credentialId)).toBe(true);
+        expect(await verifyMessage(message, legacy, 'wrong-credential-id')).toBe(false);
     });
 
     it('domain separation — signing "hello" and "VEIL_SIGNED_MESSAGE_V1\\nhello" produce different hashes', async () => {

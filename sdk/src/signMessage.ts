@@ -5,7 +5,20 @@ export type SignedMessage = {
     version: 1;
     domain: 'VEIL_SIGNED_MESSAGE_V1';
     messageHash: string;
-    credentialId: string;
+    /**
+     * No longer emitted. Present only so a message signed by an older build
+     * still parses and still verifies.
+     *
+     * A signed message is handed to whatever site asked for it, and for a
+     * legacy wallet the credential ID is the input the old fee-payer
+     * derivation consumes - so emitting it gave every such site a value it had
+     * no need for and should not have. `publicKey` already identifies the
+     * credential, cryptographically rather than by name, so nothing is lost by
+     * dropping it.
+     *
+     * @deprecated Bind to `publicKey` instead.
+     */
+    credentialId?: string;
     signature: string;
     publicKey: string;
     authData: string;
@@ -24,8 +37,7 @@ async function domainSeparatedHash(message: Uint8Array): Promise<Uint8Array> {
 
 export async function signMessage(
     message: Uint8Array,
-    signAuthEntry: (payload: Uint8Array) => Promise<WebAuthnSignature | null>,
-    credentialId: string
+    signAuthEntry: (payload: Uint8Array) => Promise<WebAuthnSignature | null>
 ): Promise<SignedMessage> {
     const hash = await domainSeparatedHash(message);
     const sig = await signAuthEntry(hash);
@@ -34,7 +46,6 @@ export async function signMessage(
         version: 1,
         domain: 'VEIL_SIGNED_MESSAGE_V1',
         messageHash: bufferToHex(hash),
-        credentialId,
         signature: bufferToHex(sig.signature),
         publicKey: bufferToHex(sig.publicKey),
         authData: bufferToHex(sig.authData),
@@ -51,9 +62,13 @@ export async function signMessage(
  *     reuse of Soroban auth signatures for message signing and vice versa.
  *  3. Verifies the P-256 ECDSA signature over authData || SHA-256(clientDataJSON).
  *
- * @param expectedCredentialId If provided, signed.credentialId must match exactly.
- *   Without this parameter the credentialId field is informational only. Callers who
- *   need to bind a signature to a known credential MUST pass this.
+ * @param expectedCredentialId Legacy binding, for messages signed by a build
+ *   that still emitted `credentialId`. Current messages carry no such field, so
+ *   passing this against one fails closed. Prefer `expectedPublicKey`.
+ * @param expectedPublicKey If provided, signed.publicKey must match exactly.
+ *   This is the binding to use: it is the credential's actual public key, it is
+ *   what the signature is verified against below, and unlike the credential ID
+ *   it is not an input to any key derivation.
  *
  * Note: A SignedMessage is valid indefinitely (no nonce or expiry). Callers requiring
  * one-time-use semantics must track consumed messageHash values themselves.
@@ -61,15 +76,21 @@ export async function signMessage(
 export async function verifyMessage(
     message: Uint8Array,
     signed: SignedMessage,
-    expectedCredentialId?: string
+    expectedCredentialId?: string,
+    expectedPublicKey?: string
 ): Promise<boolean> {
     try {
         // 1. Re-derive the domain-separated hash and compare
         const hash = await domainSeparatedHash(message);
         if (bufferToHex(hash) !== signed.messageHash) return false;
 
-        // 2. Optional credential ID check
+        // 2. Optional credential binding. The public-key form is the one to
+        //    use; the credential-ID form only ever matches a message from a
+        //    build that still emitted the field, and fails closed otherwise.
         if (expectedCredentialId !== undefined && signed.credentialId !== expectedCredentialId) {
+            return false;
+        }
+        if (expectedPublicKey !== undefined && signed.publicKey !== expectedPublicKey) {
             return false;
         }
 

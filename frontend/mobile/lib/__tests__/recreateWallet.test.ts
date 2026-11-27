@@ -31,8 +31,13 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(async () => undefined),
 }));
 jest.mock('../passkey', () => ({ evaluatePrf: jest.fn() }));
-jest.mock('../network', () => ({ getNetwork: jest.fn() }));
-jest.mock('../classicWallet', () => ({ fundWithFriendbot: jest.fn(async () => false) }));
+// `sdkStorage` runs for real against the mocked AsyncStorage above, so the
+// credential id is read through the same namespacing the SDK adapter applies.
+jest.mock('../network', () => ({
+  getNetwork: jest.fn(),
+  getNetworkName: jest.fn(() => 'testnet'),
+  hydrateNetwork: jest.fn(async () => undefined),
+}));
 jest.mock('../testnetWallet', () => ({ fundWithFriendbot: jest.fn(async () => false) }));
 jest.mock('../walletBreadcrumbs', () => ({ writeBreadcrumbs: jest.fn(async () => undefined) }));
 jest.mock('../walletStore', () => ({

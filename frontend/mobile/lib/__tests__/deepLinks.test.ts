@@ -188,6 +188,25 @@ describe('resolveDeepLink — hostile and malformed input', () => {
   });
 });
 
+describe('resolveDeepLink — the Discord link', () => {
+  it('opens the link screen with the code, from the web link and the app scheme', () => {
+    expect(resolveDeepLink('https://app.useveilapp.xyz/link-discord?code=ABCD2345')).toBe(
+      '/link-discord?code=ABCD2345',
+    );
+    expect(resolveDeepLink('veil://link-discord?code=ABCD2345')).toBe('/link-discord?code=ABCD2345');
+  });
+
+  it('forwards the code and nothing else', () => {
+    expect(resolveDeepLink('veil://link-discord?code=ABCD2345&wallet=CEVIL&to=GEVIL')).toBe(
+      '/link-discord?code=ABCD2345',
+    );
+  });
+
+  it('is not opened from another site', () => {
+    expect(resolveDeepLink('https://evil.example/link-discord?code=ABCD2345')).toBe(FALLBACK_ROUTE);
+  });
+});
+
 describe('resolveDeepLink — cold start vs warm resume', () => {
   const links = [
     'veil://pay?to=' + DESTINATION,
