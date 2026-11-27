@@ -106,7 +106,8 @@ export function formatFiat(
     minimumFractionDigits: currency.decimals,
     maximumFractionDigits: currency.decimals,
   });
-  return `${currency.symbol}${formatted}`;
+  const space = /[A-Za-z]$/.test(currency.symbol) ? ' ' : '';
+  return `${currency.symbol}${space}${formatted}`;
 }
 
 // ── Live FX rates (best-effort) ──────────────────────────────────────────────
