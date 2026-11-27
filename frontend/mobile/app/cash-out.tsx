@@ -161,6 +161,9 @@ export default function CashOutScreen() {
   const [copied, setCopied] = useState(false);
   const [bankQuery, setBankQuery] = useState('');
   const [payHash, setPayHash] = useState<string | null>(null);
+  const [statusReadSucceeded, setStatusReadSucceeded] = useState(false);
+  const [isResumed, setIsResumed] = useState(false);
+  const [pollErrors, setPollErrors] = useState(0);
   /**
    * What the wallet can actually send when it holds slightly less than the
    * order. The provider's rate rounds the order up (5.4 USDC against 5.3937967
@@ -192,6 +195,7 @@ export default function CashOutScreen() {
         deploy: wallet.deploy,
       });
       setPayHash(hash);
+      void rememberActiveOrder(order.id, order.accessToken, hash);
     } catch (err) {
       if (isPasskeyCancellation(err)) {
         // Dismissing the passkey leaves the order where it was, unpaid and
@@ -231,6 +235,9 @@ export default function CashOutScreen() {
     setCreatedAt(null);
     setSecondsLeft(null);
     setError(null);
+    setPollErrors(0);
+    setStatusReadSucceeded(false);
+    setIsResumed(false);
     idempotencyKey.current = `veil_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     setStep('amount');
   };
@@ -275,8 +282,14 @@ export default function CashOutScreen() {
     void (async () => {
       const saved = await activeOrder();
       if (!saved || !alive) return;
+      setIsResumed(true);
+      if (saved.payHash) {
+        setPayHash(saved.payHash);
+      }
       try {
         const live = await getOrderStatus(saved.id, saved.token);
+        if (!alive) return;
+        setStatusReadSucceeded(true);
         if (!alive) return;
         setStatus(live.status);
         if (isTerminal(live.status)) {
@@ -441,6 +454,9 @@ export default function CashOutScreen() {
       setOrder(created);
       setStatus(created.status);
       setCreatedAt(Date.now());
+      setStatusReadSucceeded(true);
+      setIsResumed(false);
+      setPollErrors(0);
       void rememberActiveOrder(created.id, created.accessToken);
       // So the activity feed can call this "Cashed out" rather than a transfer
       // to an unknown address.
@@ -474,6 +490,8 @@ export default function CashOutScreen() {
       try {
         const s = await getOrderStatus(order.id, order.accessToken);
         if (!alive) return;
+        setPollErrors(0);
+        setStatusReadSucceeded(true);
         setStatus(s.status);
         // The settled figures replace the quote as soon as the provider has
         // them: a payout follows what arrived, at the rate when it settled, so
@@ -502,6 +520,9 @@ export default function CashOutScreen() {
             );
           }
           return;
+        }
+        if (alive) {
+          setPollErrors((prev) => prev + 1);
         }
         // Transient: the next tick tries again rather than showing an error
         // over a screen that is otherwise correct.
@@ -548,6 +569,9 @@ export default function CashOutScreen() {
           (b.short ?? '').toLowerCase().includes(query),
       )
     : [];
+
+  const isStartUnknown = isResumed && createdAt === null && !statusReadSucceeded;
+  const isExpired = secondsLeft === 0 && payHash === null;
 
   return (
     <SafeAreaView style={styles.screen} edges={['top']}>
@@ -900,12 +924,19 @@ export default function CashOutScreen() {
               {/* A ring, not a line of text. The window is the one thing on
                   this screen that runs out, and it should look like it is. */}
               <View style={styles.ring}>
-                <Text style={[styles.ringTime, secondsLeft !== null && secondsLeft < 120 && styles.ringUrgent]}>
-                  {secondsLeft === null
-                    ? '—'
-                    : `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`}
+                <Text
+                  style={[
+                    styles.ringTime,
+                    (isExpired || (secondsLeft !== null && secondsLeft < 120)) && styles.ringUrgent,
+                  ]}
+                >
+                  {isExpired
+                    ? '0:00'
+                    : secondsLeft === null
+                      ? '—'
+                      : `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`}
                 </Text>
-                <Text style={styles.ringLabel}>left</Text>
+                <Text style={styles.ringLabel}>{isExpired ? 'expired' : 'left'}</Text>
               </View>
             </View>
 
@@ -926,38 +957,56 @@ export default function CashOutScreen() {
             <View style={styles.rows}>
               <Row label="They receive" value={`≈ ₦${order.amountNGN.toLocaleString('en-US')}`} />
               <Row label="Rate" value={`₦${order.rate.toLocaleString('en-US')} / USDC`} />
-              <Row label="Status" value={describeStatus(status)} accent />
+              <Row label="Status" value={isExpired ? 'Expired — no deposit arrived in time' : describeStatus(status)} accent />
             </View>
 
             <Text style={styles.hint}>
               Send less and the payout follows what actually arrives, proportionally.
             </Text>
 
+            {pollErrors >= 3 ? (
+              <Text style={styles.pollWarning}>
+                Status cannot be refreshed right now. We will keep checking in the background.
+              </Text>
+            ) : null}
+
             {/* Paying from the wallet is the path — the passkey is the whole
                 point of this app. Sending from elsewhere stays available, but
                 as the quiet alternative rather than the only option. */}
-            <Pressable
-              onPress={() => payFromWallet()}
-              disabled={busy || payHash !== null}
-              accessibilityRole="button"
-              style={({ pressed }) => [
-                styles.primary,
-                (busy || payHash !== null) && styles.primaryDisabled,
-                pressed && styles.pressed,
-              ]}
-            >
-              {busy ? (
-                <ActivityIndicator color={colors.onAccent} />
-              ) : (
-                <Text style={styles.primaryText}>
-                  {payHash
-                    ? 'Sent — processing your payout'
-                    : `Pay ${order.amountStableCoin} USDC from this wallet`}
-                </Text>
-              )}
-            </Pressable>
+            {isExpired ? (
+              <Pressable
+                onPress={cancelOrder}
+                accessibilityRole="button"
+                style={({ pressed }) => [styles.primary, pressed && styles.pressed]}
+              >
+                <Text style={styles.primaryText}>Start a new cash-out</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={() => payFromWallet()}
+                disabled={busy || payHash !== null || isStartUnknown}
+                accessibilityRole="button"
+                style={({ pressed }) => [
+                  styles.primary,
+                  (busy || payHash !== null || isStartUnknown) && styles.primaryDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {busy ? (
+                  <ActivityIndicator color={colors.onAccent} />
+                ) : (
+                  <Text style={styles.primaryText}>
+                    {payHash
+                      ? 'Sent — processing your payout'
+                      : isStartUnknown
+                        ? 'Checking order status...'
+                        : `Pay ${order.amountStableCoin} USDC from this wallet`}
+                  </Text>
+                )}
+              </Pressable>
+            )}
 
-            {sendableInstead !== null && payHash === null ? (
+            {sendableInstead !== null && payHash === null && !isExpired && !isStartUnknown ? (
               <Pressable
                 onPress={() => payFromWallet(sendableInstead)}
                 disabled={busy}
@@ -968,11 +1017,13 @@ export default function CashOutScreen() {
               </Pressable>
             ) : null}
 
-            <Pressable onPress={copyDeposit} accessibilityRole="button" style={styles.secondary}>
-              <Text style={styles.secondaryText}>I&apos;ll send it from elsewhere</Text>
-            </Pressable>
+            {!isExpired ? (
+              <Pressable onPress={copyDeposit} accessibilityRole="button" style={styles.secondary}>
+                <Text style={styles.secondaryText}>I&apos;ll send it from elsewhere</Text>
+              </Pressable>
+            ) : null}
 
-            {payHash === null ? (
+            {payHash === null && !isExpired ? (
               <Pressable
                 onPress={cancelOrder}
                 disabled={busy}
@@ -988,9 +1039,9 @@ export default function CashOutScreen() {
         {!mainnetOnly && step === 'done' && (
           <>
             <View style={styles.hairlineCard}>
-              <Text style={styles.eyebrow}>{isFailure(status) ? 'NOT COMPLETED' : 'PAID OUT'}</Text>
-              <Text style={[styles.moneyLarge, isFailure(status) ? styles.failed : styles.settled]}>
-                {isFailure(status) ? '—' : `₦${(order?.amountNGN ?? 0).toLocaleString('en-US')}`}
+              <Text style={styles.eyebrow}>{isFailure(status) && payHash === null ? 'NOT COMPLETED' : 'PAID OUT'}</Text>
+              <Text style={[styles.moneyLarge, isFailure(status) && payHash === null ? styles.failed : styles.settled]}>
+                {isFailure(status) && payHash === null ? '—' : `₦${(order?.amountNGN ?? 0).toLocaleString('en-US')}`}
               </Text>
               <Text style={styles.hint}>{describeStatus(status)}</Text>
             </View>
@@ -1116,6 +1167,13 @@ const createStyles = (colors: ThemeColors) =>
     },
     question: { color: colors.textStrong, fontFamily: fontFamily.bodySemiBold, fontSize: 17 },
     hint: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
+    pollWarning: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 13,
+      lineHeight: 19,
+      textAlign: 'center',
+    },
     error: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19 },
 
     // Lora carries the money — it is the one thing on every screen the user is
