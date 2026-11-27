@@ -322,4 +322,3 @@ export async function fetchHeldAssets(publicKey: string): Promise<HeldAsset[]> {
     throw err;
   }
 }
-
