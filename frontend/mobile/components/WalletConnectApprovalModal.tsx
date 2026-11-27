@@ -12,9 +12,11 @@ import {
   View,
 } from 'react-native';
 
+import { useTheme } from '../hooks/useTheme';
 import { useWalletConnect } from '../hooks/useWalletConnect';
 import { getNetwork } from '../lib/network';
 import { registerPasskeySigner } from '../lib/passkey';
+import type { ThemeColors } from '../lib/theme';
 import {
   describeTransactionXdr,
   REQUEST_TYPE_LABELS,
@@ -50,6 +52,8 @@ function requestDetails(request: WalletConnectRequest | null): RequestDetails {
  */
 export function WalletConnectApprovalModal() {
   const { pendingRequests, sessions } = useWalletConnect();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -137,22 +141,22 @@ export function WalletConnectApprovalModal() {
             </View>
 
             <View style={styles.card}>
-              <Field label="Operation type" value={REQUEST_TYPE_LABELS[details.operationType]} strong />
+              <Field label="Operation type" value={REQUEST_TYPE_LABELS[details.operationType]} strong styles={styles} />
 
               {details.operationType === 'payment' && (
                 <>
-                  <Field label="Amount" value={details.amount || 'Unknown'} />
-                  <Field label="Destination" value={details.destination || 'Unknown'} mono />
+                  <Field label="Amount" value={details.amount || 'Unknown'} styles={styles} />
+                  <Field label="Destination" value={details.destination || 'Unknown'} mono styles={styles} />
                 </>
               )}
 
               {details.operationType === 'contract' && (
                 <>
                   {details.contractAddress && (
-                    <Field label="Contract address" value={details.contractAddress} mono />
+                    <Field label="Contract address" value={details.contractAddress} mono styles={styles} />
                   )}
                   {details.functionName ? (
-                    <Field label="Function name" value={details.functionName} />
+                    <Field label="Function name" value={details.functionName} styles={styles} />
                   ) : (
                     <Text style={styles.warning}>Contract interaction — review carefully</Text>
                   )}
@@ -163,8 +167,8 @@ export function WalletConnectApprovalModal() {
                 <Text style={styles.warning}>Contract interaction — review carefully</Text>
               )}
 
-              <Field label="Method" value={request.method} mono />
-              <Field label="Network" value={getNetwork().displayName} />
+              <Field label="Method" value={request.method} mono styles={styles} />
+              <Field label="Network" value={getNetwork().displayName} styles={styles} />
             </View>
 
             {pendingRequests.length > 1 && (
@@ -185,7 +189,7 @@ export function WalletConnectApprovalModal() {
                 isSubmitting && styles.disabled,
               ]}
             >
-              {isSubmitting ? <ActivityIndicator color="#0F0F0F" size="small" /> : null}
+              {isSubmitting ? <ActivityIndicator color={colors.onAccent} size="small" /> : null}
               <Text style={styles.primaryLabel}>{isSubmitting ? 'Approving' : 'Approve'}</Text>
             </Pressable>
 
@@ -216,11 +220,13 @@ function Field({
   value,
   mono = false,
   strong = false,
+  styles,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   strong?: boolean;
+  styles: ReturnType<typeof createStyles>;
 }) {
   return (
     <View style={styles.field}>
@@ -232,150 +238,148 @@ function Field({
   );
 }
 
-const GOLD = '#FDDA24';
-const OFF_WHITE = '#F6F7F8';
-const BORDER_DIM = 'rgba(246,247,248,0.14)';
-const MUTED = 'rgba(246,247,248,0.5)';
-
-const styles = StyleSheet.create({
-  backdrop: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    backgroundColor: 'rgba(0,0,0,0.72)',
-  },
-  sheetWrapper: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    maxHeight: '85%',
-    backgroundColor: '#141414',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderTopWidth: 1,
-    borderColor: BORDER_DIM,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 28,
-  },
-  title: {
-    color: OFF_WHITE,
-    fontSize: 20,
-    fontWeight: '600',
-    fontStyle: 'italic',
-    fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }),
-    marginBottom: 16,
-  },
-  card: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-    padding: 14,
-    marginBottom: 12,
-  },
-  dappRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  dappIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
-  },
-  dappIconFallback: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-  },
-  dappInitial: {
-    color: GOLD,
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  dappText: {
-    flex: 1,
-  },
-  dappName: {
-    color: OFF_WHITE,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  muted: {
-    color: MUTED,
-    fontSize: 13,
-    marginTop: 2,
-  },
-  field: {
-    marginBottom: 10,
-  },
-  fieldLabel: {
-    color: 'rgba(246,247,248,0.45)',
-    fontSize: 12,
-    marginBottom: 3,
-  },
-  fieldValue: {
-    color: OFF_WHITE,
-    fontSize: 14,
-  },
-  strong: {
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  monoText: {
-    fontSize: 12,
-    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
-  },
-  warning: {
-    color: 'rgba(246,247,248,0.65)',
-    fontSize: 13,
-    lineHeight: 19,
-    marginBottom: 10,
-  },
-  primaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: GOLD,
-    borderRadius: 999,
-    paddingVertical: 13,
-    marginTop: 8,
-  },
-  primaryLabel: {
-    color: '#0F0F0F',
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  ghostButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: BORDER_DIM,
-    paddingVertical: 12,
-    marginTop: 10,
-  },
-  ghostLabel: {
-    color: OFF_WHITE,
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  pressed: {
-    opacity: 0.75,
-  },
-  disabled: {
-    opacity: 0.5,
-  },
-  error: {
-    marginTop: 14,
-    color: '#f87171',
-    fontSize: 13,
-    lineHeight: 19,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    backdrop: {
+      position: 'absolute',
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: 'rgba(0,0,0,0.72)',
+    },
+    sheetWrapper: {
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      maxHeight: '85%',
+      backgroundColor: colors.surfaceRaised,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      borderTopWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: 20,
+      paddingTop: 20,
+      paddingBottom: 28,
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 20,
+      fontWeight: '600',
+      fontStyle: 'italic',
+      fontFamily: Platform.select({ ios: 'Georgia', default: 'serif' }),
+      marginBottom: 16,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 14,
+      marginBottom: 12,
+    },
+    dappRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    dappIcon: {
+      width: 40,
+      height: 40,
+      borderRadius: 999,
+    },
+    dappIconFallback: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    dappInitial: {
+      color: colors.accent,
+      fontWeight: '700',
+      fontSize: 16,
+    },
+    dappText: {
+      flex: 1,
+    },
+    dappName: {
+      color: colors.textStrong,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    muted: {
+      color: colors.textSecondary,
+      fontSize: 13,
+      marginTop: 2,
+    },
+    field: {
+      marginBottom: 10,
+    },
+    fieldLabel: {
+      color: colors.textMuted,
+      fontSize: 12,
+      marginBottom: 3,
+    },
+    fieldValue: {
+      color: colors.textPrimary,
+      fontSize: 14,
+    },
+    strong: {
+      color: colors.textStrong,
+      fontWeight: '600',
+      fontSize: 15,
+    },
+    monoText: {
+      color: colors.textPrimary,
+      fontSize: 12,
+      fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    },
+    warning: {
+      color: colors.danger,
+      fontSize: 13,
+      lineHeight: 19,
+      marginBottom: 10,
+    },
+    primaryButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: colors.accent,
+      borderRadius: 999,
+      paddingVertical: 13,
+      marginTop: 8,
+    },
+    primaryLabel: {
+      color: colors.onAccent,
+      fontSize: 15,
+      fontWeight: '700',
+    },
+    ghostButton: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: 12,
+      marginTop: 10,
+    },
+    ghostLabel: {
+      color: colors.textPrimary,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    pressed: {
+      opacity: 0.75,
+    },
+    disabled: {
+      opacity: 0.5,
+    },
+    error: {
+      marginTop: 14,
+      color: colors.danger,
+      fontSize: 13,
+      lineHeight: 19,
+    },
+  });
