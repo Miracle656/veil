@@ -1,6 +1,7 @@
 export default {
   index: 'Introduction',
   'getting-started': 'Getting Started',
+  'sdk-integration': 'Integrate the SDK',
   'local-dev': 'Local Dev Emulator',
   architecture: 'Architecture',
   contracts: {
