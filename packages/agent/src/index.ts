@@ -39,3 +39,15 @@ export {
   isRegisteredIssuer,
   type RegisteredAsset,
 } from './assets.js'
+
+export {
+  fetchPortfolioSummary,
+  classifyPortfolioKind,
+  type PortfolioAssetLine,
+  type PortfolioAssetKind,
+  type PortfolioVerification,
+  type PortfolioSummaryResult,
+  type BlendPositionItem,
+  type InFlightTransfer,
+  type PortfolioLoaders,
+} from './portfolio.js'
