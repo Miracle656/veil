@@ -70,7 +70,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install EAS CLI
-        run: npm install --global eas-cli@24.7.0
+        run: npm install --global eas-cli@27.10.0
 
       # Expo's generated android/gradle.properties caps the Gradle daemon at
       # 2 GB, and packaging this APK (four ABIs, ~120 MB) ran out of heap after
