@@ -57,9 +57,15 @@ landscape, anchor survey, costs, and the licensing position.
 **The licensing analysis is unaffected and still governs.** Linq holding the
 licence is the same posture as Busha holding it — necessary, nowhere near
 sufficient, and exactly the structure the ISA 2025 "arranging" limb reaches. The
-sequencing decision stands: **bills are built, the offramp stays gated** on the SEC
-letter or the CBN sandbox, and the closed-testing constraint below is unchanged.
-Swapping providers is not a regulatory event.
+sequencing decision stands: **the bills leg is built and live**, the offramp stays
+gated on the SEC letter or the CBN sandbox, and the closed-testing constraint below
+is unchanged. Swapping providers is not a regulatory event.
+
+### Status: Bills are live
+
+The naira conversion leg for bills **shipped in October 2026**. The `/ngn/bills`
+endpoint is implemented in wraith, and the web wallet bills page now shares the
+same client as the mobile app.
 
 ---
 
