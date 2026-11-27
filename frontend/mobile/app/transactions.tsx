@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { BottomSheetModal } from '@gorhom/bottom-sheet';
+import { useLocalSearchParams } from 'expo-router';
 
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
@@ -11,7 +12,6 @@ import { TxDetailSheet } from '../components/TxDetailSheet';
 import { hydrateActivityFeed, type TxRecord } from '../lib/activityFeed';
 import { loadHorizonActivity } from '../lib/horizonActivity';
 import { getWalletAddress } from '../lib/walletStore';
-import { getNetwork } from '../lib/network';
 
 /**
  * Full transaction history — the "See all" destination from the dashboard's
@@ -26,6 +26,7 @@ const TABS: { key: ActivityFilter; label: string }[] = [
 ];
 
 export default function TransactionsScreen() {
+  const { eventId, eventType } = useLocalSearchParams<{ eventId?: string; eventType?: string }>();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [refreshing, setRefreshing] = useState(false);
@@ -43,13 +44,22 @@ export default function TransactionsScreen() {
     const addr = await getWalletAddress().catch(() => null);
     if (addr) {
       try {
-        hydrateActivityFeed(await loadHorizonActivity(addr, 100));
+        const records = await loadHorizonActivity(addr, 100);
+        hydrateActivityFeed(records);
+        const notificationRecord =
+          typeof eventId === 'string' && typeof eventType === 'string'
+            ? records.find((record) => record.id === eventId && record.type === eventType)
+            : undefined;
+        if (notificationRecord) {
+          setSelectedTx(notificationRecord);
+          detailSheetRef.current?.present();
+        }
       } catch {
         // keep whatever is in the store
       }
     }
     setLoading(false);
-  }, []);
+  }, [eventId, eventType]);
 
   useEffect(() => {
     void load();
@@ -66,9 +76,12 @@ export default function TransactionsScreen() {
       <View style={styles.header}>
         <FlowHeader title="Transactions" />
       </View>
-      <ScrollView showsVerticalScrollIndicator={false}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.body}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.accent} />
+        }
       >
         {/* Filter tabs, the way every explorer and wallet presents a history.
             Kept above the scrolling list rather than inside it so the selected
@@ -84,9 +97,7 @@ export default function TransactionsScreen() {
                 accessibilityState={{ selected: active }}
                 style={[styles.tab, active && styles.tabActive]}
               >
-                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
-                  {tab.label}
-                </Text>
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{tab.label}</Text>
               </Pressable>
             );
           })}
