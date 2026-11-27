@@ -5,6 +5,10 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Asset, Keypair, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk'
 import { signMessage } from '@veil/sdk'
+// The purpose-bound bytes, straight from the source of truth (auth.ts's
+// agentLogin.ts) — not the full agent-core barrel, which would pull the whole
+// agent into this client bundle.
+import { agentLoginMessage } from '@veil/agent-login'
 import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { screenButton, type ScreenButton } from '@/lib/assistantScreens'
@@ -154,19 +158,16 @@ function clearAgentSession() {
   } catch { /* ignore */ }
 }
 
-function base64UrlToBytes(s: string): Uint8Array {
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/')
-  const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
-  const bin = atob(padded)
-  return Uint8Array.from(bin, (c) => c.charCodeAt(0))
-}
-
 /**
  * Prove ownership of the wallet to the agent route: fetch a fresh challenge,
  * sign it with the passkey through the SAME signing path every other Veil
  * signature uses (VEIL_SIGNED_MESSAGE_V1 domain separation + WebAuthn
- * ceremony), and trade the assertion for a session token. The chat requests
- * that follow carry the token and no address.
+ * ceremony) — over the purpose-bound bytes, so a signature given for any
+ * other Veil operation does not verify as an agent login — and trade the
+ * assertion for a session token. The chat requests that follow carry the
+ * token and no address. If this device cannot complete the ceremony (a
+ * classic G… wallet, cleared storage), the send goes out without a session
+ * and the server's grace path serves it, until enforcement turns on.
  */
 async function openAgentSession(walletAddress: string): Promise<AgentSession> {
   const challengeRes = await fetch('/api/agent', {
@@ -184,7 +185,7 @@ async function openAgentSession(walletAddress: string): Promise<AgentSession> {
     throw new Error('No passkey found on this device. Sign in to the wallet first.')
   }
   const signed = await signMessage(
-    base64UrlToBytes(challengeData.challenge),
+    agentLoginMessage(challengeData.challenge),
     buildSignAuthEntry(),
     credentialId,
   )
@@ -433,15 +434,20 @@ export default function AgentPage() {
 
   const postChat = useCallback(
     async (text: string, history: { role: 'user' | 'assistant'; content: string }[], sessionToken: string) => {
+      // The token is the authority; the header keeps it out of logged bodies.
+      // An empty token means the grace path — the server accepts the request
+      // without a session while AGENT_REQUIRE_SESSION is off.
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (sessionToken) headers['Authorization'] = `Bearer ${sessionToken}`
       return fetch('/api/agent', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionToken}` },
+        headers,
         body: JSON.stringify({
           message: text,
           feePayerAddress,
           profile: getUserProfile(),
           history,
-          sessionToken,
+          sessionToken: sessionToken || undefined,
         }),
       })
     },
@@ -471,7 +477,7 @@ export default function AgentPage() {
 
     setIsThinking(true)
     try {
-      let session: AgentSession
+      let session: AgentSession | null = null
       try {
         session = await ensureSession()
       } catch (err) {
@@ -479,9 +485,13 @@ export default function AgentPage() {
           setMessages((prev) => [...prev, { role: 'agent', content: 'Cancelled — nothing was sent.' }])
           return
         }
-        throw err
+        // No session on this device — a classic (G…) wallet, a cleared
+        // storage, or a ceremony that could not complete. While
+        // AGENT_REQUIRE_SESSION is off (the default) the server still accepts
+        // session-less requests, so send without one rather than fail.
+        session = null
       }
-      let res = await postChat(text, history, session.token)
+      let res = await postChat(text, history, session?.token ?? '')
       if (res.status === 401) {
         // Session expired or unknown to this instance — sign once more and retry once.
         clearAgentSession()

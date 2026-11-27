@@ -6,6 +6,8 @@ import {
   isAuthFailure,
   parseAuthenticatedChatRequest,
   parseAuthenticatedClearHistoryRequest,
+  parseChatRequest,
+  parseClaimedAddress,
 } from '@veil/agent-core'
 import { providerFromEnv, type LlmProvider } from '@veil/agent-llm'
 import type { AgentSignedMessage } from '@veil/agent-core'
@@ -22,11 +24,28 @@ import type { AgentSignedMessage } from '@veil/agent-core'
  *
  * Authentication is a wallet-signed challenge (see packages/agent/src/auth.ts).
  * Stellar addresses are public, so a claimed `walletAddress` proves nothing;
- * the address behind a chat or clear_history request always comes from a
- * session the server opened after verifying a passkey signature over a fresh,
- * single-use challenge. The retired WebSocket server
- * (packages/agent/src/server.ts, removed) kept conversations keyed by such a
- * claim with an unauthenticated clear_history — this route replaces it.
+ * when a request carries a session token, the address comes from that session
+ * — opened after the server verified a passkey signature over a fresh,
+ * purpose-bound challenge — and a body address that disagrees is rejected,
+ * never honoured.
+ *
+ * While no mobile build performs the challenge, requests WITHOUT a session are
+ * still accepted and served under the claimed (shape-checked) address: mobile
+ * posts to this same route and today sends no token, so strict enforcement
+ * would lock every installed app out of the agent. Turning enforcement on
+ * before that build ships is one env var:
+ *
+ *   AGENT_REQUIRE_SESSION=true   → requests without a valid session get 401.
+ *                                  (default: off — the grace period)
+ *
+ * Classic (G…) wallets have no passkey and can never verify a challenge, so
+ * under enforcement they cannot use the agent at all; during the grace period
+ * they keep working through the unauthenticated path.
+ *
+ * Challenges and sessions are HMAC-signed stateless tokens: any instance of
+ * the deployment verifies the others', as long as every instance sets the
+ * same AGENT_SESSION_SECRET (see auth.ts). AGENT_RP_ID names the rpId the
+ * browser ceremony uses when a verify request arrives without an Origin.
  *
  * Protocol (all POST, JSON):
  *   { action: 'challenge', walletAddress } -> { challenge, expiresAt }
@@ -35,13 +54,23 @@ import type { AgentSignedMessage } from '@veil/agent-core'
  *   { action: 'clear_history', sessionToken } -> { history_cleared: true }
  *
  * Env (Vercel project settings): OPENROUTER_API_KEY for free models, or
- * ANTHROPIC_API_KEY for Claude. The network follows NEXT_PUBLIC_NETWORK.
+ * ANTHROPIC_API_KEY for Claude. The network — factory and passphrase both —
+ * follows STELLAR_NETWORK, or NEXT_PUBLIC_NETWORK for the wallet's own deploy.
  * AGENT_FACTORY_ADDRESS overrides the built-in passkey-wallet factory.
  */
 
 export const runtime = 'nodejs'
 // A turn is a few model calls plus Horizon lookups; free models can be slow.
 export const maxDuration = 60
+
+/**
+ * Session enforcement is OFF until a mobile build that performs the challenge
+ * has shipped (see the header comment). Flip it on with
+ * AGENT_REQUIRE_SESSION=true.
+ */
+const REQUIRE_SESSION = ['1', 'true', 'yes'].includes(
+  (process.env.AGENT_REQUIRE_SESSION ?? '').trim().toLowerCase(),
+)
 
 /** Browsers may call only from the wallet itself. Native apps send no Origin. */
 const ALLOWED_ORIGINS = new Set(
@@ -57,9 +86,10 @@ const ALLOWED_ORIGINS = new Set(
 // 20 messages a minute per caller, per warm instance. See createRateLimiter.
 const allow = createRateLimiter(20, 60_000)
 
-// Challenges and sessions live here, per warm instance — the same caveat as
-// the rate limiter above. A challenge is single-use and short-lived; a
-// session expires by time, so a stolen token stops working on its own.
+// Challenges and sessions are stateless signed tokens (see createAgentAuth);
+// every warm instance verifies any other's, given the shared
+// AGENT_SESSION_SECRET. The local caches below are best-effort single-use /
+// revocation bookkeeping, like the rate limiter above.
 const auth = createAgentAuth()
 
 let provider: LlmProvider | null = null
@@ -116,7 +146,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(issued)
   }
 
-  // ── Verify: a signature over the issued challenge opens a session. ──
+  // ── Verify: a signature over the issued challenge opens a session. The
+  // origin the request arrived with is what the assertion's clientDataJSON
+  // origin and rpIdHash must match. A verify without an Origin (a native
+  // client, or curl) needs the deployment's AGENT_RP_ID instead. ──
   if (b.action === 'verify') {
     if (typeof b.challenge !== 'string' || !b.challenge) {
       return NextResponse.json({ error: 'challenge is required' }, { status: 400 })
@@ -124,29 +157,45 @@ export async function POST(req: NextRequest) {
     if (!b.signed || typeof b.signed !== 'object') {
       return NextResponse.json({ error: 'signed challenge is required' }, { status: 400 })
     }
-    const opened = await auth.verifyChallengeAndOpenSession(b.challenge, b.signed as AgentSignedMessage)
+    const rpIdEnv = process.env.AGENT_RP_ID?.trim()
+    const expectedOrigin = origin ?? (rpIdEnv ? `https://${rpIdEnv}` : undefined)
+    if (!expectedOrigin) {
+      return NextResponse.json(
+        { error: 'Verification needs a browser Origin or a configured AGENT_RP_ID.' },
+        { status: 400 },
+      )
+    }
+    const opened = await auth.verifyChallengeAndOpenSession(b.challenge, b.signed as AgentSignedMessage, {
+      expectedOrigin,
+    })
     if (isAuthFailure(opened)) return NextResponse.json({ error: opened.error }, { status: 401 })
     return NextResponse.json(opened)
   }
 
-  // ── Everything below needs the session. The wallet address is resolved
-  // from it; a body address that disagrees is rejected, never honoured. ──
-  const walletAddress = auth.resolveSession(sessionTokenFrom(req, b))
-  if (!walletAddress) {
+  // ── Chat and clear_history: the address comes from a verified session when
+  // there is one, and from the (shape-checked) body claim during the grace
+  // period — requests without a session must keep working until a mobile
+  // build that performs the challenge has shipped. With a session, a body
+  // address that disagrees is rejected, never honoured. ──
+  const sessionToken = sessionTokenFrom(req, b)
+  const verified = auth.resolveSession(sessionToken)
+  if (!verified && REQUIRE_SESSION) {
     return NextResponse.json({ error: 'Agent session required. Complete the wallet challenge first.' }, { status: 401 })
   }
 
   // ── Clear history: behind the same session, like chat. ──
   if (b.action === 'clear_history') {
-    const parsed = parseAuthenticatedClearHistoryRequest(b, walletAddress)
+    const parsed = verified
+      ? parseAuthenticatedClearHistoryRequest(b, verified)
+      : parseClaimedAddress(b)
     if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 403 })
     // Serverless keeps no per-wallet history — the client holds the turns —
-    // so there is nothing to delete here. The acknowledgement is still gated
-    // on the session, so a stranger cannot clear or probe someone's chat.
+    // so there is nothing to delete here. The acknowledgement is still gated,
+    // so during enforcement a stranger cannot clear or probe someone's chat.
     return NextResponse.json({ history_cleared: true })
   }
 
-  const parsed = parseAuthenticatedChatRequest(b, walletAddress)
+  const parsed = verified ? parseAuthenticatedChatRequest(b, verified) : parseChatRequest(b)
   if (!parsed.ok) {
     // Shape problems (no message, bad history) are the client's fault; a
     // mismatched address is someone else's session tried on this body.

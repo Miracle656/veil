@@ -39,6 +39,17 @@ const config = {
     '^@veil/sep7$':     '<rootDir>/../../sdk/src/sep7',
     '^@veil/prf$':      '<rootDir>/../../sdk/src/crypto/prf',
     '^@veil/agent-review$': '<rootDir>/../mobile/lib/agentMessages',
+    // The agent's auth surface. The page imports only the purpose-bound
+    // message bytes (agentLogin.ts — dependency-free) — not the full
+    // agent-core barrel, which would pull the whole agent pipeline into the
+    // client bundle. agentLogin's `.js`-style sibling imports are mapped below.
+    '^@veil/agent-core$': '<rootDir>/../../packages/agent/src/handler',
+    '^@veil/agent-auth$': '<rootDir>/../../packages/agent/src/auth',
+    '^@veil/agent-login$': '<rootDir>/../../packages/agent/src/agentLogin',
+    // The agent sources import each other with explicit `.js` extensions
+    // (Node ESM style); the agent package's own jest config maps those, and
+    // so does this one for anything the wallet imports from there.
+    '^(\\.{1,2}/.*)\\.js$': '$1',
     // The ONE dApp allow-list — mobile's module, imported by the web wallet
     // (see dappParity.test.ts, which pins this mapping to the real file).
     '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',

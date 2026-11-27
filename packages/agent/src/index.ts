@@ -45,7 +45,10 @@ export {
   verifyAgentMessage,
   addressForAgentKey,
   isAuthFailure,
+  agentLoginMessage,
   AGENT_MESSAGE_DOMAIN,
+  AGENT_LOGIN_PURPOSE,
+  FACTORY_BY_NETWORK,
   DEFAULT_CHALLENGE_TTL_MS,
   DEFAULT_SESSION_TTL_MS,
   type AgentAuth,
@@ -54,9 +57,11 @@ export {
   type AuthFailure,
   type ChallengeIssued,
   type SessionOpened,
+  type VerifyContext,
 } from './auth.js'
 
 export {
   parseAuthenticatedChatRequest,
   parseAuthenticatedClearHistoryRequest,
+  parseClaimedAddress,
 } from './handler.js'

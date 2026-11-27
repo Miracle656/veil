@@ -1,36 +1,46 @@
-import { StrKey, hash as stellarHash, xdr } from '@stellar/stellar-sdk'
-import { NETWORK_PASSPHRASE } from './network.js'
+import { Networks, StrKey, hash as stellarHash, xdr } from '@stellar/stellar-sdk'
+import { createHmac, randomBytes as nodeRandomBytes, timingSafeEqual } from 'node:crypto'
+import { NETWORK, NETWORK_PASSPHRASE } from './network.js'
 
 /**
  * Wallet-signed sessions for the agent.
  *
  * The agent used to decide which conversation a request belonged to from a
- * wallet address the caller simply stated. Stellar addresses are public, so
+ * `walletAddress` the caller simply stated. Stellar addresses are public, so
  * anyone could present somebody else's and read that wallet's agent history
  * (balances, transfers) or clear it. Now the address comes from a verified
  * session instead:
  *
  *   1. `issueChallenge(walletAddress)` — the server hands out a fresh,
- *      single-use nonce tied to the claimed address.
- *   2. The client signs the nonce with its passkey through the SAME path
- *      every other Veil signature uses: the SDK's `signMessage`, which hashes
- *      the bytes under the `VEIL_SIGNED_MESSAGE_V1` domain and runs the
- *      WebAuthn ceremony with that hash as the challenge.
- *   3. `verifyChallengeAndOpenSession(challenge, signed)` — the server checks
- *      the challenge is one it issued, recently, and has not seen used; that
- *      the WebAuthn assertion is valid for exactly those challenge bytes (a
- *      signature over an attacker-chosen string proves nothing); and that the
+ *      short-lived challenge token tied to the claimed address.
+ *   2. The client signs it with its passkey through the SAME path every other
+ *      Veil signature uses: the SDK's `signMessage`, which hashes the bytes
+ *      under the `VEIL_SIGNED_MESSAGE_V1` domain and runs the WebAuthn
+ *      ceremony with that hash as the challenge. The bytes the client signs
+ *      are `agentLoginMessage(challenge)` — they carry the
+ *      `veil-agent-login-v1` purpose, so a signature given for any other Veil
+ *      operation (or any other login) does not verify here.
+ *   3. `verifyChallengeAndOpenSession(challenge, signed, context)` — the
+ *      server checks the challenge is one IT signed, recently, and has not
+ *      seen consumed; that the WebAuthn assertion is valid for exactly those
+ *      purpose-bound bytes (a signature over an attacker-chosen string proves
+ *      nothing); that the authenticator data's rpIdHash and origin match the
+ *      caller, and that the user-presence and user-verification flags are set
+ *      (the wallet's ceremony requires user verification); and that the
  *      assertion's public key derives to the claimed contract address. Only
  *      then does it open a session bound to that address.
  *
- * Afterwards callers present the session token and never a wallet address:
- * chat and clear_history resolve the address from the session. A request
- * carrying someone else's address cannot read or clear their history, because
- * there is no address in the request to lie about.
+ * Both tokens are HMAC-signed and stateless, so any instance of the serverless
+ * route can issue, verify and resolve them: the deployment sets
+ * AGENT_SESSION_SECRET and every warm instance validates the other's tokens.
+ * Without that secret the tokens are signed with an instance-local key — the
+ * single-instance behaviour the per-instance Maps had before — and the code
+ * warns so the deployment knows why a different instance would 401.
  *
- * Stores are in-memory with expiry, so on serverless they are per-instance —
- * the same caveat `createRateLimiter` in handler.ts documents. Sessions also
- * expire by time, so a stolen token stops working on its own.
+ * Single-use challenges are enforced per instance (a consumed-jti cache): a
+ * replayed challenge could open a second session on another instance within
+ * the challenge TTL, but only whoever holds the assertion bytes can replay it,
+ * and the session would still be bound to their own wallet.
  */
 
 /** What the SDK's `signMessage` returns; verified here, never trusted. */
@@ -47,19 +57,24 @@ export interface AgentSignedMessage {
 
 export const AGENT_MESSAGE_DOMAIN = 'VEIL_SIGNED_MESSAGE_V1'
 
+// The purpose-bound bytes the client signs — one definition shared with the
+// wallet's client bundle (see agentLogin.ts).
+export { AGENT_LOGIN_PURPOSE, agentLoginMessage } from './agentLogin.js'
+import { agentLoginMessage } from './agentLogin.js'
+
 /** A challenge lives long enough for one passkey ceremony. */
 export const DEFAULT_CHALLENGE_TTL_MS = 5 * 60 * 1000
 /** A session lives long enough for a conversation, then needs a fresh signature. */
 export const DEFAULT_SESSION_TTL_MS = 12 * 60 * 60 * 1000
 
-const CHALLENGE_BYTES = 32
-const SESSION_TOKEN_BYTES = 32
-
 const STELLAR_ADDRESS = /^[GC][A-Z2-7]{55}$/
 
 // The passkey-wallet factories, per network. Committed for the same reason the
 // wallet app commits them: a fresh clone verifies without secret config.
-// Overridable per-deployment via AGENT_FACTORY_ADDRESS.
+// Overridable per-deployment via AGENT_FACTORY_ADDRESS. The factory follows the
+// SAME network constant as the passphrase (NETWORK from ./network.js) — a
+// deployment that sets only NEXT_PUBLIC_NETWORK=testnet gets the testnet
+// factory AND the testnet passphrase, never a mismatched pair.
 const FACTORY_BY_NETWORK: Record<string, string> = {
   mainnet: 'CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK',
   testnet: 'CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA',
@@ -73,11 +88,27 @@ export interface AgentAuthOptions {
   networkPassphrase?: string
   challengeTtlMs?: number
   sessionTtlMs?: number
+  /**
+   * HMAC secret for the stateless challenge and session tokens. Every instance
+   * of the deployment must set the same one (AGENT_SESSION_SECRET) so tokens
+   * issued by one warm instance validate on another. Left unset, an
+   * instance-local key is used and the behaviour is the per-instance Maps the
+   * route had before — with a warning, so the deployment notices.
+   */
+  secret?: string
 }
 
 export type AuthFailure = { ok: false; error: string }
 export type ChallengeIssued = { challenge: string; expiresAt: number }
 export type SessionOpened = { sessionToken: string; walletAddress: string; expiresAt: number }
+
+/** Per-verification WebAuthn binding, supplied by the caller that saw the request. */
+export interface VerifyContext {
+  /** The Origin the request arrived with; clientDataJSON.origin must equal it. */
+  expectedOrigin?: string
+  /** The rpId the ceremony must have used; defaults to the origin's hostname. */
+  expectedRpId?: string
+}
 
 function base64UrlEncode(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -103,9 +134,7 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 function defaultRandom(n: number): Uint8Array {
-  const out = new Uint8Array(n)
-  crypto.getRandomValues(out)
-  return out
+  return new Uint8Array(nodeRandomBytes(n))
 }
 
 function subtle(): SubtleCrypto {
@@ -116,7 +145,7 @@ function subtle(): SubtleCrypto {
 
 /**
  * Re-derive the domain-separated hash the SDK signs: SHA-256 over
- * `VEIL_SIGNED_MESSAGE_V1\n` followed by the raw challenge bytes.
+ * `VEIL_SIGNED_MESSAGE_V1\n` followed by the message bytes.
  */
 async function domainSeparatedHash(message: Uint8Array): Promise<Uint8Array> {
   const domain = new TextEncoder().encode(AGENT_MESSAGE_DOMAIN + '\n')
@@ -127,13 +156,19 @@ async function domainSeparatedHash(message: Uint8Array): Promise<Uint8Array> {
 }
 
 /**
- * Full WebAuthn assertion verification, mirroring the SDK's `verifyMessage`:
- * the signed hash must equal this challenge's hash (binding the signature to
- * bytes the server chose), clientDataJSON must carry that hash as its
- * challenge with a `webauthn.get` ceremony, and the P-256 signature must
- * verify over `authData || SHA-256(clientDataJSON)`.
+ * Full WebAuthn assertion verification, mirroring the SDK's `verifyMessage` —
+ * plus the bindings a login needs and a Soroban auth entry does not have:
+ * the authenticator data's rpIdHash must match the expected rpId, the
+ * clientDataJSON origin must match the request's origin, and the
+ * user-presence and user-verification flags must be set (the wallet's
+ * ceremony always asks for user verification — a silent assertion proves
+ * nobody was there).
  */
-export async function verifyAgentMessage(message: Uint8Array, signed: AgentSignedMessage): Promise<boolean> {
+export async function verifyAgentMessage(
+  message: Uint8Array,
+  signed: AgentSignedMessage,
+  context?: VerifyContext,
+): Promise<boolean> {
   try {
     if (!signed || typeof signed !== 'object') return false
     if (signed.version !== 1 || signed.domain !== AGENT_MESSAGE_DOMAIN) return false
@@ -149,14 +184,35 @@ export async function verifyAgentMessage(message: Uint8Array, signed: AgentSigne
     // Uncompressed P-256 SEC1: 0x04 ‖ x ‖ y. Anything else cannot be a Veil key.
     if (publicKey.length !== 65 || publicKey[0] !== 0x04) return false
     if (signature.length !== 64) return false
+    // rpIdHash (32) + flags (1) + signCount (4): anything shorter is not an
+    // authenticator-data buffer this flow could have produced.
+    if (authData.length < 37) return false
 
-    let clientData: { type?: unknown; challenge?: unknown }
+    let clientData: { type?: unknown; challenge?: unknown; origin?: unknown }
     try {
       clientData = JSON.parse(new TextDecoder().decode(clientDataJSON))
     } catch {
       return false
     }
     if (clientData.type !== 'webauthn.get' || typeof clientData.challenge !== 'string') return false
+
+    // The user was present at the ceremony, and verified themselves — the
+    // wallet's signer always requests user verification, so a flag without it
+    // is not an assertion this flow should accept.
+    const flags = authData[32]
+    if (!(flags & 0x01)) return false
+    if (!(flags & 0x04)) return false
+
+    // The assertion must have been scoped to this relying party, not whatever
+    // rpId an attacker's own origin would produce.
+    const rpId = context?.expectedRpId ?? (context?.expectedOrigin ? new URL(context.expectedOrigin).hostname : undefined)
+    if (rpId) {
+      const expectedHash = new Uint8Array(await subtle().digest('SHA-256', new TextEncoder().encode(rpId) as BufferSource))
+      if (bytesToHex(authData.slice(0, 32)) !== bytesToHex(expectedHash)) return false
+    }
+
+    // …and its client data must name the origin the request came from.
+    if (context?.expectedOrigin && clientData.origin !== context.expectedOrigin) return false
 
     const challengeBytes = base64UrlDecode(clientData.challenge)
     if (bytesToHex(challengeBytes) !== bytesToHex(hash)) return false
@@ -204,15 +260,43 @@ export function addressForAgentKey(publicKey: Uint8Array, factoryAddress: string
   /* eslint-enable @typescript-eslint/no-explicit-any */
 }
 
-interface ChallengeRecord {
-  walletAddress: string
-  expiresAt: number
-  used: boolean
+// ── Stateless signed tokens ────────────────────────────────────────────────
+
+interface TokenPayload {
+  v: 1
+  /** The wallet address the token is bound to. */
+  a: string
+  /** Expiry, epoch ms. */
+  e: number
+  /** Unique id, for single-use challenges and per-instance revocation. */
+  n: string
+  /** Issued-at, epoch ms (sessions only). */
+  i?: number
 }
 
-interface SessionRecord {
-  walletAddress: string
-  expiresAt: number
+function signToken(payload: TokenPayload, secret: Buffer): string {
+  const body = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)))
+  const mac = createHmac('sha256', secret).update(body).digest()
+  return `${body}.${base64UrlEncode(new Uint8Array(mac))}`
+}
+
+function readToken(token: unknown, secret: Buffer): TokenPayload | null {
+  if (typeof token !== 'string' || !token) return null
+  const dot = token.lastIndexOf('.')
+  if (dot <= 0 || dot === token.length - 1) return null
+  const body = token.slice(0, dot)
+  const given = base64UrlDecode(token.slice(dot + 1))
+  const expected = createHmac('sha256', secret).update(body).digest()
+  if (given.length !== expected.length || !timingSafeEqual(Buffer.from(given), expected)) return null
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body))) as TokenPayload
+    if (payload?.v !== 1 || typeof payload.a !== 'string' || typeof payload.e !== 'number' || typeof payload.n !== 'string') {
+      return null
+    }
+    return payload
+  } catch {
+    return null
+  }
 }
 
 export interface AgentAuth {
@@ -220,76 +304,97 @@ export interface AgentAuth {
   verifyChallengeAndOpenSession: (
     challenge: string,
     signed: AgentSignedMessage,
+    context?: VerifyContext,
   ) => Promise<SessionOpened | AuthFailure>
   resolveSession: (sessionToken: string) => string | null
   revokeSession: (sessionToken: string) => void
-  /** For tests: how many live challenges/sessions are held. */
+  /** For tests: how many single-use challenges/sessions are tracked locally. */
   sizes: () => { challenges: number; sessions: number }
 }
 
 export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
   const now = options.now ?? Date.now
   const rand = options.randomBytes ?? defaultRandom
-  const network = options.network ?? process.env.STELLAR_NETWORK?.trim().toLowerCase() ?? 'mainnet'
+  // ONE network constant drives the factory AND the passphrase — a deployment
+  // that sets only NEXT_PUBLIC_NETWORK cannot end up with a mainnet factory
+  // verifying against a testnet passphrase (or the reverse).
+  const network = options.network ?? NETWORK
   const factoryAddress =
     options.factoryAddress ?? process.env.AGENT_FACTORY_ADDRESS?.trim() ?? FACTORY_BY_NETWORK[network] ?? ''
-  const networkPassphrase = options.networkPassphrase ?? NETWORK_PASSPHRASE
+  const networkPassphrase =
+    options.networkPassphrase ?? (network === 'testnet' ? Networks.TESTNET : Networks.PUBLIC)
   const challengeTtlMs = options.challengeTtlMs ?? DEFAULT_CHALLENGE_TTL_MS
   const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS
 
-  const challenges = new Map<string, ChallengeRecord>()
-  const sessions = new Map<string, SessionRecord>()
+  const secretText = options.secret ?? process.env.AGENT_SESSION_SECRET?.trim() ?? ''
+  if (!secretText) {
+    console.warn(
+      '[agent] AGENT_SESSION_SECRET is not set: challenges and sessions are signed with an ' +
+        'instance-local key, so a session opened on one warm instance will not resolve on ' +
+        'another. Set the same AGENT_SESSION_SECRET on every instance of the deployment.',
+    )
+  }
+  const secret = Buffer.from(secretText || Buffer.from(nodeRandomBytes(32)).toString('hex'), 'utf8')
 
-  function prune(): void {
+  // Per-instance caches. They are best-effort bookkeeping, not the source of
+  // truth — that is the HMAC signature — so a challenge consumed here stays
+  // consumed, but the caches do not have to be shared for tokens to verify.
+  const usedChallenges = new Map<string, number>() // jti -> expiresAt
+  const revokedSessions = new Map<string, number>() // jti -> expiresAt
+
+  function pruneCaches(): void {
     const t = now()
-    for (const [k, v] of challenges) if (v.expiresAt <= t) challenges.delete(k)
-    for (const [k, v] of sessions) if (v.expiresAt <= t) sessions.delete(k)
-    if (challenges.size > 10_000) challenges.delete(challenges.keys().next().value as string)
-    if (sessions.size > 10_000) sessions.delete(sessions.keys().next().value as string)
+    for (const [k, at] of usedChallenges) if (at <= t) usedChallenges.delete(k)
+    for (const [k, at] of revokedSessions) if (at <= t) revokedSessions.delete(k)
+    if (usedChallenges.size > 10_000) usedChallenges.delete(usedChallenges.keys().next().value as string)
+    if (revokedSessions.size > 10_000) revokedSessions.delete(revokedSessions.keys().next().value as string)
   }
 
   return {
     issueChallenge(walletAddress: string): ChallengeIssued | AuthFailure {
       const address = typeof walletAddress === 'string' ? walletAddress.trim() : ''
       if (!STELLAR_ADDRESS.test(address)) return { ok: false, error: 'walletAddress is not a Stellar address' }
+      // Say what classic-wallet users get: a G… account has no passkey, so it
+      // can never produce the signature this flow verifies. While session
+      // enforcement is off (the default) it can still chat without a session;
+      // once enforcement is on, a passkey (C…) wallet is required.
+      if (address.startsWith('G')) {
+        return {
+          ok: false,
+          error:
+            'Classic (G…) wallets have no passkey to sign the challenge with, so they cannot open agent sessions. Use a passkey (C…) wallet.',
+        }
+      }
       if (!factoryAddress) return { ok: false, error: 'Agent factory address is not configured' }
-      prune()
-      const challenge = base64UrlEncode(rand(CHALLENGE_BYTES))
-      challenges.set(challenge, { walletAddress: address, expiresAt: now() + challengeTtlMs, used: false })
-      return { challenge, expiresAt: now() + challengeTtlMs }
+      pruneCaches()
+      const expiresAt = now() + challengeTtlMs
+      const challenge = signToken({ v: 1, a: address, e: expiresAt, n: base64UrlEncode(rand(16)) }, secret)
+      return { challenge, expiresAt }
     },
 
-    async verifyChallengeAndOpenSession(challenge: string, signed: AgentSignedMessage): Promise<SessionOpened | AuthFailure> {
-      const record = typeof challenge === 'string' ? challenges.get(challenge) : undefined
-      // A challenge the server never issued — or already consumed — proves nothing.
-      if (!record) return { ok: false, error: 'challenge is unknown or already used' }
-      if (record.used) {
-        challenges.delete(challenge)
-        return { ok: false, error: 'challenge has already been used' }
-      }
-      if (record.expiresAt <= now()) {
-        challenges.delete(challenge)
-        return { ok: false, error: 'challenge has expired' }
-      }
-      // Single-use: consume before verifying, so a concurrent replay cannot win.
-      record.used = true
-      challenges.delete(challenge)
+    async verifyChallengeAndOpenSession(
+      challenge: string,
+      signed: AgentSignedMessage,
+      context?: VerifyContext,
+    ): Promise<SessionOpened | AuthFailure> {
+      const payload = readToken(challenge, secret)
+      // A challenge this service did not sign proves nothing.
+      if (!payload) return { ok: false, error: 'challenge is unknown or already used' }
+      if (payload.e <= now()) return { ok: false, error: 'challenge has expired' }
+      // Single-use, enforced per instance: the consumed id is remembered until
+      // the challenge expires.
+      if (usedChallenges.has(payload.n)) return { ok: false, error: 'challenge has already been used' }
+      usedChallenges.set(payload.n, payload.e)
 
-      let challengeBytes: Uint8Array
-      try {
-        challengeBytes = base64UrlDecode(challenge)
-      } catch {
-        return { ok: false, error: 'challenge is malformed' }
-      }
-      if (challengeBytes.length !== CHALLENGE_BYTES) return { ok: false, error: 'challenge is malformed' }
-
-      // The signature must be over THIS challenge, not attacker-chosen bytes.
-      if (!(await verifyAgentMessage(challengeBytes, signed))) {
+      // The signature must be over THIS challenge, purpose-bound as an agent
+      // login — not attacker-chosen bytes, and not a signature given for
+      // another Veil operation.
+      if (!(await verifyAgentMessage(agentLoginMessage(challenge), signed, context))) {
         return { ok: false, error: 'signature does not match this challenge' }
       }
 
       // …and the signing key must derive to the address the challenge was
-      // issued for. Verifying against the claimed address is the whole check.
+      // issued for. Verifying against the challenge's address is the whole check.
       const publicKey = hexToBytes(String(signed.publicKey ?? ''))
       if (!publicKey) return { ok: false, error: 'signature carries no public key' }
       let derived: string
@@ -298,34 +403,31 @@ export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
       } catch {
         return { ok: false, error: 'signature carries no verifiable wallet key' }
       }
-      if (derived !== record.walletAddress) {
+      if (derived !== payload.a) {
         return { ok: false, error: 'signature is not for this wallet' }
       }
 
-      prune()
-      const sessionToken = base64UrlEncode(rand(SESSION_TOKEN_BYTES))
+      pruneCaches()
       const expiresAt = now() + sessionTtlMs
-      sessions.set(sessionToken, { walletAddress: record.walletAddress, expiresAt })
-      return { sessionToken, walletAddress: record.walletAddress, expiresAt }
+      const sessionToken = signToken({ v: 1, a: payload.a, i: now(), e: expiresAt, n: base64UrlEncode(rand(16)) }, secret)
+      return { sessionToken, walletAddress: payload.a, expiresAt }
     },
 
     resolveSession(sessionToken: string): string | null {
-      if (typeof sessionToken !== 'string' || !sessionToken) return null
-      const record = sessions.get(sessionToken)
-      if (!record) return null
-      if (record.expiresAt <= now()) {
-        sessions.delete(sessionToken)
-        return null
-      }
-      return record.walletAddress
+      const payload = readToken(sessionToken, secret)
+      if (!payload) return null
+      if (payload.e <= now()) return null
+      if (revokedSessions.has(payload.n)) return null
+      return payload.a
     },
 
     revokeSession(sessionToken: string): void {
-      if (typeof sessionToken === 'string' && sessionToken) sessions.delete(sessionToken)
+      const payload = readToken(sessionToken, secret)
+      if (payload) revokedSessions.set(payload.n, payload.e)
     },
 
     sizes(): { challenges: number; sessions: number } {
-      return { challenges: challenges.size, sessions: sessions.size }
+      return { challenges: usedChallenges.size, sessions: revokedSessions.size }
     },
   }
 }
@@ -334,3 +436,6 @@ export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
 export function isAuthFailure(value: { ok?: boolean } | ChallengeIssued | SessionOpened): value is AuthFailure {
   return (value as { ok?: boolean }).ok === false
 }
+
+// Re-exported for tests and deployments that need to reason about the pairing.
+export { FACTORY_BY_NETWORK }

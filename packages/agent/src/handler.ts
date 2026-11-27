@@ -150,6 +150,21 @@ export function parseAuthenticatedClearHistoryRequest(
   return { ok: true, value: { walletAddress: verifiedWalletAddress.trim() } }
 }
 
+/**
+ * The grace-period fallback: shape-check a body-claimed address and nothing
+ * more. While no mobile build performs the challenge, requests without a
+ * session are served under this claimed address — exactly what the
+ * pre-session route did — so installed apps keep working. The route decides
+ * when to stop trusting this; see AGENT_REQUIRE_SESSION.
+ */
+export function parseClaimedAddress(body: unknown): { ok: true; value: string } | { ok: false; error: string } {
+  if (!body || typeof body !== 'object') return { ok: false, error: 'Expected a JSON body' }
+  const claimed = (body as Record<string, unknown>).walletAddress
+  const address = typeof claimed === 'string' ? claimed.trim() : ''
+  if (!STELLAR_ADDRESS.test(address)) return { ok: false, error: 'walletAddress is not a Stellar address' }
+  return { ok: true, value: address }
+}
+
 export async function handleChat(request: ChatRequest, llm: LlmProvider): Promise<AgentResult> {
   return runAgent(
     request.message,

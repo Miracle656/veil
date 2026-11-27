@@ -229,10 +229,12 @@ Additional endpoints: `GET /summary/:address`, `GET /transfers/address/:address`
 
 Claude-powered AI agent embedded in the Veil wallet. Served serverlessly from
 the wallet's `/api/agent` route (one POST per message); the standalone
-WebSocket server (`src/server.ts`) was retired. Every request is bound to a
-wallet-signed session: the client signs a fresh server challenge with its
-passkey and the route resolves the wallet address from the verified session,
-never from the request body. Tools:
+WebSocket server (`src/server.ts`) was retired. Requests may be bound to a
+wallet-signed session: the client signs purpose-bound server-challenge bytes
+with its passkey and the route resolves the wallet address from the verified
+session, never from the request body. Until a mobile build performs the
+challenge, session-less requests are still served under the claimed address
+(set `AGENT_REQUIRE_SESSION=true` to enforce). Tools:
 
 | Tool                    | Description                                                       |
 | ----------------------- | ----------------------------------------------------------------- |
