@@ -435,7 +435,10 @@ export async function loadHorizonActivityPage(
     (a, b) => b.timestamp - a.timestamp,
   );
   let kept = merged.slice(0, limit);
-  if (classic.records.length > 0 && !kept.some((r) => classic.rowTokens.has(r.id))) {
+  // Asked by identity, not by whether a row has a paging token: a classic row
+  // that is already on screen must never be added a second time.
+  const classicIds = new Set(classic.records.map((r) => r.id));
+  if (classic.records.length > 0 && !kept.some((r) => classicIds.has(r.id))) {
     // The trim dropped every classic row. Contract rows cannot be paged, so
     // dropping one to make room would lose it for good; instead keep the newest
     // classic row as one extra row. Exceeding the limit by one in this rare case
