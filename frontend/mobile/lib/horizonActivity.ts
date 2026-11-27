@@ -70,7 +70,7 @@ async function scanWindow(
  * issued asset. Falls back to XLM when the topic is absent, which is what older
  * events look like.
  */
-function assetFromTopic(topic: unknown): string {
+export function assetFromTopic(topic: unknown): string {
   if (!topic) return 'XLM';
   try {
     const raw = String(scValToNative(topic as never));
@@ -199,7 +199,7 @@ type BalanceChange = {
  * addresses that are both ours, or neither, are the router's business and are
  * ignored.
  */
-function invocationToRecord(
+export function invocationToRecord(
   changes: BalanceChange[],
   mine: Set<string>,
   base: { id: string; timestamp: number; hash?: string },
