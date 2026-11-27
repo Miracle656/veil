@@ -1,0 +1,404 @@
+---
+title: Integrate the SDK
+description: Build passkey wallets into your own app with the Veil SDK — install, create a wallet, sign back in, read a balance, send a payment, and set up recovery, with the decisions you cannot undo called out.
+---
+
+import { Callout, Steps } from "nextra/components";
+
+# Integrate the SDK
+
+The Veil SDK puts a passkey wallet inside **your own app**, under your own
+name and web address. Your users create a wallet with a fingerprint, face or
+screen lock. There is no seed phrase and no extension, and they never leave
+your site.
+
+This page is the path from an empty project to a working wallet. For every
+function and type, see the [SDK Reference](/sdk-reference).
+
+## SDK or Veil Connect?
+
+They solve different problems. Pick before you start.
+
+| | **Veil SDK** (this page) | **[Veil Connect](/veil-connect)** |
+|---|---|---|
+| Whose wallet is it? | A new wallet that belongs to your app | The person's existing Veil wallet |
+| Where does the person approve? | On your own pages | In a Veil window |
+| Who pays network fees? | An account you run | The person |
+| What you run | A small signing service, and an RPC provider on mainnet | Nothing |
+| Naira in and out | Not included | Built in |
+| Effort | Days | An afternoon |
+
+Choose the **SDK** when the wallet is part of your product and you want it
+under your brand. Choose **Veil Connect** when you want people to pay you, or
+use your contract, from a wallet they already have.
+
+<Callout type="warning">
+A wallet made with the SDK on your site is **not** the person's Veil wallet,
+even if they also use Veil. A passkey wallet is tied to the web address it was
+created on. Read [Decisions you cannot undo](#decisions-you-cannot-undo)
+before you ship.
+</Callout>
+
+## What you need
+
+- A web app served over **HTTPS** (or `localhost` while you build). Passkeys do
+  not work on plain HTTP.
+- **A fee-payer account**: an ordinary Stellar account (`G…`) that you fund
+  with XLM. It pays the network fee for your users' transactions. It cannot
+  move their money.
+- **A small backend route** that signs with that account. See
+  [The fee-payer](#the-fee-payer).
+- **A Soroban RPC URL.** Testnet has a free public one. Mainnet does not: see
+  [Going to mainnet](#going-to-mainnet).
+
+## Install
+
+```bash
+npm install invisible-wallet-sdk @stellar/stellar-sdk
+```
+
+## Configure
+
+Start on testnet.
+
+```ts
+// veil.ts
+import type { TransactionSigner } from 'invisible-wallet-sdk'
+
+export const config = {
+  factoryAddress: 'CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA',
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  networkPassphrase: 'Test SDF Network ; September 2015',
+}
+
+// Your fee-payer. The secret key stays on your server; the browser only
+// asks your server to sign.
+export const feePayer: TransactionSigner = {
+  publicKey: 'YOUR_FEE_PAYER_G_ADDRESS',
+  signTransaction: async (xdr, { networkPassphrase }) => {
+    const res = await fetch('/api/sign', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ xdr, networkPassphrase }),
+    })
+    if (!res.ok) throw new Error('Signing was refused')
+    return (await res.json()).signedXdr
+  },
+}
+```
+
+The **factory** is the contract that creates wallets. You use Veil's; you do
+not deploy your own.
+
+| Network | Factory |
+|---|---|
+| Testnet | `CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA` |
+| Mainnet | `CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK` |
+
+## The fee-payer
+
+Every transaction on Stellar needs an account to carry it and pay the fee.
+Your users' wallets are smart contracts, which cannot do that, so your
+fee-payer does it for them.
+
+- It pays **fees only**. It has no power over a user's wallet: spending needs
+  the user's passkey.
+- Fund it with XLM. On testnet, use
+  `https://friendbot.stellar.org/?addr=YOUR_FEE_PAYER_G_ADDRESS`.
+- **Never put its secret key in the browser.** Anyone could read it and drain
+  the account.
+
+Your `/api/sign` route signs what the SDK sends it. A minimal version:
+
+```ts
+// POST /api/sign
+import { Keypair, TransactionBuilder } from '@stellar/stellar-sdk'
+
+const feePayer = Keypair.fromSecret(process.env.FEE_PAYER_SECRET!)
+const NETWORK = 'Test SDF Network ; September 2015'
+const MAX_FEE_STROOPS = 5_000_000 // 0.5 XLM. Raise it if real calls are refused.
+
+export async function POST(req: Request) {
+  // 1. Only your own signed-in users. Rate-limit them.
+  //    requireUser is your app's own session check.
+  const user = await requireUser(req)
+  if (!user) return new Response('Unauthorized', { status: 401 })
+
+  const { xdr, networkPassphrase } = await req.json()
+  if (networkPassphrase !== NETWORK) return new Response('Wrong network', { status: 400 })
+
+  // 2. Look at what you are being asked to sign.
+  const tx = TransactionBuilder.fromXDR(xdr, NETWORK)
+  if (!('operations' in tx)) return new Response('Unsupported', { status: 400 })
+  if (tx.source !== feePayer.publicKey()) return new Response('Wrong source', { status: 400 })
+  if (Number(tx.fee) > MAX_FEE_STROOPS) return new Response('Fee too high', { status: 400 })
+  if (tx.operations.length !== 1 || tx.operations[0].type !== 'invokeHostFunction') {
+    return new Response('Unsupported', { status: 400 })
+  }
+
+  // 3. Sign and return.
+  tx.sign(feePayer)
+  return Response.json({ signedXdr: tx.toXDR() })
+}
+```
+
+<Callout type="warning">
+This route spends your XLM for whoever calls it. Without the checks above it
+is a free faucet: require a signed-in user, limit how often each one can
+call, cap the fee, and refuse anything that is not a single contract call
+from your own fee-payer. Watch the fee-payer's balance and alert when it runs
+low, because every user is stuck when it is empty.
+</Callout>
+
+## Create a wallet
+
+Creating a wallet is two steps: make the passkey, then put the wallet on the
+network.
+
+```tsx
+import { useInvisibleWallet } from 'invisible-wallet-sdk'
+import { config, feePayer } from './veil'
+
+export function CreateWallet() {
+  const wallet = useInvisibleWallet(config)
+
+  const create = async () => {
+    // 1. The device asks for a fingerprint, face or screen lock, and makes
+    //    the passkey. The wallet's address is known from this moment.
+    const { walletAddress, publicKeyBytes } = await wallet.register('ada')
+
+    // 2. Create the wallet contract on the network. Your fee-payer pays.
+    await wallet.deploy(feePayer, publicKeyBytes)
+
+    // Save walletAddress against the user in YOUR database.
+  }
+
+  if (wallet.address) return <p>Your wallet: {wallet.address}</p>
+  return (
+    <button onClick={create} disabled={wallet.isPending}>
+      {wallet.isPending ? 'Creating…' : 'Create wallet'}
+    </button>
+  )
+}
+```
+
+`wallet` gives you four pieces of state to build your screens from:
+
+| | |
+|---|---|
+| `address` | The wallet's address (`C…`), or `null` when there is none in this browser |
+| `isDeployed` | Whether the wallet exists on the network yet |
+| `isPending` | `true` while anything is in progress |
+| `error` | The last error message, or `null` |
+
+<Callout type="warning">
+**Call `register()` only from your sign-up screen.** It creates a new passkey
+and replaces the wallet keys stored in this browser. Called from a settings
+page or a "try again" button, it leaves the person looking at a new, empty
+wallet. To add another passkey to an existing wallet, use
+`registerAdditionalSigner`: see [Recovery](#recovery).
+</Callout>
+
+If `register()` succeeds and `deploy()` fails, do not register again. Keep the
+`publicKeyBytes` and call `deploy()` again: it creates the same wallet, and it
+is safe to repeat.
+
+## Sign back in
+
+```ts
+const found = await wallet.login()
+if (found) {
+  console.log('Welcome back', found.walletAddress)
+} else {
+  // No wallet in this browser: show "Create wallet" or "I have a wallet".
+}
+```
+
+On a **new device or browser**, there is nothing stored yet. Pass the address
+you saved for the user, and the SDK finds the wallet with their passkey:
+
+```ts
+await wallet.login({ walletAddress: savedWalletAddress })
+```
+
+This works when the passkey is available on the new device, which it is when
+the person's passkeys sync (iCloud Keychain, Google Password Manager) or when
+they use a phone or security key to sign in. It is why you should save every
+user's wallet address on your server.
+
+## Read a balance
+
+```ts
+const { amount, assetCode } = await wallet.getBalance()         // XLM
+const usdc = await wallet.getBalance(USDC_CONTRACT)             // a token
+```
+
+Amounts are in the token's smallest unit. XLM and USDC both have seven
+decimal places, so divide by `10_000_000` to show them.
+
+USDC's token contract on mainnet is
+`CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`.
+
+## Send a payment
+
+```ts
+// 2.5 XLM. The device asks for the passkey.
+const { transactionHash, status } = await wallet.sendPayment(
+  feePayer,
+  recipientAddress,
+  25_000_000n,
+)
+
+// 10 USDC
+await wallet.sendPayment(feePayer, recipientAddress, 100_000_000n, USDC_CONTRACT)
+```
+
+- The amount is in the smallest unit: `amount × 10_000_000`.
+- The **user** approves with their passkey. Your fee-payer only pays the fee.
+- Show the amount and the **full** recipient address before you call it. The
+  passkey prompt does not show them.
+- `status` can be `PENDING`. Do not tell the user it failed: look the hash up
+  before letting them try again, or they may pay twice.
+
+## Receiving money
+
+A wallet's address starts with `C`. It is a smart contract address.
+
+- It needs no trustline and no XLM to receive a token.
+- Send to it with the token contract's `transfer(from, to, amount)`.
+- **A classic Stellar payment cannot pay a `C…` address.** Most exchanges
+  send classic payments, so a user cannot withdraw from an exchange straight
+  to their wallet. Tell them before they try.
+
+## Recovery
+
+A passkey can be lost: a phone is stolen, a browser profile is wiped. With no
+second way in, the money in that wallet is gone for good. Nobody can reset it,
+including you and including us.
+
+Offer both of these, and ask during onboarding rather than leaving it in
+settings.
+
+**A second passkey.** The person adds another device, such as a laptop or a
+security key. Either passkey then controls the wallet.
+
+```ts
+await wallet.registerAdditionalSigner(feePayer, { username: 'ada-laptop' })
+```
+
+**A guardian.** A Stellar account that can start a recovery to a new passkey.
+The change only takes effect after a waiting period, so the real owner has
+time to notice.
+
+```ts
+await wallet.setGuardian(feePayer, guardianAddress)
+```
+
+See [Key rotation](/security/key-rotation) for the full recovery flow.
+
+## Decisions you cannot undo
+
+<Callout type="error">
+Read this before your first real user. These cannot be fixed afterwards.
+</Callout>
+
+**Your web address is permanent.** When a wallet is created, its contract
+records the web address it was created on, and from then on accepts passkey
+approvals only from exactly that address. A wallet created on
+`https://app.example.com` works only on `https://app.example.com`.
+
+- Decide your production address before any real user signs up. Moving from
+  `app.example.com` to `example.com`, or to a new domain, strands every
+  existing wallet.
+- Wallets you create on `localhost` or a preview URL work only there. Use them
+  for testing and never tell a real user to keep one.
+- If you set `rpId` and `origin` in the config, set them once and never change
+  them.
+
+**Wallets cannot be upgraded.** A deployed wallet contract stays as it is. A
+later version of the SDK or the contract does not change wallets that already
+exist.
+
+**There is no reset.** There is no admin key and no support process that can
+move money out of a wallet whose passkeys are all lost. Recovery is whatever
+the user set up beforehand.
+
+## Going to mainnet
+
+<Steps>
+
+### Switch the config
+
+```ts
+export const config = {
+  factoryAddress: 'CCZ3JLRESNLDADGXWNEH4YQ4NXUUAHRJNCWZHYG6QB4KTDYHOH6OQ7BK',
+  rpcUrl: 'https://yourapp.com/api/rpc', // your own proxy: see the next step
+  networkPassphrase: 'Public Global Stellar Network ; September 2015',
+}
+```
+
+Change the network passphrase in your signing route too.
+
+### Get an RPC provider
+
+Mainnet has no free public Soroban RPC. Use a provider, and call it through a
+route on your own server so its key is never sent to the browser. See
+[Choosing a network](/guides/networks).
+
+### Fund the fee-payer with real XLM
+
+There is no Friendbot on mainnet. Buy XLM and send it to your fee-payer. Each
+new wallet and each payment costs a small fee: watch the balance.
+
+### Make one real wallet yourself
+
+On your production address, create a wallet, add a second passkey, send a
+small amount in and out, and sign in from a second device. Do this before
+anyone else does.
+
+</Steps>
+
+## Other frameworks
+
+The examples here use React. The same wallet is available for other
+frameworks, with the same actions:
+
+| Framework | Import |
+|---|---|
+| React | `invisible-wallet-sdk` |
+| Vue 3 | `invisible-wallet-sdk/vue` |
+| Svelte | `invisible-wallet-sdk/svelte` |
+| Solid | `invisible-wallet-sdk/solid` |
+| Angular | `invisible-wallet-sdk/angular` |
+| No framework | `invisible-wallet-sdk/vanilla` |
+
+```ts
+import { createInvisibleWallet } from 'invisible-wallet-sdk/vanilla'
+
+const wallet = createInvisibleWallet(config)
+const { publicKeyBytes } = await wallet.register('ada')
+await wallet.deploy(feePayer, publicKeyBytes)
+```
+
+## Checklist before real users
+
+- [ ] Your production web address is final.
+- [ ] The fee-payer's secret key is only on your server.
+- [ ] `/api/sign` requires a signed-in user, is rate-limited, caps the fee and
+      refuses anything but a single contract call.
+- [ ] The fee-payer balance is monitored.
+- [ ] `register()` is called only from sign-up.
+- [ ] Each user's wallet address is saved on your server.
+- [ ] Users are asked to add a second passkey or a guardian during onboarding.
+- [ ] Payment screens show the amount and the full recipient address.
+- [ ] Users are told that an exchange cannot withdraw straight to their wallet.
+- [ ] You have created, funded, spent from and recovered a real wallet
+      yourself.
+
+## Where to go next
+
+- [SDK Reference](/sdk-reference): every function and type
+- [SDK Error Reference](/sdk-errors): what each error means
+- [Troubleshooting passkeys](/troubleshooting/passkeys)
+- [Cookbook](/cookbook): tipping, subscriptions and payroll recipes
+- [Veil Connect](/veil-connect): use a person's existing Veil wallet instead

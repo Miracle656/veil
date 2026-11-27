@@ -1,0 +1,293 @@
+---
+title: Veil Pay
+description: Accept USDC and XLM payments on your website with a "Pay with Veil" button. Customers pay with a passkey, can fund with naira, and you receive the full amount straight to your own Stellar address.
+---
+
+import { Callout, Steps } from "nextra/components";
+
+# Veil Pay
+
+Veil Pay is a "Pay with Veil" button for your website. Your customer pays in
+USDC or XLM from their Veil wallet, approving with a fingerprint, face or
+screen lock. The money goes straight to your own Stellar address.
+
+- **No extension, no seed phrase.** A customer without a wallet creates one in
+  about a minute, in the same window, and carries on paying.
+- **You receive the full amount.** Veil never holds your money.
+- **Naira in, naira out.** Customers in Nigeria can add money by bank transfer
+  and cash out to their own bank, inside Veil.
+- **A few lines of code.** One script, one function call.
+
+Veil Pay is one part of [Veil Connect](/veil-connect). If your app also needs
+to call its own smart contract, read that page too.
+
+<Callout type="info">
+Veil Pay is in **pilot**. Apps are added one at a time and a single payment
+is limited to 1000 USDC or 1000 XLM. See [Getting set up](#getting-set-up).
+</Callout>
+
+## How a payment goes
+
+<Steps>
+
+### Your customer clicks "Pay with Veil"
+
+Your page calls `veil.pay(...)` with the amount, your address and your order
+reference. A Veil window opens.
+
+### They check and approve
+
+Veil shows who is asking, how much, and the full address it goes to. They
+continue to Veil's normal Send screen and approve with their passkey.
+
+### You get a transaction hash
+
+The window closes and your page receives the hash and your reference.
+
+### Your server verifies it
+
+Your server looks the hash up on Stellar, checks the money really arrived at
+your address for that order, and only then marks the order paid.
+
+</Steps>
+
+## Add the button
+
+```html
+<button id="pay">Pay with Veil</button>
+
+<script src="https://app.useveilapp.xyz/connect.js"></script>
+<script>
+  const veil = VeilConnect.init({ app: 'your-app-id' })
+
+  document.getElementById('pay').onclick = async () => {
+    try {
+      const { hash, reference } = await veil.pay({
+        to: 'YOUR_STELLAR_ADDRESS',   // full address, G… or C…
+        amount: '20',                 // a string, at most 7 decimals
+        asset: 'USDC',                // 'USDC' (default) or 'XLM'
+        reference: 'order-123',       // your order id
+      })
+
+      // Tell YOUR server. It verifies the payment before marking the order paid.
+      await fetch('/api/orders/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hash, reference }),
+      })
+    } catch (error) {
+      if (error.code === 'cancelled') return   // they closed the window
+      console.error(error.code, error.message)
+    }
+  }
+</script>
+```
+
+<Callout type="warning">
+Call `veil.pay` directly from the click. Browsers block a window that is
+opened after waiting for something else, such as a request to your server.
+Create the order first, then show the button.
+</Callout>
+
+## The request
+
+| Field | Required | What it is |
+|---|---|---|
+| `to` | Yes | Your full Stellar address. A `G…` account or a `C…` contract. |
+| `amount` | Yes | A string with at most 7 decimals, for example `'20'` or `'4.5'`. Up to 1000 during the pilot. |
+| `asset` | No | `'USDC'` (the default) or `'XLM'`. |
+| `reference` | Yes | Your order id: 1 to 64 letters, digits, `-` or `_`. |
+
+For USDC, your `G…` address must already hold a USDC trustline, or the
+payment cannot be delivered.
+
+### References
+
+Your reference is written on the payment as a public text memo, so your
+server can tell which order a payment belongs to.
+
+- Keep it to **28 characters or fewer**. A text memo holds no more. A longer
+  reference is not cut to fit: no memo is written, and `memo` in the result is
+  `null`.
+- Use a new reference for every order.
+- Keep personal details out of it. A memo is public, forever.
+
+## The result
+
+```js
+{
+  hash: '…',                // the transaction hash, 64 hex characters
+  reference: 'order-123',   // what you sent
+  memo: 'order-123',        // the memo written on chain, or null
+  from: 'G…',               // the account the money left
+  network: 'mainnet',
+}
+```
+
+<Callout type="warning">
+**`from` is not the address `connect()` gives you.** A Veil wallet has a
+wallet address (`C…`) and a spending account (`G…`). Payments leave from the
+spending account. If your server checks that the sender equals the connected
+wallet address, every real payment will fail that check. Match a payment by
+where it **went**, not where it came from.
+</Callout>
+
+## Verify on your server
+
+The result your page receives comes from your customer's browser. Anyone can
+send your server a made-up hash. Before marking an order paid:
+
+1. Look the hash up on Stellar and check the transaction **succeeded**.
+2. Check the **memo** is a text memo equal to your reference.
+3. Check a payment in it went **to your address**, in the **right asset**,
+   for the **right amount**. For USDC, check the code **and** the issuer
+   `GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`. Anyone can
+   create a token called "USDC".
+4. Accept each hash **once**. Store it and refuse a repeat.
+5. Check `network` is `mainnet`.
+
+If any check fails, do not mark the order paid.
+
+### Example (Node.js, paying a `G…` address)
+
+```js
+const HORIZON = 'https://horizon.stellar.org'
+const USDC_ISSUER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
+
+/**
+ * order = { reference, to, amount, asset } from YOUR database,
+ * never from the request that reports the payment.
+ */
+async function isPaid(hash, order) {
+  if (!/^[0-9a-f]{64}$/.test(hash)) return false
+
+  const txRes = await fetch(`${HORIZON}/transactions/${hash}`)
+  if (!txRes.ok) return false
+  const tx = await txRes.json()
+  if (!tx.successful) return false
+  if (tx.memo_type !== 'text' || tx.memo !== order.reference) return false
+
+  const opsRes = await fetch(`${HORIZON}/transactions/${hash}/operations?limit=200`)
+  if (!opsRes.ok) return false
+  const ops = (await opsRes.json())._embedded.records
+
+  // Horizon writes amounts with seven decimals: "20.0000000".
+  const wanted = Number(order.amount).toFixed(7)
+
+  return ops.some((op) => {
+    if (op.type !== 'payment' || op.to !== order.to || op.amount !== wanted) return false
+    return order.asset === 'XLM'
+      ? op.asset_type === 'native'
+      : op.asset_code === 'USDC' && op.asset_issuer === USDC_ISSUER
+  })
+}
+```
+
+Then, in the same database transaction that marks the order paid, record the
+hash with a unique constraint, so the same hash can never pay for two orders.
+
+If your address is a `C…` contract, the payment appears as an
+`invoke_host_function` operation: check its `asset_balance_changes` list for
+the transfer to your contract.
+
+## Fees
+
+- **You pay nothing.** You receive exactly the amount you asked for.
+- **Your customer pays a small Veil fee on top**, in the same asset. Today it
+  is 0.5% of the amount; for USDC, never less than 0.02 or more than 5. It
+  appears as a second, smaller payment in the same transaction, to a Veil
+  address.
+- The rate can change, and the fee is left out when it cannot be worked out.
+  **Never build on its size or position.** Credit the payment to your address
+  and ignore every other operation in the transaction.
+- Your customer also pays Stellar's network fee, which is a fraction of a
+  cent.
+
+## Paying your customers
+
+To send a customer money, for example a withdrawal or a refund, pay the
+**wallet** address `connect()` gave you. It is a `C…` contract address.
+
+- Use the USDC token contract's `transfer(from, to, amount)`. On mainnet that
+  contract is `CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75`. A
+  classic `payment` operation cannot pay a `C…` address.
+- Amounts have 7 decimal places: send `amount × 10^7`.
+- It lands as soon as your transaction succeeds. The customer needs no
+  trustline and no XLM to receive, and Veil charges nothing to receive.
+
+Once the money is in their wallet, they can turn it into naira:
+
+```js
+cashOutButton.onclick = () => veil.cashOut()
+```
+
+This opens Veil's cash-out screen. The customer chooses the amount and their
+own bank account inside Veil. You never see their bank details, and you
+cannot send their money to a bank for them.
+
+## Letting customers add money
+
+A customer with an empty wallet can fund it with naira by bank transfer:
+
+```js
+addMoneyButton.onclick = () => veil.addMoney()
+```
+
+This is for customers in Nigeria and includes Veil's own identity check the
+first time. They can choose to receive USDC, ready to pay you.
+
+## When a payment does not complete
+
+`veil.pay` rejects with an error that has a `code`:
+
+| `code` | What happened | What to do |
+|---|---|---|
+| `cancelled` | They closed the window or pressed Cancel. | Nothing. Leave the order unpaid. |
+| `refused` | Veil would not take the request. `message` says why. | Fix the request. Usually a bad address, amount or reference. |
+| `blocked` | The browser blocked the window. | Call `veil.pay` directly from the click. |
+
+If your customer closes the window after paying but before your page hears
+back, your page sees `cancelled` although the payment went through. Because
+your reference is on the payment as its memo, your server can still find it:
+look up recent payments to your address and match the memo.
+
+## Getting set up
+
+Veil accepts requests only from apps it knows, and only from each app's own
+web address. That is what stops someone asking for a payment in your name
+from a link in a chat.
+
+Send us:
+
+1. **Who you are** and what you sell.
+2. **Your web addresses**, exactly as they appear in the browser, for example
+   `https://yourshop.com` and `https://www.yourshop.com`.
+3. **For testing**, the local address you develop on, for example
+   `http://localhost:3000`.
+
+You get back an app id for your live site and a separate test id for your own
+machine. The test id is shown to customers as "*Your shop* (test)".
+
+<Callout type="warning">
+The test id talks to the **live** wallet on mainnet. Payments made with it
+are real. Test with small amounts, such as 0.1 USDC.
+</Callout>
+
+## Checklist before you go live
+
+- [ ] `veil.pay` is called directly from a click.
+- [ ] Every order has its own reference, 28 characters or fewer.
+- [ ] Your server verifies the hash, the memo, the destination, the asset
+      (code **and** issuer) and the amount.
+- [ ] Your server does **not** require the sender to be the connected wallet.
+- [ ] Each hash is accepted once.
+- [ ] A `cancelled` result leaves the order unpaid, and your server can still
+      find a payment by its memo.
+- [ ] You have made one real payment and one payout with small amounts.
+
+## Not available yet
+
+- Subscriptions and repeat payments without the passkey each time.
+- A webhook to your server. Verify by hash.
+- Assets other than USDC and XLM.
+- Native mobile apps. This is for websites.

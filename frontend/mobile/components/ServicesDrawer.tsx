@@ -1,3 +1,5 @@
+import { useRouter } from 'expo-router';
+import { GridIcon } from './icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -57,6 +59,7 @@ export function ServicesDrawer({
   services?: BillService[];
 }) {
   const { colors } = useTheme();
+  const router = useRouter();
   const styles = useMemo(() => createStyles(colors), [colors]);
   // One driver for the whole panel: 0 closed, 1 open. Rows read off the same
   // value at staggered offsets, so the reveal cannot desynchronise from the
@@ -206,13 +209,39 @@ export function ServicesDrawer({
           </View>
 
           <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+            <Stagger anim={anim} index={0}>
+              <Text style={styles.sectionLabel}>Explore</Text>
+            </Stagger>
+            <Stagger anim={anim} index={1}>
+              <Pressable
+                onPress={() => {
+                  onClose();
+                  router.push('/dapps');
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Discover dApps"
+                style={({ pressed }) => [styles.row, pressed && styles.pressedRow]}
+              >
+                <View style={[styles.rowIcon, { backgroundColor: colors.accent + '18' }]}>
+                  <GridIcon size={18} color={colors.accent} />
+                </View>
+                <View style={styles.rowText}>
+                  <Text style={styles.rowLabel}>Discover dApps</Text>
+                  <Text style={styles.rowHint} numberOfLines={1}>
+                    Explore Stellar ecosystem apps
+                  </Text>
+                </View>
+                <Text style={{ color: colors.textMuted, fontSize: 16 }}>→</Text>
+              </Pressable>
+            </Stagger>
+
             {live.length > 0 ? (
               <>
-                <Stagger anim={anim} index={0}>
-                  <Text style={styles.sectionLabel}>Available</Text>
+                <Stagger anim={anim} index={2}>
+                  <Text style={[styles.sectionLabel, styles.sectionLabelSpaced]}>Available</Text>
                 </Stagger>
                 {live.map((s) => (
-                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
+                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 3}>
                     <Row service={s} colors={colors} styles={styles} />
                   </Stagger>
                 ))}
@@ -221,13 +250,13 @@ export function ServicesDrawer({
 
             {soon.length > 0 ? (
               <>
-                <Stagger anim={anim} index={live.length + (live.length > 0 ? 1 : 0)}>
+                <Stagger anim={anim} index={live.length + 2}>
                   <Text style={[styles.sectionLabel, live.length > 0 && styles.sectionLabelSpaced]}>
                     Coming soon
                   </Text>
                 </Stagger>
                 {soon.map((s) => (
-                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
+                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 3}>
                     <Row service={s} colors={colors} styles={styles} />
                   </Stagger>
                 ))}
@@ -236,20 +265,20 @@ export function ServicesDrawer({
 
             {notPlanned.length > 0 ? (
               <>
-                <Stagger anim={anim} index={ordered.indexOf(notPlanned[0])}>
+                <Stagger anim={anim} index={ordered.indexOf(notPlanned[0]) + 2}>
                   <Text style={[styles.sectionLabel, (live.length > 0 || soon.length > 0) && styles.sectionLabelSpaced]}>
                     Not planned
                   </Text>
                 </Stagger>
                 {notPlanned.map((s) => (
-                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 1}>
+                  <Stagger key={s.id} anim={anim} index={ordered.indexOf(s) + 3}>
                     <Row service={s} colors={colors} styles={styles} />
                   </Stagger>
                 ))}
               </>
             ) : null}
 
-            <Stagger anim={anim} index={ordered.length + 1}>
+            <Stagger anim={anim} index={ordered.length + 3}>
               <Text style={styles.footnote}>
                 Upcoming services will appear when providers launch them. Unsupported bill categories are not planned, and nothing unavailable here can be charged.
               </Text>
@@ -411,6 +440,7 @@ const createStyles = (colors: ThemeColors) =>
       marginLeft: 4,
     },
     sectionLabelSpaced: { marginTop: 22 },
+    pressedRow: { opacity: 0.7 },
     row: {
       flexDirection: 'row',
       alignItems: 'center',
