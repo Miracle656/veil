@@ -387,9 +387,11 @@ export async function readSessionKey(
 /** The network limits {@link buildRegisterSessionKeyCall} needs, read from the network itself. */
 export async function readSessionKeyNetworkLimits(server: rpc.Server): Promise<SessionKeyNetworkLimits> {
     const [latest, settings] = await Promise.all([
-        // The raw call: stellar-sdk 15.1 cannot parse the ledger header of newer
-        // protocols (testnet runs protocol 30), and only the close time is needed.
-        server._getLatestLedger(),
+        // The public call: `_getLatestLedger` is a private 15.1-only method
+        // that does not exist on the SDK 14 types the wallet/mobile jobs
+        // typecheck this file against, so it broke their builds. Only the
+        // close time is needed, and the public response carries it.
+        server.getLatestLedger(),
         server.getLedgerEntries(
             xdr.LedgerKey.configSetting(
                 new xdr.LedgerKeyConfigSetting({
