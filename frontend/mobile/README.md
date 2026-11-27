@@ -92,11 +92,11 @@ Point it at a server with `EXPO_PUBLIC_AGENT_URL` (defaults to
 
 The transport lives in `lib/agentClient.ts`, separated from the screen because a
 phone's network connection drops constantly — backgrounding the app is enough. It
-retries with jittered exponential backoff, queues anything composed while offline
-and flushes it on reconnect, and tracks in-flight requests: the agent server
-keeps no outbox, so a reply interrupted by a drop is gone, and the screen says so
-instead of spinning forever. Every external dependency (fetch, timers, jitter) is
-injective, which is how the retry paths are tested.
+sends one HTTPS POST per message, carrying the recent conversation, and waits for
+the reply. There is no retry and no queue: the agent server keeps no outbox, so a
+request interrupted by a drop has failed, and the screen says so instead of
+spinning forever, leaving the user to send it again. The external dependencies
+are injectable, which is how the failure paths are tested.
 
 ## Recovery (SEP-30)
 
