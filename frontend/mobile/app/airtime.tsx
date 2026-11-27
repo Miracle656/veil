@@ -573,6 +573,7 @@ export default function AirtimeScreen() {
               {(['xlm', 'usdc'] as NairaCoin[]).map((c) => (
                 <Pressable
                   key={c}
+                  testID={`airtime-coin-${c}`}
                   onPress={() => setCoin(c)}
                   style={[styles.segmentItem, coin === c && styles.segmentActive]}
                 >

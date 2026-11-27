@@ -20,6 +20,7 @@
 
 import React from 'react';
 
+import { USDC_MAINNET_ISSUER } from '../lib/assets';
 import { NotEnoughToSend } from '../lib/spendAsset';
 
 /** Fee-payer account: the classic wallet bills are refunded to. */
@@ -32,7 +33,7 @@ const LINQ_DEPOSIT_WALLET = 'GCCY3DVGYKNGBYNXVPVIQ6OGDXJN6VWNAKBDX4SLQIRHBEC3O2S
 const FEE_DESTINATION = 'GCDPRN5URKLVHTRRJZGFYHLMXXCZZWWVPT5QRHMCPKHNHB6SPFUZWFJ2';
 
 const CUSTOMER_REF = 'veil_airtime_customer_123';
-const PHONE = '08031234567';
+const PHONE = '08030000000';
 const RATE = 1450;
 /** ₦500 at ₦1,450 per USDC, at the 7 decimals both `payBill` and `spendAsset` use. */
 const LOCKED_COST = 0.3448276;
@@ -197,7 +198,16 @@ async function renderScreen() {
 }
 
 /** Fill the form and move to the confirm step, where the fee is previewed. */
-async function enterForm(root: ReturnType<typeof renderScreen> extends Promise<infer R> ? R : never) {
+async function enterForm(
+  root: ReturnType<typeof renderScreen> extends Promise<infer R> ? R : never,
+  coin: 'usdc' | 'xlm' = 'usdc',
+) {
+  if (coin !== 'usdc') {
+    await renderer.act(async () => {
+      root.findByProps({ testID: `airtime-coin-${coin}` }).props.onPress?.();
+    });
+    await flush();
+  }
   await renderer.act(async () => {
     root.findByProps({ testID: 'airtime-phone-input' }).props.onChangeText?.(PHONE);
   });
@@ -270,7 +280,7 @@ describe('Airtime flow (#1141)', () => {
 
     // The confirm step shows what will be spent before the passkey prompt.
     const confirmText = getAllText(root);
-    expect(confirmText).toContain('₦500 airtime to 08031234567 costs');
+    expect(confirmText).toContain(`₦500 airtime to ${PHONE} costs`);
     expect(confirmText).toContain('0.34 USDC');
     expect(confirmText).toContain('Network fee');
     expect(confirmText).toContain('Sponsored');
@@ -280,7 +290,7 @@ describe('Airtime flow (#1141)', () => {
     // A vend that settles must be reported as sent, with the number it went to.
     const doneText = getAllText(root);
     expect(doneText).toContain('Airtime sent');
-    expect(doneText).toContain('₦500 is on 08031234567');
+    expect(doneText).toContain(`₦500 is on ${PHONE}`);
     expect(doneText).toContain('You spent');
     expect(doneText).toContain('0.34 USDC');
 
@@ -296,12 +306,34 @@ describe('Airtime flow (#1141)', () => {
       coin: 'usdc',
       refundAddress: REFUND_ADDRESS,
     });
-    expect(mockSpendAsset).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: LINQ_DEPOSIT_WALLET,
-        amount: String(LOCKED_COST),
-      }),
+    // The issuer is what makes this USDC. `spendAsset` treats a missing asset
+    // as native XLM, so asserting only `to` and `amount` would stay green on a
+    // USDC-priced top-up that went out as XLM — which has happened.
+    expect(mockSpendAsset).toHaveBeenCalledWith({
+      to: LINQ_DEPOSIT_WALLET,
+      amount: String(LOCKED_COST),
+      asset: { code: 'USDC', issuer: USDC_MAINNET_ISSUER },
+      deploy: mockDeploy,
+    });
+  });
+
+  it('pays an XLM top-up in XLM, with no asset on the spend', async () => {
+    mockGetBillStatus.mockResolvedValue(statusResponse('settled'));
+
+    const root = await renderScreen();
+    await enterForm(root, 'xlm');
+    await slideToPay(root);
+
+    expect(mockPayBill).toHaveBeenCalledWith(
+      expect.objectContaining({ coin: 'xlm', amountStableCoin: LOCKED_COST }),
     );
+    // No `asset` key at all: a missing asset is native XLM, which is what this
+    // path means to send. An issuer here would silently pay in USDC instead.
+    expect(mockSpendAsset).toHaveBeenCalledWith({
+      to: LINQ_DEPOSIT_WALLET,
+      amount: String(LOCKED_COST),
+      deploy: mockDeploy,
+    });
   });
 
   it('shows the Veil fee before the passkey and stops when the wallet cannot cover the spend', async () => {
