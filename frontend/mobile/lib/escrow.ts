@@ -20,6 +20,7 @@ import {
   Operation,
   TransactionBuilder,
 } from '@stellar/stellar-sdk';
+import { APP_HOST } from './deepLinks';
 
 export type EscrowConfig = {
   /** Stellar Horizon REST API base URL (e.g. "https://horizon-testnet.stellar.org").
@@ -57,7 +58,7 @@ export type ReclaimOptions = {
 };
 
 export function buildClaimLink(balanceId: string): string {
-  return `https://app.veil.xyz/claim/${balanceId}`;
+  return `https://${APP_HOST}/claim/${balanceId}`;
 }
 
 /**
