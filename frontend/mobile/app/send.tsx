@@ -12,6 +12,7 @@ import { fontFamily } from '../theme/typography';
 import { FlowHeader } from '../components/FlowHeader';
 import { isFederatedAddress, isValidDestination } from '../lib/address';
 import { resolveFederation } from '../lib/federation';
+import { useNameLookup } from '../hooks/useNameLookup';
 import { ContactPicker } from '../components/ContactPicker';
 import { QrScanner } from '../components/QrScanner';
 import type { Contact } from '../hooks/useContacts';
@@ -194,6 +195,9 @@ export default function SendScreen() {
   const trimmed = recipient.trim();
   const recipientValid = isValidDestination(trimmed);
   const showError = trimmed.length > 0 && !recipientValid;
+  // Where a typed `name*domain` currently points, shown under the field before
+  // anything is signed. See `lib/nameLookup.ts`.
+  const nameLookup = useNameLookup(recipient);
   // The contract's balance OF THE SELECTED ASSET. Previously this only ever
   // read native XLM, so the smart wallet could not be chosen as the source for
   // anything else — the routing would use it, but nothing on screen said so.
@@ -308,11 +312,14 @@ export default function SendScreen() {
       // name Lobstr could pay perfectly well.
       //
       // Resolved once here so both the contract path and the fee-payer path
-      // get the same answer, and a name that resolves differently between two
-      // lookups cannot send to one account while the review screen showed
-      // another.
+      // get the same answer. When the field is already showing where the name
+      // points, that exact account is the one used: a name that resolves
+      // differently between two lookups cannot send to one account while the
+      // screen showed another.
       let destination = recipient.trim();
-      if (isFederatedAddress(destination)) {
+      if (nameLookup.status === 'resolved' && nameLookup.name === destination) {
+        destination = nameLookup.accountId;
+      } else if (isFederatedAddress(destination)) {
         try {
           const record = await resolveFederation(destination);
           destination = record.account_id;
@@ -603,6 +610,23 @@ export default function SendScreen() {
         {showError && (
           <Text style={styles.errorText} testID="send-recipient-error">Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
         )}
+        {nameLookup.status === 'resolving' && (
+          <Text style={styles.lookupText} testID="send-recipient-lookup">Looking up {nameLookup.name}…</Text>
+        )}
+        {nameLookup.status === 'resolved' && (
+          <View style={styles.resolvedBox} testID="send-recipient-resolved">
+            <Text style={styles.resolvedLabel}>Resolves to</Text>
+            <Text style={styles.resolvedAddress} selectable>{nameLookup.accountId}</Text>
+          </View>
+        )}
+        {nameLookup.status === 'not-found' && (
+          <Text style={styles.errorText} testID="send-recipient-not-found">No wallet is registered for {nameLookup.name}.</Text>
+        )}
+        {nameLookup.status === 'unreachable' && (
+          <Text style={styles.lookupText} testID="send-recipient-unreachable">
+            Could not look up {nameLookup.name} right now. The name server did not answer.
+          </Text>
+        )}
 
         {/* Memo */}
         <Text style={styles.section}>Memo · optional</Text>
@@ -844,6 +868,10 @@ const createStyles = (colors: ThemeColors) =>
     },
     memoInput: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 14, padding: 0 },
     errorText: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 18, marginTop: 8 },
+    lookupText: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 18, marginTop: 8 },
+    resolvedBox: { marginTop: 8, paddingHorizontal: 4, gap: 2 },
+    resolvedLabel: { color: colors.positive, fontFamily: fontFamily.bodyMedium, fontSize: 13, lineHeight: 18 },
+    resolvedAddress: { color: colors.textSecondary, fontFamily: fontFamily.address, fontSize: 12, lineHeight: 17 },
 
     feeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 18, paddingHorizontal: 4 },
     feeLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },

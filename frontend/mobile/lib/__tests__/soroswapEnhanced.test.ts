@@ -31,7 +31,11 @@ const USDY: SwapAsset = {
 
 const baseQuote: SwapQuote = {
   amountOut: '8224500000', // 822.45, 7 decimals
-  priceImpact: 0.005, // 0.5%
+  // Percent, not a fraction. `soroswap.ts` reads the provider's
+  // `priceImpactPct` straight into this field, and these fixtures previously
+  // assumed a fraction — which is where the stray *100 came from, and why a
+  // real 0.18% impact reached the user as 18.00%.
+  priceImpact: 0.5, // 0.5%
   path: ['native'],
   protocols: ['SOROSWAP'],
   rawQuote: null,
@@ -149,7 +153,7 @@ describe('enhanceQuoteWithSpread', () => {
     mocked.fetchOrderBookSpread.mockResolvedValue({ status: 'no-book' });
 
     const enhanced = await enhanceQuoteWithSpread(
-      { ...baseQuote, priceImpact: 0.09 }, // 9%
+      { ...baseQuote, priceImpact: 9 }, // 9%
       USDC,
       USDY,
       1000,

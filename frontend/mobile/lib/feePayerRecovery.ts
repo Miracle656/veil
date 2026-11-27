@@ -63,6 +63,15 @@ export type RecoveryInputs = {
   legacyBalanceXlm: number | null;
   /** Subentries on the legacy account — trustlines, data entries, signers. */
   legacySubentryCount: number;
+  /**
+   * Whether the legacy account holds anything besides XLM (USDC, usually).
+   *
+   * Those balances are stranded exactly as the XLM is, and the two shortcuts
+   * below that look only at XLM would walk past them: a funded PRF account
+   * says nothing about USDC still sitting on the old one, and an account whose
+   * XLM is all reserve can still hold a month of somebody's pay.
+   */
+  legacyHasAssets?: boolean;
   /** The signer key recorded in the legacy account's breadcrumbs, if any. */
   legacyCrumbSigner: Uint8Array | null;
   /** The signer the wallet contract actually holds. */
@@ -123,7 +132,9 @@ export function retainedForSweep(subentryCount: number): number {
 export function planFeePayerRecovery(input: RecoveryInputs): RecoveryPlan {
   // Something already works. Leave it alone: a sweep here would move money for
   // no reason and could race a transaction in flight.
-  if (input.prfBalanceXlm !== null && input.prfBalanceXlm > 0) {
+  // That reasoning is about XLM. Other assets left on the legacy account are
+  // stranded whether or not the PRF account has gas, so they keep the plan going.
+  if (input.prfBalanceXlm !== null && input.prfBalanceXlm > 0 && !input.legacyHasAssets) {
     return { action: 'none', reason: 'prf-funded' };
   }
   if (!input.legacyAddress) return { action: 'none', reason: 'no-legacy-candidate' };
@@ -143,7 +154,19 @@ export function planFeePayerRecovery(input: RecoveryInputs): RecoveryPlan {
   const movable = input.legacyBalanceXlm - retained;
   // Dust is not worth a transaction: the fee would eat most of it and the user
   // gets a confusing entry in their activity for nothing.
-  if (movable < 0.01) return { action: 'none', reason: 'below-reserve' };
+  if (movable < 0.01) {
+    // No XLM worth moving, but the other assets still have to cross. Whether
+    // the PRF account can afford their trustlines is checked when the
+    // transaction is built (feePayerMove.ts), which refuses rather than guesses.
+    if (!input.legacyHasAssets) return { action: 'none', reason: 'below-reserve' };
+    return {
+      action: 'sweep',
+      from: input.legacyAddress,
+      to: input.prfAddress,
+      amount: '0.0000000',
+      retainedXlm: retained,
+    };
+  }
 
   return {
     action: 'sweep',

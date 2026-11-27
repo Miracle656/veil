@@ -54,7 +54,61 @@ describe('the happy path', () => {
       to: PRF,
     });
     // The destination is derived, never taken from a caller or a screen.
-    expect(d.sendXlm).toHaveBeenCalledWith(SECRET, PRF, '4.2650850');
+    // The fourth argument is the destination's own secret, which lets it open
+    // trustlines for other assets. None was supplied here.
+    expect(d.sendXlm).toHaveBeenCalledWith(SECRET, PRF, '4.2650850', null);
+  });
+
+  it('hands the destination secret through so other assets can cross', async () => {
+    const d = deps();
+    await sweepStrandedFeePayer({ ...args, prfSecret: 'S_PRF_SECRET' }, d);
+    expect(d.sendXlm).toHaveBeenCalledWith(SECRET, PRF, '4.2650850', 'S_PRF_SECRET');
+  });
+});
+
+describe('assets other than XLM', () => {
+  // The planner used to stop at "the PRF account already has XLM" and at "the
+  // legacy XLM is all reserve". Both are true of an account still holding USDC.
+  it('still moves when the PRF account is funded but the legacy one holds USDC', async () => {
+    const d = deps({
+      loadAccount: jest.fn(async (address: string) =>
+        address === PRF
+          ? { xlm: 3, subentryCount: 0 }
+          : { xlm: 6.865085, subentryCount: 3, hasOtherAssets: true },
+      ),
+    });
+    const out = await sweepStrandedFeePayer({ ...args, prfSecret: 'S_PRF_SECRET' }, d);
+    expect(out).toMatchObject({ swept: true, amount: '4.2650850' });
+  });
+
+  it('moves the assets even when no XLM is spare', async () => {
+    const d = deps({
+      loadAccount: jest.fn(async (address: string) =>
+        address === PRF
+          ? { xlm: 3, subentryCount: 0 }
+          : { xlm: 2.5, subentryCount: 3, hasOtherAssets: true },
+      ),
+    });
+    const out = await sweepStrandedFeePayer({ ...args, prfSecret: 'S_PRF_SECRET' }, d);
+    expect(out).toMatchObject({ swept: true, amount: '0.0000000' });
+    expect(d.sendXlm).toHaveBeenCalledWith(SECRET, PRF, '0.0000000', 'S_PRF_SECRET');
+  });
+
+  it('still asks for the breadcrumb proof before moving them', async () => {
+    const other = new Uint8Array(65);
+    other[0] = 4;
+    other[1] = 9;
+    const d = deps({
+      loadAccount: jest.fn(async (address: string) =>
+        address === PRF ? null : { xlm: 2.5, subentryCount: 3, hasOtherAssets: true },
+      ),
+      readCrumbSigner: jest.fn(async () => other),
+    });
+    await expect(sweepStrandedFeePayer({ ...args, prfSecret: 'S_PRF_SECRET' }, d)).resolves.toEqual({
+      swept: false,
+      reason: 'unproven',
+    });
+    expect(d.sendXlm).not.toHaveBeenCalled();
   });
 });
 
@@ -156,7 +210,19 @@ describe('snapshotFromHorizon', () => {
         ],
         subentry_count: 3,
       }),
-    ).toEqual({ xlm: 6.865085, subentryCount: 3 });
+    ).toEqual({ xlm: 6.865085, subentryCount: 3, hasOtherAssets: false });
+  });
+
+  it('notices a balance in another asset', () => {
+    expect(
+      snapshotFromHorizon({
+        balances: [
+          { asset_type: 'credit_alphanum4', balance: '31.0700000' },
+          { asset_type: 'native', balance: '7.8776763' },
+        ],
+        subentry_count: 3,
+      }),
+    ).toEqual({ xlm: 7.8776763, subentryCount: 3, hasOtherAssets: true });
   });
 
   it('reports zero rather than null for an account with no XLM line', () => {
@@ -165,6 +231,7 @@ describe('snapshotFromHorizon', () => {
     expect(snapshotFromHorizon({ balances: [], subentry_count: 0 })).toEqual({
       xlm: 0,
       subentryCount: 0,
+      hasOtherAssets: false,
     });
   });
 });

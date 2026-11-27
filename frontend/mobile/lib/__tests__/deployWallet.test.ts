@@ -5,6 +5,7 @@ const mockSetPasskeyPublicKey = jest.fn();
 const mockGetFeePayerAddress = jest.fn();
 const mockReadBreadcrumbs = jest.fn();
 const mockComputeWalletAddress = jest.fn();
+const mockRecoverWalletPublicKey = jest.fn();
 
 jest.mock('../contractSpend', () => ({
   isWalletDeployed: (...a: unknown[]) => mockIsWalletDeployed(...a),
@@ -22,6 +23,9 @@ jest.mock('../walletBreadcrumbs', () => ({
 }));
 jest.mock('../network', () => ({
   getNetwork: () => ({ factoryContractId: 'CFACTORY', networkPassphrase: 'Public Global Stellar Network ; September 2015' }),
+}));
+jest.mock('../recoverPasskeyKey', () => ({
+  recoverWalletPublicKey: (...a: unknown[]) => mockRecoverWalletPublicKey(...a),
 }));
 jest.mock('@veil/sdk', () => ({
   computeWalletAddress: (...a: unknown[]) => mockComputeWalletAddress(...a),
@@ -106,16 +110,44 @@ describe('deployWalletIfNeeded', () => {
     expect(deploy).toHaveBeenCalledWith('SSECRET', KEY);
   });
 
-  it('refuses, and says the funds are safe, when no matching key can be found', async () => {
+  it('refuses, and says the funds are safe, when even the passkey cannot produce the key', async () => {
     mockIsWalletDeployed.mockResolvedValue(false);
     mockGetSignerSecret.mockResolvedValue('SSECRET');
     mockGetPasskeyPublicKey.mockResolvedValue(null);
     mockGetFeePayerAddress.mockResolvedValue('GSPENDING');
     mockReadBreadcrumbs.mockResolvedValue(null);
+    mockRecoverWalletPublicKey.mockResolvedValue(null);
     const deploy = jest.fn();
 
     await expect(deployWalletIfNeeded(deploy, WALLET)).rejects.toThrow(/funds are safe/);
     expect(deploy).not.toHaveBeenCalled();
+  });
+
+  // The wallets this repairs hold real money at an address nothing recorded a
+  // key for; without this last resort they stay unspendable forever.
+  it('recovers the key from the passkey when nothing stored it, and deploys', async () => {
+    mockIsWalletDeployed.mockResolvedValue(false);
+    mockGetSignerSecret.mockResolvedValue('SSECRET');
+    mockGetPasskeyPublicKey.mockResolvedValue(null);
+    mockGetFeePayerAddress.mockResolvedValue('GSPENDING');
+    mockReadBreadcrumbs.mockResolvedValue(null);
+    mockRecoverWalletPublicKey.mockResolvedValue(KEY);
+    const deploy = jest.fn().mockResolvedValue({});
+
+    await deployWalletIfNeeded(deploy, WALLET);
+
+    expect(mockRecoverWalletPublicKey).toHaveBeenCalledWith(WALLET);
+    expect(deploy).toHaveBeenCalledWith('SSECRET', KEY);
+  });
+
+  // A preview must never make the phone ask for a fingerprint.
+  it('does not prompt the passkey unless the caller asks for it', async () => {
+    mockGetPasskeyPublicKey.mockResolvedValue(null);
+    mockGetFeePayerAddress.mockResolvedValue('GSPENDING');
+    mockReadBreadcrumbs.mockResolvedValue(null);
+
+    expect(await resolveWalletPublicKey(WALLET)).toBeNull();
+    expect(mockRecoverWalletPublicKey).not.toHaveBeenCalled();
   });
 
   it('refuses without a spending key', async () => {

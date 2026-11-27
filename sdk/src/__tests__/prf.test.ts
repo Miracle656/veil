@@ -154,7 +154,7 @@ describe('feature detection + fallback', () => {
     const storage = memStore()
     const noPrf: PrfEvaluator = async () => null
 
-    const cipher = await createLocalCipher({ credentialId: 'cred', storage, evaluator: noPrf })
+    const cipher = await createLocalCipher({ credentialId: 'cred', storage, evaluator: noPrf, allowPlaintextFallback: true })
     expect(cipher.mode).toBe('fallback')
     expect(storage.data.has(FALLBACK_KEY_STORAGE)).toBe(true)
 
@@ -166,10 +166,10 @@ describe('feature detection + fallback', () => {
     const storage = memStore()
     const noPrf: PrfEvaluator = async () => null
 
-    const first = await createLocalCipher({ credentialId: 'cred', storage, evaluator: noPrf })
+    const first = await createLocalCipher({ credentialId: 'cred', storage, evaluator: noPrf, allowPlaintextFallback: true })
     const blob = await first.encrypt('persist me')
 
-    const second = await createLocalCipher({ credentialId: 'cred', storage, evaluator: noPrf })
+    const second = await createLocalCipher({ credentialId: 'cred', storage, evaluator: noPrf, allowPlaintextFallback: true })
     expect(await second.decryptString(blob)).toBe('persist me')
   })
 
@@ -180,10 +180,51 @@ describe('feature detection + fallback', () => {
     )
   })
 
-  it('falls back when the PRF ceremony throws but storage exists', async () => {
+  it('falls back when the ceremony fails for a reason that is not a cancellation', async () => {
     const storage = memStore()
     const throwing: PrfEvaluator = async () => { throw new Error('no prf extension') }
-    const cipher = await createLocalCipher({ credentialId: 'cred', storage, evaluator: throwing })
+    const cipher = await createLocalCipher({
+      credentialId: 'cred',
+      storage,
+      evaluator: throwing,
+      allowPlaintextFallback: true,
+    })
     expect(cipher.mode).toBe('fallback')
+  })
+
+  // H-7. This used to fall back: every error from the evaluator was swallowed
+  // when a store was present, and the one real caller always passes one. So
+  // dismissing the passkey prompt silently swapped passkey-bound encryption
+  // for a random key sitting in the store as base64, next to the data it
+  // encrypts - and nothing told the user the mode had changed.
+  it.each(['NotAllowedError', 'AbortError'])(
+    'surfaces a cancelled ceremony (%s) instead of downgrading to a stored key',
+    async (name) => {
+      const storage = memStore()
+      const cancelled: PrfEvaluator = async () => {
+        const err = new Error('The operation either timed out or was not allowed.')
+        err.name = name
+        throw err
+      }
+      await expect(
+        createLocalCipher({
+          credentialId: 'cred',
+          storage,
+          evaluator: cancelled,
+          allowPlaintextFallback: true,
+        }),
+      ).rejects.toThrow(/timed out or was not allowed/)
+      // Nothing was written: a cancelled prompt must not leave a key behind
+      // that a later call would silently adopt.
+      expect(await storage.getItem('invisible_wallet_local_enc_key')).toBeNull()
+    },
+  )
+
+  it('refuses a plaintext fallback the caller did not ask for', async () => {
+    const storage = memStore()
+    const noPrf: PrfEvaluator = async () => null
+    await expect(
+      createLocalCipher({ credentialId: 'cred', storage, evaluator: noPrf }),
+    ).rejects.toThrow(/allowPlaintextFallback/)
   })
 })

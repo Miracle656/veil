@@ -30,6 +30,7 @@ import {
   type PermissionScope,
 } from '../../lib/permissions';
 import type { ThemeColors } from '../../lib/theme';
+import { fontFamily } from '../../theme/typography';
 
 type PendingRevoke =
   | { kind: 'origin'; origin: string; name?: string }
@@ -206,12 +207,19 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.background,
       flex: 1,
     },
+    /**
+     * The inset alone only clears the status bar; without padding the chevron
+     * sits flush against it. 24 across matches the body below, so the back
+     * control lines up with the text it belongs to rather than floating left.
+     */
     header: {
-      paddingHorizontal: 8,
+      paddingHorizontal: 24,
+      paddingTop: 16,
     },
     content: {
       gap: 12,
-      padding: 24,
+      paddingHorizontal: 24,
+      paddingTop: 16,
       paddingBottom: 48,
     },
     hint: {
@@ -230,12 +238,12 @@ const createStyles = (colors: ThemeColors) =>
     cardTitle: {
       color: colors.textPrimary,
       fontSize: 15,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     originName: {
       color: colors.textStrong,
       fontSize: 16,
-      fontWeight: '700',
+      fontFamily: fontFamily.bodySemiBold,
     },
     origin: {
       color: colors.textFaint,
@@ -257,7 +265,7 @@ const createStyles = (colors: ThemeColors) =>
     scopeLabel: {
       color: colors.textPrimary,
       fontSize: 14,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     scopeMeta: {
       color: colors.textMuted,
@@ -278,7 +286,7 @@ const createStyles = (colors: ThemeColors) =>
     scopeRevokeText: {
       color: colors.danger,
       fontSize: 13,
-      fontWeight: '600',
+      fontFamily: fontFamily.bodySemiBold,
     },
     revokeOrigin: {
       alignSelf: 'flex-start',
@@ -288,7 +296,7 @@ const createStyles = (colors: ThemeColors) =>
     revokeOriginText: {
       color: colors.danger,
       fontSize: 13,
-      fontWeight: '700',
+      fontFamily: fontFamily.bodySemiBold,
     },
     revokeAll: {
       alignItems: 'center',
@@ -300,7 +308,7 @@ const createStyles = (colors: ThemeColors) =>
     revokeAllText: {
       color: colors.danger,
       fontSize: 15,
-      fontWeight: '700',
+      fontFamily: fontFamily.bodySemiBold,
     },
     pressed: {
       opacity: 0.6,

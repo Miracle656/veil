@@ -744,6 +744,29 @@ function resolveUserId(store: StorageAdapter): Uint8Array | Promise<Uint8Array> 
     return existing ? hexToUint8Array(existing) : mint();
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/**
+ * Default label for a new passkey, as the platform's own chooser shows it.
+ *
+ * Every Veil passkey used to be called the same thing. A device holding two
+ * then showed two identical rows, which is not a cosmetic problem: a user who
+ * reinstalled and created a second wallet by accident could not tell which row
+ * opened the funded one, and Android, given two indistinguishable candidates,
+ * skipped the chooser and went straight to biometrics with whichever it liked.
+ * Recovering that wallet meant renaming the entries by hand in Google Password
+ * Manager.
+ *
+ * The wallet address would be the ideal label and cannot be used: it is derived
+ * from the public key this very registration is about to return, so at this
+ * point it does not exist. The date does, and a short tag off the user handle
+ * separates two made on the same day.
+ */
+export function defaultPasskeyLabel(userId: Uint8Array, now: Date = new Date()): string {
+    const tag = bufferToHex(userId.subarray(0, 2));
+    return `Veil ${now.getUTCDate()} ${MONTHS[now.getUTCMonth()]} ${now.getUTCFullYear()} (${tag})`;
+}
+
 /**
  * Credential ids already known for this wallet (its platform passkey and/or
  * portable signer), to pass as excludeCredentials on the next registration so
@@ -936,7 +959,6 @@ export class InvisibleWalletCore {
         try {
             const challenge = crypto.getRandomValues(new Uint8Array(32));
             const normalizedUsername = username ? username.normalize('NFC') : undefined;
-            const name   = normalizedUsername || 'Veil User';
             // Both of these stay synchronous on a localStorage-backed store, and
             // are only awaited when the adapter genuinely returned a promise.
             // An unconditional `await` here — even on an already-resolved value
@@ -946,6 +968,9 @@ export class InvisibleWalletCore {
             const userId = isThenable<Uint8Array>(pendingUserId)
                 ? await pendingUserId
                 : pendingUserId;
+            // The label is derived from the user id, so it has to be computed
+            // after it — the two sides of this merge each had half of this.
+            const name   = normalizedUsername || defaultPasskeyLabel(userId);
 
             const resolvedRpId = this.resolveRpId();
 
@@ -1923,8 +1948,8 @@ export class InvisibleWalletCore {
             //    is to enrol a replacement credential for this wallet.
             const challenge = crypto.getRandomValues(new Uint8Array(32));
             const normalizedUsername = username ? username.normalize('NFC') : undefined;
-            const name   = normalizedUsername || 'Veil User';
             const userId = await resolveUserId(store);
+            const name   = normalizedUsername || defaultPasskeyLabel(userId);
             const resolvedRpId = this.resolveRpId();
 
             const {
@@ -2443,7 +2468,17 @@ export class InvisibleWalletCore {
         if (this.cipher) return this.cipher;
         const credentialId = await this.store.getItem('invisible_wallet_key_id');
         if (!credentialId) throw new Error('No passkey credential found. Please register first.');
-        this.cipher = await createLocalCipher({ credentialId, rpId: this.config.rpId, storage: this.store });
+        this.cipher = await createLocalCipher({
+            credentialId,
+            rpId: this.config.rpId,
+            storage: this.store,
+            // Stated here rather than inferred inside the cipher. Plenty of
+            // Android authenticators have no PRF at all, and refusing them
+            // would lock those users out of their own encrypted data, so the
+            // fallback stays on for this caller - but it is now a visible
+            // choice, and `encryptionMode()` reports which key is in use.
+            allowPlaintextFallback: true,
+        });
         return this.cipher;
     }
 
@@ -2496,12 +2531,14 @@ export class InvisibleWalletCore {
                 }
             },
             signMessage: async (message: string) => {
+                // Still read, still a precondition: signing needs a registered
+                // passkey. It is no longer passed on, because the result of
+                // this call goes to whichever site asked for it.
                 const keyId = await this.store.getItem('invisible_wallet_key_id');
                 if (!keyId) throw new Error('No passkey registered.');
                 const signed = await signMessage(
                     new TextEncoder().encode(message),
-                    this.signAuthEntry,
-                    keyId
+                    this.signAuthEntry
                 );
                 return JSON.stringify(signed);
             },

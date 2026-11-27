@@ -203,11 +203,15 @@ describe('ElectricityScreen (#1134)', () => {
   });
 
   describe('PayForGrid service tile', () => {
-    it('flips the power tile to live with route /electricity', () => {
+    // Gated 2026-11-04. The screen is built and these tests still cover it,
+    // but the purchase does not complete yet, so the tile sits behind the
+    // "soon" badge with no route. Flip this back — status 'live', route
+    // '/electricity' — in the same change that makes the flow work.
+    it('keeps the power tile gated until the purchase flow works', () => {
       const powerService = BILL_SERVICES.find((s) => s.id === 'power');
       expect(powerService).toBeDefined();
-      expect(powerService?.status).toBe('live');
-      expect(powerService?.route).toBe('/electricity');
+      expect(powerService?.status).toBe('soon');
+      expect(powerService?.route).toBeUndefined();
     });
   });
 

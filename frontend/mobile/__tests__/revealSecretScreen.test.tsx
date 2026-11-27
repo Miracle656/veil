@@ -61,6 +61,7 @@ jest.mock('expo-router', () => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { useEffect } = require('react');
   return {
+    useLocalSearchParams: () => ({}),
     useFocusEffect: (callback: () => (() => void) | void) => {
       useEffect(() => {
         const cleanup = callback();

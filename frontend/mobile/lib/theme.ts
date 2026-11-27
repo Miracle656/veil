@@ -64,12 +64,12 @@ export type ThemeColors = {
   /** Borders, dividers, and secondary button fills. */
   border: string;
   /**
-   * A border that has to read as an edge rather than a ruling.
+   * A border that has to be seen rather than merely felt.
    *
-   * `border` is a hairline at about 8% and disappears on a light screen. That
-   * is right for a divider and wrong for anything the screen is asking you to
-   * tap — an input, a checkbox, a radio — which then looks like text floating
-   * on the background. Use this for those, and `border` for everything else.
+   * `border` is deliberately faint — it rules dividers and card edges, where
+   * being noticed would be a fault. An input the screen is asking you to tap is
+   * the opposite: the NIN boxes drawn at `border` on a white screen were nearly
+   * invisible, so nobody knew there was anything to tap.
    */
   borderStrong: string;
   /** Screen and section titles. */
