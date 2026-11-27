@@ -1,8 +1,24 @@
 import { errorMessage } from '../lib/errorMessage';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as ExpoRouter from 'expo-router';
 import { useLocalSearchParams } from 'expo-router';
-import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import QRCode from 'react-native-qrcode-svg';
+import * as Clipboard from 'expo-clipboard';
+import { StrKey } from '@stellar/stellar-sdk';
 
 import { useTheme } from '../hooks/useTheme';
 import { useCurrency } from '../hooks/useCurrency';
@@ -18,7 +34,7 @@ import type { Contact } from '../hooks/useContacts';
 import { requireSigner } from '../lib/signer';
 import { requirePasskey } from '../lib/passkey';
 import { isPasskeyCancellation, PasskeyCeremonyError } from '../lib/passkeyOutcome';
-import { fetchContractAssetBalance } from '../lib/activity';
+import { fetchContractAssetBalance, getFeePayerAddress } from '../lib/activity';
 import { sendAssetFromContract, getFeePayerSpendableXlm, getFeePayerXlm, type FeePayerXlm } from '../lib/contractSpend';
 import { useWallet } from '../components/WalletProvider';
 import { deployWalletIfNeeded } from '../lib/deployWallet';
@@ -36,10 +52,31 @@ import {
 import { loadHoldings, unitPrice, type Holding } from '../lib/holdings';
 import { getNetworkName } from '../lib/network';
 import { isRegistryCode, resolveRequestedAsset } from '../lib/requestedAsset';
-import { ChevronDownIcon, ScanIcon, UsersIcon } from '../components/icons';
+import { ChevronDownIcon, CopyIcon, ScanIcon, ShareIcon, UsersIcon } from '../components/icons';
 import { TokenIcon } from '../components/TokenIcon';
 import { SuccessAnimation } from '../components/SuccessAnimation';
 import { SlideToConfirm } from '../components/SlideToConfirm';
+import { reclaimEscrowSafely } from '../lib/escrow';
+import {
+  BEARER_LINK_WARNING,
+  CLAIM_LINK_RESERVE_XLM,
+  DEFAULT_LINK_EXPIRY_SECONDS,
+  LINK_EXPIRY_OPTIONS,
+  MAX_CLAIM_LINK_NOTE_LENGTH,
+  ONE_TIME_SHARE_WARNING,
+  RECLAIM_DEVICE_KEY_WARNING,
+  createSenderClaimLink,
+  ensureClassicTrustlineForClaimLink,
+  estimateClaimLinkCost,
+  hasSmartWalletFundedConfirmation,
+  loadSenderClaimLinksOnChain,
+  markSenderLinkReclaimed,
+  markSmartWalletFundedConfirmation,
+  validateClaimLinkNote,
+  type CreatedSenderClaimLink,
+  type SenderCreatedLinkView,
+  type SenderLinkChainStatus,
+} from '../lib/sendClaimLink';
 
 /** expo-router yields `string | string[]` for a repeated query key. */
 function firstValue(value: string | string[] | undefined): string {
@@ -54,6 +91,25 @@ function fmtAmount(raw: string): string {
   return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
 
+function nextConfirmationId(): string {
+  return `link_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function statusBadgeLabel(status: SenderLinkChainStatus): string {
+  switch (status) {
+    case 'unclaimed':
+      return 'Unclaimed';
+    case 'claimed':
+      return 'Claimed';
+    case 'expired':
+      return 'Expired';
+    case 'reclaimed':
+      return 'Reclaimed';
+    case 'status_unknown':
+      return 'Could not be checked';
+  }
+}
+
 const QUICK = [
   { label: '25%', frac: 0.25 },
   { label: '50%', frac: 0.5 },
@@ -61,6 +117,7 @@ const QUICK = [
   { label: 'Max', frac: 1 },
 ];
 
+type SendMode = 'address' | 'link';
 type Step = 'form' | 'authorizing' | 'submitting' | 'done' | 'error';
 
 export default function SendScreen() {
@@ -71,7 +128,15 @@ export default function SendScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   // Deep links land here prefilled: `to`, `amount`, `asset` + `issuer`, `memo` + `memo_type` (#704).
-  const params = useLocalSearchParams<{ to?: string; amount?: string; asset?: string; issuer?: string; memo?: string; memo_type?: string }>();
+  const params = useLocalSearchParams<{
+    to?: string;
+    amount?: string;
+    asset?: string;
+    issuer?: string;
+    memo?: string;
+    memo_type?: string;
+    mode?: string;
+  }>();
 
   // A link the registry alone refuses (#791) fills in nothing, not even the
   // address: a half-applied request is how the wrong asset gets paid. A code
@@ -84,6 +149,9 @@ export default function SendScreen() {
     if (code && issuer && !isRegistryCode(code)) return false;
     return !resolveRequestedAsset(code, issuer, getNetworkName()).ok;
   });
+  const [mode, setMode] = useState<SendMode>(() =>
+    firstValue(params.mode) === 'link' ? 'link' : 'address',
+  );
   const [recipient, setRecipient] = useState(() => (refusedAtOpen ? '' : firstValue(params.to)));
   const [amount, setAmount] = useState(() => (refusedAtOpen ? '' : firstValue(params.amount)));
   const [memo, setMemo] = useState(() => (refusedAtOpen ? '' : firstValue(params.memo)));
@@ -93,6 +161,17 @@ export default function SendScreen() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [assetSheet, setAssetSheet] = useState(false);
+
+  // Claim-link state (#1285).
+  const [linkNote, setLinkNote] = useState('');
+  const [linkExpirySeconds, setLinkExpirySeconds] = useState(DEFAULT_LINK_EXPIRY_SECONDS);
+  const [confirmationId, setConfirmationId] = useState(nextConfirmationId);
+  const [createdLink, setCreatedLink] = useState<CreatedSenderClaimLink | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [createdLinks, setCreatedLinks] = useState<SenderCreatedLinkView[]>([]);
+  const [reclaimingId, setReclaimingId] = useState<string | null>(null);
+  const [stagedFromContract, setStagedFromContract] = useState(false);
+  const linkSubmitLockRef = useRef(false);
 
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [holdingsLoaded, setHoldingsLoaded] = useState(false);
@@ -122,6 +201,19 @@ export default function SendScreen() {
    */
   const [spendingXlm, setSpendingXlm] = useState<FeePayerXlm | null>(null);
 
+  const refreshCreatedLinks = useCallback(async () => {
+    try {
+      const fp = await getFeePayerAddress().catch(() => null);
+      const stored = await getWalletAddress().catch(() => null);
+      const classicSponsor = fp ?? (stored && stored.startsWith('G') ? stored : null);
+      if (!classicSponsor) return;
+      const items = await loadSenderClaimLinksOnChain(classicSponsor);
+      setCreatedLinks(items);
+    } catch {
+      // Non-fatal: link creation still works even if Horizon history cannot be read right now.
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -146,6 +238,11 @@ export default function SendScreen() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (mode !== 'link') return;
+    void refreshCreatedLinks();
+  }, [mode, refreshCreatedLinks]);
 
   const keyOf = (h: Holding) => `${h.code}:${h.issuer ?? 'native'}`;
 
@@ -193,7 +290,12 @@ export default function SendScreen() {
 
   const trimmed = recipient.trim();
   const recipientValid = isValidDestination(trimmed);
-  const showError = trimmed.length > 0 && !recipientValid;
+  const showError = mode === 'address' && trimmed.length > 0 && !recipientValid;
+
+  const selectedCode = selected?.code;
+  const selectedIssuer = selected?.issuer;
+  const selectedNative = selected?.native;
+
   // The contract's balance OF THE SELECTED ASSET. Previously this only ever
   // read native XLM, so the smart wallet could not be chosen as the source for
   // anything else — the routing would use it, but nothing on screen said so.
@@ -201,8 +303,8 @@ export default function SendScreen() {
     let alive = true;
     if (!contractAddr) return;
     const asset =
-      selected && !selected.native && selected.issuer
-        ? { code: selected.code, issuer: selected.issuer }
+      selectedCode && !selectedNative && selectedIssuer
+        ? { code: selectedCode, issuer: selectedIssuer }
         : undefined;
     setContractHeld(null);
     void fetchContractAssetBalance(contractAddr, asset)
@@ -213,10 +315,10 @@ export default function SendScreen() {
         if (alive) setContractHeld(null);
       });
     return () => { alive = false; };
-  }, [contractAddr, selected?.code, selected?.issuer, selected?.native]);
+  }, [contractAddr, selectedCode, selectedIssuer, selectedNative]);
 
   useEffect(() => {
-    if (!selected?.native) return;
+    if (!selected?.native && mode !== 'link') return;
     let alive = true;
     void getFeePayerXlm().then((x) => {
       if (alive) setSpendingXlm(x);
@@ -224,7 +326,7 @@ export default function SendScreen() {
     return () => {
       alive = false;
     };
-  }, [selected?.native, holdings]);
+  }, [selected?.native, holdings, mode]);
 
   const editable = step === 'form' || step === 'error';
   const amtNum = Number(amount);
@@ -233,7 +335,7 @@ export default function SendScreen() {
   // Any asset the contract actually holds can be its source — a SAC transfer
   // is asset-agnostic and needs no trustline on the contract side.
   const held = contractHeld ?? 0;
-  const contractSource = fromContract && !!contractAddr && held > 0;
+  const contractSource = fromContract && !!contractAddr && (held > 0 || stagedFromContract);
 
   /**
    * What the CLASSIC account alone holds.
@@ -259,16 +361,36 @@ export default function SendScreen() {
     spendingXlm && spendingXlm.balance > 0
       ? Math.min(classic, spendingXlm.spendable)
       : Math.max(0, classic - 1.5);
-  const spendable = contractSource
-    ? held
+  const rawSpendable = contractSource
+    ? stagedFromContract
+      ? Math.max(held, amtNum)
+      : held
     : selected && classicHeld !== null
       ? selected.native
         ? nativeSpendable(classicHeld)
         : classicHeld
       : null;
+
+  // Creating a claimable balance locks 1 XLM of refundable reserve on the
+  // classic account while the link is unclaimed. Deduct it when sending native
+  // XLM from the classic account so "Max" offers an amount that actually lands.
+  const spendable =
+    mode === 'link' && !contractSource && selected?.native && rawSpendable !== null
+      ? Math.max(0, rawSpendable - Number(CLAIM_LINK_RESERVE_XLM))
+      : rawSpendable;
+
   const insufficient = spendable !== null && amtNum > 0 && amtNum > spendable;
-  const memoError = memo ? (memoType ? validateMemo(memo, memoType) : validateMemoText(memo)) : null;
-  const canSubmit = recipientValid && amtNum > 0 && editable && !insufficient && !!selected && !requestProblem && !memoError;
+  const memoError =
+    mode === 'address' && memo ? (memoType ? validateMemo(memo, memoType) : validateMemoText(memo)) : null;
+  const linkNoteError = mode === 'link' ? validateClaimLinkNote(linkNote) : null;
+  const linkCost = useMemo(
+    () => estimateClaimLinkCost(amount, assetCode),
+    [amount, assetCode],
+  );
+  const canSubmit =
+    mode === 'link'
+      ? amtNum > 0 && editable && !insufficient && !!selected && !requestProblem && !linkNoteError
+      : recipientValid && amtNum > 0 && editable && !insufficient && !!selected && !requestProblem && !memoError;
 
   const up = selected ? unitPrice(selected) : null;
   const fiatOfAmount = up !== null && isFinite(amtNum) && amtNum > 0 ? format(amtNum * up) : null;
@@ -278,6 +400,11 @@ export default function SendScreen() {
     setPickerOpen(false);
   }, []);
 
+  const bumpConfirmationSession = () => {
+    setConfirmationId(nextConfirmationId());
+    setStagedFromContract(false);
+  };
+
   const handleQuick = (frac: number) => {
     // Off the SOURCE's spendable, not the combined holding. `spendable`
     // already carries the native reserve deduction, so Max is an amount the
@@ -285,9 +412,124 @@ export default function SendScreen() {
     if (spendable === null || !isFinite(spendable) || spendable <= 0) return;
     const usable = spendable * frac;
     setAmount(usable.toFixed(usable >= 1 ? 2 : 4));
+    bumpConfirmationSession();
+  };
+
+  const handleCreateClaimLink = async () => {
+    if (!canSubmit || linkSubmitLockRef.current) return;
+    const noteErr = validateClaimLinkNote(linkNote);
+    if (noteErr) {
+      setError(noteErr);
+      setStep('error');
+      return;
+    }
+    if (nonNative && (!selected?.issuer || !StrKey.isValidEd25519PublicKey(selected.issuer))) {
+      setError(`Cannot create a ${assetCode} claim link without a valid Stellar issuer address.`);
+      setStep('error');
+      return;
+    }
+
+    linkSubmitLockRef.current = true;
+    setError(null);
+    let movedFromSmartWalletThisAttempt = false;
+    try {
+      setStep('authorizing');
+
+      const stored = await getWalletAddress().catch(() => null);
+      await requirePasskey();
+      const signer = await requireSigner();
+
+      // When spending from the smart wallet contract, route the asset into the
+      // classic signer first via the existing __check_auth contract spend path,
+      // then create the Stellar claimable balance from that signer.
+      //
+      // If step 1 already settled on a previous attempt for this confirmationId
+      // and step 2 failed, skip pulling from the smart wallet again on retry —
+      // even if "Smart wallet" is still selected on screen.
+      const alreadyFundedFromWallet =
+        stagedFromContract || hasSmartWalletFundedConfirmation(confirmationId);
+
+      if (stored?.startsWith('C') && !alreadyFundedFromWallet) {
+        const spendAsset =
+          nonNative && selected?.issuer
+            ? { code: selected.code, issuer: selected.issuer }
+            : undefined;
+        const [liveContractBalance, fpSpendable] = await Promise.all([
+          fetchContractAssetBalance(stored, spendAsset),
+          getFeePayerSpendableXlm(),
+        ]);
+        const shouldPullFromContract =
+          contractSource ||
+          ((classicHeld ?? 0) < amtNum && amtNum <= liveContractBalance && liveContractBalance > 0);
+
+        if (shouldPullFromContract) {
+          if (amtNum > liveContractBalance) {
+            throw new Error(
+              `The smart wallet holds ${liveContractBalance.toFixed(2)} ${assetCode} — not enough for this amount.`,
+            );
+          }
+          const requiredClassicXlm = Number(CLAIM_LINK_RESERVE_XLM) + (spendAsset ? 0.5 : 0);
+          if (fpSpendable < Number(CLAIM_LINK_RESERVE_XLM)) {
+            throw new Error(
+              `Your Spending account needs at least ${requiredClassicXlm} XLM above its reserve to hold this claim link while unclaimed.`,
+            );
+          }
+          if (spendAsset) {
+            await ensureClassicTrustlineForClaimLink(signer, spendAsset);
+          }
+          await deployWalletIfNeeded(wallet.deploy, stored);
+          setStep('submitting');
+          await sendAssetFromContract(stored, signer.publicKey, amount, spendAsset);
+          markSmartWalletFundedConfirmation(confirmationId);
+          setStagedFromContract(true);
+          movedFromSmartWalletThisAttempt = true;
+        }
+      }
+
+      setStep('submitting');
+      const created = await createSenderClaimLink({
+        confirmationId,
+        signer,
+        amount,
+        asset: nonNative && selected ? { code: selected.code, issuer: selected.issuer ?? null } : undefined,
+        note: linkNote,
+        expirySeconds: linkExpirySeconds,
+      });
+
+      setStagedFromContract(false);
+      setCreatedLink(created);
+      setHash(created.txHash);
+      setStep('done');
+      // TODO(#1003): remove platform limitation call when multi-origin contract ships
+      void markFirstSpendCompleted(stored);
+      void refreshCreatedLinks();
+    } catch (err) {
+      if (isPasskeyCancellation(err)) {
+        setError(null);
+        setStep('form');
+        return;
+      }
+      const raw = err instanceof PasskeyCeremonyError ? err.message : errorMessage(err);
+      const name = err instanceof Error ? err.name : '';
+      const baseFriendly =
+        name === 'NotFoundError' || /^not found$/i.test(raw.trim())
+          ? 'Your fee-payer account has no XLM yet. Open Settings → Fund test XLM, then try again.'
+          : raw;
+      const friendly = movedFromSmartWalletThisAttempt
+        ? `${amount} ${assetCode} was moved to your Spending account, but creating the link failed: ${baseFriendly} Slide again to finish creating the link without transferring from your smart wallet a second time.`
+        : baseFriendly;
+      setError(friendly);
+      setStep('error');
+    } finally {
+      linkSubmitLockRef.current = false;
+    }
   };
 
   const handleSend = async () => {
+    if (mode === 'link') {
+      await handleCreateClaimLink();
+      return;
+    }
     if (!canSubmit) return;
     if (memo) {
       const memoErr = memoType ? validateMemo(memo, memoType) : validateMemoText(memo);
@@ -344,6 +586,7 @@ export default function SendScreen() {
           fetchContractAssetBalance(stored, spendAsset),
           getFeePayerSpendableXlm(),
         ]);
+        void fpSpendable;
 
         // Prefer the contract when it can actually cover the amount — it is the
         // wallet the user believes they are spending from, and the fee payer is
@@ -364,8 +607,8 @@ export default function SendScreen() {
           // recovered wallet never wrote, and refused.
           await deployWalletIfNeeded(wallet.deploy, stored);
           setStep('submitting');
-          const hash = await sendAssetFromContract(stored, destination, amount, spendAsset);
-          setHash(hash);
+          const txHash = await sendAssetFromContract(stored, destination, amount, spendAsset);
+          setHash(txHash);
           setStep('done');
           // TODO(#1003): remove platform limitation call when multi-origin contract ships
           void markFirstSpendCompleted(stored);
@@ -418,11 +661,65 @@ export default function SendScreen() {
     }
   };
 
+  const handleReclaimFromList = async (item: SenderCreatedLinkView) => {
+    if (!item.canReclaim || reclaimingId) return;
+    setReclaimingId(item.balanceId);
+    setError(null);
+    try {
+      await requirePasskey();
+      const signer = await requireSigner();
+      const outcome = await reclaimEscrowSafely({
+        signer,
+        balanceId: item.balanceId,
+        expiresAt: item.expiresAt,
+        assetCode: item.assetCode,
+        assetIssuer: item.assetIssuer,
+      });
+      if (outcome.status !== 'reclaimed') {
+        setError(outcome.message);
+        setStep('error');
+        if (outcome.status === 'already_claimed' || outcome.status === 'already_reclaimed') {
+          await refreshCreatedLinks();
+        }
+        return;
+      }
+      await markSenderLinkReclaimed(signer.publicKey, item.balanceId);
+      await refreshCreatedLinks();
+    } catch (err) {
+      if (!isPasskeyCancellation(err)) {
+        setError(errorMessage(err));
+        setStep('error');
+      }
+    } finally {
+      setReclaimingId(null);
+    }
+  };
+
+  const handleShareCreatedLink = async () => {
+    if (!createdLink) return;
+    await Share.share({
+      message: createdLink.claimUrl,
+      title: `Claim ${createdLink.amount} ${createdLink.assetCode} on Veil`,
+    });
+  };
+
+  const handleCopyCreatedLink = async () => {
+    if (!createdLink) return;
+    await Clipboard.setStringAsync(createdLink.claimUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 5000);
+  };
+
   const reset = () => {
     setRecipient('');
     setAmount('');
     setMemo('');
     setMemoType(null);
+    setLinkNote('');
+    setCreatedLink(null);
+    setCopiedLink(false);
+    setStagedFromContract(false);
+    setConfirmationId(nextConfirmationId());
     setStep('form');
     setHash(null);
     setError(null);
@@ -431,6 +728,86 @@ export default function SendScreen() {
   const busy = step === 'authorizing' || step === 'submitting';
 
   if (step === 'done') {
+    if (mode === 'link' && createdLink) {
+      return (
+        <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="send-screen">
+          <ScrollView contentContainerStyle={styles.body} showsVerticalScrollIndicator={false}>
+            <FlowHeader title="Claim link ready" />
+
+            <View style={styles.bearerCard} testID="send-link-bearer-warning">
+              <Text style={styles.bearerText}>{BEARER_LINK_WARNING}</Text>
+            </View>
+
+            <View style={[styles.card, styles.linkDoneCard]}>
+              <Text style={styles.resultTitle}>
+                {createdLink.amount} {createdLink.assetCode}
+              </Text>
+              {createdLink.note ? (
+                <Text style={styles.linkDoneNote} testID="send-link-done-note">
+                  {createdLink.note}
+                </Text>
+              ) : null}
+
+              <View style={styles.qrWrap} testID="send-link-qr">
+                <QRCode
+                  value={createdLink.claimUrl}
+                  size={168}
+                  backgroundColor="#F6F7F8"
+                  color="#0F0F0F"
+                />
+              </View>
+
+              <View style={styles.shareActionsRow}>
+                <Pressable
+                  testID="send-link-share"
+                  accessibilityRole="button"
+                  onPress={() => void handleShareCreatedLink()}
+                  style={({ pressed }) => [styles.cta, styles.flexBtn, pressed && styles.pressed]}
+                >
+                  <ShareIcon size={17} color={colors.onAccent} />
+                  <Text style={styles.ctaText}>Share link</Text>
+                </Pressable>
+                <Pressable
+                  testID="send-link-copy"
+                  accessibilityRole="button"
+                  onPress={() => void handleCopyCreatedLink()}
+                  style={({ pressed }) => [styles.secondaryBtn, pressed && styles.pressed]}
+                >
+                  <CopyIcon size={17} color={colors.textPrimary} />
+                  <Text style={styles.secondaryBtnText}>{copiedLink ? 'Copied' : 'Copy'}</Text>
+                </Pressable>
+              </View>
+
+              <Text style={styles.reclaimKeyNote} testID="send-link-one-time-warning">
+                {ONE_TIME_SHARE_WARNING}
+              </Text>
+
+              <View style={styles.costSummaryDone}>
+                <View style={styles.costLine}>
+                  <Text style={styles.feeLabel}>Locked in link</Text>
+                  <Text style={styles.costVal}>
+                    {createdLink.cost.amount} {createdLink.cost.assetCode}
+                  </Text>
+                </View>
+                <View style={styles.costLine}>
+                  <Text style={styles.feeLabel}>Refundable reserve</Text>
+                  <Text style={styles.costVal}>{createdLink.cost.reserveXlm} XLM</Text>
+                </View>
+                <View style={styles.costLine}>
+                  <Text style={styles.feeLabel}>Network fee paid</Text>
+                  <Text style={styles.costVal}>{createdLink.cost.feeXlm} XLM</Text>
+                </View>
+              </View>
+            </View>
+
+            <Pressable style={[styles.cta, styles.doneCta]} onPress={reset} testID="send-reset">
+              <Text style={styles.ctaText}>Create another link</Text>
+            </Pressable>
+          </ScrollView>
+        </SafeAreaView>
+      );
+    }
+
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'bottom']} testID="send-screen">
         <View style={styles.body}>
@@ -463,6 +840,41 @@ export default function SendScreen() {
       >
         <FlowHeader title="Send" />
 
+        {/* Delivery mode: direct address vs bearer claim link (#1285) */}
+        <View style={styles.modeSwitchRow} accessibilityRole="tablist">
+          <Pressable
+            testID="send-mode-address"
+            accessibilityRole="tab"
+            accessibilityState={{ selected: mode === 'address' }}
+            disabled={!editable}
+            onPress={() => {
+              setMode('address');
+              setError(null);
+            }}
+            style={[styles.modePill, mode === 'address' && styles.sourcePillActive]}
+          >
+            <Text style={[styles.sourceText, mode === 'address' && styles.sourceTextActive]}>
+              To an address
+            </Text>
+          </Pressable>
+          <Pressable
+            testID="send-mode-link"
+            accessibilityRole="tab"
+            accessibilityState={{ selected: mode === 'link' }}
+            disabled={!editable}
+            onPress={() => {
+              setMode('link');
+              bumpConfirmationSession();
+              setError(null);
+            }}
+            style={[styles.modePill, mode === 'link' && styles.sourcePillActive]}
+          >
+            <Text style={[styles.sourceText, mode === 'link' && styles.sourceTextActive]}>
+              Send as a link
+            </Text>
+          </Pressable>
+        </View>
+
         {/* Asset */}
         <Text style={styles.section}>Asset</Text>
         <Pressable
@@ -485,11 +897,12 @@ export default function SendScreen() {
         </Pressable>
 
         {/* Source — shown whenever the contract holds some of this asset */}
-        {contractAddr && held > 0 && (
+        {contractAddr && (held > 0 || stagedFromContract) && (
           <>
             <Text style={styles.section}>From</Text>
             <View style={styles.sourceRow}>
               <Pressable
+                testID="send-source-spending"
                 onPress={() => setFromContract(false)}
                 accessibilityRole="button"
                 style={[styles.sourcePill, !fromContract && styles.sourcePillActive]}
@@ -505,6 +918,7 @@ export default function SendScreen() {
                 </Text>
               </Pressable>
               <Pressable
+                testID="send-source-smart-wallet"
                 onPress={() => setFromContract(true)}
                 accessibilityRole="button"
                 style={[styles.sourcePill, fromContract && styles.sourcePillActive]}
@@ -531,7 +945,10 @@ export default function SendScreen() {
               testID="send-amount"
               style={styles.amountInput}
               value={amount}
-              onChangeText={setAmount}
+              onChangeText={(val) => {
+                setAmount(val);
+                bumpConfirmationSession();
+              }}
               placeholder="0"
               placeholderTextColor={colors.textFaint}
               keyboardType="decimal-pad"
@@ -547,7 +964,9 @@ export default function SendScreen() {
               // Quoting the total here is what let someone type an amount the
               // selected account could not cover.
               const shown =
-                spendable === null ? null : (contractSource ? held : spendable).toFixed(4);
+                spendable === null
+                  ? null
+                  : (contractSource && !stagedFromContract ? held : spendable).toFixed(4);
               if (shown === null) return 'Checking balance…';
               return insufficient
                 ? `Not enough ${assetCode} — ${contractSource ? 'smart wallet has' : 'spending has'} ${mask(fmtAmount(shown))}`
@@ -577,66 +996,148 @@ export default function SendScreen() {
           </View>
         </View>
 
-        {/* To */}
-        <Text style={styles.section}>To</Text>
-        <View style={[styles.card, styles.rowBetween]}>
-          <TextInput
-            style={styles.toInput}
-            testID="send-recipient"
-            value={recipient}
-            onChangeText={setRecipient}
-            placeholder="Address or name*domain"
-            placeholderTextColor={colors.textFaint}
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={editable}
-          />
-          <View style={styles.toActions}>
-            <Pressable onPress={() => setScannerOpen(true)} disabled={!editable} accessibilityLabel="Scan a QR code" style={styles.roundBtn}>
-              <ScanIcon size={16} color={colors.textSecondary} />
-            </Pressable>
-            <Pressable onPress={() => setPickerOpen(true)} disabled={!editable} accessibilityLabel="Choose a contact" style={styles.roundBtn}>
-              <UsersIcon size={16} color={colors.textSecondary} />
-            </Pressable>
-          </View>
-        </View>
-        {showError && (
-          <Text style={styles.errorText} testID="send-recipient-error">Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
+        {mode === 'address' ? (
+          <>
+            {/* To */}
+            <Text style={styles.section}>To</Text>
+            <View style={[styles.card, styles.rowBetween]}>
+              <TextInput
+                style={styles.toInput}
+                testID="send-recipient"
+                value={recipient}
+                onChangeText={setRecipient}
+                placeholder="Address or name*domain"
+                placeholderTextColor={colors.textFaint}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={editable}
+              />
+              <View style={styles.toActions}>
+                <Pressable onPress={() => setScannerOpen(true)} disabled={!editable} accessibilityLabel="Scan a QR code" style={styles.roundBtn}>
+                  <ScanIcon size={16} color={colors.textSecondary} />
+                </Pressable>
+                <Pressable onPress={() => setPickerOpen(true)} disabled={!editable} accessibilityLabel="Choose a contact" style={styles.roundBtn}>
+                  <UsersIcon size={16} color={colors.textSecondary} />
+                </Pressable>
+              </View>
+            </View>
+            {showError && (
+              <Text style={styles.errorText} testID="send-recipient-error">Enter a valid Stellar address (G/M/C…) or federated address (name*domain).</Text>
+            )}
+
+            {/* Memo */}
+            <Text style={styles.section}>Memo · optional</Text>
+            <View style={styles.card}>
+              <TextInput
+                style={styles.memoInput}
+                testID="send-memo"
+                value={memo}
+                onChangeText={setMemo}
+                placeholder="Add a note for the recipient"
+                placeholderTextColor={colors.textFaint}
+                editable={editable}
+              />
+            </View>
+            {memoError && (
+              <Text style={styles.errorText} testID="send-memo-error">
+                {memoError}
+              </Text>
+            )}
+
+            {/* Fee */}
+            <View style={styles.feeRow}>
+              <Text style={styles.feeLabel}>Network fee</Text>
+              <Text style={styles.feeValue}>Sponsored</Text>
+            </View>
+
+            {/* The memo is how exchange deposits get credited: show it on the
+                confirmation surface so a scanned SEP-7 memo is seen before submit (#704). */}
+            {memo ? (
+              <View style={styles.feeRow}>
+                <Text style={styles.feeLabel}>Memo</Text>
+                <Text style={styles.feeValue}>{memoType ? `${memo} (${memoType})` : memo}</Text>
+              </View>
+            ) : null}
+          </>
+        ) : (
+          <>
+            {/* Expiry window */}
+            <Text style={styles.section}>Reclaim after</Text>
+            <View style={styles.chipsLeft}>
+              {LINK_EXPIRY_OPTIONS.map((opt) => {
+                const selectedOpt = linkExpirySeconds === opt.seconds;
+                return (
+                  <Pressable
+                    key={opt.id}
+                    testID={`send-link-expiry-${opt.id}`}
+                    accessibilityRole="button"
+                    disabled={!editable}
+                    onPress={() => {
+                      setLinkExpirySeconds(opt.seconds);
+                      bumpConfirmationSession();
+                    }}
+                    style={[styles.chip, selectedOpt && styles.chipActive]}
+                  >
+                    <Text style={[styles.chipText, selectedOpt && styles.chipTextActive]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Locked-down plain-text note */}
+            <Text style={styles.section}>Note · optional ({MAX_CLAIM_LINK_NOTE_LENGTH} chars max)</Text>
+            <View style={styles.card}>
+              <TextInput
+                style={styles.memoInput}
+                testID="send-link-note"
+                value={linkNote}
+                onChangeText={(val) => {
+                  setLinkNote(val);
+                  bumpConfirmationSession();
+                }}
+                maxLength={MAX_CLAIM_LINK_NOTE_LENGTH + 10}
+                placeholder="Plain note shown on the claim screen (no links)"
+                placeholderTextColor={colors.textFaint}
+                editable={editable}
+              />
+            </View>
+            {linkNoteError && (
+              <Text style={styles.errorText} testID="send-link-note-error">
+                {linkNoteError}
+              </Text>
+            )}
+
+            {/* Full cost breakdown + explicit bearer & device-key reclaim disclosures */}
+            <View style={[styles.card, styles.costCard]} testID="send-link-cost-card">
+              <View style={styles.costLine}>
+                <Text style={styles.feeLabel}>Amount</Text>
+                <Text style={styles.costVal} testID="send-link-cost-amount">
+                  {linkCost.amount} {linkCost.assetCode}
+                </Text>
+              </View>
+              <View style={styles.costLine}>
+                <Text style={styles.feeLabel}>Refundable link reserve</Text>
+                <Text style={styles.costVal} testID="send-link-cost-reserve">
+                  {linkCost.reserveXlm} XLM (returned on claim or reclaim)
+                </Text>
+              </View>
+              <View style={styles.costLine}>
+                <Text style={styles.feeLabel}>Network fee</Text>
+                <Text style={styles.costVal} testID="send-link-cost-fee">
+                  {linkCost.feeXlm} XLM
+                </Text>
+              </View>
+              <Text style={styles.bearerInline} testID="send-link-preconfirm-bearer">
+                {BEARER_LINK_WARNING}
+              </Text>
+              <Text style={styles.reclaimKeyNote} testID="send-link-reclaim-key-warning">
+                {RECLAIM_DEVICE_KEY_WARNING}
+              </Text>
+            </View>
+          </>
         )}
-
-        {/* Memo */}
-        <Text style={styles.section}>Memo · optional</Text>
-        <View style={styles.card}>
-          <TextInput
-            style={styles.memoInput}
-            testID="send-memo"
-            value={memo}
-            onChangeText={setMemo}
-            placeholder="Add a note for the recipient"
-            placeholderTextColor={colors.textFaint}
-            editable={editable}
-          />
-        </View>
-        {memoError && (
-          <Text style={styles.errorText} testID="send-memo-error">
-            {memoError}
-          </Text>
-        )}
-
-        {/* Fee */}
-        <View style={styles.feeRow}>
-          <Text style={styles.feeLabel}>Network fee</Text>
-          <Text style={styles.feeValue}>Sponsored</Text>
-        </View>
-
-        {/* The memo is how exchange deposits get credited: show it on the
-            confirmation surface so a scanned SEP-7 memo is seen before submit (#704). */}
-        {memo ? (
-          <View style={styles.feeRow}>
-            <Text style={styles.feeLabel}>Memo</Text>
-            <Text style={styles.feeValue}>{memoType ? `${memo} (${memoType})` : memo}</Text>
-          </View>
-        ) : null}
 
         {step === 'error' && error && (
           <Text style={styles.errorBanner} testID="send-error">
@@ -644,7 +1145,7 @@ export default function SendScreen() {
           </Text>
         )}
         {requestProblem && <Text style={styles.errorBanner} accessibilityRole="alert">{requestProblem}</Text>}
-        {nonNative && (
+        {mode === 'address' && nonNative && (
           <Text style={styles.note}>
             Sending {assetCode} — the recipient needs a {assetCode} trustline, at a classic (G…) address.
           </Text>
@@ -674,7 +1175,11 @@ export default function SendScreen() {
                 </Text>
               </View>
             )}
-            <SlideToConfirm label="Slide to send" onConfirm={handleSend} testID="send-submit" />
+            <SlideToConfirm
+              label={mode === 'link' ? 'Slide to create link' : 'Slide to send'}
+              onConfirm={handleSend}
+              testID="send-submit"
+            />
           </>
         ) : (
           <View
@@ -694,8 +1199,59 @@ export default function SendScreen() {
                     ? 'Not enough balance'
                     : step === 'error'
                       ? 'Try again'
-                      : 'Enter details to send'}
+                      : mode === 'link'
+                        ? 'Enter an amount to create link'
+                        : 'Enter details to send'}
             </Text>
+          </View>
+        )}
+
+        {/* Sender's created claim links verified live on-chain (#1285) */}
+        {mode === 'link' && createdLinks.length > 0 && (
+          <View style={styles.createdListSection} testID="send-created-links-list">
+            <View style={styles.rowBetween}>
+              <Text style={styles.section}>Your created links (on-chain)</Text>
+              <Pressable
+                testID="send-open-claim-links"
+                accessibilityRole="button"
+                onPress={() => ExpoRouter.router?.push?.('/claim-links' as never)}
+              >
+                <Text style={styles.reclaimInlineText}>Tied-up reserves</Text>
+              </Pressable>
+            </View>
+            {createdLinks.map((item) => (
+              <View
+                key={item.balanceId}
+                style={[styles.card, styles.createdLinkRow]}
+                testID={`send-created-link-${item.balanceId}`}
+              >
+                <View style={styles.rowBetween}>
+                  <Text style={styles.assetCode}>
+                    {item.amount} {item.assetCode}
+                  </Text>
+                  <Text
+                    style={styles.createdStatus}
+                    testID={`send-created-link-status-${item.balanceId}`}
+                  >
+                    {statusBadgeLabel(item.status)}
+                  </Text>
+                </View>
+                {item.note ? <Text style={styles.assetSub}>{item.note}</Text> : null}
+                {item.canReclaim && (
+                  <Pressable
+                    testID={`send-link-reclaim-${item.balanceId}`}
+                    accessibilityRole="button"
+                    disabled={reclaimingId === item.balanceId}
+                    onPress={() => void handleReclaimFromList(item)}
+                    style={({ pressed }) => [styles.reclaimInlineBtn, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.reclaimInlineText}>
+                      {reclaimingId === item.balanceId ? 'Reclaiming…' : 'Reclaim'}
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            ))}
           </View>
         )}
       </ScrollView>
@@ -711,7 +1267,11 @@ export default function SendScreen() {
               return (
                 <Pressable
                   key={keyOf(h)}
-                  onPress={() => { setSelectedKey(keyOf(h)); setAssetSheet(false); }}
+                  onPress={() => {
+                    setSelectedKey(keyOf(h));
+                    bumpConfirmationSession();
+                    setAssetSheet(false);
+                  }}
                   style={({ pressed }) => [styles.sheetRow, pressed && styles.pressed]}
                 >
                   <TokenIcon code={h.code} size={34} />
@@ -750,10 +1310,10 @@ export default function SendScreen() {
               holdings,
             );
             if (scanned.ok && scanned.asset) {
-              const held = holdings.find(
+              const heldAsset = holdings.find(
                 (h) => h.code === scanned.asset!.code && h.issuer === scanned.asset!.issuer,
               );
-              if (held) setSelectedKey(keyOf(held));
+              if (heldAsset) setSelectedKey(keyOf(heldAsset));
             }
           }
           setScannerOpen(false);
@@ -770,6 +1330,16 @@ const createStyles = (colors: ThemeColors) =>
     screen: { flex: 1, backgroundColor: colors.background },
     flex: { flex: 1 },
     body: { paddingHorizontal: 24, paddingTop: 16, paddingBottom: 40 },
+    modeSwitchRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
+    modePill: {
+      flex: 1,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 100,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
     section: {
       color: colors.textFaint,
       fontFamily: fontFamily.bodySemiBold,
@@ -807,6 +1377,7 @@ const createStyles = (colors: ThemeColors) =>
     balanceLine: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 12, marginTop: 14 },
     balanceWarn: { color: colors.danger, fontFamily: fontFamily.bodyMedium },
     chips: { flexDirection: 'row', gap: 6, marginTop: 10, flexWrap: 'wrap', justifyContent: 'center' },
+    chipsLeft: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
     chip: {
       borderWidth: 1,
       borderColor: colors.border,
@@ -845,6 +1416,22 @@ const createStyles = (colors: ThemeColors) =>
     memoInput: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 14, padding: 0 },
     errorText: { color: colors.danger, fontFamily: fontFamily.body, fontSize: 13, lineHeight: 18, marginTop: 8 },
 
+    costCard: { marginTop: 18, gap: 8 },
+    costLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+    costVal: { color: colors.textPrimary, fontFamily: fontFamily.address, fontSize: 13 },
+    bearerInline: {
+      color: colors.accentText,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 12.5,
+      marginTop: 4,
+    },
+    reclaimKeyNote: {
+      color: colors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      lineHeight: 17,
+    },
+
     feeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 18, paddingHorizontal: 4 },
     feeLabel: { color: colors.textMuted, fontFamily: fontFamily.body, fontSize: 13 },
     feeValue: { color: colors.positive, fontFamily: fontFamily.bodyMedium, fontSize: 13 },
@@ -871,11 +1458,89 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 17,
       marginTop: 18,
     },
+    flexBtn: { flex: 1, marginTop: 0 },
+    secondaryBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+      borderRadius: 100,
+      paddingHorizontal: 18,
+      paddingVertical: 16,
+    },
+    secondaryBtnText: {
+      color: colors.textPrimary,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 14,
+    },
     disabled: { opacity: 0.4 },
     ctaText: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
 
     doneWrap: { alignItems: 'center', marginTop: 52, gap: 20 },
     doneCta: { alignSelf: 'stretch', marginTop: 16 },
+    bearerCard: {
+      marginTop: 18,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.accent,
+      borderRadius: 14,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+    },
+    bearerText: {
+      color: colors.accentText,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    linkDoneCard: { alignItems: 'center', gap: 14, marginTop: 14, paddingVertical: 20 },
+    linkDoneNote: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    qrWrap: {
+      padding: 14,
+      borderRadius: 16,
+      backgroundColor: '#F6F7F8',
+    },
+    shareActionsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'stretch',
+      gap: 10,
+    },
+    costSummaryDone: {
+      alignSelf: 'stretch',
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingTop: 12,
+      gap: 6,
+    },
+    createdListSection: { marginTop: 10, gap: 8 },
+    createdLinkRow: { gap: 6 },
+    createdStatus: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 12,
+    },
+    reclaimInlineBtn: {
+      marginTop: 6,
+      alignSelf: 'flex-start',
+      borderWidth: 1,
+      borderColor: colors.accent,
+      borderRadius: 100,
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+    },
+    reclaimInlineText: {
+      color: colors.accentText,
+      fontFamily: fontFamily.bodySemiBold,
+      fontSize: 12,
+    },
     resultCard: {
       backgroundColor: colors.surface,
       borderRadius: 20,
@@ -885,7 +1550,7 @@ const createStyles = (colors: ThemeColors) =>
       gap: 8,
       marginTop: 24,
     },
-    resultTitle: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 22 },
+    resultTitle: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 28 },
     label: { color: colors.textFaint, fontFamily: fontFamily.body, fontSize: 13, marginTop: 6 },
     hash: { color: colors.accent, fontFamily: fontFamily.address, fontSize: 14 },
     pressed: { opacity: 0.6 },
