@@ -181,7 +181,7 @@ Set these in Vercel (or `.env.local` for local dev):
 | `NEXT_PUBLIC_SOROBAN_RPC_URL` | Optional testnet Soroban RPC override |
 | `NEXT_PUBLIC_MAINNET_RPC_URL` | Mainnet Soroban RPC provider URL |
 | `NEXT_PUBLIC_WRAITH_URL` | Wraith indexer URL (transfer history) |
-| `NEXT_PUBLIC_AGENT_WS_URL` | Veil Agent WebSocket URL |
+| `NEXT_PUBLIC_AGENT_WS_URL` | Deprecated. The wallet agent uses its own `/api/agent` route; no WebSocket URL is configured. |
 
 ---
 
@@ -218,3 +218,30 @@ npm start
 Deployed on Vercel. Every push to `main` triggers an automatic deployment. The Vercel project is configured with all required environment variables.
 
 PWA service worker and offline page are only active in production builds (`NODE_ENV=production`). The service worker is disabled in `next.config.js` when `NODE_ENV === 'development'` to avoid caching issues during local development.
+
+---
+
+## Writing interaction tests
+
+Use `@testing-library/react` and `@testing-library/user-event` for all new interaction tests (e.g., clicks, state transitions, effects). Existing tests using `renderToStaticMarkup` from `react-dom/server` remain unchanged and are not migrated.
+
+Place test files ending in `.test.tsx` inside a `__tests__/` folder next to the component or page, or in `tests/`.
+
+### Example
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import MyButton from './MyButton'
+
+jest.mock('@/lib/someModule', () => ({
+  doAction: jest.fn(),
+}))
+
+test('triggers action on click', async () => {
+  const user = userEvent.setup()
+  render(<MyButton />)
+  const button = screen.getByRole('button', { name: 'Submit' })
+  await user.click(button)
+})
+```

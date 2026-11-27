@@ -9,14 +9,22 @@ import type { Metadata } from 'next'
  * and the QR, labelled "Scan to install", was a hand-drawn pattern that
  * decoded to nothing at all.
  *
- * It resolves the APK from the newest GitHub release rather than hardcoding a
- * link, because the asset is named after its versionCode (`veil-mobile-v23.apk`)
- * and so changes every build. Resolving it here means the page never points at
- * a stale build and the release workflow needs no second, stable-named upload.
+ * The button links to a fixed-name asset, `veil.apk`, which the release
+ * workflow uploads beside the versioned one. GitHub redirects
+ * `releases/latest/download/veil.apk` to the newest release itself, so the link
+ * is right the moment a build is published and nothing here can make it stale.
+ *
+ * It used to take the link from the GitHub API at render time. That answer is
+ * cached, and a refresh that fails keeps the old one: on 2026-11-12 this page
+ * was still handing out build 26 a day after build 28 shipped, and a new user
+ * installed it twice and hit a bug 28 had fixed. The API is now used only for
+ * the label next to the button (build number and size), where being an hour
+ * behind costs nothing.
  */
 
 const RELEASES = 'https://github.com/Miracle656/veil/releases'
 const API = 'https://api.github.com/repos/Miracle656/veil/releases/latest'
+const LATEST_APK = `${RELEASES}/latest/download/veil.apk`
 
 export const metadata: Metadata = {
   title: 'Install Veil for Android',
@@ -35,6 +43,7 @@ type Release = {
   assets?: { name?: string; browser_download_url?: string; size?: number }[]
 }
 
+/** Build number and size for the label. Never the download link. */
 async function latestApk() {
   try {
     const res = await fetch(API, {
@@ -44,9 +53,8 @@ async function latestApk() {
     if (!res.ok) return null
     const release = (await res.json()) as Release
     const apk = release.assets?.find((a) => a.name?.endsWith('.apk'))
-    if (!apk?.browser_download_url) return null
+    if (!apk) return null
     return {
-      url: apk.browser_download_url,
       // Megabytes, because a number of bytes means nothing to someone deciding
       // whether to start this download on mobile data.
       mb: apk.size ? Math.round(apk.size / 1e5) / 10 : null,
@@ -54,8 +62,7 @@ async function latestApk() {
       published: release.published_at ?? null,
     }
   } catch {
-    // The page still works without it: the button falls back to the releases
-    // list, which is one tap further but never wrong.
+    // The page works without it: the button does not depend on this.
     return null
   }
 }
@@ -110,7 +117,7 @@ export default async function AppPage() {
 
         <div className="mt-10 flex flex-wrap items-center gap-4">
           <a
-            href={apk?.url ?? `${RELEASES}/latest`}
+            href={LATEST_APK}
             className="inline-flex items-center gap-2 rounded-full bg-gold px-7 py-[15px] text-[14px] font-semibold text-near-black transition-transform hover:scale-[1.02]"
           >
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -122,7 +129,7 @@ export default async function AppPage() {
                 strokeLinejoin="round"
               />
             </svg>
-            {apk ? 'Download the APK' : 'Get it from Releases'}
+            Download the APK
           </a>
 
           {apk ? (

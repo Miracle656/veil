@@ -22,6 +22,31 @@
  * `response.data`.
  */
 
+/**
+ * Said when the account that pays does not exist on the network, which is what
+ * a wallet that has never received money looks like. Horizon answers 404 and
+ * the SDK's message for that is the two words "Not Found".
+ */
+export const EMPTY_WALLET_MESSAGE =
+  'This wallet has no money in it yet. Add money first, then try again.'
+
+/** True when Horizon said the thing asked for does not exist (HTTP 404). */
+export function isHorizonNotFound(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { name?: unknown; response?: { status?: unknown } }
+  return e.response?.status === 404 || e.name === 'NotFoundError'
+}
+
+/** Load the paying account, turning "it does not exist" into a sentence a person can act on. */
+export async function loadPayingAccount<T>(load: () => Promise<T>): Promise<T> {
+  try {
+    return await load()
+  } catch (err) {
+    if (isHorizonNotFound(err)) throw new Error(EMPTY_WALLET_MESSAGE)
+    throw err
+  }
+}
+
 /** Horizon's failure document, as much of it as matters here. */
 type HorizonFailure = {
   extras?: {

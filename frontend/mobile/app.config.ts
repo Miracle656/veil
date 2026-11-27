@@ -32,7 +32,7 @@ const BUNDLE_IDENTIFIER = 'xyz.veil.wallet';
  * listed here stops opening in the browser once the app is installed, so the
  * marketing site and docs must keep working as web pages.
  */
-const LINKED_PATHS = ['pay', 'send', 'receive', 'create-wallet', 'link-discord'];
+const LINKED_PATHS = ['pay', 'send', 'receive', 'create-wallet', 'claim'];
 
 /**
  * Launcher shortcuts. Mirrors `READ_ONLY_ACTIONS` in `lib/voice/actions.ts`,
@@ -104,7 +104,7 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: false,
     intentFilters: [
       // Verified app links. `autoVerify` makes Android fetch
-      // https://app.veil.xyz/.well-known/assetlinks.json at install time; if the
+      // https://app.useveilapp.xyz/.well-known/assetlinks.json at install time; if the
       // fingerprint there does not match the installed build, links keep opening
       // in the browser rather than failing outright.
       {

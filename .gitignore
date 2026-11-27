@@ -14,6 +14,8 @@ sdk/.verify-consumer-*/
 # Frontend
 frontend/website/node_modules/
 frontend/website/.next/
+# TypeScript's incremental build cache ("incremental": true), not source.
+frontend/website/tsconfig.tsbuildinfo
 frontend/docs/node_modules/
 frontend/docs/.next/
 frontend/wallet/node_modules/

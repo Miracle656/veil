@@ -59,7 +59,7 @@ export default function FeePayerSettingsPage() {
     // Idempotent and memoised — if the fee-payer is already established this
     // session (the common case, set up at dashboard mount), this resolves
     // immediately with no prompt and no re-derivation.
-    ensureFeePayer().finally(refresh)
+    ensureFeePayer(undefined, { passive: true }).finally(refresh)
   }, [refresh])
 
   const downgraded = isFeePayerPrfDowngrade(diagnostics)
@@ -138,16 +138,18 @@ export default function FeePayerSettingsPage() {
             ceremony ran. Every later visit takes the pinned fast path and
             records `prfAttempted: false`, so a card gated on it is invisible
             exactly when someone comes looking for a way out. */}
-        {mode === 'random' && (
+        {(mode === 'random' || mode === 'legacy') && (
           <div className="card-md" style={{ marginBottom: '1.5rem' }}>
             <p style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--off-white)', marginBottom: '0.375rem' }}>
-              Move this onto your passkey
+              {mode === 'legacy' ? 'Is this the wrong address?' : 'Move this onto your passkey'}
             </p>
             <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.5)', lineHeight: 1.5 }}>
-              If you dismissed the passkey prompt when this wallet was set up,
-              that is why this account is random. Try again and complete it
-              &mdash; while this account is still empty, the fee payer can move
-              onto a key your passkey rebuilds on any device.
+              {mode === 'legacy'
+                ? 'If your spending address changed by itself and the new one is empty, your passkey can find the old one. '
+                  + 'Tap below and complete the prompt. Nothing is sent, and it only switches while this address is empty.'
+                : 'If you dismissed the passkey prompt when this wallet was set up, that is why this account is random. '
+                  + 'Try again and complete it. While this account is still empty, the fee payer can move onto a key '
+                  + 'your passkey rebuilds on any device.'}
             </p>
             <button
               type="button"
@@ -168,21 +170,27 @@ export default function FeePayerSettingsPage() {
             >
               {retrying ? 'Asking your passkey…' : 'Try your passkey again'}
             </button>
-            {retry && (
-              <p
-                style={{
-                  fontSize: '0.8125rem',
-                  lineHeight: 1.5,
-                  marginTop: '0.75rem',
-                  color: retry.ok ? 'var(--teal)' : 'rgba(246,247,248,0.7)',
-                }}
-              >
-                {retry.ok
-                  ? 'Done. Your fee payer is now derived from your passkey, so any device with it can rebuild this account.'
-                  : retry.message}
-              </p>
-            )}
           </div>
+        )}
+
+        {/* Outside the card above: a successful repair changes the mode, which
+            removes that card, and the result must not vanish with it. */}
+        {retry && (
+          <p
+            role="status"
+            style={{
+              fontSize: '0.8125rem',
+              lineHeight: 1.5,
+              marginBottom: '1.5rem',
+              color: retry.ok ? 'var(--teal)' : 'rgba(246,247,248,0.7)',
+            }}
+          >
+            {retry.ok
+              ? retry.foundOnChain
+                ? 'Found it. Your spending account is back on the address your passkey makes, shown below.'
+                : 'Done. Your fee payer is now derived from your passkey, so any device with it can rebuild this account.'
+              : retry.message}
+          </p>
         )}
 
         {/* Active fee payer */}

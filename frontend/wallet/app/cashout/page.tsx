@@ -21,6 +21,12 @@ import { PageHeader } from '@/components/ui/primitives'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { NIGERIAN_BANKS, bankName } from '@/lib/nigerianBanks'
 import { getNetwork, getUsdcIssuer } from '@/lib/network'
+import { readContractAssetBalances } from '@/lib/contractAssets'
+import { movableWalletAssets, type IssuedWalletAsset } from '@/lib/moveFromWallet'
+import { moveAssetToSpending } from '@/lib/moveToSpending'
+import { horizonErrorMessage } from '@/lib/horizonError'
+import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import {
   OfframpUnavailable,
   createOrder,
@@ -117,6 +123,46 @@ export default function CashOutPage() {
   const [feePayer, setFeePayer] = useState<string | null>(null)
   /** null means "not known", never "zero" — the two lead to different actions. */
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null)
+  // USDC held by the wallet contract. Money another app pays out lands there,
+  // and cash-out sends from the spending account, so without this a person who
+  // was just paid sees "Available 0.00" with the money one step away.
+  const [walletUsdc, setWalletUsdc] = useState<IssuedWalletAsset | null>(null)
+  const [isMoving, setIsMoving] = useState(false)
+  const [moveError, setMoveError] = useState<string | null>(null)
+  /** Bumped after a move so both balances are read again. */
+  const [balancesNonce, setBalancesNonce] = useState(0)
+
+  useEffect(() => {
+    if (!contractAddress) return
+    let active = true
+    const issuer = getUsdcIssuer()
+    readContractAssetBalances(contractAddress, [])
+      .then((held) => {
+        if (!active) return
+        setWalletUsdc(
+          movableWalletAssets(held).find((a) => a.code === 'USDC' && a.issuer === issuer) ?? null,
+        )
+      })
+      .catch(() => { /* a failed read offers nothing; it never invents a balance */ })
+    return () => { active = false }
+  }, [contractAddress, balancesNonce])
+
+  async function handleMoveFromWallet() {
+    if (!walletUsdc || !contractAddress) return
+    setIsMoving(true)
+    setMoveError(null)
+    try {
+      await moveAssetToSpending(walletUsdc, contractAddress)
+      setBalancesNonce((n) => n + 1)
+    } catch (err: unknown) {
+      // Closing the passkey prompt moved nothing; the offer simply stays.
+      if (!isPasskeyCancellation(err)) {
+        setMoveError(horizonErrorMessage(err) ?? passkeyErrorMessage(err))
+      }
+    } finally {
+      setIsMoving(false)
+    }
+  }
 
   // The refund address must be the CLASSIC account. A Veil wallet is a
   // contract, which cannot hold a trustline, so a refund sent there could never
@@ -178,7 +224,7 @@ export default function CashOutPage() {
     return () => {
       cancelled = true
     }
-  }, [feePayer])
+  }, [feePayer, balancesNonce])
 
   const ngn = Number(amountNGN.replace(/[^0-9.]/g, ''))
   const estimatedUsdc = rate && ngn > 0 ? ngn / rate : null
@@ -422,6 +468,30 @@ export default function CashOutPage() {
                 {usdcBalance === null ? 'Balance unknown' : `Available ${usdcBalance.toFixed(2)} USDC`}
               </p>
 
+              {walletUsdc && (
+                <div className="card" style={{ marginTop: '0.875rem', padding: '0.875rem 1rem' }}>
+                  <p style={{ fontSize: '0.8125rem', lineHeight: 1.5, margin: '0 0 0.625rem' }}>
+                    You have {walletUsdc.balance} USDC in your wallet address. Move it to your spending wallet to cash it out. You will be asked for your passkey.
+                  </p>
+                  {moveError && (
+                    <p role="alert" style={{ fontSize: '0.75rem', color: 'var(--teal)', lineHeight: 1.5, margin: '0 0 0.625rem' }}>
+                      {moveError}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => void handleMoveFromWallet()}
+                    disabled={isMoving}
+                    style={{ fontSize: '0.875rem', padding: '0.625rem 1.25rem', width: 'auto' }}
+                  >
+                    {isMoving
+                      ? <div className="spinner" style={{ width: '14px', height: '14px' }} />
+                      : `Move ${walletUsdc.balance} USDC`}
+                  </button>
+                </div>
+              )}
+
               <div
                 style={{
                   display: 'flex',
@@ -623,7 +693,7 @@ export default function CashOutPage() {
                 <button
                   onClick={() =>
                     router.push(
-                      `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC&issuer=${getUsdcIssuer()}`,
+                      `/send?to=${encodeURIComponent(order.walletAddress)}&amount=${order.amountStableCoin}&asset=USDC&issuer=${getUsdcIssuer()}&lock=asset`,
                     )
                   }
                   style={{ ...primary, flex: 1 }}

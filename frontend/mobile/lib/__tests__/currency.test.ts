@@ -70,3 +70,16 @@ describe('getRate', () => {
     expect(getRate('NGN')).toBe(CURRENCIES.NGN.fallbackRate);
   });
 });
+
+
+describe('formatFiat letter-based currency symbol spacing', () => {
+  it('formats KSh and R with a separating space', () => {
+    expect(formatFiat(1500, 'KES', 1)).toBe('KSh 1,500');
+    expect(formatFiat(1500, 'ZAR', 1)).toBe('R 1,500.00');
+  });
+
+  it('preserves no-space formatting for glyph symbols', () => {
+    expect(formatFiat(1500, 'USD', 1)).toBe('$1,500.00');
+    expect(formatFiat(1500, 'NGN', 1)).toBe('₦1,500');
+  });
+});
