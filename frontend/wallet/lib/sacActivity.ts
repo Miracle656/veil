@@ -12,8 +12,10 @@
  * - A full back-scan runs once per session; later refreshes only scan the new
  *   ledgers closed since the last successful scan (1-2 RPC requests at steady
  *   state).
- * - If a scan fails or is rate-limited, cached rows are kept and `lastLedger`
- *   does not advance so the next refresh retries the same span.
+ * - If any chunk or scan fails (or is rate-limited), cached rows are kept,
+ *   `lastLedger` is NOT advanced so the next refresh retries the span, and
+ *   `failed: true` is returned so the UI can distinguish a failed load from an
+ *   empty history.
  */
 import { Address, Asset, scValToNative, xdr, rpc as SorobanRpc } from '@stellar/stellar-sdk'
 import type { TxRecord } from '@/components/TxDetailSheet'
@@ -24,6 +26,8 @@ const CHUNK = 2_900 // ~4h of ledgers, under mainnet RPC processing caps
 const BACKSCAN_CHUNKS = 3 // ~12h initial lookback
 const MAX_CACHED = 50
 const MAX_PAGES_PER_WINDOW = 4
+const PAGE_LIMIT = 100
+const STROOPS_PER_UNIT = 10_000_000n
 
 /** Minimal RPC surface needed for event scanning (allows test injection). */
 export interface SacRpcClient {
@@ -31,6 +35,11 @@ export interface SacRpcClient {
   getEvents: (
     request: SorobanRpc.Server.GetEventsRequest,
   ) => Promise<{ events: SorobanRpc.Api.EventResponse[]; cursor?: string }>
+}
+
+export interface SacActivityResult {
+  records: TxRecord[]
+  failed: boolean
 }
 
 const sacScan: { key: string; lastLedger: number; records: TxRecord[] } = {
@@ -44,6 +53,18 @@ export function resetSacActivityCache(): void {
   sacScan.key = ''
   sacScan.lastLedger = 0
   sacScan.records = []
+}
+
+/**
+ * Format a 7-decimal stroop integer as a decimal string using integer math,
+ * avoiding floating-point precision loss.
+ */
+export function formatStroops(value: bigint | number | string): string {
+  const n = typeof value === 'bigint' ? value : BigInt(String(value).trim())
+  const abs = n < 0n ? -n : n
+  const whole = abs / STROOPS_PER_UNIT
+  const frac = (abs % STROOPS_PER_UNIT).toString().padStart(7, '0')
+  return `${whole}.${frac}`
 }
 
 /**
@@ -74,28 +95,12 @@ export function assetFromContractId(
 }
 
 /**
- * Extract the asset code from a SAC `transfer` event's fourth topic.
- *
- * The Stellar Asset Contract emits `"native"` for XLM and `"CODE:ISSUER"` for
- * an issued asset. Falls back to `"XLM"` when the topic is absent (older events).
- */
-export function assetFromTopic(topic: unknown): string {
-  if (!topic) return 'XLM'
-  try {
-    const raw = String(scValToNative(topic as xdr.ScVal))
-    if (!raw || raw === 'native') return 'XLM'
-    const code = raw.split(':')[0]
-    return code && code.length > 0 ? code : 'XLM'
-  } catch {
-    return 'XLM'
-  }
-}
-
-/**
  * Map raw Soroban SAC `transfer` events into web history rows.
  *
- * Transfers between two addresses that both belong to this wallet, or neither,
- * are ignored.
+ * Always labels the asset from the emitting `contractId` via
+ * `assetFromContractId` (never from the untrusted fourth event topic, which any
+ * contract can spoof). Transfers between two addresses that both belong to this
+ * wallet, or neither, are ignored.
  */
 export function mapSacTransferEvents(
   events: SorobanRpc.Api.EventResponse[],
@@ -115,17 +120,13 @@ export function mapSacTransferEvents(
       const toOurs = ours.has(to)
       if (fromOurs === toOurs) continue
 
-      const stroops = scValToNative(ev.value) as bigint | number
-      const amount = (Math.abs(Number(stroops)) / 10_000_000).toFixed(7)
+      const stroops = scValToNative(ev.value) as bigint | number | string
+      const amount = formatStroops(stroops)
       const contractId =
         typeof ev.contractId === 'string'
           ? ev.contractId
           : ev.contractId?.contractId()
-      const asset = topic[3]
-        ? assetFromTopic(topic[3])
-        : contractId
-          ? assetFromContractId(contractId, network)
-          : 'XLM'
+      const asset = assetFromContractId(contractId, network)
       const ms = ev.ledgerClosedAt ? new Date(ev.ledgerClosedAt).getTime() : NaN
       const timestamp = Number.isFinite(ms) ? Math.floor(ms / 1000) : 0
 
@@ -146,7 +147,42 @@ export function mapSacTransferEvents(
   return rows
 }
 
-/** Scan one [startLedger, endLedger] window, following the cursor up to 4 pages. */
+/**
+ * Deduplicate rows across two secondary sources (e.g. RPC events and Wraith
+ * indexer) without collapsing distinct transfers that share a transaction hash.
+ *
+ * Every row in `primary` is kept. A row in `secondary` is dropped only when an
+ * unmatched row in `primary` has the exact same `(hash, type, amount, asset,
+ * counterparty)` transfer signature.
+ */
+export function dedupeSecondarySources(primary: TxRecord[], secondary: TxRecord[]): TxRecord[] {
+  const counts = new Map<string, number>()
+  const keyOf = (r: TxRecord) =>
+    r.hash ? `${r.hash}|${r.type}|${r.amount}|${r.asset}|${r.counterparty}` : ''
+
+  for (const r of primary) {
+    const k = keyOf(r)
+    if (k) counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+
+  const out: TxRecord[] = [...primary]
+  for (const r of secondary) {
+    const k = keyOf(r)
+    const remaining = k ? (counts.get(k) ?? 0) : 0
+    if (remaining > 0) {
+      counts.set(k, remaining - 1)
+      continue
+    }
+    out.push(r)
+  }
+  return out
+}
+
+/**
+ * Scan one [startLedger, endLedger] window, following the cursor up to 4 pages.
+ * Stops as soon as a page returns fewer than PAGE_LIMIT events (modern RPCs
+ * return a cursor on every response even when no more events exist).
+ */
 async function scanWindow(
   server: SacRpcClient,
   filters: SorobanRpc.Server.GetEventsRequest['filters'],
@@ -158,10 +194,11 @@ async function scanWindow(
   for (let page = 0; page < MAX_PAGES_PER_WINDOW; page++) {
     const res = await server.getEvents(
       cursor
-        ? { cursor, filters, limit: 100 }
-        : { startLedger, endLedger, filters, limit: 100 },
+        ? { cursor, filters, limit: PAGE_LIMIT }
+        : { startLedger, endLedger, filters, limit: PAGE_LIMIT },
     )
     events.push(...res.events)
+    if (res.events.length < PAGE_LIMIT) break
     cursor = res.cursor
     if (!cursor) break
   }
@@ -178,9 +215,9 @@ export async function loadContractSacActivity(
   addresses: string[],
   limit = MAX_CACHED,
   options: { server?: SacRpcClient; network?: VeilNetworkName } = {},
-): Promise<TxRecord[]> {
+): Promise<SacActivityResult> {
   const cleanAddresses = [...new Set(addresses.filter(Boolean))]
-  if (cleanAddresses.length === 0) return []
+  if (cleanAddresses.length === 0) return { records: [], failed: false }
 
   const net = getNetwork()
   const networkName = options.network ?? net.name
@@ -206,6 +243,7 @@ export async function loadContractSacActivity(
     const events: SorobanRpc.Api.EventResponse[] = []
     const incremental =
       !!cached && cached.lastLedger > 0 && latest.sequence - cached.lastLedger < CHUNK
+    let anyChunkFailed = false
 
     if (incremental) {
       if (latest.sequence > cached.lastLedger) {
@@ -216,14 +254,16 @@ export async function loadContractSacActivity(
             ...(await scanWindow(server, filters, cached.lastLedger + 1, latest.sequence)),
           )
         } catch {
-          return cached.records.slice(0, limit)
+          return { records: cached.records.slice(0, limit), failed: true }
         }
       }
     } else {
       // Full back-scan, newest chunk first so partial coverage keeps the most
-      // recent activity. A failed chunk retries once at half width, then concedes.
+      // recent activity. A failed chunk retries once at half width; if it still
+      // fails, we mark the scan incomplete so lastLedger is NOT advanced.
       for (let c = 0; c < BACKSCAN_CHUNKS; c++) {
         const endLedger = latest.sequence - c * CHUNK
+        let chunkOk = false
         for (const width of [CHUNK, Math.floor(CHUNK / 2)]) {
           try {
             events.push(
@@ -234,11 +274,13 @@ export async function loadContractSacActivity(
                 endLedger,
               )),
             )
+            chunkOk = true
             break
           } catch {
-            // fall through to the narrower width, or concede the chunk
+            // fall through to the narrower width, or record failure
           }
         }
+        if (!chunkOk) anyChunkFailed = true
         if (endLedger - CHUNK + 1 <= 1) break
       }
     }
@@ -247,7 +289,7 @@ export async function loadContractSacActivity(
 
     const seen = new Set<string>()
     const merged: TxRecord[] = []
-    for (const r of [...fresh, ...(incremental && cached ? cached.records : [])]) {
+    for (const r of [...fresh, ...(cached ? cached.records : [])]) {
       if (seen.has(r.id)) continue
       seen.add(r.id)
       merged.push(r)
@@ -255,10 +297,12 @@ export async function loadContractSacActivity(
     merged.sort((a, b) => b.timestamp - a.timestamp)
 
     sacScan.key = key
-    sacScan.lastLedger = latest.sequence
+    if (!anyChunkFailed) {
+      sacScan.lastLedger = latest.sequence
+    }
     sacScan.records = merged.slice(0, MAX_CACHED)
-    return sacScan.records.slice(0, limit)
+    return { records: sacScan.records.slice(0, limit), failed: anyChunkFailed }
   } catch {
-    return cached ? cached.records.slice(0, limit) : []
+    return { records: cached ? cached.records.slice(0, limit) : [], failed: true }
   }
 }

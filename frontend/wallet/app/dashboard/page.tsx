@@ -35,7 +35,7 @@ import { Amount, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, hydrateCurrency, useCurrency } from '@/lib/currency'
 import { useActivityFeed, initActivityFeed, hydrateActivityFeed, appendActivityFeed } from '@/lib/activityFeed'
 import { mapOperations, mergeHistory, HISTORY_MAX_ROWS, HISTORY_PAGE_SIZE, type HorizonOperation } from '@/lib/walletHistory'
-import { assetFromContractId, loadContractSacActivity } from '@/lib/sacActivity'
+import { assetFromContractId, dedupeSecondarySources, formatStroops, loadContractSacActivity } from '@/lib/sacActivity'
 import { loadBlendPositions, type BlendPosition } from '@/lib/blend'
 import { KNOWN_SAC_CONTRACT_IDS, getAssetIssuer } from '@/lib/assets'
 import { buildPortfolio } from '@/lib/portfolio'
@@ -112,6 +112,7 @@ function DashboardPageContent() {
   const [wraithOutCursor, setWraithOutCursor] = useState<string | null>(null)
   const [hasMorePages, setHasMorePages]       = useState(false)
   const [isLoadingMore, setIsLoadingMore]     = useState(false)
+  const [activityLoadError, setActivityLoadError] = useState(false)
   // PRF downgrade: surfaced as a dismissible banner (issue #629).
   const [prfDowngradeDismissed, setPrfDowngradeDismissed] = useState(false)
   const [showPrfDowngrade, setShowPrfDowngrade]           = useState(false)
@@ -350,7 +351,7 @@ function DashboardPageContent() {
           ...inData.transfers.map(t => ({
             id:           `w-${t.id}`,
             type:         'received' as const,
-            amount:       (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+            amount:       formatStroops(t.amount),
             asset:        assetFromContractId(t.contractId, activeNetwork),
             counterparty: t.fromAddress ?? 'unknown',
             timestamp:    Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
@@ -359,7 +360,7 @@ function DashboardPageContent() {
           ...outData.transfers.map(t => ({
             id:           `w-${t.id}`,
             type:         'sent' as const,
-            amount:       (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+            amount:       formatStroops(t.amount),
             asset:        assetFromContractId(t.contractId, activeNetwork),
             counterparty: t.toAddress ?? 'unknown',
             timestamp:    Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
@@ -369,10 +370,12 @@ function DashboardPageContent() {
       } catch { /* Wraith offline — fall back to Horizon + RPC events */ }
     }
 
-    const sacRecords = await sacPromise
+    const sacResult = await sacPromise
+    const secondaryRecords = dedupeSecondarySources(sacResult.records, wraithRecords)
     // Join Horizon with RPC events and indexer rows. Horizon wins on shared tx
     // hashes; a payment and its fee in Horizon keep their own ids.
-    txRecords = mergeHistory(txRecords, [...sacRecords, ...wraithRecords]).slice(0, HISTORY_MAX_ROWS)
+    txRecords = mergeHistory(txRecords, secondaryRecords).slice(0, HISTORY_MAX_ROWS)
+    setActivityLoadError(sacResult.failed && txRecords.length === 0)
 
     // ── 4. Check for new incoming transfers → agent notification badge ─────
     const lastVisit = parseInt(localStorage.getItem('veil_agent_last_visit') ?? '0', 10)
@@ -477,7 +480,7 @@ function DashboardPageContent() {
             newInCursor = data.next_cursor ?? null
             additionalRecords.push(...data.transfers.map(t => ({
               id: `w-${t.id}`, type: 'received' as const,
-              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+              amount: formatStroops(t.amount),
               asset: assetFromContractId(t.contractId, activeNetwork),
               counterparty: t.fromAddress ?? 'unknown',
               timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
@@ -491,7 +494,7 @@ function DashboardPageContent() {
             newOutCursor = data.next_cursor ?? null
             additionalRecords.push(...data.transfers.map(t => ({
               id: `w-${t.id}`, type: 'sent' as const,
-              amount: (Math.abs(Number(t.amount)) / 10_000_000).toFixed(7),
+              amount: formatStroops(t.amount),
               asset: assetFromContractId(t.contractId, activeNetwork),
               counterparty: t.toAddress ?? 'unknown',
               timestamp: Math.floor(new Date(t.ledgerClosedAt).getTime() / 1000),
@@ -990,7 +993,7 @@ function DashboardPageContent() {
             </div>
             {recent.length === 0 ? (
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '14px 0' }}>
-                {loading ? 'Loading…' : 'Nothing yet.'}
+                {loading ? 'Loading…' : activityLoadError ? 'Could not load recent activity.' : 'Nothing yet.'}
               </p>
             ) : recent.map((tx) => (
               <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>

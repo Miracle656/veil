@@ -194,7 +194,6 @@ export function mergeHistory(horizon: TxRecord[], indexer: TxRecord[]): TxRecord
     if (seenIds.has(row.id)) continue
     if (row.hash && horizonHashes.has(row.hash)) continue
     seenIds.add(row.id)
-    if (row.hash) horizonHashes.add(row.hash)
     rows.push(row)
   }
   // Newest first. Rows of one transaction keep the order Horizon gave them.

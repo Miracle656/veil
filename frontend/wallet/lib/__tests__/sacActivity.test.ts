@@ -5,7 +5,8 @@ import { NETWORKS } from '../network'
 import { mergeHistory } from '../walletHistory'
 import {
   assetFromContractId,
-  assetFromTopic,
+  dedupeSecondarySources,
+  formatStroops,
   loadContractSacActivity,
   mapSacTransferEvents,
   resetSacActivityCache,
@@ -20,6 +21,9 @@ const OTHER_G = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 4)).publicKey()
 const UNKNOWN_CONTRACT = StrKey.encodeContract(Buffer.alloc(32, 9))
 const ISSUER_G = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 5)).publicKey()
 
+const TESTNET_XLM_SAC = Asset.native().contractId(NETWORKS.testnet.networkPassphrase)
+const TESTNET_USDC_SAC = KNOWN_SAC_CONTRACT_IDS.testnet.USDC
+
 function makeTransferEvent(opts: {
   id: string
   from: string
@@ -28,7 +32,7 @@ function makeTransferEvent(opts: {
   assetTopic?: string | null
   txHash: string
   ledgerClosedAt?: string
-  contractId?: string
+  contractId: string
 }): SorobanRpc.Api.EventResponse {
   const topic: xdr.ScVal[] = [
     xdr.ScVal.scvSymbol('transfer'),
@@ -42,7 +46,7 @@ function makeTransferEvent(opts: {
     type: 'contract',
     ledger: 100_000,
     ledgerClosedAt: opts.ledgerClosedAt ?? '2026-11-20T12:00:00Z',
-    contractId: opts.contractId ?? UNKNOWN_CONTRACT,
+    contractId: opts.contractId,
     id: opts.id,
     pagingToken: opts.id,
     topic,
@@ -53,13 +57,14 @@ function makeTransferEvent(opts: {
 }
 
 describe('SAC transfer event mapping', () => {
-  it('maps an incoming transfer sent straight to the wallet C address with the right token and amount', () => {
+  it('maps an incoming transfer sent straight to the wallet C address using the emitting contract id', () => {
     const ev = makeTransferEvent({
       id: 'ev-1',
       from: SENDER_G,
       to: WALLET_C,
       stroops: 125_000_000n, // 12.5 USDC
       assetTopic: `USDC:${ISSUER_G}`,
+      contractId: TESTNET_USDC_SAC,
       txHash: 'tx-incoming-usdc',
       ledgerClosedAt: '2026-11-20T12:30:00Z',
     })
@@ -78,6 +83,30 @@ describe('SAC transfer event mapping', () => {
     ])
   })
 
+  it('does not trust spoofed fourth topics from an unknown contract', () => {
+    const spoofedNative = makeTransferEvent({
+      id: 'ev-spoof-xlm',
+      from: SENDER_G,
+      to: WALLET_C,
+      stroops: 100_000_000n,
+      assetTopic: 'native',
+      contractId: UNKNOWN_CONTRACT,
+      txHash: 'tx-spoof-xlm',
+    })
+    const spoofedUsdc = makeTransferEvent({
+      id: 'ev-spoof-usdc',
+      from: SENDER_G,
+      to: WALLET_C,
+      stroops: 100_000_000n,
+      assetTopic: `USDC:${ISSUER_G}`,
+      contractId: UNKNOWN_CONTRACT,
+      txHash: 'tx-spoof-usdc',
+    })
+
+    const rows = mapSacTransferEvents([spoofedNative, spoofedUsdc], [WALLET_C, SPENDING_G], 'testnet')
+    expect(rows.map((r) => r.asset)).toEqual([UNKNOWN_CONTRACT, UNKNOWN_CONTRACT])
+  })
+
   it('maps an outgoing native XLM transfer from the wallet C address', () => {
     const ev = makeTransferEvent({
       id: 'ev-2',
@@ -85,6 +114,7 @@ describe('SAC transfer event mapping', () => {
       to: OTHER_G,
       stroops: 50_000_000n,
       assetTopic: 'native',
+      contractId: TESTNET_XLM_SAC,
       txHash: 'tx-outgoing-xlm',
     })
 
@@ -106,7 +136,7 @@ describe('SAC transfer event mapping', () => {
       from: WALLET_C,
       to: SPENDING_G,
       stroops: 10_000_000n,
-      assetTopic: 'native',
+      contractId: TESTNET_XLM_SAC,
       txHash: 'tx-internal',
     })
 
@@ -119,7 +149,7 @@ describe('SAC transfer event mapping', () => {
       from: SENDER_G,
       to: OTHER_G,
       stroops: 10_000_000n,
-      assetTopic: 'native',
+      contractId: TESTNET_XLM_SAC,
       txHash: 'tx-other',
     })
 
@@ -127,17 +157,23 @@ describe('SAC transfer event mapping', () => {
   })
 })
 
-describe('token lookup', () => {
-  it('reads XLM and issued asset codes from the fourth SAC topic', () => {
-    expect(assetFromTopic(nativeToScVal('native', { type: 'string' }))).toBe('XLM')
-    expect(assetFromTopic(nativeToScVal(`USDC:${ISSUER_G}`, { type: 'string' }))).toBe('USDC')
-    expect(assetFromTopic(undefined)).toBe('XLM')
+describe('integer stroop formatting', () => {
+  it('formats exact 7-decimal amounts without floating-point precision loss', () => {
+    expect(formatStroops(0n)).toBe('0.0000000')
+    expect(formatStroops(1n)).toBe('0.0000001')
+    expect(formatStroops(125_000_000n)).toBe('12.5000000')
+    expect(formatStroops(-42_000_003n)).toBe('4.2000003')
+    // Beyond Number.MAX_SAFE_INTEGER (9007199254740991)
+    expect(formatStroops(123_456_789_012_345_678_901n)).toBe('12345678901234.5678901')
+    expect(formatStroops('9007199254740999')).toBe('900719925.4740999')
   })
+})
 
+describe('token lookup', () => {
   it('resolves verified contract IDs and never defaults unknown contracts to XLM', () => {
-    expect(assetFromContractId(Asset.native().contractId(NETWORKS.testnet.networkPassphrase), 'testnet')).toBe('XLM')
+    expect(assetFromContractId(TESTNET_XLM_SAC, 'testnet')).toBe('XLM')
     expect(assetFromContractId(Asset.native().contractId(NETWORKS.mainnet.networkPassphrase), 'mainnet')).toBe('XLM')
-    expect(assetFromContractId(KNOWN_SAC_CONTRACT_IDS.testnet.USDC, 'testnet')).toBe('USDC')
+    expect(assetFromContractId(TESTNET_USDC_SAC, 'testnet')).toBe('USDC')
     expect(assetFromContractId(KNOWN_SAC_CONTRACT_IDS.mainnet.USDC, 'mainnet')).toBe('USDC')
     expect(assetFromContractId(KNOWN_SAC_CONTRACT_IDS.mainnet.USDT0, 'mainnet')).toBe('USDT0')
 
@@ -182,7 +218,31 @@ describe('merging Horizon, RPC event, and indexer rows', () => {
     expect(merged[0].type).toBe('swapped')
   })
 
-  it('never shows a transaction twice when both RPC events and the indexer report it', () => {
+  it('keeps two distinct payments in one transaction when Horizon has no row for that hash', () => {
+    const payment1 = {
+      id: 'ev-1',
+      type: 'received' as const,
+      amount: '10.0000000',
+      asset: 'USDC',
+      counterparty: SENDER_G,
+      timestamp: 300,
+      hash: 'tx-multi',
+    }
+    const payment2 = {
+      id: 'ev-2',
+      type: 'received' as const,
+      amount: '5.0000000',
+      asset: 'USDC',
+      counterparty: OTHER_G,
+      timestamp: 300,
+      hash: 'tx-multi',
+    }
+
+    const merged = mergeHistory([], dedupeSecondarySources([payment1, payment2], []))
+    expect(merged.map((r) => r.id)).toEqual(['ev-1', 'ev-2'])
+  })
+
+  it('removes duplicates when both RPC events and the indexer report the same transfer', () => {
     const eventRow = {
       id: 'ev-99',
       type: 'received' as const,
@@ -202,25 +262,25 @@ describe('merging Horizon, RPC event, and indexer rows', () => {
       hash: 'tx-c-incoming',
     }
 
-    const merged = mergeHistory([], [eventRow, indexerRow])
+    const merged = mergeHistory([], dedupeSecondarySources([eventRow], [indexerRow]))
     expect(merged).toHaveLength(1)
     expect(merged[0].id).toBe('ev-99')
   })
 })
 
-describe('loadContractSacActivity caching and steady-state polling', () => {
+describe('loadContractSacActivity caching, paging, and failure handling', () => {
   beforeEach(() => {
     resetSacActivityCache()
   })
 
-  it('runs one back-scan, then makes at most 2 RPC requests on steady-state refreshes', async () => {
+  it('stops paging when a page returns fewer than 100 events even if cursor is always present', async () => {
     let latestSeq = 50_000
     const initialEv = makeTransferEvent({
       id: 'ev-initial',
       from: SENDER_G,
       to: WALLET_C,
       stroops: 10_000_000n,
-      assetTopic: `USDC:${ISSUER_G}`,
+      contractId: TESTNET_USDC_SAC,
       txHash: 'tx-initial',
       ledgerClosedAt: '2026-11-20T12:00:00Z',
     })
@@ -229,7 +289,7 @@ describe('loadContractSacActivity caching and steady-state polling', () => {
       from: SENDER_G,
       to: WALLET_C,
       stroops: 20_000_000n,
-      assetTopic: 'native',
+      contractId: TESTNET_XLM_SAC,
       txHash: 'tx-new',
       ledgerClosedAt: '2026-11-20T12:01:00Z',
     })
@@ -237,18 +297,19 @@ describe('loadContractSacActivity caching and steady-state polling', () => {
     const getLatestLedger = jest.fn(async () => ({ sequence: latestSeq }))
     const getEvents = jest.fn(async (req: SorobanRpc.Server.GetEventsRequest) => {
       if ('startLedger' in req && req.startLedger === 50_001) {
-        return { events: [newEv] }
+        return { events: [newEv], cursor: 'always-present-cursor' }
       }
       if ('endLedger' in req && req.endLedger === 50_000) {
-        return { events: [initialEv] }
+        return { events: [initialEv], cursor: 'always-present-cursor' }
       }
-      return { events: [] }
+      return { events: [], cursor: 'always-present-cursor' }
     })
     const server: SacRpcClient = { getLatestLedger, getEvents }
 
-    // First call: full back-scan (3 chunks)
+    // First call: 1 getLatestLedger + 3 getEvents (1 per chunk, NOT 4 per chunk)
     const first = await loadContractSacActivity([WALLET_C, SPENDING_G], 50, { server, network: 'testnet' })
-    expect(first.map((r) => r.id)).toEqual(['ev-initial'])
+    expect(first.failed).toBe(false)
+    expect(first.records.map((r) => r.id)).toEqual(['ev-initial'])
     expect(getLatestLedger).toHaveBeenCalledTimes(1)
     expect(getEvents).toHaveBeenCalledTimes(3)
 
@@ -258,19 +319,56 @@ describe('loadContractSacActivity caching and steady-state polling', () => {
     latestSeq = 50_005
 
     const second = await loadContractSacActivity([WALLET_C, SPENDING_G], 50, { server, network: 'testnet' })
-    expect(second.map((r) => r.id)).toEqual(['ev-new', 'ev-initial'])
+    expect(second.failed).toBe(false)
+    expect(second.records.map((r) => r.id)).toEqual(['ev-new', 'ev-initial'])
     expect(getLatestLedger).toHaveBeenCalledTimes(1)
     expect(getEvents).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps cached rows when a subsequent scan fails or is rate-limited', async () => {
+  it('does not record a back-scan as complete when a chunk fails, and retries on the next call', async () => {
+    const server: SacRpcClient = {
+      getLatestLedger: jest.fn(async () => ({ sequence: 70_000 })),
+      getEvents: jest.fn(async () => {
+        throw new Error('503 Service Unavailable')
+      }),
+    }
+
+    const first = await loadContractSacActivity([WALLET_C], 50, { server, network: 'testnet' })
+    expect(first.failed).toBe(true)
+    expect(first.records).toEqual([])
+
+    // Now the RPC recovers: because lastLedger was NOT advanced, it runs the
+    // full back-scan (3 chunks) instead of skipping straight to incremental.
+    const recoveredEv = makeTransferEvent({
+      id: 'ev-recovered',
+      from: SENDER_G,
+      to: WALLET_C,
+      stroops: 30_000_000n,
+      contractId: TESTNET_XLM_SAC,
+      txHash: 'tx-recovered',
+    })
+    ;(server.getEvents as jest.Mock).mockReset()
+    ;(server.getEvents as jest.Mock).mockImplementation(async (req: SorobanRpc.Server.GetEventsRequest) => {
+      if ('endLedger' in req && req.endLedger === 70_000) {
+        return { events: [recoveredEv] }
+      }
+      return { events: [] }
+    })
+
+    const second = await loadContractSacActivity([WALLET_C], 50, { server, network: 'testnet' })
+    expect(second.failed).toBe(false)
+    expect(second.records.map((r) => r.id)).toEqual(['ev-recovered'])
+    expect(server.getEvents).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps cached rows and reports failed when a subsequent incremental scan is rate-limited', async () => {
     let latestSeq = 60_000
     const initialEv = makeTransferEvent({
       id: 'ev-cached',
       from: SENDER_G,
       to: WALLET_C,
       stroops: 15_000_000n,
-      assetTopic: 'native',
+      contractId: TESTNET_XLM_SAC,
       txHash: 'tx-cached',
     })
 
@@ -285,13 +383,15 @@ describe('loadContractSacActivity caching and steady-state polling', () => {
     }
 
     const first = await loadContractSacActivity([WALLET_C], 50, { server, network: 'testnet' })
-    expect(first).toHaveLength(1)
+    expect(first.failed).toBe(false)
+    expect(first.records).toHaveLength(1)
 
     // Simulate rate-limit error on next refresh
     latestSeq = 60_010
     ;(server.getEvents as jest.Mock).mockRejectedValueOnce(new Error('429 Too Many Requests'))
 
     const second = await loadContractSacActivity([WALLET_C], 50, { server, network: 'testnet' })
-    expect(second.map((r) => r.id)).toEqual(['ev-cached'])
+    expect(second.failed).toBe(true)
+    expect(second.records.map((r) => r.id)).toEqual(['ev-cached'])
   })
 })
