@@ -227,6 +227,108 @@ We return the contract address rather than inventing a classic one because that
 is where the money actually is. A `G…` address that merely forwarded would be a
 second place for funds to go wrong.
 
+## Paying a name privately
+
+<Callout type="warning">
+**Not available in the wallet yet.** The registry methods described below are being proposed separately and require an approved contract upgrade. Even after the registry supports meta-addresses, Veil must implement recipient scanning and claim/recovery before it can safely offer private sends. Until then, the wallet does not offer "Pay privately" and you must not send funds to a manually derived one-time address.
+</Callout>
+
+A Veil name resolves to a `C…` contract address, so a classic-only sender
+cannot pay it at all. A **stealth meta-address** is an optional second record on
+a name: two public keys its holder publishes, from which every sender derives a
+fresh one-time address. It is what turns "send privately to `ada*useveilapp.xyz`"
+from a protocol into something a person can do.
+
+Publishing one is **opt-in**. A name that never sets it stays a plain public
+payment destination.
+
+### What the record holds
+
+Two Ed25519 public keys:
+
+| Key | What it is for |
+| --- | --- |
+| **spend** | the one-time address is offset from it |
+| **view** | a sender agrees a shared secret with it |
+
+Shown as one string, spend key first, each 32 bytes of hex:
+
+```
+st:vly:<64 hex chars for the spend key><64 hex chars for the view key>
+```
+
+The split is the usual one: the view key lets its holder **find** payments, the
+spend key lets them **move** funds. A scanning service can be given the view key
+without being able to spend anything.
+
+### How a sender derives the address
+
+The sender invents an ephemeral scalar `r` and publishes `R = r·G` beside the
+payment:
+
+1. shared point `r·V`, which only the holder of the view secret `v` can repeat;
+2. `h = SHA-256(r·V ‖ R)`, reduced modulo the Ed25519 group order;
+3. the one-time address is `P = S + h·G`.
+
+The holder recomputes the same `h` from `v·R` and spends with the scalar
+`s + h`. `R` is not secret and must travel with the payment; without it the
+holder cannot derive the address that received the funds.
+
+### Publishing and removing it
+
+The registry stores the record but never interprets it. Both calls are
+**holder only** and only work while the name is active.
+
+```bash
+# Publish (opt in)
+stellar contract invoke \
+  --id CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4 \
+  --source <the holder's key> \
+  -- set_meta_address \
+  --name ada \
+  --spend-key <32 bytes of hex> \
+  --view-key <32 bytes of hex>
+
+# Withdraw it (opt out), returning the name to a public destination
+stellar contract invoke \
+  --id CA7BWBV2L67YVIZWJKLYT3RRCTFCZPN6L5SXYQ4YELWP56E34JFNOEP4 \
+  --source <the holder's key> \
+  -- remove_meta_address \
+  --name ada
+```
+
+Removal is idempotent: removing a record that was never there leaves the name as
+it was. The record does **not** survive a lapse — when a lapsed name is
+registered again, even by the same holder, the meta-address is dropped and must
+be published again. A name that changed hands must never keep advertising the
+previous holder's keys.
+
+<Callout type="info">
+A meta-address is a **public** value. Publishing one tells anybody who resolves
+the name that it accepts stealth payments. That is why it is a separate,
+opt-in record rather than something a registration grants by default.
+</Callout>
+
+### Resolution fails closed
+
+A name with no meta-address does not quietly fall back to a public payment. The
+API says so explicitly:
+
+```
+GET https://app.useveilapp.xyz/api/names/meta?q=ada*useveilapp.xyz
+```
+
+When the testnet preview is enabled and the deployed registry supports the
+method, a published record answers `200` with the two keys. A successful lookup
+that returns no record answers `404` with `NO_META_ADDRESS`. A disabled preview,
+an older registry without `meta_address`, or an RPC failure answers `503` —
+none of those failures is treated as proof that the holder did not opt in.
+The wallet does not offer private sending until it can scan for and recover
+the resulting payment.
+
+The contract's `meta_address(name)` also returns `None` for an expired name, so
+a sender cannot derive an address for a name nobody holds.
+
 ## On-chain reference
 
 | | |
