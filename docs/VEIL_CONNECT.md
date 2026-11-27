@@ -52,8 +52,8 @@ passkey.
   the window or pressed Cancel), `refused` (Veil would not take the request,
   see `message`), or `blocked` (the browser blocked the window).
 - One payment may be at most 1000 (USDC or XLM) during the pilot.
-- Adding naira gives the person XLM. They swap to USDC inside Veil. Joining
-  those into one step is planned, not built.
+- When adding naira, the person can choose to receive USDC: Veil swaps the
+  delivered XLM for them in the same flow.
 
 ## You must verify every payment on your server
 
@@ -219,4 +219,3 @@ use `stakesync`. The test id is removed when the pilot goes live.
 - Signing a ready-made transaction, or a contract call whose arguments are
   lists, maps or structs.
 - More than one contract call in a single approval.
-- Naira straight to USDC in one step.
