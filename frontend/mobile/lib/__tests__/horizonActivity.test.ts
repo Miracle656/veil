@@ -91,7 +91,10 @@ describe('assetFromTopic', () => {
     expect(assetFromTopic(xdr.ScVal.scvSymbol('native'))).toBe('XLM');
   });
 
-  it('reads CODE:ISSUER as the asset code', () => {
+  // Known gap, documented rather than approved: the topic carries both the
+  // code and the issuer, but only the code is kept. A token called USDC from
+  // any issuer therefore shows up in history as "USDC".
+  it('documents known gap: shows only the code of CODE:ISSUER, so a USDC token from any issuer displays as USDC', () => {
     const issuer = randomAccount();
     expect(assetFromTopic(xdr.ScVal.scvSymbol(`USDC:${issuer}`))).toBe('USDC');
   });
@@ -289,8 +292,10 @@ describe('classic operations', () => {
     });
   });
 
+  // Known gap, documented rather than approved: on a received path payment
+  // the row shows the sender's source amount, not the amount that reached us.
   it.each(['path_payment_strict_send', 'path_payment_strict_receive'])(
-    'maps %s in both directions as a swap',
+    'documents known gap: maps %s in both directions as a swap, so a received row shows the sender\'s source amount',
     async (type) => {
       const me = randomAccount();
       const other = randomAccount();
