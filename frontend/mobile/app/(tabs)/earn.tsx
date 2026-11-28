@@ -30,6 +30,7 @@ import {
   type BlendPosition,
   type BlendReserve,
 } from '../../lib/blend';
+import { poolStatusInfo } from '../../lib/blendStatus';
 import { fundDeposit, loadEarnBalances, type EarnBalances } from '../../lib/earnFunding';
 import { useNetwork } from '../../hooks/useNetwork';
 import { useWallet } from '../../components/WalletProvider';
@@ -398,6 +399,12 @@ export default function EarnRoute() {
                         <Text style={[typography.heading, styles.cardTitle]}>{pool.name} pool</Text>
                         <Text style={[typography.accent, styles.badge]}>Blend</Text>
                       </View>
+                      {poolStatusInfo(pool.status).notice ? (
+                        <View style={styles.statusNotice} accessibilityRole="alert">
+                          <Text style={styles.statusLabel}>{poolStatusInfo(pool.status).label}</Text>
+                          <Text style={styles.statusText}>{poolStatusInfo(pool.status).notice}</Text>
+                        </View>
+                      ) : null}
                       {pool.reserves.map((reserve) => (
                         <View key={reserve.assetId} style={styles.reserveRow}>
                           <View style={styles.reserveText}>
@@ -408,6 +415,7 @@ export default function EarnRoute() {
                             label="Deposit"
                             fullWidth={false}
                             style={styles.smallButton}
+                            disabled={!poolStatusInfo(pool.status).canSupply}
                             onPress={() => openDeposit(pool, reserve)}
                           />
                         </View>
@@ -471,7 +479,17 @@ export default function EarnRoute() {
               <Text style={styles.footnote}>
                 In the {selected.pool.name} pool on Blend. Withdrawals return to your spending account.
               </Text>
-              <Button label="Deposit" disabled={!depositIsValid} onPress={handleDeposit} />
+              {poolStatusInfo(selected.pool.status).notice ? (
+                <View style={styles.statusNotice} accessibilityRole="alert">
+                  <Text style={styles.statusLabel}>{poolStatusInfo(selected.pool.status).label}</Text>
+                  <Text style={styles.statusText}>{poolStatusInfo(selected.pool.status).notice}</Text>
+                </View>
+              ) : null}
+              <Button
+                label="Deposit"
+                disabled={!depositIsValid || !poolStatusInfo(selected.pool.status).canSupply}
+                onPress={handleDeposit}
+              />
               <Button label="Cancel" variant="ghost" onPress={() => setStep('pools')} />
             </View>
           ) : null}
@@ -576,6 +594,16 @@ const createStyles = (colors: ThemeColors) =>
     footnote: { fontFamily: fontFamily.body, fontSize: 12, lineHeight: 18, color: colors.textMuted },
     positive: { fontFamily: fontFamily.bodySemiBold, color: colors.positive },
     warning: { color: colors.danger },
+    statusNotice: {
+      borderWidth: 1,
+      borderColor: colors.accent,
+      borderRadius: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      gap: 4,
+    },
+    statusLabel: { fontFamily: fontFamily.bodySemiBold, fontSize: 13, lineHeight: 18, color: colors.textStrong },
+    statusText: { fontFamily: fontFamily.body, fontSize: 13, lineHeight: 19, color: colors.textSecondary },
     link: { fontFamily: fontFamily.bodySemiBold, fontSize: 13, color: colors.accentText },
     amountRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     amountInput: {

@@ -68,6 +68,8 @@ function poolStub(options: {
     metadata: {
       name: options.name ?? '',
       reserveList: options.reserves.map((r) => r.assetId),
+      // On ice, as the mainnet pool reported on 2026-11-28.
+      status: 3,
     },
     reserves: new Map(reserves.map((r) => [r.assetId, r])),
     loadUser: async () => ({
@@ -122,6 +124,8 @@ describe('blend', () => {
           { assetId: 'CXLM', code: 'XLM', supplyApy: 0.002, totalSupply: '500' },
           { assetId: 'CUSDC', code: 'USDC', supplyApy: 0.09, totalSupply: '1000' },
         ],
+        // The pool's own status is carried through, for the Earn notice.
+        status: 3,
       });
     });
 

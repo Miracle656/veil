@@ -32,6 +32,7 @@ import {
   setAppLocked,
 } from '../lib/notifications';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
+import { BrandSplash } from '../components/BrandSplash';
 import { WalletProvider } from '../components/WalletProvider';
 import { BootnodeBanner } from '../components/BootnodeBanner';
 import { ErrorBoundary } from '../components/ErrorBoundary';
@@ -146,6 +147,12 @@ export default function RootLayout() {
           </ConnectivityProvider>
         </BottomSheetModalProvider>
         </KeyboardProvider>
+        {/* The opening screen: the mark, the name, "from Divinity Labs". It sits
+            over the app while the app starts underneath, and removes itself
+            after about a second. It is here, last, so it paints above
+            everything, and inside SafeAreaProvider because it reads the
+            bottom inset. */}
+        <BrandSplash />
       </SafeAreaProvider>
       </ErrorBoundary>
     </GestureHandlerRootView>

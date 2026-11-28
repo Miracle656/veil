@@ -13,6 +13,8 @@ import { StrKey } from '@stellar/stellar-sdk';
 import type { AgentMessage, CashOutIntent, InvestIntent, SwapIntent } from './agentMessages';
 
 /** Who the agent is talking to. Stored by lib/agentProfile.ts. */
+import { parseScreenIntent, type ScreenIntent } from './assistantScreens';
+
 export type AgentUserProfile = {
   name?: string;
   language?: string;
@@ -64,7 +66,8 @@ export function historyFromMessages(messages: AgentMessage[]): AgentTurn[] {
         message.kind === 'proposal' ||
         message.kind === 'swap' ||
         message.kind === 'invest' ||
-        message.kind === 'cashout') &&
+        message.kind === 'cashout' ||
+        message.kind === 'screen') &&
       message.text.trim()
     ) {
       turns.push({ role: 'assistant', content: message.text });
@@ -97,6 +100,7 @@ export type AgentReply = {
   swapIntent?: SwapIntent;
   investIntent?: InvestIntent;
   cashOutIntent?: CashOutIntent;
+  screenIntent?: ScreenIntent;
 };
 
 /**
@@ -194,6 +198,7 @@ export async function sendAgentMessage(
       swapIntent: parseSwapIntent((data as { swapIntent?: unknown }).swapIntent),
       investIntent: parseInvestIntent((data as { investIntent?: unknown }).investIntent),
       cashOutIntent: parseCashOutIntent((data as { cashOutIntent?: unknown }).cashOutIntent),
+      screenIntent: parseScreenIntent((data as { screenIntent?: unknown }).screenIntent),
     };
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {
