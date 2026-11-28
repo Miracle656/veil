@@ -19,6 +19,7 @@
 import { AppState, Platform } from 'react-native';
 
 import { movementKey } from './activityFeed';
+import { isDustRecord } from './dust';
 import { loadHorizonActivity } from './horizonActivity';
 import { hydrateNetwork } from './network';
 import { fireTransferNotification } from './notifications';
@@ -81,6 +82,7 @@ export async function checkForNewActivity(): Promise<number> {
     if (seen.has(key)) continue;
     seen.add(key);
     if (tx.type !== 'received' && tx.type !== 'sent') continue;
+    if (isDustRecord(tx)) continue;
 
     await fireTransferNotification({
       type: tx.type,

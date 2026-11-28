@@ -14,6 +14,7 @@ import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 
 import { movementKey, subscribeActivityFeed, type TxRecord } from '../lib/activityFeed';
+import { isDustRecord } from '../lib/dust';
 import * as Notifications from 'expo-notifications';
 import { useRouter, useSegments } from 'expo-router';
 
@@ -56,6 +57,51 @@ let initialised = false;
  * on web, so there is nothing for this hook to do there.
  */
 const NOTIFICATIONS_SUPPORTED = Platform.OS !== 'web';
+
+/**
+ * Process a post-initialisation activity snapshot: mark every unseen movement
+ * as seen and fire a transfer notification for non-dust incoming/outgoing rows.
+ *
+ * Exported for unit tests so the foreground notification path can be verified
+ * directly without a React renderer.
+ */
+export function processNotificationSnapshot(records: TxRecord[], seen: Set<string>): void {
+  for (const tx of records) {
+    const key = movementKey(tx);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    // Dust payments are still marked as seen so they never fire later,
+    // but they must not trigger a notification.
+    if (isDustRecord(tx)) continue;
+
+    if (tx.type === 'received') {
+      void fireTransferNotification({
+        type: 'received',
+        amount: tx.amount,
+        asset: tx.asset,
+        counterparty: tx.counterparty,
+        txId: tx.id,
+        hash: tx.hash,
+      });
+    } else if (tx.type === 'sent') {
+      void fireTransferNotification({
+        type: 'sent',
+        amount: tx.amount,
+        asset: tx.asset,
+        counterparty: tx.counterparty,
+        txId: tx.id,
+        hash: tx.hash,
+      });
+    }
+    // 'swapped' records are intentionally not notified — they are
+    // internal wallet operations, not external transfers.
+  }
+
+  // Persist after each judged snapshot, so a reload or a force-quit picks
+  // up where this left off rather than starting from nothing.
+  void saveNotifiedMovements();
+}
 
 export function useNotifications(): void {
   const router = useRouter();
@@ -142,39 +188,7 @@ export function useNotifications(): void {
         return;
       }
 
-      // Look for records we haven't seen before.
-      for (const tx of records) {
-        const key = movementKey(tx);
-        if (seenRef.current.has(key)) continue;
-        seenRef.current.add(key);
-
-        // Fire a notification for the new record.
-        if (tx.type === 'received') {
-          void fireTransferNotification({
-            type: 'received',
-            amount: tx.amount,
-            asset: tx.asset,
-            counterparty: tx.counterparty,
-            txId: tx.id,
-            hash: tx.hash,
-          });
-        } else if (tx.type === 'sent') {
-          void fireTransferNotification({
-            type: 'sent',
-            amount: tx.amount,
-            asset: tx.asset,
-            counterparty: tx.counterparty,
-            txId: tx.id,
-            hash: tx.hash,
-          });
-        }
-        // 'swapped' records are intentionally not notified — they are
-        // internal wallet operations, not external transfers.
-      }
-
-      // Persist after each judged snapshot, so a reload or a force-quit picks
-      // up where this left off rather than starting from nothing.
-      void saveNotifiedMovements();
+      processNotificationSnapshot(records, seenRef.current);
     }
 
     return () => {

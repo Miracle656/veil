@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { AppState, type NativeEventSubscription } from 'react-native';
 
 import { getNetwork } from './network';
+import { isDustAmount } from './dust';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,8 @@ export interface TxRecord {
   timestamp: number;
   hash?: string;
   memo?: string;
+  /** True when the raw amount is too small to display at 4-decimal precision. */
+  isDust?: boolean;
   // swap-specific
   destAmount?: string;
   destAsset?: string;
@@ -121,6 +124,7 @@ function wraithTransferToTxRecord(t: WraithTransfer, userAddress: string): TxRec
         : t.fromAddress ?? 'unknown',
       timestamp,
       hash: t.txHash,
+      isDust: isDustAmount(safeAmount),
       // Swap-specific fields (Wraith may not provide destAmount/destAsset)
       destAmount: safeAmount.toFixed(7),
       destAsset: 'XLM',
@@ -137,6 +141,7 @@ function wraithTransferToTxRecord(t: WraithTransfer, userAddress: string): TxRec
       : t.fromAddress ?? 'unknown',
     timestamp,
     hash: t.txHash,
+    isDust: isDustAmount(safeAmount),
   };
 }
 

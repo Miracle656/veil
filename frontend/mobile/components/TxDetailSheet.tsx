@@ -12,6 +12,7 @@ import { useTheme } from '../hooks/useTheme';
 import { explorerTxUrl, openExternalUrl } from '../lib/about';
 import type { ThemeColors } from '../lib/theme';
 import type { TxRecord } from '../lib/activityFeed';
+import { formatDisplayAmount } from '../lib/dust';
 
 /** A history transaction — mirrors the web wallet's `TxRecord` (components/TxDetailSheet.tsx). */
 export type { TxRecord };
@@ -63,7 +64,7 @@ export const TxDetailSheet = forwardRef<BottomSheetModal, TxDetailSheetProps>(
             <>
               <Text style={styles.kind}>{TITLES[tx.type]}</Text>
               <Text style={styles.amount}>
-                {tx.amount} {tx.asset}
+                {formatDisplayAmount(tx)}
               </Text>
               {tx.type === 'swapped' && tx.destAmount ? (
                 <Text style={styles.swapTo}>

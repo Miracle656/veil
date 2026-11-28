@@ -3,6 +3,7 @@ import { Address, Asset, Horizon, StrKey, scValToNative, xdr, rpc as SorobanRpc 
 import { getNetwork } from './network';
 import { getFeePayerAddress } from './activity';
 import type { TxRecord } from './activityFeed';
+import { isDustAmount } from './dust';
 
 /** Trim a Horizon amount ("2500.0000000") to a clean grouped number. */
 function fmt(raw: string | undefined): string {
@@ -143,11 +144,13 @@ async function loadContractSacActivity(addresses: string[], limit: number): Prom
         const from = String(scValToNative(topic[1]!));
         const to = String(scValToNative(topic[2]!));
         const stroops = scValToNative(ev.value) as bigint;
+        const amountNum = Number(stroops) / 10_000_000;
         const sent = mine.has(from);
         fresh.push({
           id: ev.id,
           type: sent ? 'sent' : 'received',
-          amount: (Number(stroops) / 10_000_000).toLocaleString('en-US', { maximumFractionDigits: 4 }),
+          amount: amountNum.toLocaleString('en-US', { maximumFractionDigits: 4 }),
+          isDust: isDustAmount(amountNum),
           // The SAC puts the asset in the fourth topic ("native", or
           // "CODE:ISSUER"), which is why the filters above reserve a slot for
           // it. Hardcoding XLM here labelled every USDC movement as XLM.
@@ -216,6 +219,7 @@ export function invocationToRecord(
       ...base,
       type: 'swapped',
       amount: fmt(from.amount),
+      isDust: isDustAmount(from.amount),
       asset: assetOfChange(from),
       counterparty: String(to.from ?? 'unknown'),
       destAmount: fmt(to.amount),
@@ -224,11 +228,11 @@ export function invocationToRecord(
   }
   if (sent.length > 0) {
     const c = sent[0]!;
-    return { ...base, type: 'sent', amount: fmt(c.amount), asset: assetOfChange(c), counterparty: String(c.to ?? 'unknown') };
+    return { ...base, type: 'sent', amount: fmt(c.amount), isDust: isDustAmount(c.amount), asset: assetOfChange(c), counterparty: String(c.to ?? 'unknown') };
   }
   if (received.length > 0) {
     const c = received[0]!;
-    return { ...base, type: 'received', amount: fmt(c.amount), asset: assetOfChange(c), counterparty: String(c.from ?? 'unknown') };
+    return { ...base, type: 'received', amount: fmt(c.amount), isDust: isDustAmount(c.amount), asset: assetOfChange(c), counterparty: String(c.from ?? 'unknown') };
   }
   return null; // nothing of ours moved (e.g. a pure read, or a deploy)
 }
