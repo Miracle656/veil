@@ -29,6 +29,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getWalletAddress } from './walletStore';
 import { OfframpTimeout, OfframpUnavailable, withoutProviderName } from './offramp';
+import { isOrderRetentionActive } from './onrampOrderState';
 
 const BASE_URL = process.env['EXPO_PUBLIC_WRAITH_URL']?.replace(/\/+$/, '') ?? '';
 
@@ -410,6 +411,13 @@ export interface OnrampOrder {
   /** ISO-8601. After this the order is dead and the money must not be sent. */
   expiresAt: string;
   status: string;
+  /**
+   * Set locally when the user taps "I've sent the transfer". Stored alongside
+   * the order so an app restart keeps checking for a bounded grace window past
+   * `expiresAt` instead of dropping the order and telling the user nothing was
+   * charged.
+   */
+  paidClaimed?: boolean;
 }
 
 /**
@@ -452,9 +460,14 @@ export async function rememberOnrampOrder(order: OnrampOrder): Promise<void> {
 }
 
 /**
- * The stored order, or null when there is none, it is unreadable, or its window
- * has closed. An expired order is cleared on the way out: restoring a dead one
- * is how someone pays an account that has stopped accepting it.
+ * The stored order, or null when there is none, it is unreadable, or its
+ * retention window has closed.
+ *
+ * An unpaid order is cleared as soon as `expiresAt` passes: restoring a closed
+ * account number risks sending money to an account that stopped accepting it.
+ * When the user already tapped "I've sent the transfer" (`paidClaimed`), the
+ * order is retained for a bounded grace period past `expiresAt` so status
+ * polling can resume across a restart.
  */
 export async function loadOnrampOrder(): Promise<OnrampOrder | null> {
   const raw = await AsyncStorage.getItem(ACTIVE_ORDER_KEY).catch(() => null);
@@ -462,7 +475,7 @@ export async function loadOnrampOrder(): Promise<OnrampOrder | null> {
   try {
     const order = JSON.parse(raw) as OnrampOrder;
     if (!order?.orderId || !order?.expiresAt) return null;
-    if (secondsUntil(order.expiresAt) <= 0) {
+    if (!isOrderRetentionActive(order.expiresAt, Boolean(order.paidClaimed))) {
       await forgetOnrampOrder();
       return null;
     }
