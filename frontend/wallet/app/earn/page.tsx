@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Asset, Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { PoolStatusNotice } from '@/components/PoolStatusNotice'
+import { poolStatusInfo } from '@/lib/blendStatus'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
@@ -390,9 +392,11 @@ export default function EarnPage() {
                   <div style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginBottom: '0.75rem' }}>
                     Total liquidity: {(Number(pool.totalSupply) / 1e7).toLocaleString()}
                   </div>
+                  <PoolStatusNotice status={pool.status} />
                   <button
                     className="btn-secondary"
                     style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem' }}
+                    disabled={!poolStatusInfo(pool.status).canSupply}
                     onClick={() => { setSelectedPool(pool); setSelectedAssetContract(pool.assets[0] ?? null); setStep('deposit-form') }}
                   >
                     Deposit &amp; earn
@@ -432,10 +436,11 @@ export default function EarnPage() {
                 </p>
               )}
             </div>
+            <PoolStatusNotice status={selectedPool.status} />
             <button
               className="btn-gold"
               onClick={handleDeposit}
-              disabled={!depositAmount || parseFloat(depositAmount) <= 0}
+              disabled={!depositAmount || parseFloat(depositAmount) <= 0 || !poolStatusInfo(selectedPool.status).canSupply}
             >
               Deposit &amp; earn
             </button>
