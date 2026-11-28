@@ -1,7 +1,7 @@
 # Payment-link claim spike — how someone with no wallet claims money from a link
 
 **Status:** decision made; mechanism proven end to end on testnet. No product code written — this document and `scripts/spikes/link-claim-spike.mjs` are the deliverable.
-**Date:** 2026-11-20 · **Updated:** 2026-11-27 — fee-payer seed arithmetic corrected (a 1 XLM seed is all reserve and cannot pay a fee); the spike now submits a real transaction from the seeded fee payer; `balance_id` finding reframed as a testnet observation.
+**Date:** 2026-11-20 · **Updated:** 2026-11-28 — fee-payer seed arithmetic corrected (a 1 XLM seed is all reserve and cannot pay a fee); the spike now submits the wallet deploy from the seeded fee payer and it lands; the sender-side claimant reserves are stated; `balance_id` finding reframed as a testnet observation; an earlier "broken factory" claim withdrawn (it was this script passing strings where the contract takes Bytes, plus a domain Veil does not own).
 **Issue:** #1283 · Spike branch: `spike/link-claim-decision`
 
 ## The problem in one line
@@ -44,9 +44,13 @@ At claim time, three things happen in four small transactions:
      │                                │ ② claim → seed fee payer         │ ← signed by the
      │                                │ ③ SAC transfer → C… wallet       │   secret in the link,
      │                                │ ④ merge ephemeral → sponsor      │   fee-bumped by sponsor
-     │                                │                                  │
-     │                          money is in the new wallet, gas in the    │
-     │                          fee payer, ephemeral account gone         │
+     │                                │                                  │ ⑤ fee payer deploys the
+     │                                │                                  │   wallet through the
+     │                                │                                  │   factory, paying the
+     │                                │                                  │   fee from its seed
+     │                          money is in the new wallet, the wallet is │
+     │                          deployed, gas in the fee payer, ephemeral │
+     │                          account gone                             │
 ```
 
 - **① Sponsor creates the ephemeral account** under CAP-33 (`beginSponsoringFutureReserves`
@@ -62,6 +66,12 @@ At claim time, three things happen in four small transactions:
   so the link amount arrives intact and the recipient's wallet never touches fees.
 - The ephemeral account exists for the duration of the claim — seconds — and merges
   away, releasing the borrowed base reserve. **Nothing is stranded.**
+- **⑤ The fee payer deploys the wallet itself**, paying the deploy fee out of the
+  spendable half of its seed — the transaction a 1 XLM (all-reserve) seed could never
+  have afforded. The factory's `deploy` needs no passkey ceremony (no Soroban auth
+  entries; see findings #7 for the argument and host details), so the classic
+  fee-payer key signs it, and the wallet lands at the counterfactual address the
+  step-③ transfer already funded.
 
 The recipient's `C…` wallet address is *counterfactual*: the factory derives it
 deterministically from the passkey public key (`sdk/src/utils.ts`
@@ -84,24 +94,27 @@ which is 1 XLM, entirely locked**. A fee payer created with exactly 1 XLM has ze
 spendable and cannot pay a fee — an earlier draft of this document seeded 1 XLM and
 called the wallet operational, which was wrong, and the transaction-from-fee-payer
 check below is what exposed it. The spike seeds **2 XLM: 1 XLM locked in the reserve +
-1 XLM spendable gas**, and proves the spendable part is real by submitting a classic
-transaction *from the seeded fee payer* — signed by it, fee paid by it, 0.1 XLM paid
-out of it (see the proof table). What the fee payer still cannot do on testnet today
-is submit the wallet deploy itself: the deployed testnet factory traps on every
-`deploy` call (an observed environment failure — see findings #7), which is the repo's
-known stale-testnet-factory gap, not a property of this design. On a network whose
-factory works, the same seed shape makes the wallet fully operational: balance in the
-contract, spendable gas in the fee payer, deploy paid from the fee payer.
+1 XLM spendable gas**, and proves the spendable part is real the strongest way
+available: it submits the **wallet deploy itself** from the seeded fee payer — signed
+by the fee payer, its fee paid out of the spendable seed, through the real factory
+with the real app host (`app.useveilapp.xyz`; the earlier `app.veil.xyz` was a domain
+Veil does not own — see findings #7) — and the wallet lands at the counterfactual
+address derived before the passkey ceremony ever ran. The wallet a person ends up
+with after claiming is fully operational, and the spike proves each part: balance in
+the contract, spendable gas in the fee payer, deploy paid from the fee payer.
 
 ## Why the other two candidates were rejected
 
 **1. Ephemeral keypair holding the funds directly — rejected.**
-It is strictly dominated by the chosen mechanism. Funding an account per link strands
-the base reserve (1 XLM) for the life of every outstanding link and leaves dust
-accounts behind on dead links. The chosen mechanism keeps the funds in a claimable
-balance — no per-link account exists until the claim starts, and the one account that
-is created is destroyed in the same flow. Bearer risk is identical between the two
-(see below), so it cannot justify the difference.
+Its reserve cost is the same while a link is outstanding — a claimable balance with
+two claimants holds one base reserve per claimant, 1 XLM of the sender's, exactly what
+funding an account per link would strand (see "Reclaim and expiry"). What differs is
+what is left behind: an account per link survives the claim as a dust account whose
+1 XLM minimum balance is stranded until someone merges it away, while a claimable
+balance returns its reserves to the sender at claim or reclaim and leaves no account
+at all — the one account the claim *does* create (the ephemeral) is destroyed in the
+same flow. Bearer risk is identical between the two (see below), so it cannot justify
+the difference.
 
 **3. Soroban escrow contract keyed by a hash — rejected for now, revisited later.**
 It is the better long-term shape (no ephemeral secret in the link at all — the link
@@ -113,29 +126,27 @@ semantics, and a sender reclaim path. The decision is to ship the claimable-bala
 mechanism now and record the contract as the candidate to replace it if links become a
 significant volume or the bearer risk (below) proves unacceptable in practice.
 
-## What the spike proved (testnet, 2026-11-27)
+## What the spike proved (testnet, 2026-11-28)
 
-`node scripts/spikes/link-claim-spike.mjs` — fresh keys every run, complete run ~90s
-(93s on the recorded run; longer only when the dev network flakes).
+`node scripts/spikes/link-claim-spike.mjs` — fresh keys every run, complete run ~77s.
+Every identifier below is written in full so it can be looked up directly.
 Last full run:
 
 | Step | Result | Evidence |
 |---|---|---|
 | Recipient verified absent | no `G…` account (Horizon 404), zero SAC balance, `C…` never deployed (no contract instance on-ledger) | pre-claim assertions |
-| Sender funds the link | `createClaimableBalance` 25 XLM; claimants: ephemeral (unconditional) + sender (after deadline) | tx on testnet |
-| Sponsor creates ephemeral account | CAP-33 bracket, sponsored reserve, `startingBalance: '0'` | tx on testnet |
-| Claim + fee-payer seed | claim succeeds; fee-payer `G…` created with 2 XLM — 1 XLM locked reserve (the account minimum is two base reserves) + 1 XLM spendable | `951e49d8…901b1763` (run of 2026-11-27) |
-| SAC transfer into the undeployed wallet | native-SAC `transfer` → counterfactual `C…` | `3a8b0d82…a336ecb` |
-| Merge back to sponsor | ephemeral account gone (Horizon 404), reserve released | `8bec144c…95f9d4` |
-| **A real transaction from the seeded fee payer** | classic `payment` signed AND fee-paid by the fee payer: 0.1 XLM leaves the spendable seed, inclusion fee paid from it | `4dbae08c…4a8a92ee` |
-| Wallet deploy via the testnet factory | **blocked on testnet, observed:** the deployed factory `CAUK4…` traps on every `deploy` call — `(WasmVm, InvalidAction)`, even for an off-curve key that should fail validation cleanly. Stale-factory gap (SCF_STRATEGY.md), not a design property | simulation, deterministic across 4 runs |
-| Recipient balance confirmed | wallet holds exactly `25 − 2 = 23 XLM` in the SAC; fee payer holds `2 − 0.1 − fees = 1.89999 XLM`, i.e. **0.9 XLM spendable** above the 1 XLM reserve | read back from the SAC + Horizon |
-| Reclaim + expiry | second link left unclaimed; after the deadline the sender reclaimed it | `5e16c1fc…031abfa9b` |
+| Sender funds the link | `createClaimableBalance` 25 XLM; claimants: ephemeral (unconditional) + sender (after deadline) | balance id `000000001fb323f2f3920bd21c0bc1e2de3e2dc78bab6a3ec562973be66d65d38cf379aa` |
+| Sponsor creates ephemeral account | CAP-33 bracket, sponsored reserve, `startingBalance: '0'` | charged 300 stroops |
+| Claim + fee-payer seed | claim succeeds; fee-payer `G…` created with 2 XLM — 1 XLM locked reserve (the account minimum is two base reserves) + 1 XLM spendable | `5de25c4d5b1b43b3742396a5d103731dfad34cabe13628c7484935ebd3709b73` |
+| SAC transfer into the undeployed wallet | native-SAC `transfer` → counterfactual `C…` | `193b6bd1f82bd9ad7b1cc4d43253b08053a6bb3d5e9b1ef0aef0651bf5441195` |
+| Merge back to sponsor | ephemeral account gone (Horizon 404), reserve released | `cabda47981e56375835e5291acf800bc448adac521ea659067764a8f86d2315d` |
+| **Wallet deploy from the seeded fee payer** | factory `deploy` signed AND fee-paid by the fee payer (88,207 stroops out of the spendable seed); wallet contract live at the pre-derived counterfactual address | `483e19c462eb2301992159ffc688e92f21f817019814a2d1b5a5b149bdc7ed75` |
+| Recipient balance confirmed | wallet holds exactly `25 − 2 = 23 XLM` in the SAC; fee payer holds `2 − 0.0088207 = 1.9911793 XLM`, i.e. **0.9911793 XLM spendable** above the 1 XLM reserve | read back from the SAC + Horizon |
+| Reclaim + expiry | second link (`00000000413558b15b6245e252d74c1a375ba8e04024ff6227c22a3e6f25fcbd4d21c4ea`) left unclaimed; after the deadline the sender reclaimed it | `b2eb58d18ea07df3c574167d542dec768b7a16b229f3622eb5fd68c1bfafe2c6` |
 
-The deploy row is the honest limit of what testnet proves today: the fee payer's
-ability to transact is demonstrated on-chain, the wallet deploy itself is blocked by
-the stale testnet factory (known repo gap), and the claim flow needs no change for
-that — the deploy runs unchanged once the factory is redeployed.
+The deploy row is the point of the whole seed: the fee payer does not merely hold a
+balance, it submits the wallet's own deployment and pays for it out of the seed's
+spendable half — which a 1 XLM seed (all reserve) could never have done.
 
 ### What Veil pays per claim (measured)
 
@@ -143,25 +154,29 @@ that — the deploy runs unchanged once the factory is redeployed.
 |---|---|
 | bracket: create the ephemeral account | 300 |
 | claim + fee-payer seed (fee-bumped) | 300 |
-| SAC transfer into the wallet (fee-bumped) | 151,437 |
+| SAC transfer into the wallet (fee-bumped) | 177,290 |
 | merge the ephemeral away (fee-bumped) | 200 |
-| **Total per claim** | **152,237 stroops ≈ 0.0152 XLM** |
+| **Total per claim** | **178,090 stroops ≈ 0.0178 XLM** |
 
 The cost is dominated by the Soroban resource fee of the single SAC transfer (inner
-fee 177,962 stroops before the 2× fee-bump markup). The base reserve is borrowed and
+fee 207,693 stroops before the 2× fee-bump markup). The base reserve is borrowed and
 returned by the merge — it does not appear in the total. At current XLM prices this is
 a rounding error per claim; the fee-bump declarations are deliberately generous (2× the
 inner fee), and Horizon charged less than declared on every bump, so a production route
 can tune these down further.
 
-Separately — and paid by the *recipient*, not Veil — the fee payer spent its own
-spendable seed during the proof: 0.1 XLM moved plus a 100-stroop fee for its
-transaction. The fee payer's 1 XLM reserve stays locked for the life of the account;
-that permanent reserve comes out of the link amount and is part of the seed's purpose.
+Separately — and paid by the *recipient*, not Veil — the wallet deploy costs
+88,207 stroops, paid by the fee payer out of its spendable seed. The fee payer's
+1 XLM reserve stays locked for the life of the account; that permanent reserve comes
+out of the link amount and is part of the seed's purpose.
 
 The sender pays plain classic fees for the link-creating transaction (~100–300
-stroops; spike measured 0.00003 XLM across three link transactions) and nothing else —
-no reserve is locked, and an unclaimed link costs nothing over time.
+stroops; spike measured 0.00003 XLM across three link transactions) — and, while a
+link is outstanding, **holds one base reserve per claimant in the claimable balance:
+2 claimants × 0.5 XLM = 1 XLM of the sender's balance is reserved per link** until it
+is claimed or reclaimed. An unclaimed link therefore does cost the sender liquidity
+over time — it does not cost fees, and the reserve returns with the reclaim, but it is
+not free money in limbo.
 
 ## The bearer-risk question, answered explicitly
 
@@ -191,8 +206,12 @@ Covered by the design and proven in the spike; nothing new to build:
   predicate — reclaim is the existing `reclaimEscrow()` shape in
   `sdk/src/claimableBalance.ts`, executable any time after the deadline.
 - Expiry is enforced by the ledger predicate, not by Veil's infrastructure: a link
-  nobody claims reverts to the sender with one classic transaction, and an
-  unclaimed link costs nothing in the meantime (no account, no reserve).
+  nobody claims reverts to the sender with one classic transaction. While it sits
+  unclaimed it costs the sender no fees, but it is **not** free: the claimable balance
+  holds one base reserve per claimant — 2 claimants × 0.5 XLM = **1 XLM of the
+  sender's balance is reserved per outstanding link** until it is claimed or reclaimed,
+  when the reserve returns. No account is created in the meantime, and the reclaim
+  releases the reserve with the same single transaction that recovers the funds.
 - Deadline default and UI warning are product decisions to settle when the claim
   screen is built; the mechanism supports any value.
 
@@ -255,23 +274,27 @@ These were discovered by the spike and are otherwise undocumented:
 6. **The fee-bump declarations are charged by Horizon at less than declared** on every
    bump in the spike. Production should declare tight-but-safe fees and record actual
    `fee_charged` for cost monitoring.
-7. **The deployed testnet factory cannot execute `deploy`** — *observed, not inferred*:
-   every `factory.deploy` simulation on testnet traps with `(WasmVm, InvalidAction)`
-   ("VM call trapped: UnreachableCodeReached"), deterministically across four runs and
-   four fresh keys, and even for an off-curve public key that should return a clean
-   `FactoryError::InvalidPublicKey`. The factory wasm on testnet is an older build
-   (`soroban-sdk 22.0.11`, exports only `init`/`deploy`) and the repo already records
-   the testnet factory as stale relative to `expected-hashes.json`
-   (`docs/SCF_STRATEGY.md`, known gap #1). Consequence for this design: the claim
-   flow's wallet-deploy step cannot be exercised on testnet until the testnet factory
-   is redeployed — the spike proves the fee payer can transact with a classic payment
-   instead, and the deploy leg is recorded as blocked-by-environment. This affects
-   testnet wallet creation generally, not just links; the mainnet factory verifies.
+7. **`factory.deploy` takes `rp_id` and `origin` as Bytes, not strings — and the app
+   host is `app.useveilapp.xyz`.** The contract signature is
+   `deploy(env, public_key: BytesN<65>, rp_id: Bytes, origin: Bytes)`
+   (`contracts/factory/src/lib.rs:73`) and the SDK sends bytes
+   (`sdk/src/core.ts:1088-1091`). An earlier draft of this spike passed both as
+   strings and every `deploy` simulation trapped with `(WasmVm, InvalidAction)`
+   ("VM call trapped: UnreachableCodeReached") — *before* any key validation, so even
+   deliberately invalid keys trapped the same way. That trap is indistinguishable at
+   a glance from a broken contract, and the earlier draft wrongly blamed the testnet
+   factory for it; with bytes arguments the factory deploys cleanly (the proof table
+   above). The same draft also used `rp_id = 'veil.xyz'` / `origin =
+   'https://app.veil.xyz'` — a domain Veil does not own, the hard-coded host the
+   claim-link builder used to carry; it was replaced on main by the shared
+   `app.useveilapp.xyz` constant in #1358. Anyone building the claim flow should
+   import the host from that one constant rather than typing a domain.
 
 ## What is deliberately not built here
 
 - The `/claim` route in the web wallet and the claim screen in mobile (the link URL
-  builder `buildClaimLink()` already points at `app.veil.xyz/claim/{balanceId}`).
+  builder `buildClaimLink()` already points at `app.useveilapp.xyz/claim/{balanceId}`,
+  on main as of #1358).
 - The server route that validates and fee-bumps the recipient-signed claim
   transactions — the shape and the validation checklist are the sponsor-trustline
   route's: re-verify balance id, destinations (wallet `C…`, fee payer `G…`), that the

@@ -23,14 +23,14 @@
  *          simulated with a random G… — Node cannot run a WebAuthn PRF),
  *        - merges itself back into the sponsor, releasing the borrowed
  *          base reserve. Nothing is stranded.
- *   4. Submits real transactions from the SEEDED FEE PAYER: the product-
- *      shaped wallet deploy (factory.deploy) and a classic payment, both
- *      fee-paid out of the fee payer's own spendable seed — proving the
- *      seed actually buys gas (a 1 XLM seed would be all reserve: minimum
- *      balance is two base reserves = 1 XLM, zero spendable, nothing to
- *      pay a fee with). The deploy is observed to be blocked on testnet by
- *      the stale factory contract (see the OBSERVED note in main()); the
- *      payment proves the spendable XLM is real money the fee payer moves.
+ *   4. Deploys the wallet from the SEEDED FEE PAYER — one real transaction
+ *      whose fee the fee payer pays out of its own spendable seed — proving
+ *      the seed actually buys gas (a 1 XLM seed would be all reserve: minimum
+ *      balance is two base reserves = 1 XLM, zero spendable, nothing to pay
+ *      a fee with). The deploy goes through the real factory with the real
+ *      app domain: rp_id/origin as BYTES (the contract takes Bytes), host
+ *      app.useveilapp.xyz (app.veil.xyz is a domain Veil does not control —
+ *      the old claim-link host, replaced on main as of #1358).
  *   5. Verifies the recipient wallet's balance, measures exactly what the
  *      sponsor paid per claim in XLM, and demonstrates reclaim after the
  *      deadline on a second, never-claimed link.
@@ -131,6 +131,16 @@ async function fundWithFriendbot(label, keypair) {
   throw new Error(`account for ${label} never appeared on Horizon`);
 }
 
+/** Poll Soroban RPC until a submitted transaction leaves the NOT_FOUND state. */
+async function waitSorobanTx(hash) {
+  for (let i = 0; i < 30; i++) {
+    const res = await rpc.getTransaction(hash);
+    if (res.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) return res;
+    await sleep(1000);
+  }
+  throw new Error(`transaction ${hash} never left NOT_FOUND on Soroban RPC`);
+}
+
 /**
  * Same derivation as sdk/src/utils.ts computeWalletAddress(): the factory
  * deploys with salt = SHA-256(65-byte P-256 public key), so the wallet
@@ -173,8 +183,7 @@ async function main() {
   console.log('Payment-link claim spike — testnet');
   console.log('═'.repeat(72));
 
-  let claimCharged = 0n, transferCharged = 0n, mergeCharged = 0n, bracketCharged = 0n;
-  let feePayerFees = 0n; // what the fee payer itself paid: deploy attempt + payment fee + 0.1 XLM moved
+  let claimCharged = 0n, transferCharged = 0n, mergeCharged = 0n, bracketCharged = 0n, deployCharged = 0n;
 
   // ── Cast the actors ────────────────────────────────────────────────────
   const sponsor = Keypair.random(); // Veil's SPONSOR_SECRET_KEY role (server-only)
@@ -365,62 +374,56 @@ async function main() {
   const claimSponsorCost = sponsorBeforeTx - sponsorAfterTx;
   console.log(`  sponsor net cost: ${claimSponsorCost.toFixed(7)} XLM (includes reserve released back by the merge)`);
 
-  // ── 4. One real transaction from the seeded fee payer ─────────────────
+  // ── 4. Deploy the wallet — one real transaction paid by the seeded fee payer ──
   // This is the step that makes "the fee payer can transact" more than an
   // assertion about balances: a 1 XLM seed would be ENTIRELY reserve (the
   // account minimum is two base reserves = 1 XLM) with zero spendable, so
-  // no fee could ever be paid.
+  // this transaction could not exist. The factory's deploy() needs no
+  // Soroban auth (contracts/factory/src/lib.rs: no require_auth in deploy)
+  // and no passkey ceremony, so the classic fee-payer key alone signs it —
+  // the same shape as the product's deploy(), whose source account is also
+  // the fee payer (sdk/src/core.ts).
   //
-  // The product-shaped proof would be the wallet deploy itself
-  // (factory.deploy — no Soroban auth needed, no passkey ceremony; the
-  // same shape as sdk/src/core.ts deploy(), whose source account is also
-  // the fee payer). OBSERVED on testnet (2026-11-26/27, deterministic
-  // across four runs and four fresh keys, valid and invalid keys alike):
-  // the deployed testnet factory CAUK4… traps on EVERY `deploy` call —
-  // (WasmVm, InvalidAction) / "VM call trapped: UnreachableCodeReached" —
-  // even for an off-curve key that should return a clean
-  // FactoryError::InvalidPublicKey. The simulation below cannot succeed,
-  // so there is no resource envelope to submit with and the deploy cannot
-  // be sent on testnet today. The repo already records the testnet factory
-  // as stale relative to expected-hashes.json (docs/SCF_STRATEGY.md,
-  // "known gaps" #1); this is that gap biting, not a conclusion about the
-  // claim design. Mainnet's factory verifies.
+  // Two ways to get this wrong, both learned the hard way (an earlier draft
+  // of this script hit both and briefly blamed the factory):
+  //   1. The contract takes rp_id and origin as BYTES (contracts/factory/
+  //      src/lib.rs:73); the SDK sends bytes (sdk/src/core.ts:1088-1091).
+  //      Passing them as strings traps with (WasmVm, InvalidAction) —
+  //      indistinguishable at a glance from a broken contract.
+  //   2. The real app domain is app.useveilapp.xyz. app.veil.xyz is a domain
+  //      Veil does not control — it was the claim-link host's old hard-coded
+  //      value, fixed on main as of #1358.
+  const APP_RP_ID = 'app.useveilapp.xyz';
+  const APP_ORIGIN = `https://${APP_RP_ID}`;
   const feePayerAccount = await server.loadAccount(recipientFeePayer.publicKey());
-  const deployTx = new TransactionBuilder(feePayerAccount, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+  const deployUnsigned = new TransactionBuilder(feePayerAccount, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
     .addOperation(new Contract(FACTORY_ID).call(
       'deploy',
       nativeToScVal(p256Key, { type: 'bytes' }),
-      nativeToScVal('veil.xyz', { type: 'string' }),
-      nativeToScVal('https://app.veil.xyz', { type: 'string' }),
+      nativeToScVal(new TextEncoder().encode(APP_RP_ID), { type: 'bytes' }),
+      nativeToScVal(new TextEncoder().encode(APP_ORIGIN), { type: 'bytes' }),
     ))
     .setTimeout(30)
     .build();
-  try {
-    const sim = await rpc.simulateTransaction(deployTx);
-    console.log(`4  wallet deploy via the testnet factory: ${SorobanRpc.Api.isSimulationError(sim) ? `simulation fails deterministically — ${sim.error}` : 'simulated fine (factory has been fixed since 2026-11-27 — re-run to submit)'}`);
-  } catch (e) {
-    console.log(`4  wallet deploy simulation: ${e.message}`);
+  const deploySim = await rpc.simulateTransaction(deployUnsigned);
+  if (SorobanRpc.Api.isSimulationError(deploySim)) {
+    throw new Error(`deploy sim failed: ${deploySim.error}`);
   }
-
-  // The submitted proof instead: a plain classic transaction FROM the fee
-  // payer, paying its own fee and 0.1 XLM out of the spendable seed. This
-  // is the minimum the claim flow needs from the fee payer even before the
-  // wallet deploys — a fee-payer that can actually pay fees.
-  const payUnsigned = new TransactionBuilder(await server.loadAccount(recipientFeePayer.publicKey()),
-    { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
-    .addOperation(Operation.payment({
-      destination: sponsor.publicKey(),
-      asset: Asset.native(),
-      amount: '0.1',
-    }))
-    .setTimeout(30)
-    .build();
-  payUnsigned.sign(recipientFeePayer);
-  const payRes = await server.submitTransaction(payUnsigned);
-  if (!payRes.successful) throw new Error(`fee-payer payment failed: ${payRes.hash}`);
-  const payCharged = BigInt(payRes.fee_charged);
-  feePayerFees += payCharged + 1_000_000n; // fee + the 0.1 XLM payment
-  console.log(`4b fee-payer payment: ${payRes.hash} (0.1 XLM to the sponsor, charged ${payCharged} stroops) — the spendable seed is real`);
+  const deployTx = SorobanRpc.assembleTransaction(deployUnsigned, deploySim).build();
+  deployTx.sign(recipientFeePayer);
+  const deployRes = await server.submitTransaction(deployTx);
+  if (!deployRes.successful) throw new Error(`wallet deploy failed: ${deployRes.hash}`);
+  deployCharged = BigInt(deployRes.fee_charged);
+  console.log(`4  wallet deploy: ${deployRes.hash}`);
+  console.log(`   signed AND fee-paid by the seeded fee payer, charged ${deployCharged} stroops out of its spendable seed`);
+  const deployStatus = await waitSorobanTx(deployRes.hash);
+  if (deployStatus.status !== SorobanRpc.Api.GetTransactionStatus.SUCCESS) {
+    throw new Error(`deploy failed: ${deployStatus.status}`);
+  }
+  // The wallet now exists on-ledger, at the counterfactual address derived
+  // before the passkey ceremony ever happened.
+  await rpc.getContractData(recipientWallet, xdr.ScVal.scvLedgerKeyContractInstance());
+  console.log(`   wallet contract live at the pre-derived counterfactual address ${recipientWallet}`);
 
   // ── 5. Confirm the recipient's balance ─────────────────────────────────
   // expected wallet balance: link amount minus the fee-payer seed. The
@@ -434,14 +437,14 @@ async function main() {
   const feePayerXlm = await nativeBalance(recipientFeePayer.publicKey());
   const feePayerStroops = BigInt(Math.round(feePayerXlm * 1e7));
   const MIN_BALANCE_STROOPS = 10_000_000n; // two base reserves of 0.5 XLM
-  const expectedFeePayer = SEED_STROOPS - feePayerFees;
+  const expectedFeePayer = SEED_STROOPS - deployCharged;
   if (feePayerStroops !== expectedFeePayer) {
     throw new Error(`fee payer balance mismatch: ${feePayerStroops} vs expected ${expectedFeePayer}`);
   }
   if (feePayerStroops - MIN_BALANCE_STROOPS <= 0n) {
     throw new Error('fee payer has no spendable balance above the reserve');
   }
-  console.log(`recipient fee payer: ${feePayerXlm} XLM total · ${Number(feePayerStroops - MIN_BALANCE_STROOPS) / 1e7} XLM spendable above the 1 XLM reserve (seed ${FEE_PAYER_SEED_XLM} − 1 XLM reserve − 0.1 XLM payment − ${(Number(feePayerFees - 1_000_000n) / 1e7).toFixed(7)} XLM fees)`);
+  console.log(`recipient fee payer: ${feePayerXlm} XLM total · ${Number(feePayerStroops - MIN_BALANCE_STROOPS) / 1e7} XLM spendable above the 1 XLM reserve (seed ${FEE_PAYER_SEED_XLM} − 1 XLM reserve − ${(Number(deployCharged) / 1e7).toFixed(7)} XLM deploy fee)`);
   try {
     await nativeBalance(ephemeral.publicKey());
     throw new Error('ephemeral account should have been merged away');
@@ -480,11 +483,9 @@ async function main() {
   console.log(`sender reclaimed the expired link (${reclaimed.hash}) — reclaim + expiry proven`);
 
   // ── 7. The cost ledger ─────────────────────────────────────────────────
+  const sponsorEnd = await nativeBalance(sponsor.publicKey());
   const senderEnd = await nativeBalance(sender.publicKey());
-  // Sponsor cost is measured at the end of the claim (before the fee
-  // payer's 0.1 XLM payment lands in the sponsor's account, which would
-  // otherwise read as negative cost).
-  const sponsorNet = sponsorStart - sponsorAfterTx; // fees for both sponsor txs + transient reserve (returned)
+  const sponsorNet = sponsorStart - sponsorEnd; // fees for both sponsor txs + transient reserve (returned)
   // Sender paid its own link-creation fees; the claimed 25 left for good,
   // the reclaimed 5 came back.
   const senderFees = senderStart - senderEnd - parseFloat(LINK_AMOUNT_XLM);
@@ -494,7 +495,7 @@ async function main() {
   console.log(`  · claim+seed fee-bump             : ${claimCharged} stroops charged`);
   console.log(`  · SAC transfer fee-bump           : ${transferCharged} stroops charged (2 × ${transferInner.fee} inner: inclusion + resource fee)`);
   console.log(`  · merge fee-bump                  : ${mergeCharged} stroops charged`);
-  console.log(`fee payer's own spend        : ${(Number(feePayerFees - 1_000_000n) / 1e7).toFixed(7)} XLM fees + 0.1 XLM payment, from its spendable seed (not Veil's cost)`);
+  console.log(`fee payer's own deploy fee   : ${deployCharged} stroops, paid out of the spendable seed (not Veil's cost)`);
   console.log(`SENDER cost for 2 links    : ${senderFees.toFixed(7)} XLM (both link amounts settled: 25 claimed, 5 reclaimed)`);
   console.log(`elapsed                    : ${((Date.now() - t0) / 1000).toFixed(0)}s`);
   console.log('═'.repeat(72));
