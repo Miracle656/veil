@@ -162,6 +162,12 @@ export type AgentRequest = {
   feePayerAddress?: string;
   profile?: AgentUserProfile;
   history: AgentTurn[];
+  /**
+   * Wallet-signed session token (see packages/agent/src/auth.ts). The server
+   * resolves the wallet address from the session and rejects a body address
+   * that disagrees with it, so prefer sending the token over the raw address.
+   */
+  sessionToken?: string;
 };
 
 /**
@@ -177,9 +183,13 @@ export async function sendAgentMessage(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    // The session is the authority; the header keeps the token out of logs
+    // that capture bodies. The body copy covers servers that only read JSON.
+    if (request.sessionToken) headers['Authorization'] = `Bearer ${request.sessionToken}`;
     const res = await fetchImpl(getAgentUrl(), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(request),
       signal: controller.signal,
     });

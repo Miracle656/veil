@@ -38,6 +38,15 @@
   <input id="reference" value="order-0001">
   <button id="pay">Pay with Veil</button>
 
+  <h2>Call a contract</h2>
+  <label>Contract (full C… address)</label>
+  <input id="contract" placeholder="C…">
+  <label>Function</label>
+  <input id="method" placeholder="join_challenge">
+  <label>Arguments, as JSON: [{ "type": "u32", "value": "7" }]</label>
+  <input id="args" value="[]">
+  <button id="invoke">Call with Veil</button>
+
   <h2>Result</h2>
   <pre id="out">Nothing yet.</pre>
 
@@ -74,6 +83,16 @@
       asset: 'USDC',
       reference: $('reference').value.trim(),
     }).then((r) => show('Paid. Now verify the hash on your server.', r), fail)
+    $('invoke').onclick = () => {
+      if (!client) return
+      let args
+      try { args = JSON.parse($('args').value || '[]') } catch { return fail({ code: 'config', message: 'The arguments are not valid JSON.' }) }
+      client.invoke({
+        contract: $('contract').value.trim(),
+        method: $('method').value.trim(),
+        args,
+      }).then((r) => show('Called. Now verify the hash on your server.', r), fail)
+    }
   </script>
 </body>
 </html>

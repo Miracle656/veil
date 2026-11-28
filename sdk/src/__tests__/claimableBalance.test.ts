@@ -100,11 +100,11 @@ const MOCK_ACCOUNT = {
 
 describe('buildClaimLink()', () => {
     it('returns the correct claim URL', () => {
-        expect(buildClaimLink(BALANCE_ID)).toBe(`https://app.veil.xyz/claim/${BALANCE_ID}`);
+        expect(buildClaimLink(BALANCE_ID)).toBe(`https://app.useveilapp.xyz/claim/${BALANCE_ID}`);
     });
 
     it('handles an empty balanceId', () => {
-        expect(buildClaimLink('')).toBe('https://app.veil.xyz/claim/');
+        expect(buildClaimLink('')).toBe('https://app.useveilapp.xyz/claim/');
     });
 });
 
@@ -153,7 +153,7 @@ describe('createEscrow()', () => {
             config: CONFIG,
         });
         expect(result.balanceId).toBe(BALANCE_ID);
-        expect(result.claimLink).toBe(`https://app.veil.xyz/claim/${BALANCE_ID}`);
+        expect(result.claimLink).toBe(`https://app.useveilapp.xyz/claim/${BALANCE_ID}`);
         expect(result.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
     });
 
