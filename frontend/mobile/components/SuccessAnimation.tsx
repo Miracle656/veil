@@ -3,6 +3,7 @@ import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
 import { useTheme } from '../hooks/useTheme';
+import { useReduceMotion } from '../hooks/useReduceMotion';
 import { fontFamily } from '../theme/typography';
 import { CheckIcon, PaperPlaneIcon, type IconProps } from './icons';
 
@@ -21,15 +22,32 @@ export function SuccessAnimation({
   FromIcon?: (p: IconProps) => React.JSX.Element;
 }) {
   const { colors } = useTheme();
+  const reduceMotion = useReduceMotion();
 
   const fly = useRef(new Animated.Value(0)).current; // -1..1 buzz
   const morph = useRef(new Animated.Value(0)).current; // 0 = plane, 1 = check
   const pop = useRef(new Animated.Value(0)).current; // ring entrance
 
   useEffect(() => {
+    if (reduceMotion) {
+      fly.setValue(0);
+      pop.setValue(1);
+      morph.setValue(1);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+        () => undefined,
+      );
+      return;
+    }
+
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
 
-    Animated.spring(pop, { toValue: 1, useNativeDriver: true, friction: 6, tension: 90 }).start();
+    const popAnim = Animated.spring(pop, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 6,
+      tension: 90,
+    });
+    popAnim.start();
 
     // Buzz the plane for ~0.7s, then morph into the check.
     const buzz = Animated.loop(
@@ -39,15 +57,28 @@ export function SuccessAnimation({
       ]),
       { iterations: 4 },
     );
+    let morphAnim: Animated.CompositeAnimation | undefined;
     buzz.start(() => {
       fly.setValue(0);
-      Animated.spring(morph, { toValue: 1, useNativeDriver: true, friction: 5, tension: 90 }).start(() => {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      morphAnim = Animated.spring(morph, {
+        toValue: 1,
+        useNativeDriver: true,
+        friction: 5,
+        tension: 90,
+      });
+      morphAnim.start(() => {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(
+          () => undefined,
+        );
       });
     });
 
-    return () => buzz.stop();
-  }, [fly, morph, pop]);
+    return () => {
+      buzz.stop();
+      popAnim.stop();
+      morphAnim?.stop();
+    };
+  }, [fly, morph, pop, reduceMotion]);
 
   const ringScale = pop.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] });
   const planeTranslate = fly.interpolate({ inputRange: [-1, 1], outputRange: [-5, 5] });

@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View, type ViewStyle } from 'react-native';
 
+import { useReduceMotion } from '../hooks/useReduceMotion';
+
 /**
  * A placeholder block that pulses while real content loads.
  *
@@ -11,14 +13,15 @@ import { Animated, Easing, StyleSheet, View, type ViewStyle } from 'react-native
  *
  * The pulse is opacity-only and driven by the native driver, so it costs no
  * JS-thread work while the screen is also fetching, parsing and rendering.
- * `reduceMotion` renders a flat block for anyone who does not want movement.
+ * `reduceMotion` renders a flat block for anyone who does not want movement;
+ * when omitted, it follows the OS Reduce Motion setting.
  */
 export function Skeleton({
   width,
   height = 14,
   radius = 6,
   style,
-  reduceMotion = false,
+  reduceMotion,
 }: {
   width: number | `${number}%`;
   height?: number;
@@ -26,10 +29,12 @@ export function Skeleton({
   style?: ViewStyle;
   reduceMotion?: boolean;
 }) {
+  const systemReduceMotion = useReduceMotion();
+  const shouldReduceMotion = reduceMotion ?? systemReduceMotion;
   const pulse = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
-    if (reduceMotion) return;
+    if (shouldReduceMotion) return;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulse, {
@@ -48,11 +53,11 @@ export function Skeleton({
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse, reduceMotion]);
+  }, [pulse, shouldReduceMotion]);
 
   const base: ViewStyle = { width, height, borderRadius: radius };
 
-  if (reduceMotion) {
+  if (shouldReduceMotion) {
     return <View style={[styles.block, base, style]} />;
   }
 
