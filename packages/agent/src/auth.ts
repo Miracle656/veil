@@ -262,8 +262,19 @@ export function addressForAgentKey(publicKey: Uint8Array, factoryAddress: string
 
 // ── Stateless signed tokens ────────────────────────────────────────────────
 
+/**
+ * What a token may be used for. Challenges and sessions are signed with the
+ * same key, so the TYPE is what stops one standing in for the other: a
+ * challenge token is handed to any caller who asks, before any proof, so
+ * treating it as a session would authenticate whoever asked for it. Both
+ * `resolveSession` and `verifyChallengeAndOpenSession` reject the wrong type.
+ */
+type TokenType = 'challenge' | 'session'
+
 interface TokenPayload {
   v: 1
+  /** What this token may be used for — see TokenType. */
+  t: TokenType
   /** The wallet address the token is bound to. */
   a: string
   /** Expiry, epoch ms. */
@@ -280,7 +291,7 @@ function signToken(payload: TokenPayload, secret: Buffer): string {
   return `${body}.${base64UrlEncode(new Uint8Array(mac))}`
 }
 
-function readToken(token: unknown, secret: Buffer): TokenPayload | null {
+function readToken(token: unknown, secret: Buffer, expectedType: TokenType): TokenPayload | null {
   if (typeof token !== 'string' || !token) return null
   const dot = token.lastIndexOf('.')
   if (dot <= 0 || dot === token.length - 1) return null
@@ -290,7 +301,13 @@ function readToken(token: unknown, secret: Buffer): TokenPayload | null {
   if (given.length !== expected.length || !timingSafeEqual(Buffer.from(given), expected)) return null
   try {
     const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(body))) as TokenPayload
-    if (payload?.v !== 1 || typeof payload.a !== 'string' || typeof payload.e !== 'number' || typeof payload.n !== 'string') {
+    if (
+      payload?.v !== 1 ||
+      payload.t !== expectedType ||
+      typeof payload.a !== 'string' ||
+      typeof payload.e !== 'number' ||
+      typeof payload.n !== 'string'
+    ) {
       return null
     }
     return payload
@@ -319,8 +336,11 @@ export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
   // that sets only NEXT_PUBLIC_NETWORK cannot end up with a mainnet factory
   // verifying against a testnet passphrase (or the reverse).
   const network = options.network ?? NETWORK
+  // `||`, not `??`: an AGENT_FACTORY_ADDRESS set to an empty string must fall
+  // back to the built-in factory, not silently disable the agent's address
+  // verification.
   const factoryAddress =
-    options.factoryAddress ?? process.env.AGENT_FACTORY_ADDRESS?.trim() ?? FACTORY_BY_NETWORK[network] ?? ''
+    options.factoryAddress || process.env.AGENT_FACTORY_ADDRESS?.trim() || FACTORY_BY_NETWORK[network] || ''
   const networkPassphrase =
     options.networkPassphrase ?? (network === 'testnet' ? Networks.TESTNET : Networks.PUBLIC)
   const challengeTtlMs = options.challengeTtlMs ?? DEFAULT_CHALLENGE_TTL_MS
@@ -368,7 +388,7 @@ export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
       if (!factoryAddress) return { ok: false, error: 'Agent factory address is not configured' }
       pruneCaches()
       const expiresAt = now() + challengeTtlMs
-      const challenge = signToken({ v: 1, a: address, e: expiresAt, n: base64UrlEncode(rand(16)) }, secret)
+      const challenge = signToken({ v: 1, t: 'challenge', a: address, e: expiresAt, n: base64UrlEncode(rand(16)) }, secret)
       return { challenge, expiresAt }
     },
 
@@ -377,7 +397,7 @@ export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
       signed: AgentSignedMessage,
       context?: VerifyContext,
     ): Promise<SessionOpened | AuthFailure> {
-      const payload = readToken(challenge, secret)
+      const payload = readToken(challenge, secret, 'challenge')
       // A challenge this service did not sign proves nothing.
       if (!payload) return { ok: false, error: 'challenge is unknown or already used' }
       if (payload.e <= now()) return { ok: false, error: 'challenge has expired' }
@@ -409,12 +429,13 @@ export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
 
       pruneCaches()
       const expiresAt = now() + sessionTtlMs
-      const sessionToken = signToken({ v: 1, a: payload.a, i: now(), e: expiresAt, n: base64UrlEncode(rand(16)) }, secret)
+      const sessionToken = signToken({ v: 1, t: 'session', a: payload.a, i: now(), e: expiresAt, n: base64UrlEncode(rand(16)) }, secret)
       return { sessionToken, walletAddress: payload.a, expiresAt }
     },
 
     resolveSession(sessionToken: string): string | null {
-      const payload = readToken(sessionToken, secret)
+      // 'session' — a challenge token (or anything else) must never resolve.
+      const payload = readToken(sessionToken, secret, 'session')
       if (!payload) return null
       if (payload.e <= now()) return null
       if (revokedSessions.has(payload.n)) return null
@@ -422,7 +443,7 @@ export function createAgentAuth(options: AgentAuthOptions = {}): AgentAuth {
     },
 
     revokeSession(sessionToken: string): void {
-      const payload = readToken(sessionToken, secret)
+      const payload = readToken(sessionToken, secret, 'session')
       if (payload) revokedSessions.set(payload.n, payload.e)
     },
 

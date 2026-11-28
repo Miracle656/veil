@@ -180,7 +180,7 @@ veil/
 │   └── agent/                     # Veil AI Agent (Node.js / TypeScript)
 │       └── src/
 │           ├── agent.ts           # Claude tool-use loop (get_price, get_balance, build_swap, build_payment, request_user_approval)
-│           ├── server.ts          # Express + WebSocket server — handles chat messages, conversation history
+│           ├── handler.ts         # One request per POST — parsing, auth, the serverless route's contract
 │           ├── txBuilder.ts       # Builds unsigned Stellar XDR transactions (swap, payment)
 │           └── x402Client.ts      # x402 micropayment client — auto-pays Lens price endpoint calls
 └── frontend/

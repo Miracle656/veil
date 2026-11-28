@@ -481,19 +481,20 @@ export default function AgentPage() {
       try {
         session = await ensureSession()
       } catch (err) {
-        if (isPasskeyCancellation(err)) {
-          setMessages((prev) => [...prev, { role: 'agent', content: 'Cancelled — nothing was sent.' }])
-          return
-        }
-        // No session on this device — a classic (G…) wallet, a cleared
-        // storage, or a ceremony that could not complete. While
-        // AGENT_REQUIRE_SESSION is off (the default) the server still accepts
-        // session-less requests, so send without one rather than fail.
+        // No session on this device — a dismissed prompt, a classic (G…)
+        // wallet, cleared storage, or a ceremony that could not complete.
+        // While AGENT_REQUIRE_SESSION is off (the default) the server still
+        // accepts session-less requests, so the message goes out anyway: a
+        // dismissed passkey prompt must not eat it. (If enforcement is on,
+        // the server answers 401 and the retry below asks once more.)
         session = null
       }
       let res = await postChat(text, history, session?.token ?? '')
       if (res.status === 401) {
-        // Session expired or unknown to this instance — sign once more and retry once.
+        // Enforcement is on and this request needs a session: sign once
+        // more and retry once. Here a dismissed prompt cannot fall back —
+        // the server has said it will only accept a session — so the
+        // message genuinely cannot be sent.
         clearAgentSession()
         sessionRef.current = null
         try {

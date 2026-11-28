@@ -132,8 +132,7 @@ describe('wallet-signed agent sessions', () => {
     expect(auth.resolveSession(opened.sessionToken)).toBe(key.wallet)
   })
 
-  it('challenges and sessions work across instances sharing the secret', async () => {
-    // Two warm instances, same AGENT_SESSION_SECRET: the challenge issued by
+  it('challenges and sessions work across instances sharing the secret', async () => {    // Two warm instances, same AGENT_SESSION_SECRET: the challenge issued by
     // one must verify — and the session it opens must resolve — on the other.
     const instanceA = createAgentAuth({ factoryAddress: FACTORY, networkPassphrase: NETWORK_PASSPHRASE, secret: SHARED_SECRET })
     const instanceB = createAgentAuth({ factoryAddress: FACTORY, networkPassphrase: NETWORK_PASSPHRASE, secret: SHARED_SECRET })
@@ -154,6 +153,29 @@ describe('wallet-signed agent sessions', () => {
     expect(instanceC.resolveSession(opened.sessionToken)).toBeNull()
     const lateVerify = await instanceC.verifyChallengeAndOpenSession(issued.challenge, await key.signLogin(issued.challenge))
     expect(isAuthFailure(lateVerify)).toBe(true)
+  })
+
+  it('a challenge token is never a session, and a session token is never a challenge', async () => {
+    const auth = createAgentAuth({ factoryAddress: FACTORY, networkPassphrase: NETWORK_PASSPHRASE, secret: SHARED_SECRET })
+    const key = await makeKey()
+
+    // Anyone can ask for a challenge for ANY address — no proof is needed —
+    // so the challenge token must not authenticate as that wallet.
+    const issued = auth.issueChallenge(key.wallet)
+    if (!('challenge' in issued)) throw new Error('challenge issue failed')
+    expect(auth.resolveSession(issued.challenge)).toBeNull()
+
+    // …and the session a real signature earns is not a challenge: it must not
+    // be fed back into verify, where its shorter claim lifecycle and
+    // single-use accounting do not apply.
+    const opened = await auth.verifyChallengeAndOpenSession(
+      issued.challenge,
+      await key.signLogin(issued.challenge),
+      { expectedOrigin: ORIGIN },
+    )
+    if (!('sessionToken' in opened)) throw new Error('verify failed')
+    const reused = await auth.verifyChallengeAndOpenSession(opened.sessionToken, await key.signLogin(opened.sessionToken))
+    expect(isAuthFailure(reused)).toBe(true)
   })
 
   it('an unsigned request has no session and parses to an error', async () => {
