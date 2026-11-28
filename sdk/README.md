@@ -253,6 +253,8 @@ the escrow helpers' `senderKeypair` / `claimantKeypair` options in favour of
 
 A session key is an ed25519 key the wallet owner registers with a passkey. Until its expiry it may call one function on one contract, and the third argument of each call (the amount, for a token `transfer`) counts against a cap that covers the key's whole life. It does not limit who receives a transfer.
 
+> **The cap only works when the third argument is the amount.** If it is missing, or is not an `i128`, the wallet counts the call as zero and the cap limits nothing. Register a session key only for a function shaped like a token `transfer(from, to, amount)`.
+
 These helpers follow the wallet code every Veil wallet on mainnet runs (WASM SHA-256 `b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5`, source `contracts/invisible_wallet/src/` at commit `ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2`), not `main`.
 
 ```ts

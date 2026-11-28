@@ -7,6 +7,12 @@
  * against a cap that covers its whole life. Nothing else is limited: in
  * particular the contract never looks at who receives a transfer.
  *
+ * The cap only works for a function whose THIRD argument is the amount. If
+ * that argument is missing, or is not an i128, the contract counts the call
+ * as zero, so the cap limits nothing and the key can call that function
+ * without limit until it expires. Register a session key only for a function
+ * shaped like a token `transfer(from, to, amount)`.
+ *
  * Everything here follows the wallet WASM every Veil wallet on mainnet runs,
  * SHA-256 b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5,
  * built from contracts/invisible_wallet/src/ at commit
@@ -19,6 +25,7 @@
 import { Address, Keypair, hash, nativeToScVal, rpc, scValToNative, xdr } from '@stellar/stellar-sdk';
 
 import { assertEntryAuthorized } from './authEntryGuard';
+import { latestLedgerClose } from './latestLedger';
 
 /** Element count of the credential `__check_auth` treats as a session-key signature. */
 export const SESSION_KEY_SIGNATURE_VECTOR_LENGTH = 3;
@@ -386,8 +393,8 @@ export async function readSessionKey(
 
 /** The network limits {@link buildRegisterSessionKeyCall} needs, read from the network itself. */
 export async function readSessionKeyNetworkLimits(server: rpc.Server): Promise<SessionKeyNetworkLimits> {
-    const [{ sequence }, settings] = await Promise.all([
-        server.getLatestLedger(),
+    const [{ closeTime }, settings] = await Promise.all([
+        latestLedgerClose(server),
         server.getLedgerEntries(
             xdr.LedgerKey.configSetting(
                 new xdr.LedgerKeyConfigSetting({
@@ -396,17 +403,11 @@ export async function readSessionKeyNetworkLimits(server: rpc.Server): Promise<S
             ),
         ),
     ]);
-    // `getLatestLedger` has no close time on the SDK 14 types the
-    // wallet/mobile jobs typecheck against, and `_getLatestLedger` is a
-    // private 15.1-only method — so read the close time of the latest
-    // ledger via the public `getLedgers`, which carries it on both.
-    const { latestLedgerCloseTime } = await server.getLedgers({
-        startLedger: sequence,
-        pagination: { limit: 1 },
-    });
+    // The close time comes from latestLedgerClose, which does not decode the
+    // ledger header: a Stellar SDK older than the network's protocol cannot.
     if (settings.entries.length !== 1) throw new SessionKeyError('The network did not return its state archival settings.');
     return {
-        ledgerTime: BigInt(latestLedgerCloseTime),
+        ledgerTime: BigInt(closeTime),
         maxEntryTtl: settings.entries[0].val.configSetting().stateArchivalSettings().maxEntryTtl(),
     };
 }

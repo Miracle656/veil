@@ -31,6 +31,7 @@ import {
 import { assertEntryAuthorized, hostFunctionCalls } from '../../src/authEntryGuard';
 import { sessionKeyLedgerKey, signAuthEntryWithSessionKey } from '../../src/sessionKey';
 import { buildWebAuthnSignatureVector } from '../../src/signatureVector';
+import { latestLedgerClose, latestLedgerSequence } from '../../src/latestLedger';
 
 /** SHA-256 of the wallet WASM every Veil wallet on mainnet runs (source: commit ccebd01a9b71c9857e6cd1e05dbdf6d45ea38ba2). */
 export const DEPLOYED_WALLET_WASM_SHA256 = 'b485f817469402ba4ccc24ea30077308f69589cbe0897db49087b15f58659ea5';
@@ -278,7 +279,7 @@ export async function submitAsWallet(
     if (rpc.Api.isSimulationError(recorded)) throw new Error(`Recording simulation failed: ${recorded.error}`);
     const success = recorded as rpc.Api.SimulateTransactionSuccessResponse;
     const allowed = hostFunctionCalls(unsigned);
-    const { sequence } = await server.getLatestLedger();
+    const sequence = await latestLedgerSequence(server);
     const validUntil = sequence + 60;
 
     let signedEntries: xdr.SorobanAuthorizationEntry[] = [];
@@ -514,14 +515,7 @@ export async function balanceOf(tokenId: string, holder: string): Promise<bigint
 
 /** The ledger's own clock, in unix seconds. */
 export async function ledgerTime(): Promise<bigint> {
-    // `getLatestLedger` has no close time on SDK 14 types, so read it via
-    // the public `getLedgers` (see readSessionKeyNetworkLimits).
-    const { sequence } = await server.getLatestLedger();
-    const { latestLedgerCloseTime } = await server.getLedgers({
-        startLedger: sequence,
-        pagination: { limit: 1 },
-    });
-    return BigInt(latestLedgerCloseTime);
+    return BigInt((await latestLedgerClose(server)).closeTime);
 }
 
 export async function waitForLedgerTime(target: bigint): Promise<void> {

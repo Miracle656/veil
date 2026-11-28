@@ -23,6 +23,7 @@ import {
     walletAuthFailure,
 } from '../../src/sessionKey';
 import * as net from './harness';
+import { latestLedgerSequence } from '../../src/latestLedger';
 
 const CAP = 1_000_000n;
 const SESSION_KEY_EXPIRED = 19;
@@ -173,7 +174,7 @@ describe('a session key on the deployed wallet code, on a real network', () => {
     });
 
     it('a different function on the same token contract (approve) is refused', async () => {
-        const { sequence } = await net.server.getLatestLedger();
+        const sequence = await latestLedgerSequence(net.server);
         const result = await sessionCall(token, 'approve', [
             new Address(wallet).toScVal(),
             new Address(stranger.publicKey()).toScVal(),
