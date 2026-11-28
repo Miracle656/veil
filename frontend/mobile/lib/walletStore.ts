@@ -110,6 +110,16 @@ export async function setSignerSecret(secret: string): Promise<void> {
 }
 
 /**
+ * Remove a retired spending secret once its account is confirmed empty or merged.
+ */
+export async function removeRetiredFeePayerSecret(secret: string): Promise<void> {
+  const existing = await getRetiredFeePayerSecrets();
+  const next = existing.filter((s) => s !== secret);
+  if (next.length === existing.length) return;
+  await setSecureItem(await key(SecureKey.retiredFeePayers), JSON.stringify(next));
+}
+
+/**
  * The SDK's own AsyncStorage keys, namespaced the same way by the adapter in
  * components/WalletProvider.tsx. They have to be cleared alongside the secure
  * store, or a reset leaves the SDK still holding a credential id — which it
