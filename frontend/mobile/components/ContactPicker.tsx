@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
@@ -10,6 +10,8 @@ import {
   View,
 } from 'react-native';
 import { Contact, useContacts } from '../hooks/useContacts';
+import { useTheme } from '../hooks/useTheme';
+import type { ThemeColors } from '../lib/theme';
 
 interface ContactPickerProps {
   visible: boolean;
@@ -19,6 +21,8 @@ interface ContactPickerProps {
 
 export function ContactPicker({ visible, onSelect, onClose }: ContactPickerProps) {
   const { contacts, isLoaded } = useContacts();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredContacts = contacts.filter(
@@ -51,7 +55,7 @@ export function ContactPicker({ visible, onSelect, onClose }: ContactPickerProps
           <TextInput
             style={styles.search}
             placeholder="Search name or address..."
-            placeholderTextColor="#64748b"
+            placeholderTextColor={colors.textFaint}
             value={searchTerm}
             onChangeText={setSearchTerm}
             autoCapitalize="none"
@@ -60,7 +64,7 @@ export function ContactPicker({ visible, onSelect, onClose }: ContactPickerProps
 
           <ScrollView showsVerticalScrollIndicator={false} style={styles.list} contentContainerStyle={styles.listContent}>
             {!isLoaded ? (
-              <ActivityIndicator style={styles.loader} color="#f1f5f9" />
+              <ActivityIndicator style={styles.loader} color={colors.textPrimary} />
             ) : filteredContacts.length === 0 ? (
               <Text style={styles.emptyText}>
                 {searchTerm ? 'No contacts found' : "You haven't saved any contacts yet."}
@@ -86,77 +90,78 @@ export function ContactPicker({ visible, onSelect, onClose }: ContactPickerProps
   );
 }
 
-const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    justifyContent: 'flex-end',
-  },
-  sheet: {
-    maxHeight: '80%',
-    backgroundColor: '#0B0B0F',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    borderWidth: 1,
-    borderColor: '#334155',
-    padding: 20,
-    gap: 14,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  title: {
-    color: '#FFFFFF',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  closeText: {
-    color: '#9BA1A6',
-    fontSize: 14,
-  },
-  search: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 12,
-    color: '#f1f5f9',
-    fontSize: 15,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  list: {
-    flexGrow: 0,
-  },
-  listContent: {
-    gap: 8,
-    paddingBottom: 8,
-  },
-  loader: {
-    marginVertical: 24,
-  },
-  emptyText: {
-    color: '#64748b',
-    fontSize: 14,
-    textAlign: 'center',
-    paddingVertical: 24,
-  },
-  item: {
-    backgroundColor: '#1e293b',
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  itemName: {
-    color: '#f1f5f9',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  itemAddress: {
-    color: '#94a3b8',
-    fontFamily: 'monospace',
-    fontSize: 12,
-    marginTop: 2,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.6)',
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      maxHeight: '80%',
+      backgroundColor: colors.surfaceRaised,
+      borderTopLeftRadius: 20,
+      borderTopRightRadius: 20,
+      borderWidth: 1,
+      borderColor: colors.border,
+      padding: 20,
+      gap: 14,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    title: {
+      color: colors.textStrong,
+      fontSize: 20,
+      fontWeight: '700',
+    },
+    closeText: {
+      color: colors.textMuted,
+      fontSize: 14,
+    },
+    search: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      padding: 12,
+      color: colors.textPrimary,
+      fontSize: 15,
+      borderWidth: 1,
+      borderColor: colors.borderStrong,
+    },
+    list: {
+      flexGrow: 0,
+    },
+    listContent: {
+      gap: 8,
+      paddingBottom: 8,
+    },
+    loader: {
+      marginVertical: 24,
+    },
+    emptyText: {
+      color: colors.textMuted,
+      fontSize: 14,
+      textAlign: 'center',
+      paddingVertical: 24,
+    },
+    item: {
+      backgroundColor: colors.surface,
+      borderRadius: 10,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    itemName: {
+      color: colors.textPrimary,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    itemAddress: {
+      color: colors.textSecondary,
+      fontFamily: 'monospace',
+      fontSize: 12,
+      marginTop: 2,
+    },
+  });

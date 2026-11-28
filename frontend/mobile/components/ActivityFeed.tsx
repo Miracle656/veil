@@ -9,7 +9,7 @@ import {
 import { useActivityFeed, type TxRecord } from '../lib/activityFeed';
 import { DUST_AMOUNT_LABEL, isDustRecord } from '../lib/dust';
 import { StellarIdenticon } from './StellarIdenticon';
-import { knownDepositAddresses } from '../lib/offramp';
+import { knownDepositAddresses, subscribeDepositAddresses } from '../lib/offramp';
 import { useTheme } from '../hooks/useTheme';
 import type { ThemeColors } from '../lib/theme';
 import { fontFamily } from '../theme/typography';
@@ -92,8 +92,12 @@ export default function ActivityFeed({
     void knownDepositAddresses().then((a) => {
       if (alive) setDepositAddresses(a);
     });
+    const unsubscribe = subscribeDepositAddresses((next) => {
+      if (alive) setDepositAddresses(next);
+    });
     return () => {
       alive = false;
+      unsubscribe();
     };
   }, []);
   const { colors } = useTheme();
