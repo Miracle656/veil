@@ -53,7 +53,7 @@ function fmt(n: number): string {
  * What the spending account can send of an issued asset, or null when it has
  * no trustline for it (and so cannot hold it at all).
  */
-async function spendingAssetBalance(
+export async function spendingAssetBalance(
   feePayer: string,
   asset: { code: string; issuer: string },
 ): Promise<number | null> {
