@@ -2,8 +2,13 @@ import { describe, it, expect } from '@jest/globals'
 import { Networks, StrKey } from '@stellar/stellar-sdk'
 import {
   ALL_REGISTERED_ASSETS,
+  AQUA_MAINNET_ISSUER,
+  ETHERFUSE_MAINNET_ISSUER,
+  EURC_MAINNET_ISSUER,
+  USDC_MAINNET_ISSUER,
   USDT0_MAINNET_ISSUER,
   USDT0_MAINNET_SAC,
+  USDY_MAINNET_ISSUER,
   classifyBalances,
   classifyHolding,
   deriveSac,
@@ -95,6 +100,25 @@ describe('classifyHolding', () => {
   it('claims nothing about a code that is not in the registry', () => {
     expect(classifyHolding('SCAM', FAKE_A, '1', 'mainnet').status).toBe('unlisted')
   })
+
+  it.each([
+    ['USDY', USDY_MAINNET_ISSUER],
+    ['EURC', EURC_MAINNET_ISSUER],
+    ['AQUA', AQUA_MAINNET_ISSUER],
+    ['CETES', ETHERFUSE_MAINNET_ISSUER],
+    ['USTRY', ETHERFUSE_MAINNET_ISSUER],
+    ['TESOURO', ETHERFUSE_MAINNET_ISSUER],
+  ])('verifies %s with its registered issuer and rejects impostors', (code, issuer) => {
+    const genuine = classifyHolding(code, issuer, '100', 'mainnet')
+    expect(genuine.status).toBe('verified')
+    expect(genuine.registeredIssuer).toBe(issuer)
+    expect(genuine.message).toContain(issuer)
+
+    const fake = classifyHolding(code, FAKE_A, '100', 'mainnet')
+    expect(fake.status).toBe('unverified')
+    expect(fake.registeredIssuer).toBe(issuer)
+    expect(fake.message).toMatch(/UNVERIFIED/)
+  })
 })
 
 describe('classifyBalances', () => {
@@ -135,5 +159,26 @@ describe('describeAsset', () => {
 
   it('says so for an unregistered asset', () => {
     expect(describeAsset('SCAM', 'mainnet').status).toBe('unknown')
+  })
+
+  it.each([
+    ['USDY', USDY_MAINNET_ISSUER],
+    ['EURC', EURC_MAINNET_ISSUER],
+    ['AQUA', AQUA_MAINNET_ISSUER],
+    ['CETES', ETHERFUSE_MAINNET_ISSUER],
+    ['USTRY', ETHERFUSE_MAINNET_ISSUER],
+    ['TESOURO', ETHERFUSE_MAINNET_ISSUER],
+  ])('describes verified %s on mainnet', (code, issuer) => {
+    const desc = describeAsset(code, 'mainnet')
+    expect(desc.status).toBe('verified')
+    expect(desc.issuer).toBe(issuer)
+    expect(desc.message).toContain(issuer)
+
+    const withIssuer = describeAsset(`${code}:${issuer}`, 'mainnet')
+    expect(withIssuer.status).toBe('verified')
+
+    const withFake = describeAsset(`${code}:${FAKE_A}`, 'mainnet')
+    expect(withFake.status).toBe('unverified')
+    expect(withFake.message).toMatch(/UNVERIFIED/)
   })
 })
