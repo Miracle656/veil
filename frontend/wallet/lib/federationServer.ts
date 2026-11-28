@@ -254,6 +254,95 @@ export async function resolveOnChain(name: string): Promise<string | null> {
   return null
 }
 
+/**
+ * What the registry holds for a name's stealth meta-address, hex encoded.
+ * A successful Option::None is distinct from an unsupported method or RPC
+ * failure: only the former means the holder has not published a record.
+ */
+export interface NameMetaAddressRecord {
+  stellar_address: string
+  spend_key: string
+  view_key: string
+}
+
+export type MetaAddressReader = (name: string) => Promise<{ spend_key: string; view_key: string } | null>
+
+function toHex(value: unknown): string | null {
+  if (!(value instanceof Uint8Array)) return null
+  let out = ''
+  for (const byte of value) out += byte.toString(16).padStart(2, '0')
+  return out
+}
+
+/** Read meta_address(name), throwing when the registry cannot answer. */
+export async function resolveMetaAddressOnChain(
+  name: string,
+): Promise<{ spend_key: string; view_key: string } | null> {
+  const contractId = getNamesContractId()
+  if (!contractId) throw new Error('The names registry is not deployed on this network.')
+
+  const network = serverNetwork()
+  if (network.rpcUrls.length === 0) throw new Error('No Soroban RPC upstream is configured.')
+
+  let sawSimulationFailure = false
+  let sawTransportFailure = false
+  for (const rpcUrl of network.rpcUrls) {
+    try {
+      const server = new SorobanRpc.Server(rpcUrl)
+      const contract = new Contract(contractId)
+      const source = new Account('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF', '0')
+      const tx = new TransactionBuilder(source, {
+        fee: BASE_FEE,
+        networkPassphrase: network.networkPassphrase,
+      })
+        .addOperation(contract.call('meta_address', nativeToScVal(name, { type: 'string' })))
+        .setTimeout(30)
+        .build()
+
+      const sim = await server.simulateTransaction(tx)
+      if (!SorobanRpc.Api.isSimulationSuccess(sim) || !sim.result) {
+        sawSimulationFailure = true
+        continue
+      }
+
+      const value = scValToNative(sim.result.retval)
+      if (value == null) return null
+      if (typeof value !== 'object') throw new Error('The registry returned an invalid meta-address.')
+
+      const fields = value as { spend_key?: unknown; view_key?: unknown }
+      const spend = toHex(fields.spend_key)
+      const view = toHex(fields.view_key)
+      if (!spend || !view) throw new Error('The registry returned a malformed meta-address.')
+      return { spend_key: spend, view_key: view }
+    } catch {
+      sawTransportFailure = true
+    }
+  }
+
+  if (sawSimulationFailure) {
+    throw new Error('The names registry could not simulate meta_address; the deployed contract may not support it.')
+  }
+  throw new Error(sawTransportFailure
+    ? 'Every RPC upstream failed while reading meta_address.'
+    : 'The names registry could not answer meta_address.')
+}
+
+/** Resolve a federated address to its published meta-address, or null. */
+export async function lookupNameMetaAddress(
+  q: string,
+  reader: MetaAddressReader = resolveMetaAddressOnChain,
+): Promise<NameMetaAddressRecord | null> {
+  const parsed = parseFederationName(q)
+  if (!parsed) return null
+  const meta = await reader(parsed.name)
+  if (!meta) return null
+  return {
+    stellar_address: \`\${parsed.name}*\${parsed.domain}\`,
+    spend_key: meta.spend_key,
+    view_key: meta.view_key,
+  }
+}
+
 /** A SEP-2 `type=name` answer. */
 export interface FederationNameRecord {
   stellar_address: string
