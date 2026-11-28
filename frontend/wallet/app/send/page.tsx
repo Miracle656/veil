@@ -311,7 +311,9 @@ export default function SendPage() {
     }
     const server = new Server(network.horizonUrl)
     server.loadAccount(signerPublicKey).then(account => {
-      const list: WalletAsset[] = account.balances.map(b => {
+      const list: WalletAsset[] = filterPlainAssetBalances(
+        account.balances as unknown as HorizonBalanceEntry[],
+      ).map(b => {
         if (b.asset_type === 'native') {
           // The reserve depends on how many trustlines, offers and data entries
           // this account holds, so it can only be known here, with the account

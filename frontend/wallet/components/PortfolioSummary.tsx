@@ -13,6 +13,13 @@
  */
 
 import type { PortfolioSummary as Summary, PortfolioLine } from '@/lib/portfolio'
+import {
+  formatLpAmount,
+  formatPoolSharePct,
+  formatUnderlyingValue,
+  shortPoolId,
+  type LpPosition,
+} from '@/lib/lpPositions'
 import { Amount, Label, Row, TokenIcon } from '@/components/ui/primitives'
 import { formatFiat, type CurrencyCode } from '@/lib/currency'
 import { useState, type FormEvent } from 'react'
@@ -309,6 +316,126 @@ function Bucket({
   )
 }
 
+// ── LP Positions section ──────────────────────────────────────────────────────
+
+function LpPositionRow({
+  position,
+  hideAmounts,
+  currencyCode,
+  fxRate,
+  last,
+}: {
+  position: LpPosition
+  hideAmounts: boolean
+  currencyCode: CurrencyCode
+  fxRate: number
+  last: boolean
+}) {
+  const fiatLabel = position.valueUsd !== null
+    ? formatFiat(position.valueUsd, currencyCode, fxRate)
+    : '—'
+
+  const warningLabel =
+    position.status === 'unknown_pair'
+      ? 'Unknown pair'
+      : position.valueUsd === null
+        ? 'Price unavailable'
+        : null
+
+  return (
+    <div style={{ paddingBottom: last ? 0 : undefined }}>
+      <Row last={last} className="vw-listrow">
+        <span style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
+          <TokenIcon code={position.underlying ? position.underlying[0].code : 'LP'} size={36} />
+          <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+            <span style={{ fontSize: '15px', fontWeight: 600 }}>
+              {position.pair}
+              <span
+                style={{
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  letterSpacing: '0.08em',
+                  textTransform: 'uppercase',
+                  color: 'var(--teal, #00A7B5)',
+                  border: '1px solid rgba(0,167,181,0.35)',
+                  borderRadius: '4px',
+                  padding: '1px 5px',
+                  marginLeft: '8px',
+                  verticalAlign: '2px',
+                }}
+              >
+                LP Position
+              </span>
+            </span>
+            <span className="vw-meta">
+              {hideAmounts ? '••••' : formatUnderlyingValue(position)}
+            </span>
+            <span style={{ fontSize: '11px', color: 'rgba(246,247,248,0.4)' }}>
+              {hideAmounts
+                ? '••••'
+                : position.shareOfPool !== null
+                  ? `${formatPoolSharePct(position.shareOfPool)} of pool · ${formatLpAmount(position.shares)} shares`
+                  : `${formatLpAmount(position.shares)} shares · Pool ${shortPoolId(position.poolId)}`}
+            </span>
+          </span>
+        </span>
+        <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', flexShrink: 0 }}>
+          <Amount className="text-[15px] font-semibold">
+            {hideAmounts ? '••••' : fiatLabel}
+          </Amount>
+          {!hideAmounts && warningLabel && (
+            <span
+              role="status"
+              aria-label={warningLabel}
+              style={{ fontSize: '11px', color: 'rgba(212,175,55,0.8)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+            >
+              <AlertTriangle size={11} strokeWidth={1.5} style={{ flexShrink: 0 }} />
+              {warningLabel}
+            </span>
+          )}
+        </span>
+      </Row>
+    </div>
+  )
+}
+
+function LpPositionsSection({
+  positions,
+  lpUsd,
+  hideAmounts,
+  currencyCode,
+  fxRate,
+}: {
+  positions: LpPosition[]
+  lpUsd: number | null
+  hideAmounts: boolean
+  currencyCode: CurrencyCode
+  fxRate: number
+}) {
+  if (positions.length === 0) return null
+  return (
+    <section aria-label="LP Positions">
+      <SectionHeader
+        label="LP Positions"
+        valueUsd={lpUsd}
+        currencyCode={currencyCode}
+        fxRate={fxRate}
+        hideAmounts={hideAmounts}
+      />
+      {positions.map((pos, i) => (
+        <LpPositionRow
+          key={pos.poolId}
+          position={pos}
+          hideAmounts={hideAmounts}
+          currencyCode={currencyCode}
+          fxRate={fxRate}
+          last={i === positions.length - 1}
+        />
+      ))}
+    </section>
+  )
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export interface PortfolioSummaryProps {
@@ -343,10 +470,12 @@ export function PortfolioSummary({
   hideAmounts = false,
   walletAddress,
 }: PortfolioSummaryProps) {
-  const { lines, totalUsd, cashUsd, lendingUsd, investUsd, pricedAt } = portfolio
-  const unpricedCount = lines.filter((l) => l.valueUsd === null).length
+  const { lines, lpPositions = [], totalUsd, cashUsd, lendingUsd, investUsd, lpUsd = null, pricedAt } = portfolio
+  const unpricedCount =
+    lines.filter((l) => l.valueUsd === null).length +
+    lpPositions.filter((p) => p.valueUsd === null).length
 
-  if (lines.length === 0) {
+  if (lines.length === 0 && lpPositions.length === 0) {
     return (
       <div className="vw-panel" style={{ padding: '8px 28px 18px' }} aria-label="Portfolio">
         <div style={{
@@ -416,6 +545,13 @@ export function PortfolioSummary({
         currencyCode={currencyCode}
         fxRate={fxRate}
         walletAddress={walletAddress}
+      />
+      <LpPositionsSection
+        positions={lpPositions}
+        lpUsd={lpUsd}
+        hideAmounts={hideAmounts}
+        currencyCode={currencyCode}
+        fxRate={fxRate}
       />
 
       {/* Footer: priced-at timestamp + partial-pricing warning. "Priced at"
