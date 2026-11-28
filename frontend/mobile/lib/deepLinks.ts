@@ -48,9 +48,10 @@ const LINKABLE_ROUTES: Record<string, readonly string[]> = {
   '/send': ['to', 'amount', 'asset', 'issuer', 'memo', 'memo_type'],
   '/receive': ['amount', 'asset', 'issuer'],
   '/create-wallet': [],
-  // Claim links carry the balance id in the path (`/claim/<id>`); it is folded
-  // into the `id` parameter by `resolveInAppPath`.
-  '/claim': ['id'],
+  // Claim links carry the balance id in the path (`/claim/<id>`), folded into
+  // `id` by `resolveInAppPath`, plus optional `network` and plain-text `note`.
+  // The `#s=` bearer secret stays strictly in process memory — never in a query string.
+  '/claim': ['id', 'network', 'note'],
   // Read-only destinations for launcher shortcuts (`lib/voice/actions.ts`).
   // Exact paths with no parameters: a link can open these screens but cannot
   // choose what they show.
@@ -67,6 +68,56 @@ const PATH_ALIASES: Record<string, string> = {
   // Paths are lowercased before lookup, but asset codes are case-sensitive.
   '/token/xlm': '/token/XLM',
 };
+
+const MAX_EPHEMERAL_SECRETS_IN_MEMORY = 16;
+
+/**
+ * Process-local, in-memory-only map holding `#s=` bearer secrets extracted from
+ * inbound `/claim/<id>#s=...` deep links until the claim screen consumes or
+ * dismisses them. Never written to `AsyncStorage` or echoed into a URL query.
+ */
+const ephemeralClaimSecrets = new Map<string, string>();
+
+function stashClaimLinkSecret(balanceId: string, secret: string): void {
+  const cleanId = balanceId.trim();
+  const cleanSecret = secret.trim();
+  if (!cleanId || !cleanSecret) return;
+  if (ephemeralClaimSecrets.has(cleanId)) {
+    ephemeralClaimSecrets.delete(cleanId);
+  } else if (ephemeralClaimSecrets.size >= MAX_EPHEMERAL_SECRETS_IN_MEMORY) {
+    const oldest = ephemeralClaimSecrets.keys().next().value;
+    if (oldest !== undefined) ephemeralClaimSecrets.delete(oldest);
+  }
+  ephemeralClaimSecrets.set(cleanId, cleanSecret);
+}
+
+/** Read an in-memory bearer secret previously extracted for `balanceId`, if any. */
+export function peekClaimLinkSecret(balanceId: string): string | null {
+  return ephemeralClaimSecrets.get(balanceId.trim()) ?? null;
+}
+
+/** Wipe one or all in-memory claim secrets (on claim completion, dismiss, or tests). */
+export function clearClaimLinkSecret(balanceId?: string): void {
+  if (balanceId !== undefined) {
+    ephemeralClaimSecrets.delete(balanceId.trim());
+    return;
+  }
+  ephemeralClaimSecrets.clear();
+}
+
+/** Extract the `#s=` bearer secret from a raw URL's fragment without touching query params. */
+export function extractSecretFromUrlFragment(url: string | null | undefined): string | null {
+  if (typeof url !== 'string') return null;
+  const hashIndex = url.indexOf('#');
+  if (hashIndex === -1) return null;
+  const fragment = url.slice(hashIndex + 1);
+  for (const [key, value] of parseQuery(fragment)) {
+    if (key === 's' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
 
 /**
  * SEP-7 `pay` field names mapped onto the query parameters the `/pay` route
@@ -225,11 +276,22 @@ export function resolveDeepLink(url: string, _context: DeepLinkContext = {}): st
 }
 
 function resolveInAppPath(pathAndQuery: string): string {
+  const secret = extractSecretFromUrlFragment(pathAndQuery);
   const { path, query } = splitPathAndQuery(pathAndQuery);
   const normalized = normalizePath(path);
   // `/claim/<balanceId>`: the id is case-sensitive, so take it from the raw path.
   const claimMatch = /^\/claim\/([^/]+)$/i.exec(`/${decodeURIComponent(path.trim()).replace(/^\/+/, '').replace(/\/+$/, '')}`);
-  if (claimMatch?.[1]) return buildTarget('/claim', `id=${encodeURIComponent(claimMatch[1])}`);
+  if (claimMatch?.[1]) {
+    const id = claimMatch[1];
+    if (secret) stashClaimLinkSecret(id, secret);
+    const merged = query ? `id=${encodeURIComponent(id)}&${query}` : `id=${encodeURIComponent(id)}`;
+    return buildTarget('/claim', merged);
+  }
+  if (normalized === '/claim' && secret) {
+    for (const [k, v] of parseQuery(query)) {
+      if (k === 'id' && v.trim()) stashClaimLinkSecret(v.trim(), secret);
+    }
+  }
   const route = PATH_ALIASES[normalized] ?? normalized;
   if (!(route in LINKABLE_ROUTES)) return FALLBACK_ROUTE;
   return buildTarget(route, query);
