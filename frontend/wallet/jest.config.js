@@ -13,7 +13,9 @@ const config = {
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
       tsconfig: {
-        jsx: 'react',
+        // Next compiles with the automatic runtime, so a component does not
+        // import React. Rendering one under Jest needs the same setting.
+        jsx: 'react-jsx',
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,
       },

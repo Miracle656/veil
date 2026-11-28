@@ -40,6 +40,10 @@ export type NavItem = {
  *
  * Buy with naira sits directly above Cash out: they are the two halves of the
  * naira rail and reading one without the other makes the wallet look one-way.
+ *
+ * The Blend backstop screen (#1298) is deliberately absent: it is behind
+ * `isBackstopEnabled` (`lib/backstopFeature.ts`) and must not appear in mainnet
+ * navigation until its live testnet cycle is done.
  */
 export const NAV_MAIN: NavItem[] = [
   { href: '/dashboard', label: 'Home',           Icon: House             },
