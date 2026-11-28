@@ -4,6 +4,8 @@
 
 **Short answer:** we no longer need to build a privacy pool. SDF and Nethermind have one, and a private transaction costs **about $0.003** in fees (measured). The real costs are **~9–15 engineer-weeks of integration** (mobile is the hard part), **a history server for note discovery**, and **compliance/legal work**. It is **not usable on mainnet yet**: the pool is an unaudited testnet preview. Start on testnet now; ship to mainnet when theirs is audited and approved.
 
+**Mechanism decision:** [ADR 0006 — Privacy Mechanisms: Which Problem Each One Solves](adr/0006-privacy-mechanisms.md) separates shielded-pool amount privacy from stealth-address recipient privacy and records the UI labelling rule.
+
 ---
 
 ## 1. What Stellar has now
