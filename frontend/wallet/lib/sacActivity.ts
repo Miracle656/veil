@@ -57,10 +57,26 @@ export function resetSacActivityCache(): void {
 
 /**
  * Format a 7-decimal stroop integer as a decimal string using integer math,
- * avoiding floating-point precision loss.
+ * avoiding floating-point precision loss. Returns `'0.0000000'` for malformed
+ * values so a single bad row never drops the rest of a page.
  */
-export function formatStroops(value: bigint | number | string): string {
-  const n = typeof value === 'bigint' ? value : BigInt(String(value).trim())
+export function formatStroops(value: bigint | number | string | null | undefined): string {
+  if (value === null || value === undefined) return '0.0000000'
+  let n: bigint
+  try {
+    if (typeof value === 'bigint') {
+      n = value
+    } else if (typeof value === 'number') {
+      if (!Number.isInteger(value)) return '0.0000000'
+      n = BigInt(value)
+    } else {
+      const trimmed = value.trim()
+      if (!trimmed) return '0.0000000'
+      n = BigInt(trimmed)
+    }
+  } catch {
+    return '0.0000000'
+  }
   const abs = n < 0n ? -n : n
   const whole = abs / STROOPS_PER_UNIT
   const frac = (abs % STROOPS_PER_UNIT).toString().padStart(7, '0')
@@ -259,11 +275,12 @@ export async function loadContractSacActivity(
       }
     } else {
       // Full back-scan, newest chunk first so partial coverage keeps the most
-      // recent activity. A failed chunk retries once at half width; if it still
-      // fails, we mark the scan incomplete so lastLedger is NOT advanced.
+      // recent activity. A failed chunk retries once at half width; if full
+      // width failed (even if half width succeeded, leaving the older half
+      // unscanned), mark the scan incomplete so lastLedger is NOT advanced.
       for (let c = 0; c < BACKSCAN_CHUNKS; c++) {
         const endLedger = latest.sequence - c * CHUNK
-        let chunkOk = false
+        let chunkFull = false
         for (const width of [CHUNK, Math.floor(CHUNK / 2)]) {
           try {
             events.push(
@@ -274,13 +291,13 @@ export async function loadContractSacActivity(
                 endLedger,
               )),
             )
-            chunkOk = true
+            if (width === CHUNK) chunkFull = true
             break
           } catch {
             // fall through to the narrower width, or record failure
           }
         }
-        if (!chunkOk) anyChunkFailed = true
+        if (!chunkFull) anyChunkFailed = true
         if (endLedger - CHUNK + 1 <= 1) break
       }
     }

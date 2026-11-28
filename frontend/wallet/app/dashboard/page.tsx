@@ -375,7 +375,7 @@ function DashboardPageContent() {
     // Join Horizon with RPC events and indexer rows. Horizon wins on shared tx
     // hashes; a payment and its fee in Horizon keep their own ids.
     txRecords = mergeHistory(txRecords, secondaryRecords).slice(0, HISTORY_MAX_ROWS)
-    setActivityLoadError(sacResult.failed && txRecords.length === 0)
+    setActivityLoadError(sacResult.failed)
 
     // ── 4. Check for new incoming transfers → agent notification badge ─────
     const lastVisit = parseInt(localStorage.getItem('veil_agent_last_visit') ?? '0', 10)
@@ -995,25 +995,34 @@ function DashboardPageContent() {
               <p style={{ fontSize: '13px', color: 'rgba(246,247,248,0.4)', padding: '14px 0' }}>
                 {loading ? 'Loading…' : activityLoadError ? 'Could not load recent activity.' : 'Nothing yet.'}
               </p>
-            ) : recent.map((tx) => (
-              <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                  <span style={{ fontSize: '14px', fontWeight: 500 }}>
-                    {tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'}
-                  </span>
-                  <span className="vw-meta">
-                    {tx.counterparty.length > 12
-                      ? tx.counterparty.slice(0, 6) + '…' + tx.counterparty.slice(-6)
-                      : tx.counterparty}
-                  </span>
-                </span>
-                <Amount className={`text-sm font-semibold shrink-0 ${tx.type === 'received' ? 'text-teal' : 'text-off-white'}`}>
-                  {hideAmounts
-                    ? '••••'
-                    : (tx.type === 'sent' ? '-' : tx.type === 'received' ? '+' : '') + tx.amount + ' ' + tx.asset}
-                </Amount>
-              </Row>
-            ))}
+            ) : (
+              <>
+                {activityLoadError && (
+                  <p style={{ fontSize: '12px', color: 'rgba(246,247,248,0.45)', padding: '6px 0 4px' }}>
+                    Could not load recent activity.
+                  </p>
+                )}
+                {recent.map((tx) => (
+                  <Row key={tx.id} className="vw-listrow" onClick={() => setSelectedTx(tx)}>
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                      <span style={{ fontSize: '14px', fontWeight: 500 }}>
+                        {tx.type === 'sent' ? 'Sent' : tx.type === 'swapped' ? 'Swapped' : 'Received'}
+                      </span>
+                      <span className="vw-meta">
+                        {tx.counterparty.length > 12
+                          ? tx.counterparty.slice(0, 6) + '…' + tx.counterparty.slice(-6)
+                          : tx.counterparty}
+                      </span>
+                    </span>
+                    <Amount className={`text-sm font-semibold shrink-0 ${tx.type === 'received' ? 'text-teal' : 'text-off-white'}`}>
+                      {hideAmounts
+                        ? '••••'
+                        : (tx.type === 'sent' ? '-' : tx.type === 'received' ? '+' : '') + tx.amount + ' ' + tx.asset}
+                    </Amount>
+                  </Row>
+                ))}
+              </>
+            )}
           </div>
 
           {/* ── Agent card (center bottom) ── */}

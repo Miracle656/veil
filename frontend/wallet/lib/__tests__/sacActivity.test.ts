@@ -167,6 +167,17 @@ describe('integer stroop formatting', () => {
     expect(formatStroops(123_456_789_012_345_678_901n)).toBe('12345678901234.5678901')
     expect(formatStroops('9007199254740999')).toBe('900719925.4740999')
   })
+
+  it('returns 0.0000000 instead of throwing on malformed amounts', () => {
+    expect(formatStroops('')).toBe('0.0000000')
+    expect(formatStroops('NaN')).toBe('0.0000000')
+    expect(formatStroops('12.34')).toBe('0.0000000')
+    expect(formatStroops('not-a-number')).toBe('0.0000000')
+    expect(formatStroops(Number.NaN)).toBe('0.0000000')
+    expect(formatStroops(1.5)).toBe('0.0000000')
+    expect(formatStroops(null)).toBe('0.0000000')
+    expect(formatStroops(undefined)).toBe('0.0000000')
+  })
 })
 
 describe('token lookup', () => {
@@ -393,5 +404,41 @@ describe('loadContractSacActivity caching, paging, and failure handling', () => 
     const second = await loadContractSacActivity([WALLET_C], 50, { server, network: 'testnet' })
     expect(second.failed).toBe(true)
     expect(second.records.map((r) => r.id)).toEqual(['ev-cached'])
+  })
+
+  it('marks a back-scan incomplete when a chunk fails at full width and only succeeds at half width', async () => {
+    const partialEv = makeTransferEvent({
+      id: 'ev-half',
+      from: SENDER_G,
+      to: WALLET_C,
+      stroops: 5_000_000n,
+      contractId: TESTNET_XLM_SAC,
+      txHash: 'tx-half',
+    })
+
+    const getEvents = jest.fn(async (req: SorobanRpc.Server.GetEventsRequest) => {
+      if ('startLedger' in req && 'endLedger' in req && req.endLedger === 80_000) {
+        const width = req.endLedger - req.startLedger + 1
+        if (width >= 2_900) throw new Error('-32001 request exceeded processing limit')
+        return { events: [partialEv] }
+      }
+      return { events: [] }
+    })
+
+    const server: SacRpcClient = {
+      getLatestLedger: jest.fn(async () => ({ sequence: 80_000 })),
+      getEvents,
+    }
+
+    const first = await loadContractSacActivity([WALLET_C], 50, { server, network: 'testnet' })
+    expect(first.failed).toBe(true)
+    expect(first.records.map((r) => r.id)).toEqual(['ev-half'])
+
+    // Because lastLedger was NOT advanced, the next call retries the full back-scan
+    getEvents.mockReset()
+    getEvents.mockResolvedValue({ events: [] })
+    const second = await loadContractSacActivity([WALLET_C], 50, { server, network: 'testnet' })
+    expect(second.failed).toBe(false)
+    expect(getEvents).toHaveBeenCalledTimes(3)
   })
 })
