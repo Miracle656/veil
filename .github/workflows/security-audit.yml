@@ -1,0 +1,61 @@
+name: Security Audit
+
+# Fork pull_request tokens are read-only; only the lockfile enters this privileged workflow.
+on:
+  push:
+    branches: [main]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Security Audit — cargo audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    env:
+      AUDIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      AUDIT_DIR: ${{ runner.temp }}/cargo-audit
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rustsec/audit-check
+          ref: 69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+          path: audit-action
+          persist-credentials: false
+
+      - name: Prepare lockfile
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p "$AUDIT_DIR"
+          if [ "$GITHUB_EVENT_NAME" = "pull_request_target" ]; then
+            git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/pr/head"
+            test "$(git rev-parse refs/remotes/pr/head)" = "$AUDIT_SHA"
+          fi
+          git show "${AUDIT_SHA}:contracts/Cargo.lock" > "$AUDIT_DIR/Cargo.lock"
+
+      # The child process can override GITHUB_SHA so the check lands on the PR head.
+      - name: Publish audit check
+        env:
+          INPUT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_IGNORE: RUSTSEC-2026-0009
+        run: |
+          env \
+            GITHUB_SHA="$AUDIT_SHA" \
+            "INPUT_WORKING-DIRECTORY=$AUDIT_DIR" \
+            node "$GITHUB_WORKSPACE/audit-action/dist/index.js"
