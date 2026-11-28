@@ -74,6 +74,11 @@ export interface BlendPool {
   supplyApy: number // e.g. 0.042 = 4.2%
   totalSupply: string
   assets: string[]
+  /**
+   * The pool contract's status number, or null when it was not reported.
+   * Read it through `poolStatusInfo` (lib/blendStatus.ts).
+   */
+  status: number | null
 }
 
 export interface BlendPosition {
@@ -90,6 +95,12 @@ export interface BlendPosition {
   deposited: string
   bTokenBalance: string
   accruedInterest: string
+}
+
+/** The status number from a loaded pool, or null when it is missing or not a whole number. */
+export function readPoolStatus(pool: { metadata?: { status?: unknown } }): number | null {
+  const status = pool.metadata?.status
+  return typeof status === 'number' && Number.isInteger(status) ? status : null
 }
 
 /** Load configured Blend pools and their reserve APYs. */
@@ -117,6 +128,7 @@ export async function loadBlendPools(): Promise<BlendPool[]> {
           supplyApy: avgSupplyApy,
           totalSupply,
           assets: pool.metadata.reserveList,
+          status: readPoolStatus(pool),
         }
       } catch (err) {
         console.warn(`[blend] failed loading pool ${poolId}:`, err)
