@@ -14,11 +14,17 @@ on:
     branches: [main]
     paths:
       - 'frontend/docs/**'
+      - 'frontend/wallet/app/earn/page.tsx'
+      - 'frontend/mobile/app/(tabs)/earn.tsx'
+      - 'frontend/mobile/lib/about.ts'
       - '.github/workflows/docs.yml'
   pull_request:
     branches: [main]
     paths:
       - 'frontend/docs/**'
+      - 'frontend/wallet/app/earn/page.tsx'
+      - 'frontend/mobile/app/(tabs)/earn.tsx'
+      - 'frontend/mobile/lib/about.ts'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -62,3 +68,6 @@ jobs:
 
       - name: Build docs site
         run: npm run build
+
+      - name: Run doc verification tests
+        run: npm test
