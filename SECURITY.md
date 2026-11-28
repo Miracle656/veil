@@ -2,12 +2,12 @@
 
 ## Supported Versions
 
-Only the most recent release receives security patches. Veil is currently in testnet preview; no version is considered production-ready for Mainnet.
+Only the most recent release receives security patches.
 
 | Version | Status          | Supported |
 |---------|-----------------|-----------|
-| 0.1.x   | Testnet preview | Yes       |
-| < 0.1   | —               | No        |
+| 0.2.x   | Current release | Yes       |
+| < 0.2   | Unsupported     | No        |
 
 Once a v1.0 release is cut, the table will track the current stable branch and the one prior minor version.
 
@@ -17,9 +17,9 @@ Once a v1.0 release is cut, the table will track the current stable branch and t
 
 **Do not open a public GitHub issue for security reports.** Doing so discloses the vulnerability before a fix is available.
 
-### Preferred channel
+### Preferred Channel
 
-Email **security@invisible-wallet.dev** with:
+Email **security@useveilapp.xyz** with:
 
 - A description of the vulnerability and its potential impact
 - Step-by-step reproduction instructions
@@ -27,23 +27,11 @@ Email **security@invisible-wallet.dev** with:
 - The affected version(s) or commit range
 - Any suggested mitigations you have identified
 
-PGP-encrypted email is accepted. Request the public key by emailing the address above with subject line `PGP key request` — we will respond with the key before you send sensitive details.
-
-### Backup channel
-
-GitHub's [private vulnerability reporting](https://github.com/Miracle656/veil/security/advisories/new) is also available and preferred when you do not need end-to-end encryption.
-
 ---
 
-## Response SLA
+## Response Timelines
 
-| Severity     | Acknowledgement | Triage complete | Fix target |
-|--------------|-----------------|-----------------|------------|
-| Critical     | 24 hours        | 48 hours        | 7 days     |
-| High         | 48 hours        | 5 days          | 14 days    |
-| Medium / Low | 72 hours        | 10 days         | 30 days    |
-
-Severity is assessed using [CVSS v3.1](https://www.first.org/cvss/calculator/3-1). We reserve the right to adjust timelines if the fix requires a coordinated release with an upstream dependency (Stellar SDK, Soroban runtime).
+We review incoming reports on a best-effort basis and aim to acknowledge receipt promptly. We will keep the reporter informed as triage and remediation progress.
 
 ---
 
@@ -54,10 +42,14 @@ We follow a coordinated disclosure model:
 1. Reporter submits the vulnerability privately.
 2. We acknowledge receipt and begin triage.
 3. We develop and test a fix on a private branch.
-4. We issue a patched release and publish a GitHub Security Advisory.
+4. We issue a patched release and publish a security advisory.
 5. After the advisory is public (minimum 7 days after the patch ships) the reporter may publish their own write-up.
 
 We will credit reporters by name or handle in the advisory unless they request anonymity.
+
+### Advisory Publication
+
+Security advisories and release notes detailing fixed vulnerabilities are published on GitHub under [Security Advisories](https://github.com/Miracle656/veil/security/advisories) and in project release notes.
 
 ---
 
@@ -100,4 +92,4 @@ The following will not be accepted as valid reports:
 
 ## Audit Status
 
-No third-party audit has been completed. Veil is testnet-only. A full audit is planned before any Mainnet deployment. See the [Security](https://docs.useveilapp.xyz/security) docs page for the current audit roadmap.
+Veil is live on Stellar Mainnet (deployed 2026-08-23). An external security audit was delivered on 2026-09-17. See the [Security](https://docs.useveilapp.xyz/security) docs page for architecture and security details.

@@ -164,4 +164,4 @@ Ranked by what would hurt first:
 
 - Revisit on any privacy release, on SPP upstream updates that change derivation/storage/disclosure code, and on the move to mainnet (the [maintainer go/no-go](../scripts/wave-issues-privacy.md#not-contributor-issues--maintainer-tasks)).
 - The strongest low-cost checks are the ones already in tests: `SPP_REQUIRED_METHODS` coverage ([`rpcFailover.test.ts:100`](../frontend/wallet/lib/__tests__/rpcFailover.test.ts)) and the V132 cross-platform key vectors.
-- Report findings per [`SECURITY.md`](../SECURITY.md) (coordinated disclosure; `security@invisible-wallet.dev`). SPP-side findings go upstream to Nethermind.
+- Report findings per [`SECURITY.md`](../SECURITY.md) (coordinated disclosure; `security@useveilapp.xyz`). SPP-side findings go upstream to Nethermind.
