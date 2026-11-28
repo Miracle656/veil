@@ -558,7 +558,6 @@ export default function SendPage() {
       const destination = resolvedAddress ?? recipient
 
       if (StrKey.isValidEd25519PublicKey(destination) || StrKey.isValidMed25519PublicKey(destination)) {
-        const account = await horizonServer.loadAccount(feePayerKp.publicKey())
         const account = await loadPayingAccount(() => horizonServer.loadAccount(feePayerKp.publicKey()))
         const builder = new TransactionBuilder(account, {
           fee: inclusionFee(),
