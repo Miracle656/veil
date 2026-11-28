@@ -2,11 +2,16 @@ export { computeWalletAddress } from './walletAddress';
 
 // ── Buffer helpers ────────────────────────────────────────────────────────────
 
+const HEX = '0123456789abcdef';
+
 export function bufferToHex(input: Uint8Array | ArrayBuffer): string {
     const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-    return Array.from(bytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
+    let result = '';
+    for (let i = 0; i < bytes.length; i++) {
+        const byte = bytes[i];
+        result += HEX[byte >> 4] + HEX[byte & 15];
+    }
+    return result;
 }
 
 export function hexToUint8Array(hex: string): Uint8Array {

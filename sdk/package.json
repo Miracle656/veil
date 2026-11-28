@@ -275,7 +275,7 @@
     {
       "name": "main (React hook + utils)",
       "path": "dist/index.js",
-      "limit": "235 KB"
+      "limit": "235.5 KB"
     },
     {
       "name": "vanilla",
