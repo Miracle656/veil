@@ -20,6 +20,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import { PageHeader } from '@/components/ui/primitives'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 import { NIGERIAN_BANKS, bankName } from '@/lib/nigerianBanks'
+import { savedRecipients, type SavedBankRecipient } from '@/lib/savedRecipients'
 import { getNetwork, getUsdcIssuer } from '@/lib/network'
 import { readContractAssetBalances } from '@/lib/contractAssets'
 import { movableWalletAssets, type IssuedWalletAsset } from '@/lib/moveFromWallet'
@@ -101,6 +102,11 @@ export default function CashOutPage() {
   const [bankQuery, setBankQuery] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [verified, setVerified] = useState<VerifiedBank | null>(null)
+
+  // Saved in this browser only, and only when the user ticks the box. The list
+  // is read from storage after mount so the server render never guesses at it.
+  const [savedBanks, setSavedBanks] = useState<SavedBankRecipient[]>([])
+  const [saveForNext, setSaveForNext] = useState(false)
 
   const [order, setOrder] = useState<OfframpOrder | null>(null)
   const [createdAt, setCreatedAt] = useState<number | null>(null)
@@ -190,6 +196,10 @@ export default function CashOutPage() {
   }, [router])
 
   useEffect(() => {
+    setSavedBanks(savedRecipients.list().bank)
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
     void isOfframpAvailable().then((ok) => {
       if (cancelled) return
@@ -270,6 +280,22 @@ export default function CashOutPage() {
     attempted.current = null
   }, [])
 
+  /**
+   * Picking a saved account fills the form, then goes through the same
+   * verification as a typed one. The saved name is never trusted on its own.
+   */
+  function pickSavedBank(r: SavedBankRecipient) {
+    clearVerification()
+    setBankCode(r.bankCode)
+    setBankQuery('')
+    setAccountNumber(r.accountNumber)
+  }
+
+  function removeSavedBank(id: string) {
+    savedRecipients.removeBank(id)
+    setSavedBanks(savedRecipients.list().bank)
+  }
+
   async function handleCreateOrder() {
     setError(null)
     setBusy(true)
@@ -297,6 +323,15 @@ export default function CashOutPage() {
       setStatus(created.status)
       setCreatedAt(Date.now())
       setIdempotencyKey(null)
+      if (saveForNext) {
+        savedRecipients.addBank({
+          bankCode: verified.bankCode,
+          bankName: verified.bankName || bankName(verified.bankCode),
+          accountNumber: verified.accountNumber,
+          accountName: verified.accountName,
+        })
+        setSavedBanks(savedRecipients.list().bank)
+      }
       rememberActiveOrder(created.id)
       // So activity can call this "Cashed out" instead of "Sent".
       rememberDepositAddress(created.walletAddress)
@@ -539,6 +574,22 @@ export default function CashOutPage() {
 
         {step === 'bank' && (
           <>
+            {savedBanks.length > 0 && (
+              <div style={{ marginBottom: '1.5rem' }}>
+                <p style={eyebrow}>SAVED ACCOUNTS</p>
+                {savedBanks.map((r) => (
+                  <div key={r.id} style={{ ...row, justifyContent: 'space-between', marginTop: 8 }}>
+                    <button onClick={() => pickSavedBank(r)} style={linkBtn}>
+                      {r.bankName} · ••••{r.accountNumber.slice(-4)}
+                    </button>
+                    <button onClick={() => removeSavedBank(r.id)} style={linkBtn}>
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <p style={eyebrow}>ACCOUNT NUMBER</p>
             <input
               value={accountNumber}
@@ -649,6 +700,15 @@ export default function CashOutPage() {
               <DetailRow label="Account" value={verified.accountNumber} />
               <DetailRow label="Rate" value={rate ? `₦${rate.toLocaleString('en-NG')} / USDC` : '—'} />
             </div>
+
+            <label style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: '1rem', fontSize: '0.875rem', color: 'rgba(246,247,248,0.7)' }}>
+              <input
+                type="checkbox"
+                checked={saveForNext}
+                onChange={(e) => setSaveForNext(e.target.checked)}
+              />
+              Save for next time
+            </label>
 
             <div style={{ display: 'flex', gap: 10, marginTop: '1.75rem' }}>
               <button onClick={() => { setIdempotencyKey(null); setStep('bank') }} style={secondary} disabled={busy}>

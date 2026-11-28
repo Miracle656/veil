@@ -10,6 +10,7 @@ import { FEE_PAYER_PRF_SALT, type PrfEvaluator } from '@veil/prf'
 import { getNetwork, getNetworkName, walletConfig } from '@/lib/network'
 import { adoptPasskeyFromOtherNetwork, walletLocal, walletSession } from '@/lib/walletStorage'
 import { passkeyErrorMessage } from '@/lib/passkeyAuth'
+import { clearSavedRecipients } from '@/lib/savedRecipients'
 
 /**
  * The active network's wallet address for a stored passkey public key, or null.
@@ -162,6 +163,7 @@ export default function LockPage() {
       const existing = walletSession.getItem('invisible_wallet_address')
       if (existing && existing !== sessionAddress) {
         sessionStorage.clear()
+        clearSavedRecipients()
         setError('Account mismatch detected. Please register again.')
         return
       }
