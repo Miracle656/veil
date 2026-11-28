@@ -66,14 +66,9 @@ const nextConfig = {
     ];
   },
   webpack: (config) => {
-    // When webpack compiles SDK source files from ../../sdk/src/, it resolves
-    // node_modules going up from that directory and misses the wallet's
-    // node_modules. Prepend wallet's node_modules so imports like
-    // @stellar/stellar-sdk resolve correctly regardless of the importer's path.
-    config.resolve.modules = [
-      path.resolve(__dirname, "node_modules"),
-      ...config.resolve.modules,
-    ];
+    // The SDK is built in its own workspace before Next compiles the wallet.
+    // Leaving normal issuer-relative resolution intact lets SDK output use its
+    // own Stellar SDK 17 dependency while wallet code uses its compatible SDK 14.
     // The agent package (packages/agent) is ESM TypeScript that imports its own
     // modules as './network.js' — the extension TypeScript emits. When webpack
     // compiles that source directly, those files only exist as .ts; try .ts first.
