@@ -251,7 +251,7 @@ Measured with the repository's `size-limit` configuration, minified and brotlied
 
 | Entry point | Current main (`4035923a`) | This change | Delta | Budget | Headroom |
 |---|---:|---:|---:|---:|---:|
-| Main SDK | 237,314 B | 252,898 B | +15,584 B | 256,000 B | 3,102 B |
+| Main SDK | 237,314 B | 252,789 B | +15,475 B | 256,000 B | 3,211 B |
 | Vanilla | 216,234 B | 216,502 B | +268 B | 225,000 B | 8,498 B |
 
-The main entry point grows by 15,584 B. Current main is already 2,314 B over its former 235,000 B ceiling, so the 256,000 B ceiling clears that pre-existing drift and leaves 3,102 B after the complete secure v2 implementation, including SHA-512 scalar signing. Reusing Noble's existing byte-conversion helpers avoids duplicate implementations, and passing byte arrays directly to Stellar XDR avoids bundling a second Buffer implementation. No feature was removed to meet the budget.
+The main entry point grows by 15,475 B. Current main is already 2,314 B over its former 235,000 B ceiling, so the 256,000 B ceiling clears that pre-existing drift and leaves 3,211 B after the complete secure v2 implementation, including SHA-512 scalar signing. Reusing Noble's existing byte-conversion helpers avoids duplicate implementations, and passing byte arrays directly to Stellar XDR avoids bundling a second Buffer implementation. No feature was removed to meet the budget.

@@ -87,11 +87,8 @@
       "@noble/curves/utils": [
         "./node_modules/@noble/curves/utils"
       ],
-      "@noble/hashes/sha256": [
-        "./node_modules/@noble/hashes/sha256"
-      ],
-      "@noble/hashes/sha512": [
-        "./node_modules/@noble/hashes/sha512"
+      "@noble/hashes/sha2.js": [
+        "./node_modules/@noble/hashes/sha2"
       ],
       "@anthropic-ai/sdk": [
         "./node_modules/@anthropic-ai/sdk"

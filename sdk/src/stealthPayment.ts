@@ -9,8 +9,7 @@ import {
     numberToBytesBE,
     numberToBytesLE,
 } from '@noble/curves/utils';
-import { sha256 } from '@noble/hashes/sha256';
-import { sha512 } from '@noble/hashes/sha512';
+import { sha256, sha512 } from '@noble/hashes/sha2.js';
 import type { TransactionSigner } from './signer';
 import {
     createEscrow,
