@@ -54,6 +54,18 @@ export interface PushDeviceRegistration {
   platform: 'ios' | 'android';
   appVersion: string;
   locale: string;
+  /** Random per-install identifier generated on-device (never a wallet identifier). */
+  installId?: string;
+  /** Category preferences stored against this install record (#1287). */
+  categories?: Record<string, boolean>;
+}
+
+/** Last Expo push token obtained by this module during the current session. */
+let cachedPushToken: string | null = null;
+
+/** Forget any in-memory cached token. Tests only. */
+export function resetPushTokenCacheForTests(): void {
+  cachedPushToken = null;
 }
 
 /**
@@ -126,13 +138,81 @@ export async function registerPushDevice(
   const base = options.wraithUrl === undefined ? getWraithUrl() : options.wraithUrl;
   if (!base) return false;
   const doFetch = options.fetchImpl ?? fetch;
-  const response = await doFetch(`${base}/push/devices`, {
+  const normalizedBase = base.replace(/\/+$/, '');
+  const response = await doFetch(`${normalizedBase}/push/devices`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(registration),
   });
   if (!response.ok) throw new Error(`device registry answered ${response.status}`);
+  cachedPushToken = registration.token;
   return true;
+}
+
+/**
+ * Remove this install's token from the device registry (`DELETE /push/devices/:token`).
+ *
+ * Returns false when the build has no registry configured; throws on any
+ * non-2xx answer (including 404 — when #1274 is not deployed yet, a 404 is a
+ * missing route, not confirmation that a token was deregistered).
+ */
+export async function deregisterPushDevice(
+  token: string,
+  options: { wraithUrl?: string | null; fetchImpl?: typeof fetch } = {},
+): Promise<boolean> {
+  const base = options.wraithUrl === undefined ? getWraithUrl() : options.wraithUrl;
+  if (!base) return false;
+  const doFetch = options.fetchImpl ?? fetch;
+  const normalizedBase = base.replace(/\/+$/, '');
+  const response = await doFetch(`${normalizedBase}/push/devices/${encodeURIComponent(token)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(`device registry answered ${response.status}`);
+  if (cachedPushToken === token) cachedPushToken = null;
+  return true;
+}
+
+export interface GetPushTokenDeps {
+  platform?: string;
+  remotePushEnabled?: () => boolean;
+  hasPermission?: () => Promise<boolean>;
+  projectId?: () => string | null;
+  getToken?: (projectId: string) => Promise<string>;
+}
+
+/**
+ * Return the Expo push token owned by this module, or `null` when remote push
+ * is disabled, unsupported on this platform, lacks notification permission, or
+ * has no EAS project id.
+ *
+ * Respects {@link isRemotePushEnabled} first so no caller can obtain a push
+ * token while `EXPO_PUBLIC_REMOTE_PUSH` is off.
+ */
+export async function getPushToken(overrides: GetPushTokenDeps = {}): Promise<string | null> {
+  const platform = overrides.platform ?? Platform.OS;
+  if (platform !== 'ios' && platform !== 'android') return null;
+
+  const enabled = (overrides.remotePushEnabled ?? (() => isRemotePushEnabled()))();
+  if (!enabled) return null;
+
+  if (cachedPushToken && !overrides.getToken) return cachedPushToken;
+
+  const hasPermission =
+    overrides.hasPermission ??
+    (async () => {
+      const perm = (await Notifications.getPermissionsAsync()) as { granted?: boolean } | undefined;
+      return !!perm?.granted;
+    });
+  if (!(await hasPermission())) return null;
+
+  const projectId = (overrides.projectId ?? (() => resolveProjectId()))();
+  if (!projectId) return null;
+
+  const fetchToken = overrides.getToken ?? defaultDeps.getToken;
+  const token = await fetchToken(projectId);
+  if (!token) return null;
+  cachedPushToken = token;
+  return token;
 }
 
 export interface PushRegistrationDeps {
@@ -189,6 +269,7 @@ export async function ensurePushRegistration(
   let token: string;
   try {
     token = await deps.getToken(projectId);
+    if (token) cachedPushToken = token;
   } catch (err) {
     return failed(deps, 'push token request', err);
   }
@@ -216,19 +297,51 @@ function failed(
 }
 
 /**
+ * Register the Expo token for a native token the OS just handed over.
+ *
+ * Passing `devicePushToken` to `getExpoPushTokenAsync` matters: without it Expo
+ * fetches the native token again, and every native fetch fires the push token
+ * listener again, so a rotation would re-register in an endless loop.
+ */
+export function registerRotatedToken(
+  devicePushToken: string,
+  platform: 'ios' | 'android',
+  overrides: PushRegistrationDeps = {},
+): Promise<PushRegistrationResult> {
+  return ensurePushRegistration({
+    ...overrides,
+    getToken: async (projectId) =>
+      (
+        await Notifications.getExpoPushTokenAsync({
+          projectId,
+          devicePushToken: { type: platform, data: devicePushToken },
+        })
+      ).data,
+  });
+}
+
+/**
  * Re-register whenever the OS rotates the device's push credentials.
  *
  * `addPushTokenListener` reports the native (APNs/FCM) token, not the Expo one,
- * so the listener asks Expo again rather than sending what it was handed.
+ * so the listener converts it to an Expo token rather than sending it as is.
+ * The listener also fires on every native token fetch, not only on a real
+ * rotation, so a native token already seen is ignored.
  * Returns the unsubscribe function; a no-op on platforms with no remote push.
  */
 export function watchPushTokenRotation(
-  onRotate: () => Promise<unknown> = () => ensurePushRegistration(),
+  onRotate?: (devicePushToken: string) => Promise<unknown>,
   platform: string = Platform.OS,
 ): () => void {
   if (platform !== 'ios' && platform !== 'android') return () => {};
-  const subscription = Notifications.addPushTokenListener(() => {
-    void onRotate();
+  const os = platform;
+  const handle = onRotate ?? ((devicePushToken: string) => registerRotatedToken(devicePushToken, os));
+  let lastSeen: string | null = null;
+  const subscription = Notifications.addPushTokenListener(({ data }) => {
+    const devicePushToken = String(data);
+    if (devicePushToken === lastSeen) return;
+    lastSeen = devicePushToken;
+    void handle(devicePushToken);
   });
   return () => subscription.remove();
 }

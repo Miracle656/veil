@@ -1,10 +1,14 @@
 import * as Notifications from 'expo-notifications';
 
 import {
+  deregisterPushDevice,
   ensurePushRegistration,
+  getPushToken,
   isRemotePushEnabled,
   redactPushToken,
   registerPushDevice,
+  registerRotatedToken,
+  resetPushTokenCacheForTests,
   resolveProjectId,
   watchPushTokenRotation,
   type PushRegistrationDeps,
@@ -214,41 +218,84 @@ describe('watchPushTokenRotation', () => {
 
   beforeEach(() => addPushTokenListener.mockReset());
 
+  type Listener = (event: { data: string }) => void;
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
   it('re-registers every time the OS rotates the token, until unsubscribed', async () => {
     const remove = jest.fn();
-    let rotate: (() => void) | undefined;
-    addPushTokenListener.mockImplementation((listener: () => void) => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
       rotate = listener;
       return { remove };
     });
     const onRotate = jest.fn(async () => undefined);
 
     const stop = watchPushTokenRotation(onRotate, 'ios');
-    rotate?.();
-    rotate?.();
+    rotate?.({ data: 'apns-1' });
+    rotate?.({ data: 'apns-2' });
 
-    expect(onRotate).toHaveBeenCalledTimes(2);
+    expect(onRotate).toHaveBeenNthCalledWith(1, 'apns-1');
+    expect(onRotate).toHaveBeenNthCalledWith(2, 'apns-2');
     stop();
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
-  it('asks Expo for a fresh token on rotation rather than sending the native one', async () => {
-    let rotate: (() => void) | undefined;
-    addPushTokenListener.mockImplementation((listener: () => void) => {
+  it('ignores a native token it has already seen', () => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
+      rotate = listener;
+      return { remove: jest.fn() };
+    });
+    const onRotate = jest.fn(async () => undefined);
+
+    watchPushTokenRotation(onRotate, 'android');
+    rotate?.({ data: 'fcm-1' });
+    rotate?.({ data: 'fcm-1' });
+
+    expect(onRotate).toHaveBeenCalledTimes(1);
+  });
+
+  it('turns the native token it was handed into an Expo token, without fetching the native one again', async () => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
       rotate = listener;
       return { remove: jest.fn() };
     });
     const getExpoPushTokenAsync = Notifications.getExpoPushTokenAsync as jest.Mock;
-    getExpoPushTokenAsync.mockResolvedValue({ data: TOKEN });
-    const { deps, register } = happy({ getToken: undefined });
-    delete deps.getToken;
+    getExpoPushTokenAsync.mockReset().mockResolvedValue({ data: TOKEN });
+    const { deps, register } = happy();
 
-    watchPushTokenRotation(() => ensurePushRegistration(deps), 'android');
-    rotate?.();
-    await new Promise((resolve) => setImmediate(resolve));
+    watchPushTokenRotation((t) => registerRotatedToken(t, 'android', deps), 'android');
+    rotate?.({ data: 'fcm-1' });
+    await flush();
 
-    expect(getExpoPushTokenAsync).toHaveBeenCalledWith({ projectId: 'project-id' });
+    expect(getExpoPushTokenAsync).toHaveBeenCalledWith({
+      projectId: 'project-id',
+      devicePushToken: { type: 'android', data: 'fcm-1' },
+    });
     expect(register).toHaveBeenCalledWith(expect.objectContaining({ token: TOKEN }));
+  });
+
+  it('does not loop when fetching a token fires the listener again', async () => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
+      rotate = listener;
+      return { remove: jest.fn() };
+    });
+    // expo-notifications emits onDevicePushToken on every native token fetch.
+    const getExpoPushTokenAsync = Notifications.getExpoPushTokenAsync as jest.Mock;
+    getExpoPushTokenAsync.mockReset().mockImplementation(async () => {
+      rotate?.({ data: 'apns-1' });
+      return { data: TOKEN };
+    });
+    const { deps, register } = happy();
+
+    watchPushTokenRotation((t) => registerRotatedToken(t, 'ios', deps), 'ios');
+    rotate?.({ data: 'apns-1' });
+    for (let i = 0; i < 5; i++) await flush();
+
+    expect(getExpoPushTokenAsync).toHaveBeenCalledTimes(1);
+    expect(register).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op on web', () => {
@@ -256,5 +303,56 @@ describe('watchPushTokenRotation', () => {
 
     expect(addPushTokenListener).not.toHaveBeenCalled();
     expect(() => stop()).not.toThrow();
+  });
+});
+
+describe('getPushToken and deregisterPushDevice', () => {
+  beforeEach(() => {
+    resetPushTokenCacheForTests();
+  });
+
+  it('returns null without requesting a token when remote push is off (the default)', async () => {
+    const getToken = jest.fn(async () => TOKEN);
+
+    await expect(
+      getPushToken({
+        platform: 'android',
+        hasPermission: async () => true,
+        projectId: () => 'project-id',
+        getToken,
+      }),
+    ).resolves.toBeNull();
+    expect(getToken).not.toHaveBeenCalled();
+  });
+
+  it('reuses the token cached by ensurePushRegistration when remote push is on', async () => {
+    const { deps } = happy();
+    await ensurePushRegistration(deps);
+
+    const hasPermission = jest.fn(async () => true);
+    await expect(
+      getPushToken({
+        platform: 'android',
+        remotePushEnabled: () => true,
+        hasPermission,
+      }),
+    ).resolves.toBe(TOKEN);
+    expect(hasPermission).not.toHaveBeenCalled();
+  });
+
+  it('deletes the device with DELETE /push/devices/:token and throws on 404 instead of treating it as success', async () => {
+    const okFetch = jest.fn(async () => ({ ok: true, status: 204 }) as Response);
+    await expect(
+      deregisterPushDevice(TOKEN, { wraithUrl: 'https://wraith.example/', fetchImpl: okFetch }),
+    ).resolves.toBe(true);
+    expect(okFetch).toHaveBeenCalledWith(
+      `https://wraith.example/push/devices/${encodeURIComponent(TOKEN)}`,
+      { method: 'DELETE' },
+    );
+
+    const notFoundFetch = jest.fn(async () => ({ ok: false, status: 404 }) as Response);
+    await expect(
+      deregisterPushDevice(TOKEN, { wraithUrl: 'https://wraith.example', fetchImpl: notFoundFetch }),
+    ).rejects.toThrow('404');
   });
 });
