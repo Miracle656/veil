@@ -97,6 +97,17 @@ describe('sendAgentMessage', () => {
     }) as unknown as typeof fetch;
     await expect(sendAgentMessage(request, offline)).rejects.toThrow(/Check your connection/);
   });
+
+  it('sends the session token as a bearer header when present', async () => {
+    const seen: { headers?: unknown; body?: unknown }[] = [];
+    const spy = (async (_url: unknown, init: { headers?: unknown; body?: unknown }) => {
+      seen.push({ headers: init.headers, body: init.body });
+      return { ok: true, status: 200, json: async () => ({ response: 'hi' }) };
+    }) as unknown as typeof fetch;
+    await sendAgentMessage({ ...request, sessionToken: 'sess-123' }, spy);
+    expect((seen[0].headers as Record<string, string>)['Authorization']).toBe('Bearer sess-123');
+    expect(String(seen[0].body)).toContain('sess-123');
+  });
 });
 
 describe('parseSwapIntent', () => {
