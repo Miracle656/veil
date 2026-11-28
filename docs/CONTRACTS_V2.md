@@ -283,6 +283,17 @@ Adopt OpenZeppelin smart accounts for v2; do not build our own contract v2.
    will recognise the stack.
 
 **Before committing:** the mobile passkey spike; a testnet end-to-end (create → receive →
+
+## Quantum-Safe Signer (CAP-87 / ML-DSA)
+
+> **Status:** Work in Progress (Issue #1327)
+>
+> TODO:
+> - Document multi-algorithm signer storage (P-256 passkey + ML-DSA) for Contracts v2 without touching deployed v1 contracts.
+> - State clearly whether adding an ML-DSA signer preserves the existing deterministic wallet address.
+> - Document chosen NIST ML-DSA parameter set (e.g., ML-DSA-44 / ML-DSA-65 / ML-DSA-87) and rationale.
+> - Record measured Testnet verification cost (CPU instructions, memory, ledger/stroop fees) per `__check_auth` spend.
+
 spend → swap → cash-out) against SDF's testnet deployment; a check that our fee payer can
 sponsor account creation under a sensible cap; and a reproducible-build check of the shared
 contracts' WASM hashes. **Independently of this decision:** ship V150 — no contract fixes CR-1.
