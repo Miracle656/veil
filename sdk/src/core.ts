@@ -55,6 +55,7 @@ import {
 import { createSep43Wallet, type Sep43Wallet } from './sep43';
 import { signMessage } from './signMessage';
 import { buildWebAuthnSignatureVector } from './signatureVector';
+import { latestLedgerSequence } from './latestLedger';
 import {
     forgetAdditionalSigner,
     guardPrimaryBinding,
@@ -1386,7 +1387,7 @@ export class InvisibleWalletCore {
                 nonces.set(contractAddress, nonce);
             }
 
-            latestLedger ??= (await server.getLatestLedger()).sequence;
+            latestLedger ??= await latestLedgerSequence(server);
             const expiration = cappedExpiration(addrCred.signatureExpirationLedger(), latestLedger);
 
             const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
