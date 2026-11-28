@@ -1,15 +1,26 @@
-import { describe, it, expect } from '@jest/globals'
+import { beforeAll, describe, expect, it, jest } from '@jest/globals'
 import { Networks, StrKey } from '@stellar/stellar-sdk'
 import {
   ALL_REGISTERED_ASSETS,
   USDT0_MAINNET_ISSUER,
-  USDT0_MAINNET_SAC,
   classifyBalances,
   classifyHolding,
   deriveSac,
   describeAsset,
   registeredAsset,
 } from '../assets.js'
+
+jest.unstable_mockModule('@soroswap/sdk', () => ({
+  SoroswapSDK: jest.fn(),
+  SupportedNetworks: { MAINNET: 'mainnet' },
+  SupportedProtocols: {},
+  TradeType: {},
+}))
+
+let resolveAsset: typeof import('../price.js').resolveAsset
+
+// Derived from USDT0_MAINNET_ISSUER via deriveSac
+const USDT0_MAINNET_SAC = 'CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF'
 
 // Impostor issuers of an asset also called USDT0 (mainnet Horizon, 2026-09-24).
 const FAKE_A = 'GC35JBERU4SFTDVOF32A2SIJN5FHSLSZFZSGP6VVFWCZNDVGJFLQBANK'
@@ -135,5 +146,25 @@ describe('describeAsset', () => {
 
   it('says so for an unregistered asset', () => {
     expect(describeAsset('SCAM', 'mainnet').status).toBe('unknown')
+  })
+})
+
+describe('resolveAsset (via registry)', () => {
+  beforeAll(async () => {
+    ({ resolveAsset } = await import('../price.js'))
+  })
+
+  it('resolves bare USDC from the registry', () => {
+    const usdc = registeredAsset('USDC', 'mainnet')
+    expect(usdc).not.toBeNull()
+    expect(resolveAsset('USDC').horizon).toBe(`USDC:${usdc?.issuer}`)
+  })
+
+  it('resolves every mainnet registry asset by its pinned issuer', () => {
+    for (const { network, asset } of ALL_REGISTERED_ASSETS) {
+      if (network === 'mainnet') {
+        expect(resolveAsset(asset.code).horizon).toBe(`${asset.code}:${asset.issuer}`)
+      }
+    }
   })
 })
