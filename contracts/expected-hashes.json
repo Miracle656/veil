@@ -5,6 +5,7 @@
     "invisible_wallet.wasm": "a312cbd03765a28babc7db5048e43fcae44e372ef276b2f37cc00221ccf50507",
     "mock_wallet.wasm": "c86f7ccbdcc54674c0d428eed7bce81699d946fe3af21e78ca4d22e88ed73f1a",
     "multisig_wallet.wasm": "8d8a46da7219530a977c56a5fe1301461428d4c317fd9ccc6b2fd8dff2e144b9",
+    "stealth_announcer.wasm": "6273128e19acff8436f2740ab3948234183d221f98a404c2ef300599631f8535",
     "vault.wasm": "bddded7ee3b0700c82232f145a783cc45ac3d68dfb621b3d72266f132b80e9d7",
     "veil_masquerade.wasm": "0f36d36e0380f7884ca179cc552234569b26f873cc7366f33babb03325dcfff5",
     "veil_names.wasm": "e5fa8d241d3f7d36003781a5e7832d72e32cb62276fb4780ff8711fab2f7c4e3"
