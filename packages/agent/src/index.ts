@@ -68,3 +68,29 @@ export {
   type AssetAnswer,
   type HorizonIssuerFlags,
 } from './assets.js'
+
+export {
+  createAgentAuth,
+  verifyAgentMessage,
+  addressForAgentKey,
+  isAuthFailure,
+  agentLoginMessage,
+  AGENT_MESSAGE_DOMAIN,
+  AGENT_LOGIN_PURPOSE,
+  FACTORY_BY_NETWORK,
+  DEFAULT_CHALLENGE_TTL_MS,
+  DEFAULT_SESSION_TTL_MS,
+  type AgentAuth,
+  type AgentAuthOptions,
+  type AgentSignedMessage,
+  type AuthFailure,
+  type ChallengeIssued,
+  type SessionOpened,
+  type VerifyContext,
+} from './auth.js'
+
+export {
+  parseAuthenticatedChatRequest,
+  parseAuthenticatedClearHistoryRequest,
+  parseClaimedAddress,
+} from './handler.js'

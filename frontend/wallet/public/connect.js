@@ -5,6 +5,7 @@
  *   const veil = VeilConnect.init({ app: 'your-app-id' })
  *   const { address } = await veil.connect()
  *   const { hash, reference } = await veil.pay({ to, amount: '20', asset: 'USDC', reference: 'order-123' })
+ *   const { hash, result } = await veil.invoke({ contract, method, args: [{ type: 'address', value: address }] })
  *   await veil.addMoney()
  *
  * Call these from a click or tap. Browsers block a window that opens any
@@ -106,6 +107,38 @@
           asset: payment.asset || 'USDC',
           reference: payment.reference,
         })
+      },
+      /**
+       * Asks the person to approve one call to one of YOUR contracts. The
+       * contract must be registered for your app id.
+       *
+       *   veil.invoke({
+       *     contract: 'C…',
+       *     method: 'join_challenge',
+       *     args: [
+       *       { type: 'address', value: address },
+       *       { type: 'u32', value: 7 },
+       *       { type: 'i128', value: '50000000' },   // 5 USDC, in stroops
+       *     ],
+       *   })
+       *
+       * Argument types: address, bool, u32, i32, u64, i64, u128, i128, string,
+       * symbol, bytes (hex). Pass large numbers as strings.
+       *
+       * Resolves with { hash, network, contract, method, signer, from, result }.
+       * `signer` is the C… wallet that approved. `from` is the G… account that
+       * carried the transaction. `result` is the contract's return value as
+       * base64 XDR (an ScVal), or null. Verify the hash on your server.
+       */
+      invoke: function (call) {
+        call = call || {}
+        var args = []
+        var given = call.args || []
+        for (var i = 0; i < given.length; i++) {
+          var a = given[i] || {}
+          args.push({ type: a.type, value: a.value === undefined || a.value === null ? a.value : String(a.value) })
+        }
+        return open(appId, { type: 'invoke', contract: call.contract, method: call.method, args: args })
       },
       /** Opens "Buy with naira" in Veil. Resolves once the user is on their way. */
       addMoney: function () {

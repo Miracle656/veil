@@ -39,6 +39,12 @@
       "@veil/agent/assets": [
         "../../packages/agent/src/assets"
       ],
+      "@veil/agent-auth": [
+        "../../packages/agent/src/auth"
+      ],
+      "@veil/agent-login": [
+        "../../packages/agent/src/agentLogin"
+      ],
       "@veil/agent-llm": [
         "../../packages/agent/src/llm"
       ],

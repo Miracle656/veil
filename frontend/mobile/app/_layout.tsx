@@ -20,6 +20,7 @@ import { fontAssets } from '../theme/typography';
 import { useTheme } from '../hooks/useTheme';
 import { useInactivityLock } from '../hooks/useInactivityLock';
 import { useNotifications } from '../hooks/useNotifications';
+import { usePushRegistration } from '../hooks/usePushRegistration';
 import { useOutboxReplay } from '../hooks/useOutboxReplay';
 import { ConnectivityProvider, useConnectivity } from '../lib/connectivity';
 import { hydrateNetwork } from '../lib/network';
@@ -28,7 +29,6 @@ import { hydrateLockSettings } from '../lib/appLock';
 import {
   configureNotificationChannel,
   configureNotificationHandler,
-  requestNotificationPermissions,
   setAppLocked,
 } from '../lib/notifications';
 import { WalletConnectApprovalModal } from '../components/WalletConnectApprovalModal';
@@ -74,12 +74,14 @@ export default function RootLayout() {
     // defaults and a saved lock timeout only takes effect once re-picked.
     void hydrateLockSettings();
     // Configure local notifications: the handler decides how they appear when
-    // the app is in the foreground; permissions are requested once per install.
+    // the app is in the foreground. Permission is NOT requested here: a prompt
+    // on first launch, before the user has a wallet, is one that gets refused.
+    // usePushRegistration (in NotificationGate) asks once a wallet exists, for
+    // local and remote notifications alike (#1273).
     configureNotificationHandler();
     // Android takes heads-up behaviour from the channel, so it has to exist
     // before the first notification is posted.
     void configureNotificationChannel();
-    void requestNotificationPermissions();
     // Check for payments while the app is closed, so a notification does not
     // wait for the next time the user opens it.
     void registerActivityCheck();
@@ -172,6 +174,9 @@ function InactivityLockGate() {
  */
 function NotificationGate() {
   useNotifications();
+  // Asks for notification permission and registers for remote push, but only
+  // once the user is in the tabs with a wallet — never on first launch (#1273).
+  usePushRegistration();
   return null;
 }
 

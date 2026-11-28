@@ -1,6 +1,7 @@
 export default {
   index: 'Introduction',
   'getting-started': 'Getting Started',
+  'sdk-integration': 'Integrate the SDK',
   'local-dev': 'Local Dev Emulator',
   architecture: 'Architecture',
   contracts: {
@@ -13,6 +14,8 @@ export default {
   'sdk-errors': 'SDK Error Reference',
   troubleshooting: 'Troubleshooting',
   guides: 'Guides',
+  'veil-pay': 'Veil Pay',
+  'veil-connect': 'Veil Connect',
   names: 'Veil Names',
   invest: 'Invest Rail & Disclosures',
   cookbook: 'Cookbook',

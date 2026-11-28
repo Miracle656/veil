@@ -180,7 +180,7 @@ veil/
 │   └── agent/                     # Veil AI Agent (Node.js / TypeScript)
 │       └── src/
 │           ├── agent.ts           # Claude tool-use loop (get_price, get_balance, build_swap, build_payment, request_user_approval)
-│           ├── server.ts          # Express + WebSocket server — handles chat messages, conversation history
+│           ├── handler.ts         # One request per POST — parsing, auth, the serverless route's contract
 │           ├── txBuilder.ts       # Builds unsigned Stellar XDR transactions (swap, payment)
 │           └── x402Client.ts      # x402 micropayment client — auto-pays Lens price endpoint calls
 └── frontend/
@@ -227,7 +227,14 @@ Additional endpoints: `GET /summary/:address`, `GET /transfers/address/:address`
 
 ### Agent (packages/agent)
 
-Claude-powered AI agent embedded in the Veil wallet. Connects via WebSocket. Tools:
+Claude-powered AI agent embedded in the Veil wallet. Served serverlessly from
+the wallet's `/api/agent` route (one POST per message); the standalone
+WebSocket server (`src/server.ts`) was retired. Requests may be bound to a
+wallet-signed session: the client signs purpose-bound server-challenge bytes
+with its passkey and the route resolves the wallet address from the verified
+session, never from the request body. Until a mobile build performs the
+challenge, session-less requests are still served under the claimed address
+(set `AGENT_REQUIRE_SESSION=true` to enforce). Tools:
 
 | Tool                    | Description                                                       |
 | ----------------------- | ----------------------------------------------------------------- |

@@ -2,7 +2,7 @@ import { Redirect, useLocalSearchParams } from "expo-router";
 
 /**
  * Entry point for inbound payment requests: `veil://pay?…`,
- * `https://app.veil.xyz/pay?…`, and SEP-7 `web+stellar:pay?…` URIs, all of
+ * `https://app.useveilapp.xyz/pay?…`, and SEP-7 `web+stellar:pay?…` URIs, all of
  * which `lib/deepLinks.ts` normalises onto this route.
  *
  * It deliberately holds no UI of its own — it hands the request to the send
