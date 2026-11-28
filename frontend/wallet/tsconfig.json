@@ -69,9 +69,6 @@
       "react/jsx-runtime": [
         "./node_modules/@types/react/jsx-runtime"
       ],
-      "@stellar/stellar-sdk": [
-        "./node_modules/@stellar/stellar-sdk"
-      ],
       "@anthropic-ai/sdk": [
         "./node_modules/@anthropic-ai/sdk"
       ],
