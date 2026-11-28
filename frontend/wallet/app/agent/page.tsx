@@ -11,6 +11,7 @@ import { signMessage } from '@veil/sdk'
 import { agentLoginMessage } from '@veil/agent-login'
 import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { agentChatBody } from '@/lib/agentChatBody'
 import { screenButton, type ScreenButton } from '@/lib/assistantScreens'
 import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
@@ -442,16 +443,20 @@ export default function AgentPage() {
       return fetch('/api/agent', {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          message: text,
-          feePayerAddress,
-          profile: getUserProfile(),
-          history,
-          sessionToken: sessionToken || undefined,
-        }),
+        // walletAddress is always in the body: see lib/agentChatBody.ts.
+        body: JSON.stringify(
+          agentChatBody({
+            message: text,
+            walletAddress,
+            feePayerAddress,
+            profile: getUserProfile(),
+            history,
+            sessionToken,
+          }),
+        ),
       })
     },
-    [feePayerAddress],
+    [walletAddress, feePayerAddress],
   )
 
   const sendMessage = useCallback(async () => {
