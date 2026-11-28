@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { walletSession } from '@/lib/walletStorage'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
 import { foreignPlatformOrigin, formatUsdc, topUpWalletUsdc } from '@/lib/namesPurchase'
 import {
@@ -189,7 +190,7 @@ export default function VeilIansPage() {
     } catch (err: unknown) {
       const raw = err instanceof Error ? err.message : String(err)
       setBuyError(
-        /cancelled|NotAllowedError/i.test(raw)
+        isPasskeyCancellation(err) || /WebAuthn signing was cancelled/i.test(raw)
           ? 'Passkey verification was cancelled. Nothing was charged.'
           : (masqueradeErrorMessage(err, collectionId) ?? raw),
       )

@@ -20,6 +20,7 @@ import { Keypair } from '@stellar/stellar-sdk'
 import type { WebAuthnSignature } from '@veil/sdk'
 import { derToRawSignature, hexToUint8Array } from '@veil/utils'
 
+import { isPasskeyCancellation } from './passkeyOutcome'
 import { walletLocal, walletSession } from './walletStorage'
 
 /** Thrown when the wallet cannot sign, with text meant for a user to read. */
@@ -96,16 +97,24 @@ export function buildSignAuthEntry(): (payload: Uint8Array) => Promise<WebAuthnS
     const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
     const credId = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
 
-    const assertion = (await navigator.credentials.get({
-      publicKey: {
-        challenge,
-        allowCredentials: [{ id: credId, type: 'public-key' }],
-        // `__check_auth` checks the user-verified flag in authenticatorData,
-        // so a silent assertion would be rejected on-chain after the user had
-        // already been through the prompt.
-        userVerification: 'required',
-      },
-    })) as PublicKeyCredential | null
+    let assertion: PublicKeyCredential | null
+    try {
+      assertion = (await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          allowCredentials: [{ id: credId, type: 'public-key' }],
+          // `__check_auth` checks the user-verified flag in authenticatorData,
+          // so a silent assertion would be rejected on-chain after the user had
+          // already been through the prompt.
+          userVerification: 'required',
+        },
+      })) as PublicKeyCredential | null
+    } catch (err: unknown) {
+      if (isPasskeyCancellation(err)) {
+        return null
+      }
+      throw err
+    }
 
     if (!assertion) return null
 

@@ -297,19 +297,51 @@ function failed(
 }
 
 /**
+ * Register the Expo token for a native token the OS just handed over.
+ *
+ * Passing `devicePushToken` to `getExpoPushTokenAsync` matters: without it Expo
+ * fetches the native token again, and every native fetch fires the push token
+ * listener again, so a rotation would re-register in an endless loop.
+ */
+export function registerRotatedToken(
+  devicePushToken: string,
+  platform: 'ios' | 'android',
+  overrides: PushRegistrationDeps = {},
+): Promise<PushRegistrationResult> {
+  return ensurePushRegistration({
+    ...overrides,
+    getToken: async (projectId) =>
+      (
+        await Notifications.getExpoPushTokenAsync({
+          projectId,
+          devicePushToken: { type: platform, data: devicePushToken },
+        })
+      ).data,
+  });
+}
+
+/**
  * Re-register whenever the OS rotates the device's push credentials.
  *
  * `addPushTokenListener` reports the native (APNs/FCM) token, not the Expo one,
- * so the listener asks Expo again rather than sending what it was handed.
+ * so the listener converts it to an Expo token rather than sending it as is.
+ * The listener also fires on every native token fetch, not only on a real
+ * rotation, so a native token already seen is ignored.
  * Returns the unsubscribe function; a no-op on platforms with no remote push.
  */
 export function watchPushTokenRotation(
-  onRotate: () => Promise<unknown> = () => ensurePushRegistration(),
+  onRotate?: (devicePushToken: string) => Promise<unknown>,
   platform: string = Platform.OS,
 ): () => void {
   if (platform !== 'ios' && platform !== 'android') return () => {};
-  const subscription = Notifications.addPushTokenListener(() => {
-    void onRotate();
+  const os = platform;
+  const handle = onRotate ?? ((devicePushToken: string) => registerRotatedToken(devicePushToken, os));
+  let lastSeen: string | null = null;
+  const subscription = Notifications.addPushTokenListener(({ data }) => {
+    const devicePushToken = String(data);
+    if (devicePushToken === lastSeen) return;
+    lastSeen = devicePushToken;
+    void handle(devicePushToken);
   });
   return () => subscription.remove();
 }

@@ -7,6 +7,7 @@ import {
   isRemotePushEnabled,
   redactPushToken,
   registerPushDevice,
+  registerRotatedToken,
   resetPushTokenCacheForTests,
   resolveProjectId,
   watchPushTokenRotation,
@@ -217,41 +218,84 @@ describe('watchPushTokenRotation', () => {
 
   beforeEach(() => addPushTokenListener.mockReset());
 
+  type Listener = (event: { data: string }) => void;
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+
   it('re-registers every time the OS rotates the token, until unsubscribed', async () => {
     const remove = jest.fn();
-    let rotate: (() => void) | undefined;
-    addPushTokenListener.mockImplementation((listener: () => void) => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
       rotate = listener;
       return { remove };
     });
     const onRotate = jest.fn(async () => undefined);
 
     const stop = watchPushTokenRotation(onRotate, 'ios');
-    rotate?.();
-    rotate?.();
+    rotate?.({ data: 'apns-1' });
+    rotate?.({ data: 'apns-2' });
 
-    expect(onRotate).toHaveBeenCalledTimes(2);
+    expect(onRotate).toHaveBeenNthCalledWith(1, 'apns-1');
+    expect(onRotate).toHaveBeenNthCalledWith(2, 'apns-2');
     stop();
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
-  it('asks Expo for a fresh token on rotation rather than sending the native one', async () => {
-    let rotate: (() => void) | undefined;
-    addPushTokenListener.mockImplementation((listener: () => void) => {
+  it('ignores a native token it has already seen', () => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
+      rotate = listener;
+      return { remove: jest.fn() };
+    });
+    const onRotate = jest.fn(async () => undefined);
+
+    watchPushTokenRotation(onRotate, 'android');
+    rotate?.({ data: 'fcm-1' });
+    rotate?.({ data: 'fcm-1' });
+
+    expect(onRotate).toHaveBeenCalledTimes(1);
+  });
+
+  it('turns the native token it was handed into an Expo token, without fetching the native one again', async () => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
       rotate = listener;
       return { remove: jest.fn() };
     });
     const getExpoPushTokenAsync = Notifications.getExpoPushTokenAsync as jest.Mock;
-    getExpoPushTokenAsync.mockResolvedValue({ data: TOKEN });
-    const { deps, register } = happy({ getToken: undefined });
-    delete deps.getToken;
+    getExpoPushTokenAsync.mockReset().mockResolvedValue({ data: TOKEN });
+    const { deps, register } = happy();
 
-    watchPushTokenRotation(() => ensurePushRegistration(deps), 'android');
-    rotate?.();
-    await new Promise((resolve) => setImmediate(resolve));
+    watchPushTokenRotation((t) => registerRotatedToken(t, 'android', deps), 'android');
+    rotate?.({ data: 'fcm-1' });
+    await flush();
 
-    expect(getExpoPushTokenAsync).toHaveBeenCalledWith({ projectId: 'project-id' });
+    expect(getExpoPushTokenAsync).toHaveBeenCalledWith({
+      projectId: 'project-id',
+      devicePushToken: { type: 'android', data: 'fcm-1' },
+    });
     expect(register).toHaveBeenCalledWith(expect.objectContaining({ token: TOKEN }));
+  });
+
+  it('does not loop when fetching a token fires the listener again', async () => {
+    let rotate: Listener | undefined;
+    addPushTokenListener.mockImplementation((listener: Listener) => {
+      rotate = listener;
+      return { remove: jest.fn() };
+    });
+    // expo-notifications emits onDevicePushToken on every native token fetch.
+    const getExpoPushTokenAsync = Notifications.getExpoPushTokenAsync as jest.Mock;
+    getExpoPushTokenAsync.mockReset().mockImplementation(async () => {
+      rotate?.({ data: 'apns-1' });
+      return { data: TOKEN };
+    });
+    const { deps, register } = happy();
+
+    watchPushTokenRotation((t) => registerRotatedToken(t, 'ios', deps), 'ios');
+    rotate?.({ data: 'apns-1' });
+    for (let i = 0; i < 5; i++) await flush();
+
+    expect(getExpoPushTokenAsync).toHaveBeenCalledTimes(1);
+    expect(register).toHaveBeenCalledTimes(1);
   });
 
   it('is a no-op on web', () => {
