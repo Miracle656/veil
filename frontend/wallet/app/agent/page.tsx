@@ -6,9 +6,8 @@ import { useRouter } from 'next/navigation'
 import { Asset, Keypair, TransactionBuilder, type Transaction } from '@stellar/stellar-sdk'
 import { parseInvestIntent } from '../earn/prefill'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
-import { getNativeAssetContractId, getNetwork } from '@/lib/network'
-import { KNOWN_SAC_CONTRACT_IDS } from '@/lib/assets'
-import { getCustomerRef } from '@/lib/ngn'
+import { screenButton, type ScreenButton } from '@/lib/assistantScreens'
+import { getNetwork } from '@/lib/network'
 import { requirePasskey } from '@/lib/passkeyAuth'
 import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
@@ -33,10 +32,10 @@ interface Message {
   /** A swap the agent handed to the Swap screen, which quotes and confirms it. */
   swapIntent?: { from: string; to: string; amount?: string }
   investIntent?: { code?: string; asset?: string; issuer: string; amount?: string; quoteCurrency?: string }
-  recurringTopupIntent?: RecurringTopupIntent
-  cancelTopupIntent?: CancelTopupIntent
-  planActionState?: 'idle' | 'submitting' | 'done' | 'error'
-  planActionNote?: string
+  /** A wallet screen the assistant pointed to. The route is this app's own, looked up by id. */
+  screen?: ScreenButton
+  /** A cash-out the assistant prepared. The Cash out screen does the rest. */
+  cashOutNgn?: number
 }
 
 /** Link into the Swap screen, pre-filled. The Swap page validates it again. */
@@ -379,14 +378,10 @@ export default function AgentPage() {
           msg.investIntent = data.investIntent
         }
       }
-      if (data.recurringTopupIntent) {
-        msg.recurringTopupIntent = data.recurringTopupIntent
-        msg.planActionState = 'idle'
-      }
-      if (data.cancelTopupIntent && typeof data.cancelTopupIntent.planId === 'string') {
-        msg.cancelTopupIntent = data.cancelTopupIntent
-        msg.planActionState = 'idle'
-      }
+      const screen = screenButton(data.screenIntent)
+      if (screen) msg.screen = screen
+      const cashOutNgn = Number(data.cashOutIntent?.amountNGN)
+      if (Number.isFinite(cashOutNgn) && cashOutNgn > 0) msg.cashOutNgn = cashOutNgn
       if (data.pendingTxXdr) {
         msg.pendingTxXdr = data.pendingTxXdr
         msg.pendingTxSummary = data.pendingTxSummary
@@ -921,57 +916,33 @@ export default function AgentPage() {
                 </div>
               )}
 
-              {/* Recurring top-up plan confirmation card — confirm once */}
-              {msg.recurringTopupIntent && (
+              {/* Cash-out hand-off. The server prepared it; until now the web page dropped it. */}
+              {msg.cashOutNgn !== undefined && (
                 <div className="agent-tx-card">
                   <div className="agent-tx-card__header">
-                    <span className="agent-tx-card__label">Repeating top-up plan</span>
+                    <span className="agent-tx-card__label">Cash out</span>
                   </div>
                   <div className="agent-tx-card__summary">
-                    {msg.recurringTopupIntent.provider} {msg.recurringTopupIntent.category} · ₦
-                    {msg.recurringTopupIntent.amountNgn.toLocaleString('en-NG')} ({msg.recurringTopupIntent.frequency} ×{' '}
-                    {msg.recurringTopupIntent.totalPeriods}) for {msg.recurringTopupIntent.maskedPhone}
+                    ₦{msg.cashOutNgn.toLocaleString('en-US')} to your bank. You choose the bank and confirm on the Cash out screen.
                   </div>
-                  {msg.planActionNote && (
-                    <div className="agent-tx-card__summary" style={{ opacity: 0.85 }}>
-                      {msg.planActionNote}
-                    </div>
-                  )}
-                  {msg.planActionState !== 'done' && (
-                    <button
-                      onClick={() => confirmRecurringPlan(i, msg.recurringTopupIntent!)}
-                      disabled={msg.planActionState === 'submitting'}
-                      className="agent-tx-card__btn"
-                    >
-                      {msg.planActionState === 'submitting' ? 'Confirming…' : 'Confirm plan'}
-                    </button>
-                  )}
+                  <button onClick={() => router.push('/cashout')} className="agent-tx-card__btn">
+                    Open Cash out
+                  </button>
                 </div>
               )}
 
-              {/* Cancel recurring top-up plan card */}
-              {msg.cancelTopupIntent && (
+              {/* A screen the assistant pointed to. Nothing has been done: the user does it there. */}
+              {msg.screen && (
                 <div className="agent-tx-card">
                   <div className="agent-tx-card__header">
-                    <span className="agent-tx-card__label">Cancel repeating top-up</span>
+                    <span className="agent-tx-card__label">{msg.screen.title}</span>
                   </div>
                   <div className="agent-tx-card__summary">
-                    Plan ID: {msg.cancelTopupIntent.planId}
+                    Nothing has been done yet. You do it, and confirm it, on that screen.
                   </div>
-                  {msg.planActionNote && (
-                    <div className="agent-tx-card__summary" style={{ opacity: 0.85 }}>
-                      {msg.planActionNote}
-                    </div>
-                  )}
-                  {msg.planActionState !== 'done' && (
-                    <button
-                      onClick={() => confirmCancelPlan(i, msg.cancelTopupIntent!.planId)}
-                      disabled={msg.planActionState === 'submitting'}
-                      className="agent-tx-card__btn"
-                    >
-                      {msg.planActionState === 'submitting' ? 'Cancelling…' : 'Cancel plan'}
-                    </button>
-                  )}
+                  <button onClick={() => router.push(msg.screen!.href)} className="agent-tx-card__btn">
+                    Open {msg.screen.title}
+                  </button>
                 </div>
               )}
 

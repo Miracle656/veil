@@ -1,3 +1,4 @@
+import { GridIcon } from '../../components/icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage } from '../../lib/errorMessage';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -396,6 +397,23 @@ export default function DashboardTab() {
         fallbackUsd={usd}
       />
 
+      {/* dApps Discoverability Card */}
+      <Pressable
+        onPress={() => router.push('/dapps')}
+        accessibilityRole="button"
+        accessibilityLabel="Discover dApps. Explore Stellar apps supported by Veil"
+        style={({ pressed }) => [themedStyles.dappsCard, pressed && themedStyles.dappsCardPressed]}
+      >
+        <View style={themedStyles.dappsCardIcon}>
+          <GridIcon size={20} color={themeColors.accent} />
+        </View>
+        <View style={themedStyles.dappsCardBody}>
+          <Text style={themedStyles.dappsCardTitle}>Discover dApps</Text>
+          <Text style={themedStyles.dappsCardSubtitle}>Explore Stellar apps supported by Veil</Text>
+        </View>
+        <Text style={themedStyles.dappsCardChevron}>→</Text>
+      </Pressable>
+
       {/* Activity feed — 3 most recent, full history on the transactions page */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Collectibles</Text>
@@ -486,6 +504,45 @@ const createThemedStyles = (themeColors: ThemeColors) =>
     screen: {
       flex: 1,
       backgroundColor: themeColors.background,
+    },
+    dappsCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: themeColors.surface,
+      borderColor: themeColors.border,
+      borderWidth: 1,
+      borderRadius: 14,
+      padding: 14,
+      gap: 12,
+    },
+    dappsCardPressed: {
+      opacity: 0.75,
+    },
+    dappsCardIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      backgroundColor: themeColors.accent + '15',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    dappsCardBody: {
+      flex: 1,
+    },
+    dappsCardTitle: {
+      color: themeColors.textPrimary,
+      fontFamily: fontFamily.bodyMedium,
+      fontSize: 14,
+    },
+    dappsCardSubtitle: {
+      color: themeColors.textMuted,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    dappsCardChevron: {
+      color: themeColors.accent,
+      fontSize: 16,
     },
     scrollContent: {
       paddingHorizontal: 20,

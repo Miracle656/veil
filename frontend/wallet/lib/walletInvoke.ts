@@ -157,6 +157,12 @@ export interface InvokeAsWalletParams {
   cpuInstructions?: number
   /** Prefix for diagnostic logs, so a failure says which flow produced it. */
   label?: string
+  /**
+   * Called with the authorisations the simulation says are needed, before any
+   * of them is signed. Throw to stop. A caller that showed the person what
+   * they are approving uses this to make sure it is still the same thing.
+   */
+  checkAuthEntries?: (entries: xdr.SorobanAuthorizationEntry[]) => void
 }
 
 /**
@@ -213,6 +219,7 @@ export async function invokeAsWallet(params: InvokeAsWalletParams): Promise<stri
 
   const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
   const authEntries = successSim.result?.auth
+  params.checkAuthEntries?.(authEntries ?? [])
   if (authEntries) {
     const networkIdBytes = new Uint8Array(
       await crypto.subtle.digest('SHA-256', new TextEncoder().encode(networkPassphrase)),
