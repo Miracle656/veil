@@ -1,19 +1,19 @@
 'use client'
 
 /**
- * Bills & airtime — the everyday-money surface from the Veil design.
+ * Bills & airtime — buy airtime, data, and pay bills from crypto.
  *
- * Wire the bill flow to the existing /ngn/bills routes, following
- * frontend/mobile/app/airtime.tsx for the sequence: reserve, pay from the
- * wallet, poll to a terminal state.
+ * This is the web wallet's bills surface, using the same `/ngn/bills` routes
+ * the mobile app uses. The naira conversion leg shipped on Linq, POST /ngn/bills
+ * is live in wraith, and bills are paid from the mobile app daily.
  *
- * - Reserve first, spend second: Reserving locks the rate and gets the deposit
- *   address. A reservation failure costs nothing.
- * - Same signing path with platform fee: Crypto leaves the wallet via the fee-payer
- *   Stellar account, with the platform fee applied as on other money paths.
- * - Bounded wait and distinguishable retries (V276): The screen never waits
- *   indefinitely and poll errors are retried visibly before moving to unconfirmed,
- *   never saying a purchase failed when the money already left.
+ * Flow matches frontend/mobile/app/airtime.tsx:
+ * 1. Reserve first, spend second: Reserving locks the rate and gets the deposit
+ *    address. A reservation failure costs nothing.
+ * 2. The user signs with their passkey to send crypto from the wallet.
+ * 3. Bounded wait with visible poll errors: The screen never waits indefinitely
+ *    and poll errors are retried visibly before moving to unconfirmed, never
+ *    saying a purchase failed when the money already left.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'

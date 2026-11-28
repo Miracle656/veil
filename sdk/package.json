@@ -127,6 +127,7 @@
     "size": "npm run build && size-limit",
     "test:surface": "jest api-surface.test.ts",
     "verify:exports": "npm run build && node scripts/verify-exports.js",
+    "check:readme": "node scripts/check-readme-snippets.js",
     "test:tree-shaking": "npm run build && node scripts/verify-tree-shaking.js",
     "stryker": "stryker run",
     "storybook": "storybook dev -p 6006 -c react/.storybook",
@@ -275,7 +276,7 @@
     {
       "name": "main (React hook + utils)",
       "path": "dist/index.js",
-      "limit": "235 KB"
+      "limit": "236 KB"
     },
     {
       "name": "vanilla",

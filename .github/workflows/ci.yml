@@ -82,7 +82,18 @@ jobs:
           # so the parsing path is unreachable in the deployed contract. Patching
           # forward pulls time-macros, which raises the MSRV to Rust 1.88 and
           # breaks the pinned 1.85 reproducible build.
-          ignore: RUSTSEC-2026-0009
+          #
+          # RUSTSEC-2026-0387 (crypto-bigint <0.7.6, constant-time variability):
+          # The pinned Soroban/RustCrypto 0.13 dependency graph requires
+          # crypto-bigint 0.5.x; elliptic-curve 0.13 declares ^0.5, so a lockfile
+          # override to 0.7.x is semver-incompatible. The only direct production
+          # use in this workspace is P-256 VerifyingKey::from_sec1_bytes in
+          # factory/src/validation.rs, which validates attacker-supplied PUBLIC
+          # keys (no secret scalar/private-key operation). SigningKey is used
+          # only in #[cfg(test)] fixtures. Keep this narrow exception until the
+          # upstream Soroban/RustCrypto stack supports crypto-bigint >=0.7.6;
+          # reassess before adding any production private-key operations.
+          ignore: RUSTSEC-2026-0009,RUSTSEC-2026-0387
 
   contracts:
     name: Rust contracts — build & test
