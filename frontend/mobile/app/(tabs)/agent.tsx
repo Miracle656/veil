@@ -33,6 +33,7 @@ import {
 } from 'react-native';
 
 import { Button, Card, Screen } from '../../components/ui';
+import { routeForScreen, SCREEN_NOT_IN_APP, type ScreenIntent } from '../../lib/assistantScreens';
 import { KeyboardStickyView, useKeyboardState } from 'react-native-keyboard-controller';
 
 import { threadBottomInset } from '../../lib/agentComposer';
@@ -165,6 +166,29 @@ export default function AgentScreen() {
           kind: 'invest',
           text: reply.response,
           intent: reply.investIntent,
+        });
+        return;
+      }
+
+      // A cash-out is only ever a hand-off: the bank, the identity check and
+      // the order all stay on the Cash out screen.
+      if (reply.cashOutIntent && !reply.pendingTxXdr) {
+        appendMessage({
+          id: nextMessageId('cashout'),
+          kind: 'cashout',
+          text: reply.response,
+          intent: reply.cashOutIntent,
+        });
+        return;
+      }
+
+      // The assistant named a screen. It does nothing there itself.
+      if (reply.screenIntent && !reply.pendingTxXdr) {
+        appendMessage({
+          id: nextMessageId('screen'),
+          kind: 'screen',
+          text: reply.response,
+          intent: reply.screenIntent,
         });
         return;
       }
@@ -536,6 +560,26 @@ function MessageRow({
         </View>
       );
 
+    case 'cashout':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <CashOutHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
+
+    case 'screen':
+      return (
+        <View style={styles.row}>
+          <View style={[styles.bubble, styles.bubbleAgent]}>
+            {message.text.trim() ? <RichText text={message.text} /> : null}
+            <ScreenHandoff intent={message.intent} />
+          </View>
+        </View>
+      );
+
     case 'invest':
       return (
         <View style={styles.row}>
@@ -566,6 +610,41 @@ function SwapHandoff({ intent }: { intent: { from: string; to: string; amount?: 
           })
         }
       />
+    </View>
+  );
+}
+
+/**
+ * Cash-out hand-off. Only the naira amount comes from the assistant, and only
+ * as words on the button: the bank, the rate and the order are all set on the
+ * Cash out screen.
+ */
+function CashOutHandoff({ intent }: { intent: import('../../lib/agentMessages').CashOutIntent }) {
+  const router = useRouter();
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Button
+        label={`Open Cash out · ₦${intent.amountNGN.toLocaleString('en-US')}`}
+        onPress={() => router.push('/cash-out')}
+      />
+    </View>
+  );
+}
+
+/**
+ * A screen the assistant named. The route comes from this app's own table
+ * (lib/assistantScreens.ts), never from the reply.
+ */
+function ScreenHandoff({ intent }: { intent: ScreenIntent }) {
+  const router = useRouter();
+  const { colors } = useTheme();
+  const route = routeForScreen(intent.screen);
+  if (!route) {
+    return <Text style={{ marginTop: 10, fontSize: 13, color: colors.textSecondary }}>{SCREEN_NOT_IN_APP}</Text>;
+  }
+  return (
+    <View style={{ marginTop: 10 }}>
+      <Button label={`Open ${intent.title}`} onPress={() => router.push(route as never)} />
     </View>
   );
 }

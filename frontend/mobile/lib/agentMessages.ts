@@ -15,6 +15,8 @@ import { Asset, Operation, TransactionBuilder, type Transaction } from '@stellar
 // ── Message model ─────────────────────────────────────────────────────────────
 
 /** Where a proposed transaction has got to. */
+import type { ScreenIntent } from './assistantScreens';
+
 export type ProposalStatus =
   | { state: 'awaiting' }
   | { state: 'confirming' }
@@ -60,6 +62,8 @@ export type AgentMessage =
   | { id: string; kind: 'invest'; text: string; intent: InvestIntent }
   /** A read-rate cash-out hand-off to the screen that verifies and creates orders. */
   | { id: string; kind: 'cashout'; text: string; intent: CashOutIntent }
+  /** Prose from the agent plus a screen for the user to open and act on themselves. */
+  | { id: string; kind: 'screen'; text: string; intent: ScreenIntent }
   /** A failure, from the service or from this app. */
   | { id: string; kind: 'error'; text: string }
   /** App-generated context, never attributed to the agent. */

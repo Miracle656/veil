@@ -115,6 +115,11 @@ export interface BlendPool {
    * happened to be listed first.
    */
   reserves: BlendReserve[];
+  /**
+   * The pool contract's status number, or null when it was not reported.
+   * Read it through `poolStatusInfo` (lib/blendStatus.ts).
+   */
+  status: number | null;
 }
 
 export interface BlendPosition {
@@ -124,6 +129,12 @@ export interface BlendPosition {
   /** Current value of the supply in the underlying asset, in stroops. */
   deposited: string;
   bTokenBalance: string;
+}
+
+/** The status number from a loaded pool, or null when it is missing or not a whole number. */
+export function readPoolStatus(pool: { metadata?: { status?: unknown } }): number | null {
+  const status = pool.metadata?.status;
+  return typeof status === 'number' && Number.isInteger(status) ? status : null;
 }
 
 /** Load configured Blend pools and the APY of each reserve the wallet can use. */
@@ -151,6 +162,7 @@ export async function loadBlendPools(): Promise<BlendPool[]> {
           id: pool.id,
           name: pool.metadata.name || pool.id.slice(0, 8),
           reserves,
+          status: readPoolStatus(pool),
         };
       } catch (error) {
         console.warn(`[blend] failed loading pool ${poolId}:`, error);
