@@ -1,16 +1,16 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { createRateLimiter, handleChat, parseChatRequest } from '@veil/agent-core'
+import { createAgentHandler, createRateLimiter } from '@veil/agent-core'
 import { providerFromEnv, type LlmProvider } from '@veil/agent-llm'
 
 /**
- * The Veil agent, as one serverless function.
+ * The Veil agent HTTP endpoint.
  *
- * It used to run as a WebSocket server on its own Render service, which needed
- * an always-on host and a funded key for x402 data fees. Now each chat message
- * is one POST: the client sends the recent conversation, the function runs the
- * model's tool loop (balances, history and prices straight from Horizon) and
- * returns the reply, plus any transaction for the user to approve with their
- * passkey. The function never holds keys and never signs anything.
+ * Callers must first authenticate ownership of `walletAddress` via the
+ * single-use challenge handshake (`action: 'challenge'` -> `action: 'verify'`),
+ * which opens an expiring session bound to the verified wallet address.
+ * Subsequent `chat` and `clear_history` calls require the session token and
+ * take `walletAddress` exclusively from the verified session, never from the
+ * request body.
  *
  * Env (Vercel project settings): OPENROUTER_API_KEY for free models, or
  * ANTHROPIC_API_KEY for Claude. The network follows NEXT_PUBLIC_NETWORK.
@@ -33,6 +33,7 @@ const ALLOWED_ORIGINS = new Set(
 
 // 20 messages a minute per caller, per warm instance. See createRateLimiter.
 const allow = createRateLimiter(20, 60_000)
+const agentHandler = createAgentHandler()
 
 let provider: LlmProvider | null = null
 function llm(): LlmProvider {
@@ -72,12 +73,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Expected a JSON body' }, { status: 400 })
   }
 
-  const parsed = parseChatRequest(body)
-  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 })
-
   try {
-    const result = await handleChat(parsed.value, llm())
-    return NextResponse.json(result)
+    const dispatched = await agentHandler.dispatch(
+      body,
+      llm(),
+      req.headers.get('authorization'),
+    )
+    return NextResponse.json(dispatched.body, { status: dispatched.status })
   } catch (err) {
     // Log the detail; return something a person can act on. Provider errors can
     // carry request ids and internals that do not belong in a chat bubble.
