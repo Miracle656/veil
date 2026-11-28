@@ -14,6 +14,8 @@ sdk/.verify-consumer-*/
 # Frontend
 frontend/website/node_modules/
 frontend/website/.next/
+# TypeScript's incremental build cache ("incremental": true), not source.
+frontend/website/tsconfig.tsbuildinfo
 frontend/docs/node_modules/
 frontend/docs/.next/
 frontend/wallet/node_modules/
@@ -67,3 +69,6 @@ veil-assessment-*.pdf
 # can only ever be stale: the one removed here was from April and ran none of
 # the August hardening (origin allowlist, token, rate limit).
 packages/agent/dist/
+
+# Output of the allowance proof script
+scripts/spikes/spike-result.json

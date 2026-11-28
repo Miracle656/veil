@@ -124,9 +124,9 @@ describe('formatFiat — currencies with two decimals', () => {
 
   it('uses each currency\u2019s own symbol and precision', () => {
     expect(loadCurrency().formatFiat(100, 'GHS', 15)).toBe('₵1,500.00')
-    expect(loadCurrency().formatFiat(100, 'ZAR', 18)).toBe('R1,800.00')
+    expect(loadCurrency().formatFiat(100, 'ZAR', 18)).toBe('R 1,800.00')
     // KES is configured with zero decimals, like NGN.
-    expect(loadCurrency().formatFiat(100, 'KES', 129)).toBe('KSh12,900')
+    expect(loadCurrency().formatFiat(100, 'KES', 129)).toBe('KSh 12,900')
   })
 })
 
@@ -562,5 +562,13 @@ describe('useCurrency', () => {
     // A server snapshot that varied would produce a hydration mismatch on every
     // visit with a non-default currency.
     expect(getServerSnapshot()).toBe(0)
+  })
+})
+
+
+describe('formatFiat — letter-based currency symbol spacing', () => {
+  it('separates letter-based currency symbols (e.g. KSh, R) with a space', () => {
+    expect(loadCurrency().formatFiat(1500, 'KES', 1)).toBe('KSh 1,500')
+    expect(loadCurrency().formatFiat(1500, 'ZAR', 1)).toBe('R 1,500.00')
   })
 })

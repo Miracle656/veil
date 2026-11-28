@@ -5,13 +5,20 @@ import {
   type ChatTurn,
   type LlmProvider,
 } from './llm.js'
-import { HORIZON_URL, NETWORK, SOROBAN_RPC_URL } from './network.js'
+import { HORIZON_URL, NETWORK, NETWORK_PASSPHRASE, SOROBAN_RPC_URL } from './network.js'
 import { classifyBalances, describeAsset, getRegisteredAsset } from './assets.js'
 import { getPrice } from './price.js'
 import { buildPayment, getBalances } from './txBuilder.js'
 import { getTrendingActivity } from './trending.js'
 import { StrKey } from '@stellar/stellar-sdk'
 import { redactSensitive, toModelTools, type VeilTool } from './boundary.js'
+import { SCREENS, SCREEN_IDS, isScreenId, type ScreenIntent } from './screens.js'
+import {
+  ALLOWED_OPERATION_TYPES,
+  proposalRefusal,
+  reviewProposedTransaction,
+  type ProposalReview,
+} from './txReview.js'
 
 // ── Agent configuration ──────────────────────────────────────────────────────
 
@@ -214,6 +221,24 @@ export const TOOL_REGISTRY: VeilTool[] = [
     },
   },
   {
+    name: 'open_screen',
+    screen: 'Any wallet screen',
+    kind: 'prepare',
+    approval: 'screen',
+    description:
+      'Take the user to a wallet screen to do something there. Use this for anything the other tools do not cover: ' +
+      'airtime, buying with naira, names, collectibles, privacy, passkeys, the assistant allowance and the rest. ' +
+      'It only offers a button; the user does the action on that screen and confirms it there. Screens: ' +
+      SCREEN_IDS.map((id) => `${id} (${SCREENS[id].does})`).join(' '),
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        screen: { type: 'string', enum: SCREEN_IDS, description: 'The screen to open.' },
+      },
+      required: ['screen'],
+    },
+  },
+  {
     name: 'open_swap',
     screen: 'Swap screen',
     kind: 'prepare',
@@ -259,20 +284,19 @@ export const TOOL_REGISTRY: VeilTool[] = [
     kind: 'prepare',
     approval: 'self',
     description:
-      'ALWAYS call this before any transaction executes. ' +
-      'Sends the transaction to the wallet UI for passkey (biometric) approval. ' +
-      'The user must approve with Face ID / fingerprint before the tx is submitted.',
+      'ALWAYS call this after build_payment before any transaction executes. ' +
+      'Sends only the transaction the server built in this turn to the wallet UI for passkey (biometric) approval. ' +
+      'Never supply transaction bytes; the user confirms destination and amount with Face ID / fingerprint before submission.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        transaction_xdr: { type: 'string', description: 'Unsigned transaction XDR (base64)' },
         summary: {
           type: 'string',
           description: 'Plain English: what this transaction does, amounts, assets, recipient',
         },
         estimated_fee_xlm: { type: 'number', description: 'Estimated network fee in XLM' },
       },
-      required: ['transaction_xdr', 'summary'],
+      required: ['summary'],
     },
   },
 ]
@@ -352,7 +376,9 @@ RULES:
 12. REFUSE to give investment advice. If a user asks "should I buy USDY?" or "is USDY a good investment?" or similar advice questions, respond with a flat refusal pointing them to the Invest section for details, and NOTHING MORE.
 13. CAPABILITY BOUNDARY: Only claim actions or data available through the registered capabilities above. If a request is outside them, plainly say what you cannot do from this chat and direct the user to the most relevant screen named above. Do not claim that screen supports an action unless its registered capability says so; if no screen applies, say so instead of inventing one.
 14. DATA BOUNDARY: Never estimate or infer a requested number. get_wallet_balance and get_transfer_history provide Stellar data only; get_price provides current Stellar market data only. If the requested chain or figure has no available data source, say "I cannot see that data here" and do not give a guessed or approximate number. If a registered tool reports that data is unavailable, treat that as unavailable — do not fill the gap from memory.
-15. For a cash-out, use get_offramp_rate first. If unavailable, say it is unavailable; do not blame the user or estimate a rate. If available, call prepare_cash_out with only the requested naira amount. Never select or verify a bank account, request or repeat an account number in chat, create a payout order, or send a deposit. Tell the user the Cash Out screen will collect and verify their bank account before order creation. An unverified account must be verified on that screen, not by you.`
+15. For a cash-out, use get_offramp_rate first. If unavailable, say it is unavailable; do not blame the user or estimate a rate. If available, call prepare_cash_out with only the requested naira amount. Never select or verify a bank account, request or repeat an account number in chat, create a payout order, or send a deposit. Tell the user the Cash Out screen will collect and verify their bank account before order creation. An unverified account must be verified on that screen, not by you.
+16. For anything else the wallet does, call open_screen with the matching screen and tell the user in one sentence what they can do there. You have NOT done the thing: never say it is done, bought, sent or set up. Never ask for, repeat or store a national identity number (NIN), a bank account number, a recovery phrase or a secret key; those are typed on the screen, never in this chat. If the user pastes one, tell them not to share it here and do not use it.
+17. The assistant can only pay without the passkey from an allowance the user has given on the Assistant allowance screen, and the wallet itself enforces that limit. To set one up, change it, stop it, or set up a repeating airtime top-up, call open_screen with assistant_allowance. Never claim an allowance exists or how much is left: you cannot see it from here.`
 }
 
 /**
@@ -402,6 +428,8 @@ export interface AgentResult {
   investIntent?: InvestIntent
   /** A read-rate cash-out hand-off; the Cash Out screen owns all payout steps. */
   cashOutIntent?: CashOutIntent
+  /** A wallet screen to offer the user a button to. Nothing is done for them. */
+  screenIntent?: ScreenIntent
 }
 
 export interface SwapIntent {
@@ -442,8 +470,12 @@ export async function runAgent(
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
+  let serverBuiltTx:
+    | { xdr: string; review: ProposalReview; signerAccount: string }
+    | undefined
   let swapIntent: SwapIntent | undefined
   let investIntent: InvestIntent | undefined
+  let screenIntent: ScreenIntent | undefined
   let unavailablePrice: { assetA: string; assetB: string } | undefined
   const unavailablePriceResponse = () =>
     unavailablePrice
@@ -702,6 +734,15 @@ export async function runAgent(
         return JSON.stringify({ ...balances, holdings: classifyBalances(balances) })
       }
 
+      case 'open_screen': {
+        const screen = input.screen
+        if (!isScreenId(screen)) {
+          return JSON.stringify({ error: 'That is not a wallet screen. Choose one from the list in this tool.' })
+        }
+        screenIntent = { screen, title: SCREENS[screen].title }
+        return JSON.stringify({ status: 'screen_button_shown', title: SCREENS[screen].title })
+      }
+
       case 'open_swap': {
         const from = String(input.from_asset ?? '').trim().toUpperCase()
         const to = String(input.to_asset ?? '').trim().toUpperCase()
@@ -721,12 +762,53 @@ export async function runAgent(
           cashOutPaymentBlocked = true
           return JSON.stringify({ error: 'Cash-out deposits must be sent from the Cash Out screen.' })
         }
+        if (input.operation !== undefined && String(input.operation) !== 'payment') {
+          serverBuiltTx = undefined
+          return JSON.stringify({
+            error: `Unsupported operation "${String(input.operation)}". Only payment transactions may be built here.`,
+          })
+        }
+        const expectedFeePayer =
+          feePayerAddress ?? (StrKey.isValidEd25519PublicKey(walletAddress) ? walletAddress : undefined)
+        const proposedSource =
+          typeof input.wallet_address === 'string' ? input.wallet_address.trim() : ''
+        if (expectedFeePayer && proposedSource && proposedSource !== expectedFeePayer) {
+          serverBuiltTx = undefined
+          return JSON.stringify({
+            error: `Source account mismatch: ${proposedSource} is not this wallet's fee payer.`,
+          })
+        }
+        const signerAccount = expectedFeePayer ?? (StrKey.isValidEd25519PublicKey(proposedSource) ? proposedSource : '')
+        if (!signerAccount) {
+          serverBuiltTx = undefined
+          return JSON.stringify({
+            error: 'A valid fee-payer Stellar account is required to build a payment.',
+          })
+        }
         const payInput = {
           ...(input as unknown as Parameters<typeof buildPayment>[0]),
-          wallet_address: feePayerAddress ?? (input as any).wallet_address,
+          wallet_address: signerAccount,
         }
         const xdr = await buildPayment(payInput)
-        return JSON.stringify({ transaction_xdr: xdr, status: 'built' })
+        let review: ProposalReview | null = null
+        try {
+          review = reviewProposedTransaction(xdr, NETWORK_PASSPHRASE)
+        } catch {
+          review = null
+        }
+        const refusal = proposalRefusal(review, signerAccount)
+        if (refusal || !review) {
+          serverBuiltTx = undefined
+          return JSON.stringify({ error: refusal ?? 'Server-built transaction failed validation.' })
+        }
+        serverBuiltTx = { xdr, review, signerAccount }
+        return JSON.stringify({
+          status: 'built',
+          source: review.source,
+          fee: review.fee,
+          operations: review.operations,
+          confirmations: review.confirmations,
+        })
       }
 
       case 'request_user_approval': {
@@ -734,8 +816,29 @@ export async function runAgent(
           cashOutPaymentBlocked = true
           return JSON.stringify({ error: 'Cash-out deposits must be sent from the Cash Out screen.' })
         }
-        pendingTxXdr = input.transaction_xdr as string
-        pendingTxSummary = input.summary as string
+        if (input.transaction_xdr !== undefined) {
+          return JSON.stringify({
+            error: 'Model-supplied transaction_xdr is not accepted; the server only sends transactions it built itself.',
+          })
+        }
+        if (input.operation !== undefined && !ALLOWED_OPERATION_TYPES.has(String(input.operation))) {
+          return JSON.stringify({
+            error: `Unsupported operation "${String(input.operation)}" cannot be sent for approval.`,
+          })
+        }
+        if (!serverBuiltTx) {
+          return JSON.stringify({
+            error: 'No server-built transaction is ready for approval. Call build_payment first.',
+          })
+        }
+        const refusal = proposalRefusal(serverBuiltTx.review, serverBuiltTx.signerAccount)
+        if (refusal) {
+          serverBuiltTx = undefined
+          return JSON.stringify({ error: refusal })
+        }
+        pendingTxXdr = serverBuiltTx.xdr
+        pendingTxSummary = typeof input.summary === 'string' ? input.summary : ''
+        serverBuiltTx = undefined
         return JSON.stringify({ status: 'awaiting_approval' })
       }
 
@@ -768,6 +871,7 @@ export async function runAgent(
         swapIntent,
         investIntent,
         cashOutIntent,
+        screenIntent,
       }
     }
 
@@ -792,14 +896,16 @@ export async function runAgent(
       // report, and so does a price lookup that failed. Either beats re-throwing.
       const settled = cashOutResponse() ?? unavailablePriceResponse()
       if (settled) {
-        return { response: settled, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent }
+        return { response: settled, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent, screenIntent }
       }
       // The work is done — a swap or invest to open or a payment to approve — and only the
       // model's closing sentence failed. Hand the user the result rather than an
       // error that throws it away.
-      if (swapIntent || investIntent || pendingTxXdr) {
+      if (swapIntent || investIntent || pendingTxXdr || screenIntent) {
         return {
-          response: swapIntent
+          response: screenIntent && !swapIntent && !investIntent && !pendingTxXdr
+            ? `You can do that on the ${screenIntent.title} screen.`
+            : swapIntent
             ? 'Your swap is ready in the Swap screen.'
             : investIntent
             ? 'Routing to the Invest section (destination screen under construction).'
@@ -809,6 +915,7 @@ export async function runAgent(
           swapIntent,
           investIntent,
           cashOutIntent,
+          screenIntent,
         }
       }
       throw err
@@ -817,7 +924,7 @@ export async function runAgent(
 
   const response =
     cashOutResponse() ?? unavailablePriceResponse() ?? redactBankAccountNumbers(turn.text)
-  return { response, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent }
+  return { response, pendingTxXdr, pendingTxSummary, swapIntent, investIntent, cashOutIntent, screenIntent }
 }
 
 // ── createVeilAgent — library-friendly wrapper ───────────────────────────────
