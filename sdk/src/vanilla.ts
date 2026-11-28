@@ -1,5 +1,6 @@
 import {
     Account,
+    Address,
     Contract,
     rpc as SorobanRpc,
     Horizon,
@@ -175,7 +176,7 @@ export class InvisibleWallet {
 
         // Check if already deployed
         try {
-            await server.getContractData(walletAddress, xdr.ScVal.scvLedgerKeyContractInstance());
+            await server.getContractData(new Address(walletAddress), xdr.ScVal.scvLedgerKeyContractInstance());
             this._isDeployed = true;
             return { walletAddress, alreadyDeployed: true };
         } catch {
@@ -317,7 +318,7 @@ export class InvisibleWallet {
 
         for (const addressToCheck of addressesToCheck) {
             try {
-                await server.getContractData(addressToCheck, xdr.ScVal.scvLedgerKeyContractInstance());
+                await server.getContractData(new Address(addressToCheck), xdr.ScVal.scvLedgerKeyContractInstance());
                 this._address = addressToCheck;
                 this._isDeployed = true;
                 localStorage.setItem('invisible_wallet_address', addressToCheck);

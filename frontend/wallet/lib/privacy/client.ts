@@ -79,7 +79,7 @@ async function getSigner() {
     },
     async signMessage(message: string | Uint8Array) {
       const bytes = typeof message === 'string' ? new TextEncoder().encode(message) : message
-      return keypair.sign(Buffer.from(bytes)).toString('base64')
+      return Buffer.from(keypair.sign(Buffer.from(bytes))).toString('base64')
     },
     async signTransaction(xdr: string, options?: { networkPassphrase?: string }) {
       const transaction = TransactionBuilder.fromXDR(
@@ -91,7 +91,7 @@ async function getSigner() {
     },
     async signAuthEntry(entry: string) {
       const signature = keypair.sign(hash(Buffer.from(entry, 'base64')))
-      return { signedAuthEntry: signature.toString('base64'), signerAddress: keypair.publicKey() }
+      return { signedAuthEntry: Buffer.from(signature).toString('base64'), signerAddress: keypair.publicKey() }
     },
   }
 }

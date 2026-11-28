@@ -255,14 +255,14 @@ function validateAuthEntryRequest(
     return 'The authorization entry XDR could not be read.';
   }
 
-  const credentials = entry.credentials();
-  if (credentials.switch().name !== 'sorobanCredentialsAddress') {
+  const credentials = entry.credentials;
+  if (credentials.type !== 'sorobanCredentialsAddress') {
     return 'Veil signs an address-authorized Soroban entry; this one is not address-authorized.';
   }
 
   let addressed: string;
   try {
-    addressed = Address.fromScAddress(credentials.address().address()).toString();
+    addressed = Address.fromScAddress(credentials.address.address).toString();
   } catch {
     return 'The authorization entry names an address that cannot be read.';
   }

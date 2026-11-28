@@ -118,7 +118,7 @@ function txResult(feeCharged: number) {
   return new xdr.TransactionResult({
     feeCharged: xdr.Int64.fromString(String(feeCharged)),
     result: xdr.TransactionResultResult.txSuccess([]),
-    ext: new xdr.TransactionResultExt(0),
+    ext: xdr.TransactionResultExt.v0(),
   })
 }
 

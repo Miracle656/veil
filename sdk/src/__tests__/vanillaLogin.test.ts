@@ -86,9 +86,12 @@ function stubCredentialsGet(assertion: Assertion) {
 /** A server that only knows about `deployedAddress`. */
 function stubServer(deployedAddress: string | null) {
   const lookedUp: string[] = [];
-  const getContractData = jest.fn(async (address: string) => {
-    lookedUp.push(address);
-    if (address !== deployedAddress) throw new Error('Contract not found on-ledger');
+  const getContractData = jest.fn(async (address: { toString(): string } | string) => {
+    // SDK 17 accepts an Address instance here; compare its canonical StrKey,
+    // not the object identity, with the address deployed by the test fixture.
+    const normalizedAddress = typeof address === 'string' ? address : address.toString();
+    lookedUp.push(normalizedAddress);
+    if (normalizedAddress !== deployedAddress) throw new Error('Contract not found on-ledger');
     return {};
   });
   jest.mocked(SorobanRpc.Server).mockImplementation(() => ({ getContractData }) as never);

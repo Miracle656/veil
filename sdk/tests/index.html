@@ -7,8 +7,12 @@
 <body>
   <h1>Veil SDK Browser Matrix Test</h1>
   <script type="module">
+    // Module imports are evaluated before their body. Keep the Buffer polyfill
+    // in a preceding module so it is installed before vanilla.ts is evaluated.
     import { Buffer } from 'buffer';
     window.Buffer = Buffer;
+  </script>
+  <script type="module">
     import { InvisibleWallet } from '../src/vanilla.ts';
     window.InvisibleWallet = InvisibleWallet;
   </script>

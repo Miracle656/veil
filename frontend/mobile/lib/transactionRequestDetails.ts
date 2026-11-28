@@ -84,11 +84,15 @@ function symbolToString(value: unknown): string | undefined {
  */
 function describeInvokeHostFunction(operation: Operation.InvokeHostFunction): RequestDetails {
   try {
-    const invokeContract = operation.func?.invokeContract?.();
+    const func = operation.func;
+    if (func.type !== 'hostFunctionTypeInvokeContract') {
+      return { operationType: 'contract' };
+    }
+    const invokeContract = func.invokeContract;
     return {
       operationType: 'contract',
-      contractAddress: addressToString(invokeContract?.contractAddress?.()),
-      functionName: symbolToString(invokeContract?.functionName?.()),
+      contractAddress: addressToString(invokeContract.contractAddress),
+      functionName: symbolToString(invokeContract.functionName.toString()),
     };
   } catch {
     // Fall through: an entry whose inner shape is unexpected is still a contract
@@ -158,17 +162,17 @@ export function describeAuthEntryXdr(xdrString: string): RequestDetails {
   }
 
   try {
-    const invocation = entry.rootInvocation().function();
-    if (invocation.switch().name !== 'sorobanAuthorizedFunctionTypeContractFn') {
+    const invocation = entry.rootInvocation.function;
+    if (invocation.type !== 'sorobanAuthorizedFunctionTypeContractFn') {
       // A create-contract or upload-wasm authorisation is still an authorisation
       // the user must read carefully; it is just not one this function can name.
       return { operationType: 'authEntry', undecodable: true };
     }
-    const contractFn = invocation.contractFn();
+    const contractFn = invocation.contractFn;
     return {
       operationType: 'authEntry',
-      contractAddress: addressToString(contractFn.contractAddress()),
-      functionName: symbolToString(contractFn.functionName()),
+      contractAddress: addressToString(contractFn.contractAddress),
+      functionName: symbolToString(contractFn.functionName.toString()),
     };
   } catch {
     return unknown();

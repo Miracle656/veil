@@ -166,6 +166,11 @@ async function waitForTransaction(
   throw new Error('Vault transaction timed out. Check its status on Stellar Explorer.')
 }
 
+/** SDK 17 returns a transaction hash as raw bytes; the UI links to the hex form. */
+function rpcHash(hash: string | Uint8Array): string {
+  return typeof hash === 'string' ? hash : Buffer.from(hash).toString('hex')
+}
+
 async function submitOperation(
   operation: xdr.Operation,
   signer: Keypair,
@@ -196,8 +201,9 @@ async function submitOperation(
     )
   }
 
-  await waitForTransaction(server, submitted.hash)
-  return submitted.hash
+  const hash = rpcHash(submitted.hash)
+  await waitForTransaction(server, hash)
+  return hash
 }
 
 async function simulateCall(
@@ -280,7 +286,7 @@ export async function deployAndInitializeVault(params: {
     )
   }
 
-  const deployment = await waitForTransaction(server, submitted.hash)
+  const deployment = await waitForTransaction(server, rpcHash(submitted.hash))
   const contractId = extractContractId(deployment)
   const contract = new Contract(contractId)
   const tokenAddress = Asset.native().contractId(network.networkPassphrase)

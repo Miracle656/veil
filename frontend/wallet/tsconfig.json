@@ -31,7 +31,7 @@
         "./*"
       ],
       "@veil/sdk": [
-        "../../sdk/src/index"
+        "../../sdk/dist/index"
       ],
       "@veil/agent-core": [
         "../../packages/agent/src/handler"
@@ -52,22 +52,22 @@
         "../mobile/lib/agentMessages"
       ],
       "@veil/events": [
-        "../../sdk/src/events"
+        "../../sdk/dist/events"
       ],
       "@veil/utils": [
-        "../../sdk/src/utils"
+        "../../sdk/dist/utils"
       ],
       "@veil/recovery": [
-        "../../sdk/src/recovery/sep30"
+        "../../sdk/dist/recovery/sep30"
       ],
       "@veil/backup": [
-        "../../sdk/src/backup"
+        "../../sdk/dist/backup"
       ],
       "@veil/prf": [
-        "../../sdk/src/crypto/prf"
+        "../../sdk/dist/crypto/prf"
       ],
       "@veil/sep7": [
-        "../../sdk/src/sep7"
+        "../../sdk/dist/sep7"
       ],
       "@veil/dapps": [
         "../mobile/lib/dappAllowlist"
@@ -77,9 +77,6 @@
       ],
       "react/jsx-runtime": [
         "./node_modules/@types/react/jsx-runtime"
-      ],
-      "@stellar/stellar-sdk": [
-        "./node_modules/@stellar/stellar-sdk"
       ],
       "@anthropic-ai/sdk": [
         "./node_modules/@anthropic-ai/sdk"

@@ -260,12 +260,12 @@ describe('SEP-43 Conformance: Request & Response Shapes', () => {
 
       // Verify the returned XDR is a valid SorobanAuthorizationEntry with credentials signature
       const decoded = xdr.SorobanAuthorizationEntry.fromXDR(res.signedAuthEntry!, 'base64');
-      const cred = decoded.credentials();
-      expect(cred.switch().value).toBe(xdr.SorobanCredentialsType.sorobanCredentialsAddress().value);
-      const signatureScVal = cred.address().signature();
-      expect(signatureScVal.switch().name).toBe('scvVec');
+      const cred = decoded.credentials;
+      expect(cred.type).toBe('sorobanCredentialsAddress');
+      const signatureScVal = cred.address.signature;
+      expect(signatureScVal.type).toBe('scvVec');
       // Vector contains 5 elements [pubkey, authData, clientDataJSON, sig, nonce]
-      expect(signatureScVal.vec()?.length).toBe(5);
+      expect(signatureScVal.vec?.length).toBe(5);
     });
 
     it('rejects mismatched address in options with error code -3', async () => {

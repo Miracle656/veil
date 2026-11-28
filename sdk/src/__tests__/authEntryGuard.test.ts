@@ -93,7 +93,7 @@ describe('hostFunctionCalls', () => {
   it('reads the calls a transaction actually makes', () => {
     const calls = hostFunctionCalls(txInvoking(WALLET, 'add_signer'))
     expect(calls).toHaveLength(1)
-    expect(calls[0].functionName().toString()).toBe('add_signer')
+    expect(calls[0].functionName.toString()).toBe('add_signer')
   })
 
   it('ignores operations that are not contract invocations', () => {
@@ -214,10 +214,10 @@ describe('rootContractCall', () => {
             contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
               new xdr.ContractIdPreimageFromAddress({
                 address: new Address(WALLET).toScAddress(),
-                salt: Buffer.alloc(32),
+                salt: new Uint8Array(32),
               })
             ),
-            executable: xdr.ContractExecutable.contractExecutableWasm(Buffer.alloc(32)),
+            executable: xdr.ContractExecutable.contractExecutableWasm(new Uint8Array(32)),
           })
         ),
         subInvocations: [],

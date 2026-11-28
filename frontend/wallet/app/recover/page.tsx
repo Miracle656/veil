@@ -65,8 +65,10 @@ export default function RecoverPage() {
       // get_signers returns Map<u32, BytesN<65>> → SCV_MAP of (SCV_U32, SCV_BYTES) entries
       let publicKeys: Uint8Array[] = []
       try {
-        const entries = simResult.retval.map() as Array<{ val: () => { bytes: () => Buffer } }>
-        publicKeys = entries.map(e => new Uint8Array(e.val().bytes()))
+        if (simResult.retval.type !== 'scvMap' || !simResult.retval.map) throw new Error('not a map')
+        publicKeys = simResult.retval.map.map((e) =>
+          e.val.type === 'scvBytes' ? new Uint8Array(e.val.bytes.toBytes()) : new Uint8Array(),
+        )
       } catch {
         // Fallback: scValToNative handles all possible return shapes
         const raw = scValToNative(simResult.retval)
@@ -221,8 +223,10 @@ export default function RecoverPage() {
 
       let publicKeys: Uint8Array[] = []
       try {
-        const entries = simResult.retval.map() as Array<{ val: () => { bytes: () => Buffer } }>
-        publicKeys = entries.map(e => new Uint8Array(e.val().bytes()))
+        if (simResult.retval.type !== 'scvMap' || !simResult.retval.map) throw new Error('not a map')
+        publicKeys = simResult.retval.map.map((e) =>
+          e.val.type === 'scvBytes' ? new Uint8Array(e.val.bytes.toBytes()) : new Uint8Array(),
+        )
       } catch {
         const raw = scValToNative(simResult.retval)
         if (Array.isArray(raw)) {

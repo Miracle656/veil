@@ -100,25 +100,27 @@ export function allowanceLedgerKey(wallet: string, spender: string, token: strin
     new xdr.LedgerKeyContractData({
       contract: new Address(wallet).toScAddress(),
       key: xdr.ScVal.scvVec([xdr.ScVal.scvSymbol('Allowance'), allowanceKey]),
-      durability: xdr.ContractDataDurability.persistent(),
+      durability: xdr.ContractDataDurability.persistent,
     }),
   )
 }
 
 function i128ToBigInt(val: xdr.ScVal): bigint {
-  const parts = val.i128()
-  return (BigInt(parts.hi().toString()) << 64n) | BigInt(parts.lo().toString())
+  if (val.type !== 'scvI128') throw new Error('Expected an i128 value')
+  return (val.i128.hi << 64n) | val.i128.lo
 }
 
 /** Decode the stored `Allowance { amount: i128, expiry: Option<u64> }`. */
 export function decodeAllowanceValue(val: xdr.ScVal): { amount: bigint; expiry: bigint | null } {
   let amount: bigint | undefined
   let expiry: bigint | null = null
-  for (const entry of val.map() ?? []) {
-    const field = entry.key().sym().toString()
-    if (field === 'amount') amount = i128ToBigInt(entry.val())
-    if (field === 'expiry' && entry.val().switch().name !== 'scvVoid') {
-      expiry = BigInt(entry.val().u64().toString())
+  if (val.type !== 'scvMap') throw new Error('Allowance value is not a map')
+  for (const entry of val.map ?? []) {
+    if (entry.key.type !== 'scvSymbol') continue
+    const field = entry.key.sym.toString()
+    if (field === 'amount') amount = i128ToBigInt(entry.val)
+    if (field === 'expiry' && entry.val.type === 'scvU64') {
+      expiry = entry.val.u64
     }
   }
   if (amount === undefined) throw new Error('Allowance entry has no amount')
@@ -183,7 +185,8 @@ export async function fetchAllowances(
       const pair = byKey.get(entry.key)
       if (!pair) continue
       const data = xdr.LedgerEntryData.fromXDR(entry.xdr, 'base64')
-      const { amount, expiry } = decodeAllowanceValue(data.contractData().val())
+      if (data.type !== 'contractData') continue
+      const { amount, expiry } = decodeAllowanceValue(data.contractData.val)
       found.push({
         ...pair,
         amount,
@@ -248,22 +251,22 @@ export function trackPairs(store: PairStore, wallet: string, pairs: AllowancePai
  */
 export function approvalsInTransaction(envelope: xdr.TransactionEnvelope, wallet: string): AllowancePair[] {
   const tx =
-    envelope.switch().name === 'envelopeTypeTxFeeBump'
-      ? envelope.feeBump().tx().innerTx().v1().tx()
-      : envelope.switch().name === 'envelopeTypeTx'
-        ? envelope.v1().tx()
+    envelope.type === 'envelopeTypeTxFeeBump' && envelope.feeBump.tx.innerTx.type === 'envelopeTypeTx'
+      ? envelope.feeBump.tx.innerTx.v1.tx
+      : envelope.type === 'envelopeTypeTx'
+        ? envelope.v1.tx
         : null
   if (!tx) return []
 
   const pairs: AllowancePair[] = []
-  for (const op of tx.operations()) {
-    if (op.body().switch().name !== 'invokeHostFunction') continue
-    const fn = op.body().invokeHostFunctionOp().hostFunction()
-    if (fn.switch().name !== 'hostFunctionTypeInvokeContract') continue
-    const call = fn.invokeContract()
-    if (call.functionName().toString() !== 'approve') continue
-    if (Address.fromScAddress(call.contractAddress()).toString() !== wallet) continue
-    const [spender, token] = call.args()
+  for (const op of tx.operations) {
+    if (op.body.type !== 'invokeHostFunction') continue
+    const fn = op.body.invokeHostFunctionOp.hostFunction
+    if (fn.type !== 'hostFunctionTypeInvokeContract') continue
+    const call = fn.invokeContract
+    if (call.functionName.toString() !== 'approve') continue
+    if (Address.fromScAddress(call.contractAddress).toString() !== wallet) continue
+    const [spender, token] = call.args
     if (!spender || !token) continue
     try {
       pairs.push({

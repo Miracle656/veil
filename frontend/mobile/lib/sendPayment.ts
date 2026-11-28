@@ -2,10 +2,12 @@
  * Payment send flow for the mobile wallet — the native port of the web
  * wallet's send path (`frontend/wallet/app/send/page.tsx`, `lib/sorobanTx.ts`).
  *
- * Two destinations, mirroring the web:
- *   • a classic `G…` account → a plain Horizon native payment;
- *   • anything else (a `C…` contract) → a native-SAC `transfer` invoked over
- *     Soroban RPC: simulate → assemble → sign → submit → poll for the result.
+ * Destinations, mirroring the web:
+ *   • a classic `G…`/`M…` account → a plain Horizon payment;
+ *   • a `W…` CAP-84 muxed contract → a SAC `transfer` built with
+ *     `TransactionBuilder.addSacTransferOperation`, which keeps the muxed id;
+ *   • a `C…` contract → a native-SAC `transfer` invoked over Soroban RPC:
+ *     simulate → assemble → sign → submit → poll for the result.
  *
  * The wallet authorizes and pays for the transfer with a signer whose secret is
  * never persisted — on this wallet it is derived from the device passkey (see
@@ -22,12 +24,14 @@ import {
   Operation,
   StrKey,
   TransactionBuilder,
+  extractBaseAddress,
   nativeToScVal,
   rpc as SorobanRpc,
   type Transaction,
 } from '@stellar/stellar-sdk';
 
 import { getNetwork } from './network';
+import { isMuxedContractAddress } from './address';
 import { inclusionFee } from './fees';
 import { horizonErrorMessage } from './horizonError';
 import { buildStellarMemo, validateMemo } from './sep7';
@@ -78,6 +82,26 @@ export function isClassicAddress(address: string): boolean {
   return StrKey.isValidEd25519PublicKey(address);
 }
 
+/** True for a muxed `M…` account address — still a classic payment destination. */
+export function isMuxedAccountAddress(address: string): boolean {
+  return StrKey.isValidMed25519PublicKey(address);
+}
+
+/**
+ * Why a muxed contract address cannot carry a memo.
+ *
+ * CAP-84 makes a `W…` address valid only as the destination of a Stellar Asset
+ * Contract `transfer`, and a Soroban transaction cannot have a memo at all. The
+ * id inside the address is what identifies the recipient, so a memo is not
+ * merely unsupported here — it is unnecessary.
+ */
+export const MUXED_CONTRACT_MEMO_ERROR =
+  'A muxed contract address (W…) can only be paid by a Stellar Asset Contract transfer, which cannot carry a memo. The muxed ID in the address identifies the recipient.';
+
+/** Why a muxed contract address cannot carry a platform fee in the same payment. */
+export const MUXED_CONTRACT_FEE_ERROR =
+  'A muxed contract address (W…) can only be paid by a single Stellar Asset Contract transfer, so a platform fee cannot be attached to the same transaction.';
+
 /** Converts a decimal XLM string to an i128 stroop amount. */
 export function toStroops(amount: string): bigint {
   return BigInt(Math.round(parseFloat(amount) * STROOPS_PER_XLM));
@@ -88,8 +112,17 @@ export function validateSend(recipient: string, amount: string, memo?: string, m
   const errors: SendValidation = {};
 
   const to = recipient.trim();
-  if (!StrKey.isValidEd25519PublicKey(to) && !StrKey.isValidContract(to)) {
-    errors.recipient = 'Enter a valid Stellar address (G…) or contract (C…).';
+  if (
+    !StrKey.isValidEd25519PublicKey(to) &&
+    !StrKey.isValidMed25519PublicKey(to) &&
+    !StrKey.isValidContract(to) &&
+    !StrKey.isValidMuxedContract(to)
+  ) {
+    errors.recipient = 'Enter a valid Stellar address (G…, M…, C… or W…).';
+  } else if (isMuxedContractAddress(to) && memo?.trim()) {
+    // A W… address is a valid destination, just not a classic one. Saying
+    // "invalid address" here would be false; the memo is what cannot work.
+    errors.memo = MUXED_CONTRACT_MEMO_ERROR;
   }
 
   const value = parseFloat(amount);
@@ -174,6 +207,44 @@ export async function sendPayment(
   const to = recipient.trim();
   const memoText = memo?.trim();
 
+  // A CAP-84 muxed contract address is a valid destination, but only for a
+  // Stellar Asset Contract transfer. It is never a classic payment destination,
+  // so route it before the classic branch and explain the two things that
+  // cannot travel with a Soroban transaction rather than calling it invalid.
+  if (isMuxedContractAddress(to)) {
+    if (memoText) throw new Error(MUXED_CONTRACT_MEMO_ERROR);
+    if (platformFee) throw new Error(MUXED_CONTRACT_FEE_ERROR);
+
+    await assertFeePayerCanCoverFee(signer.publicKey);
+    // Native XLM unless a classic (issued) asset is supplied. Either reaches a
+    // W… destination through that asset's SAC `transfer`, so both work.
+    const sendAsset =
+      asset && asset.code.toUpperCase() !== 'XLM' && asset.issuer
+        ? new Asset(asset.code, asset.issuer)
+        : Asset.native();
+
+    const server = new SorobanRpc.Server(net().rpcUrl);
+    const account = await server.getAccount(signer.publicKey);
+    // addSacTransferOperation (SDK 17.3+) builds the SAC transfer, its
+    // source-account authorization entry and the ledger footprint, preserving
+    // the muxed id inside the W… destination. No simulation/assemble step: the
+    // SDK supplies the resource estimate for this exact operation.
+    const tx = new TransactionBuilder(account, {
+      fee: inclusionFee(),
+      networkPassphrase: net().networkPassphrase,
+    })
+      .addSacTransferOperation(to, sendAsset, toStroops(amount))
+      .setTimeout(30)
+      .build();
+    signer.sign(tx);
+
+    const sendResult = await server.sendTransaction(tx);
+    if (sendResult.status === 'ERROR') {
+      throw new Error(rejectionFromResult(sendResult.errorResult));
+    }
+    return { hash: await pollForResult(server, sendResult.hash) };
+  }
+
   await assertFeePayerCanCoverFee(signer.publicKey);
 
   // Native XLM unless a classic (issued) asset is supplied.
@@ -182,20 +253,28 @@ export async function sendPayment(
       ? new Asset(asset.code, asset.issuer)
       : Asset.native();
 
-  if (isClassicAddress(to)) {
+  if (isClassicAddress(to) || isMuxedAccountAddress(to)) {
     const server = new Horizon.Server(net().horizonUrl);
 
     // A payment op can't land on an account that doesn't exist yet — first
     // funding must be a create_account op (native only, >= the base reserve).
+    // For an M… destination the account is the underlying G… address; a
+    // create_account cannot target a muxed address at all.
+    const underlying = isMuxedAccountAddress(to) ? extractBaseAddress(to) : to;
     let destinationExists = true;
     try {
-      await server.loadAccount(to);
+      await server.loadAccount(underlying);
     } catch (err) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       if (status === 404 || (err instanceof Error && err.name === 'NotFoundError')) {
         destinationExists = false;
       }
       // Other errors: assume it exists and let the submit surface the truth.
+    }
+    if (!destinationExists && isMuxedAccountAddress(to)) {
+      throw new Error(
+        'The account behind this muxed address (M…) does not exist yet. Send XLM to its G… address first, then pay the M… address.',
+      );
     }
     if (!destinationExists && !sendAsset.isNative()) {
       throw new Error('The recipient account is brand new — it must receive XLM first before it can hold other assets.');

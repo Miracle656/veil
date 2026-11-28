@@ -39,7 +39,12 @@ export type Sep7MemoType = 'text' | 'id' | 'hash' | 'return';
 
 /** The validated, normalised fields of a SEP-7 `pay` request. */
 export type Sep7PayRequest = {
-    /** Stellar account (`G…`), muxed account (`M…`), or contract (`C…`) to pay. */
+    /**
+     * Stellar account (`G…`), muxed account (`M…`), contract (`C…`), or muxed
+     * contract (`W…`) to pay. A `W…` destination is not a classic payment
+     * destination: CAP-84 only allows it as the destination of a Stellar Asset
+     * Contract `transfer`.
+     */
     destination: string;
     /** Decimal amount string (≤ 7 dp), if the request fixes an amount. */
     amount?: string;
@@ -71,12 +76,20 @@ export class Sep7Error extends Error {
 
 // ── Validation helpers ─────────────────────────────────────────────────────────────
 
-/** True for a valid Stellar destination: account, muxed account, or contract. */
+/**
+ * True for a valid Stellar destination: account (`G…`), muxed account (`M…`),
+ * contract (`C…`), or muxed contract (`W…`).
+ *
+ * A `W…` address is valid but is only payable by a Stellar Asset Contract
+ * `transfer` (CAP-84); callers that build classic payments must refuse it with
+ * that reason instead of calling it invalid.
+ */
 export function isValidDestination(value: string): boolean {
     return (
         StrKey.isValidEd25519PublicKey(value) ||
         StrKey.isValidMed25519PublicKey(value) ||
-        StrKey.isValidContract(value)
+        StrKey.isValidContract(value) ||
+        StrKey.isValidMuxedContract(value)
     );
 }
 

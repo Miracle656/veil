@@ -48,8 +48,8 @@ describe('sep7 fuzz', () => {
 
 describe('sep7 known-good examples', () => {
   // 56-char Stellar public keys (G... or C...) for lookLikeStellarAddress
-  const PUBLIC_KEY = 'G67AK7IOO7UEJMXLT2S3PXRLSLLDCZBRZ2C7EJS3KBIO5TDD6YRMAMFS'
-  const ISSUER = 'G7HBVM4YLL3DUXH7GQC63RAVIMU77YDAUTOMMTPVJ37ZO7WYLWLLLCUJ'
+  const PUBLIC_KEY = 'GCSWM5I2FRYFIDSVJDGLWDH4TMQZY6IVT4JDF2SCFW6PPJ56TSBH23NO'
+  const ISSUER = 'GD2VUFNSFXBAVZEZIU6VRPFU2KMSU4VQKP65SCE4TR5C2MJPLJ6VEAIM'
 
   it('parses a basic pay URI', () => {
     const uri = `web+stellar:pay?destination=${PUBLIC_KEY}&amount=100.50`
@@ -121,7 +121,7 @@ describe('sep7 known-good examples', () => {
   })
 
   it('detects C-prefix address via parseQrValue', () => {
-    const cKey = 'C67AK7IOO7UEJMXLT2S3PXRLSLLDCZBRZ2C7EJS3KBIO5TDD6YRMAMFS'
+    const cKey = 'CBQHNAXSI55GX2GN6D67GK7BHVPSLJUGZQEU7WJ5LKR5PNUCGLIMAO4K'
     const result = parseQrValue(cKey)
     expect(result).not.toBeNull()
     if (result && 'destination' in result) {

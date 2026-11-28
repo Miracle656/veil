@@ -4,15 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "next build --webpack",
+    "build": "npm run build:sdk && next build --webpack",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "npm run build:sdk && tsc --noEmit",
     "test": "jest",
     "test:vitest": "vitest run --coverage",
     "test:watch": "jest --watch",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "build:sdk": "npm --prefix ../../sdk ci --legacy-peer-deps && npm --prefix ../../sdk run build"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

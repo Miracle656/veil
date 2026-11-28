@@ -33,7 +33,7 @@
     "@reown/walletkit": "^1.6.0",
     "@sentry/react-native": "~7.2.0",
     "@soroswap/sdk": "^0.5.0",
-    "@stellar/stellar-sdk": "^14.6.1",
+    "@stellar/stellar-sdk": "^17.4.0",
     "@walletconnect/core": "2.26.0",
     "@walletconnect/react-native-compat": "2.26.0",
     "@walletconnect/utils": "2.26.0",

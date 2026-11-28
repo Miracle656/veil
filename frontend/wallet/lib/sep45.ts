@@ -38,26 +38,16 @@ import {
   Address,
   StrKey,
 } from '@stellar/stellar-sdk'
-// @stellar/js-xdr is CommonJS with `__esModule: true` but no `default` export,
-// so a default import resolves to `undefined` under esModuleInterop — a
-// namespace import is what actually works (see docs/SEP45_SPIKE.md gotchas
-// and stellar-js-xdr.d.ts for the full story).
-import * as jsXdr from '@stellar/js-xdr'
 import type { WebAuthnSignature } from '@veil/sdk'
 import { getNetwork } from './network'
 
 /** XDR codec for the challenge payload: a variable-length array of entries. */
-const AuthEntryArray = new jsXdr.VarArray(xdr.SorobanAuthorizationEntry)
-
 function decodeAuthEntries(base64: string): xdr.SorobanAuthorizationEntry[] {
-  const reader = new jsXdr.XdrReader(Buffer.from(base64, 'base64'))
-  return AuthEntryArray.read(reader) as xdr.SorobanAuthorizationEntry[]
+  return xdr.decodeArray(xdr.SorobanAuthorizationEntry, base64, 'base64')
 }
 
 function encodeAuthEntries(entries: xdr.SorobanAuthorizationEntry[]): string {
-  const writer = new jsXdr.XdrWriter()
-  AuthEntryArray.write(entries, writer)
-  return writer.finalize().toString('base64')
+  return xdr.encodeArray(xdr.SorobanAuthorizationEntry, entries, 'base64')
 }
 
 // ── Errors ───────────────────────────────────────────────────────────────────
@@ -214,9 +204,9 @@ export const SEP45_SIGNATURE_EXPIRATION_LEDGERS = 60
 
 /** Whether an entry's address-credentials signature is still the SEP-45 "please sign me" placeholder. */
 function isUnsignedAddressEntry(entry: xdr.SorobanAuthorizationEntry): boolean {
-  const cred = entry.credentials()
-  if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) return false
-  return cred.address().signature().switch().name === 'scvVoid'
+  const cred = entry.credentials
+  if (cred.type !== 'sorobanCredentialsAddress') return false
+  return cred.address.signature.type === 'scvVoid'
 }
 
 /**
@@ -237,20 +227,20 @@ function validateWebAuthInvocation(
   walletAddress: string,
   homeDomain: string,
 ): void {
-  if (invocation.subInvocations().length !== 0) {
+  if (invocation.subInvocations.length !== 0) {
     throw new Sep45Error(
       'SEP-45 challenge invocation has sub-invocations; web_auth_verify should never need any',
       'INVALID_CHALLENGE',
     )
   }
 
-  const fn = invocation.function()
-  if (fn.switch().name !== 'sorobanAuthorizedFunctionTypeContractFn') {
+  const fn = invocation.function
+  if (fn.type !== 'sorobanAuthorizedFunctionTypeContractFn') {
     throw new Sep45Error('SEP-45 challenge invocation is not a contract function call', 'INVALID_CHALLENGE')
   }
-  const call = fn.contractFn()
+  const call = fn.contractFn
 
-  const contractAddress = Address.fromScAddress(call.contractAddress()).toString()
+  const contractAddress = Address.fromScAddress(call.contractAddress).toString()
   if (contractAddress !== webAuthContractId) {
     throw new Sep45Error(
       `SEP-45 challenge invokes ${contractAddress}, not the anchor's declared web-auth contract (${webAuthContractId})`,
@@ -258,7 +248,7 @@ function validateWebAuthInvocation(
     )
   }
 
-  const functionName = call.functionName().toString()
+  const functionName = call.functionName.toString()
   if (functionName !== 'web_auth_verify') {
     throw new Sep45Error(
       `SEP-45 challenge invokes "${functionName}", not "web_auth_verify" — refusing to sign`,
@@ -266,7 +256,7 @@ function validateWebAuthInvocation(
     )
   }
 
-  const [account, argHomeDomain] = call.args().map((arg) => scValToNative(arg))
+  const [account, argHomeDomain] = call.args.map((arg) => scValToNative(arg))
   if (account !== walletAddress) {
     throw new Sep45Error(
       `SEP-45 challenge's "account" argument (${account}) does not match this wallet (${walletAddress})`,
@@ -353,7 +343,9 @@ export async function signSep45Challenge(
     const entry = challenge.entries[i]
     if (!isUnsignedAddressEntry(entry)) continue
 
-    const entryAddress = Address.fromScAddress(entry.credentials().address().address()).toString()
+    const credentials = entry.credentials
+    if (credentials.type !== 'sorobanCredentialsAddress') continue
+    const entryAddress = Address.fromScAddress(credentials.address.address).toString()
     if (entryAddress !== walletAddress) {
       throw new Sep45Error(
         `SEP-45 challenge contains an unsigned entry addressed to ${entryAddress}, not this wallet (${walletAddress})`,
@@ -373,14 +365,14 @@ export async function signSep45Challenge(
   }
 
   validateWebAuthInvocation(
-    challenge.entries[walletEntryIndex].rootInvocation(),
+    challenge.entries[walletEntryIndex].rootInvocation,
     webAuthContractId,
     walletAddress,
     homeDomain,
   )
 
-  const networkId = Buffer.from(
-    (stellarHash as (input: Buffer) => Buffer)(Buffer.from(challenge.networkPassphrase)),
+  const networkId = (stellarHash as (input: Uint8Array) => Uint8Array)(
+    new TextEncoder().encode(challenge.networkPassphrase),
   )
   const signatureExpirationLedger = currentLedger + expirationLedgers
 
@@ -388,17 +380,21 @@ export async function signSep45Challenge(
     challenge.entries.map(async (entry, i) => {
       if (i !== walletEntryIndex) return entry // the anchor's own entry — already signed, pass through
 
-      const addrCred = entry.credentials().address()
+      const entryCredentials = entry.credentials
+      if (entryCredentials.type !== 'sorobanCredentialsAddress') {
+        throw new Sep45Error('SEP-45 wallet entry has no address credential', 'INVALID_CHALLENGE')
+      }
+      const addrCred = entryCredentials.address
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
           networkId,
-          nonce: addrCred.nonce(),
-          invocation: entry.rootInvocation(),
+          nonce: addrCred.nonce,
+          invocation: entry.rootInvocation,
           signatureExpirationLedger,
         }),
       )
       const payloadHash = new Uint8Array(
-        (stellarHash as (input: Buffer) => Buffer)(Buffer.from(preimage.toXDR())),
+        (stellarHash as (input: Uint8Array) => Uint8Array)(new Uint8Array(preimage.toXDR())),
       )
 
       const sig = await signAuthEntry(payloadHash)
@@ -416,13 +412,13 @@ export async function signSep45Challenge(
       return new xdr.SorobanAuthorizationEntry({
         credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
           new xdr.SorobanAddressCredentials({
-            address: addrCred.address(),
-            nonce: addrCred.nonce(),
+            address: addrCred.address,
+            nonce: addrCred.nonce,
             signatureExpirationLedger,
             signature: sigVec,
           }),
         ),
-        rootInvocation: entry.rootInvocation(),
+        rootInvocation: entry.rootInvocation,
       })
     }),
   )

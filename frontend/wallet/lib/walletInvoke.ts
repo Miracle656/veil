@@ -219,6 +219,7 @@ export async function invokeAsWallet(params: InvokeAsWalletParams): Promise<stri
 
   const successSim = sim as SorobanRpc.Api.SimulateTransactionSuccessResponse
   const authEntries = successSim.result?.auth
+  const signedAuthEntries: xdr.SorobanAuthorizationEntry[] = []
   params.checkAuthEntries?.(authEntries ?? [])
   if (authEntries) {
     const networkIdBytes = new Uint8Array(
@@ -226,17 +227,18 @@ export async function invokeAsWallet(params: InvokeAsWalletParams): Promise<stri
     )
 
     for (const parsed of authEntries) {
-      const cred = parsed.credentials()
-      if (cred.switch().value !== xdr.SorobanCredentialsType.sorobanCredentialsAddress().value) {
+      const cred = parsed.credentials
+      if (cred.type !== 'sorobanCredentialsAddress') {
+        signedAuthEntries.push(parsed)
         continue
       }
 
-      const addrCred = cred.address()
+      const addrCred = cred.address
       const preimage = xdr.HashIdPreimage.envelopeTypeSorobanAuthorization(
         new xdr.HashIdPreimageSorobanAuthorization({
-          networkId: Buffer.from(networkIdBytes),
-          nonce: addrCred.nonce(),
-          invocation: parsed.rootInvocation(),
+          networkId: new Uint8Array(networkIdBytes),
+          nonce: addrCred.nonce,
+          invocation: parsed.rootInvocation,
           signatureExpirationLedger: validUntilLedger,
         }),
       )
@@ -257,15 +259,18 @@ export async function invokeAsWallet(params: InvokeAsWalletParams): Promise<stri
         sigElements.push(nativeToScVal(currentNonce, { type: 'u64' }))
       }
 
-      parsed.credentials(
-        xdr.SorobanCredentials.sorobanCredentialsAddress(
-          new xdr.SorobanAddressCredentials({
-            address: addrCred.address(),
-            nonce: addrCred.nonce(),
-            signatureExpirationLedger: validUntilLedger,
-            signature: xdr.ScVal.scvVec(sigElements),
-          }),
-        ),
+      signedAuthEntries.push(
+        new xdr.SorobanAuthorizationEntry({
+          credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+            new xdr.SorobanAddressCredentials({
+              address: addrCred.address,
+              nonce: addrCred.nonce,
+              signatureExpirationLedger: validUntilLedger,
+              signature: xdr.ScVal.scvVec(sigElements),
+            }),
+          ),
+          rootInvocation: parsed.rootInvocation,
+        }),
       )
     }
   }
@@ -283,7 +288,7 @@ export async function invokeAsWallet(params: InvokeAsWalletParams): Promise<stri
     .addOperation(
       Operation.invokeHostFunction({
         func: ihfOp.func,
-        auth: authEntries ?? [],
+        auth: signedAuthEntries,
         source: ihfOp.source,
       }),
     )

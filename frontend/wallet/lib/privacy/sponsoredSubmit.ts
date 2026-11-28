@@ -97,11 +97,13 @@ export interface PrivateTransactionCost {
 
 /** The inner `Transaction` body of an envelope, unwrapping a fee bump. */
 function transactionBody(envelope: xdr.TransactionEnvelope): xdr.Transaction | null {
-  switch (envelope.switch().name) {
+  switch (envelope.type) {
     case 'envelopeTypeTx':
-      return envelope.v1().tx()
+      return envelope.v1.tx
     case 'envelopeTypeTxFeeBump':
-      return envelope.feeBump().tx().innerTx().v1().tx()
+      return envelope.feeBump.tx.innerTx.type === 'envelopeTypeTx'
+        ? envelope.feeBump.tx.innerTx.v1.tx
+        : null
     default:
       return null
   }
@@ -118,13 +120,14 @@ function transactionBody(envelope: xdr.TransactionEnvelope): xdr.Transaction | n
 export function readTransactionCost(
   response: Pick<SorobanRpc.Api.GetSuccessfulTransactionResponse, 'envelopeXdr' | 'resultXdr'>
 ): PrivateTransactionCost | null {
-  const fee = response.resultXdr?.feeCharged()
+  const fee = response.resultXdr?.feeCharged
   if (fee === undefined) return null
 
-  const ext = response.envelopeXdr ? transactionBody(response.envelopeXdr)?.ext() : undefined
-  const instructions = ext && ext.switch() === 1 ? ext.sorobanData().resources().instructions() : null
+  const ext = response.envelopeXdr ? transactionBody(response.envelopeXdr)?.ext : undefined
+  const instructions =
+    ext && ext.type === 'sorobanData' ? Number(ext.sorobanData.resources.instructions) : null
 
-  return { feeChargedStroops: Number(fee.toString()), instructions }
+  return { feeChargedStroops: Number(fee), instructions }
 }
 
 /** Whether an envelope invokes `transact` on one of `poolContractIds`. */
@@ -135,14 +138,14 @@ export function isPoolTransact(
   const body = transactionBody(envelope)
   if (!body) return false
 
-  return body.operations().some((op) => {
-    if (op.body().switch().name !== 'invokeHostFunction') return false
-    const fn = op.body().invokeHostFunctionOp().hostFunction()
-    if (fn.switch().name !== 'hostFunctionTypeInvokeContract') return false
-    const call = fn.invokeContract()
+  return body.operations.some((op) => {
+    if (op.body.type !== 'invokeHostFunction') return false
+    const fn = op.body.invokeHostFunctionOp.hostFunction
+    if (fn.type !== 'hostFunctionTypeInvokeContract') return false
+    const call = fn.invokeContract
     return (
-      call.functionName().toString() === 'transact' &&
-      poolContractIds.includes(Address.fromScAddress(call.contractAddress()).toString())
+      call.functionName.toString() === 'transact' &&
+      poolContractIds.includes(Address.fromScAddress(call.contractAddress).toString())
     )
   })
 }

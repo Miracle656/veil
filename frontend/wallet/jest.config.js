@@ -18,7 +18,11 @@ const config = {
         allowSyntheticDefaultImports: true,
       },
     }],
+    // SDK 17's XDR layer depends on `uint8array-extras`, which ships ESM only.
+    // Compile that dependency to CommonJS for Jest.
+    '^.+\\.js$': ['babel-jest', { presets: [require.resolve('next/babel')] }],
   },
+  transformIgnorePatterns: ['/node_modules/(?!.*(@exodus|@noble|@walletconnect|uint8array-extras))'],
   // SDK source (compiled from ../../sdk/src) imports @stellar/stellar-sdk and
   // friends, but its sibling sdk/node_modules isn't installed in the wallet CI
   // job. Add the wallet's node_modules to the resolver search path (the jest
@@ -54,6 +58,7 @@ const config = {
     // (see dappParity.test.ts, which pins this mapping to the real file).
     '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',
   },
+  setupFiles: ['<rootDir>/jest.setup.js'],
   setupFilesAfterEnv: [],
   collectCoverageFrom: [
     'lib/**/*.ts',

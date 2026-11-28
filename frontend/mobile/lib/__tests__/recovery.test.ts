@@ -321,7 +321,7 @@ describe('attachRecoverySignatures', () => {
 
     const unsigned = tx.toXDR();
     tx.sign(keypair);
-    const signature = tx.signatures[0]!.signature().toString('base64');
+    const signature = Buffer.from(tx.signatures[0]!.signature.toBytes()).toString('base64');
 
     return { xdr: unsigned, signerKey: keypair.publicKey(), signature };
   }

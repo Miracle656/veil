@@ -134,8 +134,9 @@ test.describe('SDK WebAuthn happy-path across browsers', () => {
   test('runs happy-path registration and signing', async ({ page }) => {
     await page.goto('/');
 
-    // Execute the happy-path flow using the InvisibleWallet SDK in the browser
+    // Wait for the browser module import (including its Buffer polyfill) to finish.
     const result = await page.evaluate(async () => {
+      await (window as any).__walletReady;
       // @ts-ignore
       const wallet = new window.InvisibleWallet({
         factoryAddress: 'CAUK4MWO3TTFM6PLURSH2GPK3AB747SZGABKTCVLKCU7W2MGKHKP35GA',
