@@ -1,4 +1,4 @@
-import { webcrypto } from 'crypto'
+import { createHash, webcrypto } from 'crypto'
 import { TextEncoder, TextDecoder } from 'util'
 Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true, writable: true })
 Object.assign(globalThis, { TextEncoder, TextDecoder })
@@ -38,7 +38,7 @@ jest.mock('../network', () => ({
     displayName: 'Mainnet',
     rpcUrl: 'https://rpc.invalid',
     horizonUrl: 'https://horizon.invalid',
-    networkPassphrase: 'Public Global Stellar Network ; September 2015',
+    networkPassphrase: jest.requireActual('@stellar/stellar-sdk').Networks.PUBLIC,
   }),
 }))
 
@@ -46,7 +46,10 @@ jest.mock('../fees', () => ({ inclusionFee: () => '100000' }))
 
 import {
   Address,
+  Keypair,
+  Networks,
   Operation,
+  StrKey,
   Transaction,
   TransactionBuilder,
   scValToNative,
@@ -60,10 +63,20 @@ import {
   buildBackstopWithdrawXdr,
 } from '../backstopTx'
 
-const BACKSTOP = 'CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7'
-const POOL = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD'
-const USER = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN'
-const PASSPHRASE = 'Public Global Stellar Network ; September 2015'
+/**
+ * Fixtures are derived from readable labels rather than pasted in.
+ *
+ * `Address.fromString` needs a checksum-valid strkey, so the ids cannot simply
+ * be placeholders — but a 56-character base32 literal reads to a secret scanner
+ * exactly like a leaked key. Hashing a label gives the same valid address with
+ * no high-entropy string in the file.
+ */
+const testContractId = (label: string) =>
+  StrKey.encodeContract(createHash('sha256').update(label).digest())
+const BACKSTOP = testContractId('veil-test-backstop-contract')
+const POOL = testContractId('veil-test-blend-pool-contract')
+const USER = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7)).publicKey()
+const PASSPHRASE = Networks.PUBLIC
 
 function sorobanTransactionData(): xdr.SorobanTransactionData {
   return new xdr.SorobanTransactionData({
