@@ -43,6 +43,43 @@ export async function latestLedgerSequence(
     }
 }
 
+/**
+ * The latest ledger's sequence number and close time (seconds since 1970).
+ *
+ * The same problem as above, one step further: `server.getLedgers` decodes
+ * ledger headers too, so on a network newer than the Stellar SDK it throws as
+ * well. The RPC's `getLatestLedger` reply carries `closeTime` as plain JSON,
+ * so that is read first. An older RPC that does not send it falls back to
+ * `getLedgers`.
+ */
+export async function latestLedgerClose(
+    server: rpc.Server,
+    fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<{ sequence: number; closeTime: number }> {
+    const url = rpcUrlOf(server);
+    if (url && typeof fetchImpl === 'function') {
+        try {
+            const res = await fetchImpl(url, {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getLatestLedger' }),
+            });
+            const body = (await res.json()) as { result?: { sequence?: unknown; closeTime?: unknown } };
+            const sequence = Number(body?.result?.sequence);
+            const raw = body?.result?.closeTime;
+            const closeTime = raw === undefined || raw === null || raw === '' ? NaN : Number(raw);
+            if (Number.isInteger(sequence) && sequence > 0 && Number.isInteger(closeTime) && closeTime > 0) {
+                return { sequence, closeTime };
+            }
+        } catch {
+            /* fall through to the SDK */
+        }
+    }
+    const sequence = await latestLedgerSequence(server, fetchImpl);
+    const { latestLedgerCloseTime } = await server.getLedgers({ startLedger: sequence, pagination: { limit: 1 } });
+    return { sequence, closeTime: Number(latestLedgerCloseTime) };
+}
+
 /** The URL an `rpc.Server` was made with, or null when it cannot be read. */
 function rpcUrlOf(server: rpc.Server): string | null {
     const raw = (server as unknown as { serverURL?: { toString(): string } | string }).serverURL;

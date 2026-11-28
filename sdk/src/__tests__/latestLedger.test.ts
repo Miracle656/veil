@@ -1,6 +1,6 @@
 import type { rpc } from '@stellar/stellar-sdk';
 
-import { latestLedgerSequence } from '../latestLedger';
+import { latestLedgerClose, latestLedgerSequence } from '../latestLedger';
 
 const DECODE_ERROR = new TypeError('XDR Read Error: unknown StellarValueType member for value 3');
 
@@ -54,6 +54,34 @@ describe('latestLedgerSequence', () => {
             const s = server({ getLatestLedger: async () => { throw DECODE_ERROR; }, serverURL });
             await expect(latestLedgerSequence(s, fetchImpl)).rejects.toBe(DECODE_ERROR);
         }
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+});
+
+describe('latestLedgerClose', () => {
+    it('reads sequence and close time from the plain reply, without the SDK', async () => {
+        const getLedgers = jest.fn();
+        const s = { getLatestLedger: jest.fn(), getLedgers, serverURL: 'https://rpc.invalid' } as unknown as rpc.Server;
+        const fetchImpl = reply({ result: { sequence: 5969042, closeTime: '1795868854', headerXdr: 'AAAA' } });
+        await expect(latestLedgerClose(s, fetchImpl)).resolves.toEqual({ sequence: 5969042, closeTime: 1795868854 });
+        expect(getLedgers).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ['no close time', { result: { sequence: 10 } }],
+        ['an empty close time', { result: { sequence: 10, closeTime: '' } }],
+        ['a non-numeric close time', { result: { sequence: 10, closeTime: 'soon' } }],
+    ])('falls back to getLedgers when the reply has %s', async (_label, body) => {
+        const getLedgers = jest.fn(async () => ({ latestLedgerCloseTime: 777 }));
+        const s = { getLatestLedger: async () => ({ sequence: 10 }), getLedgers, serverURL: 'https://rpc.invalid' } as unknown as rpc.Server;
+        await expect(latestLedgerClose(s, reply(body))).resolves.toEqual({ sequence: 10, closeTime: 777 });
+        expect(getLedgers).toHaveBeenCalledWith({ startLedger: 10, pagination: { limit: 1 } });
+    });
+
+    it('falls back to getLedgers when the server URL cannot be read', async () => {
+        const fetchImpl = reply({ result: { sequence: 1, closeTime: 1 } });
+        const s = { getLatestLedger: async () => ({ sequence: 42 }), getLedgers: async () => ({ latestLedgerCloseTime: 99 }) } as unknown as rpc.Server;
+        await expect(latestLedgerClose(s, fetchImpl)).resolves.toEqual({ sequence: 42, closeTime: 99 });
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 });
