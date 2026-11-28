@@ -46,6 +46,49 @@ export function isPrivacyEnabled(network: VeilNetworkName = getNetworkName()): b
   return privacyFlagOn();
 }
 
+/**
+ * Environment variable that enables experimental ed25519 stealth sending and
+ * receiving in the mobile app. Off by default on every network until the
+ * CryptoNote-style ed25519 scheme (0x0101) and raw-scalar signing complete
+ * independent cryptographic review and the lifting criteria in
+ * `docs/PRIVACY_THREAT_MODEL.md` §11 are met.
+ */
+export const STEALTH_FEATURE_FLAG = 'EXPO_PUBLIC_STEALTH_FEATURE_FLAG' as const;
+
+/**
+ * Build-time switch for ed25519 stealth sending and receiving, off unless a
+ * build explicitly opts in with `EXPO_PUBLIC_STEALTH_FEATURE_FLAG=1` (or `true`),
+ * mirroring the web wallet's `NEXT_PUBLIC_STEALTH_FEATURE_FLAG`.
+ */
+export function isStealthEnabled(): boolean {
+  return (
+    process.env.EXPO_PUBLIC_STEALTH_FEATURE_FLAG === '1' ||
+    process.env.EXPO_PUBLIC_STEALTH_FEATURE_FLAG === 'true'
+  );
+}
+
+/** Thrown when a stealth send or receive path is invoked while the flag is off. */
+export class StealthFeatureDisabledError extends Error {
+  readonly flag = STEALTH_FEATURE_FLAG;
+
+  constructor(operation: string) {
+    super(
+      `Stealth ${operation} is disabled by default (${STEALTH_FEATURE_FLAG} is not enabled). ` +
+        'The ed25519 stealth scheme (0x0101) is not yet audited; see docs/PRIVACY_THREAT_MODEL.md.'
+    );
+    this.name = 'StealthFeatureDisabledError';
+  }
+}
+
+/**
+ * Enforces the default-off stealth feature gate at send and receive boundaries.
+ */
+export function assertStealthEnabled(operation: string): void {
+  if (!isStealthEnabled()) {
+    throw new StealthFeatureDisabledError(operation);
+  }
+}
+
 /** Supported association-set compliance policies (V132). */
 export type AssociationSetPolicy = 'blocklist' | 'allowlist';
 
