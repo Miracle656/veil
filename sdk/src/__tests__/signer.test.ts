@@ -12,10 +12,11 @@ import {
   Networks,
   Operation,
   TransactionBuilder,
+  xdr,
   type Transaction,
 } from '@stellar/stellar-sdk';
 import { signForSubmission } from '../core';
-import { _resetSignerDeprecationWarnings, type TransactionSigner } from '../signer';
+import { _resetSignerDeprecationWarnings, resolveSigner, signWith, type TransactionSigner } from '../signer';
 
 const PASSPHRASE = Networks.TESTNET;
 const config = (extra: object = {}) =>
@@ -86,6 +87,72 @@ describe('TransactionSigner callback path', () => {
     await expect(signForSubmission(buildTx(kp.publicKey()), echo, config())).rejects.toThrow(/without adding a signature/);
     const garbage: TransactionSigner = { publicKey: kp.publicKey(), signTransaction: async () => 'not xdr' };
     await expect(signForSubmission(buildTx(kp.publicKey()), garbage, config())).rejects.toThrow(/not a transaction envelope/);
+  });
+
+  it('rejects a signature from a different key', async () => {
+    const kp = Keypair.random();
+    const other = Keypair.random();
+    const tx = buildTx(kp.publicKey());
+    const returned = TransactionBuilder.fromXDR(tx.toXDR(), PASSPHRASE) as Transaction;
+    returned.sign(other);
+    const signer: TransactionSigner = { publicKey: kp.publicKey(), signTransaction: async () => returned.toXDR() };
+    await expect(signWith(tx, resolveSigner(signer), PASSPHRASE)).rejects.toThrow(/valid signature for its public key/);
+  });
+
+  it('rejects an arbitrary decorated signature', async () => {
+    const kp = Keypair.random();
+    const tx = buildTx(kp.publicKey());
+    const returned = TransactionBuilder.fromXDR(tx.toXDR(), PASSPHRASE) as Transaction;
+    returned.addDecoratedSignature(new xdr.DecoratedSignature({
+      hint: Buffer.alloc(4),
+      signature: Buffer.alloc(64),
+    }));
+    const signer: TransactionSigner = { publicKey: kp.publicKey(), signTransaction: async () => returned.toXDR() };
+    await expect(signWith(tx, resolveSigner(signer), PASSPHRASE)).rejects.toThrow(/valid signature/);
+  });
+
+  it('rejects a valid signature with the wrong hint and mixed invalid additions', async () => {
+    const kp = Keypair.random();
+    const tx = buildTx(kp.publicKey());
+    const wrongHint = TransactionBuilder.fromXDR(tx.toXDR(), PASSPHRASE) as Transaction;
+    wrongHint.sign(kp);
+    wrongHint.signatures.splice(0, wrongHint.signatures.length, new xdr.DecoratedSignature({
+      hint: Buffer.alloc(4),
+      signature: wrongHint.signatures[0].signature(),
+    }));
+    const wrongHintSigner: TransactionSigner = {
+      publicKey: kp.publicKey(),
+      signTransaction: async () => wrongHint.toXDR(),
+    };
+    await expect(signWith(tx, resolveSigner(wrongHintSigner), PASSPHRASE)).rejects.toThrow(/valid signature/);
+
+    const mixed = TransactionBuilder.fromXDR(tx.toXDR(), PASSPHRASE) as Transaction;
+    mixed.sign(kp);
+    mixed.addDecoratedSignature(new xdr.DecoratedSignature({
+      hint: Buffer.alloc(4),
+      signature: Buffer.alloc(64),
+    }));
+    const mixedSigner: TransactionSigner = { publicKey: kp.publicKey(), signTransaction: async () => mixed.toXDR() };
+    await expect(signWith(tx, resolveSigner(mixedSigner), PASSPHRASE)).rejects.toThrow(/valid signature/);
+  });
+
+  it('rejects a signer that changes an existing signature', async () => {
+    const kp = Keypair.random();
+    const tx = buildTx(kp.publicKey());
+    tx.sign(kp);
+    const signer: TransactionSigner = {
+      publicKey: kp.publicKey(),
+      signTransaction: async (xdrEnvelope) => {
+        const changed = TransactionBuilder.fromXDR(xdrEnvelope, PASSPHRASE) as Transaction;
+        changed.signatures.splice(0, changed.signatures.length, new xdr.DecoratedSignature({
+          hint: Buffer.alloc(4),
+          signature: Buffer.alloc(64),
+        }));
+        changed.sign(kp);
+        return changed.toXDR();
+      },
+    };
+    await expect(signWith(tx, resolveSigner(signer), PASSPHRASE)).rejects.toThrow(/changed a signature/);
   });
 
   it('wraps in a fee bump signed by a sponsorSigner callback', async () => {

@@ -6,11 +6,12 @@
   //
   // The `@veil/*` aliases point mobile at the SDK's TypeScript *source* under
   // `../../sdk/src`. `tsc` follows those files and then tries to resolve their
-  // own imports (`react`, `@stellar/stellar-sdk`) from the SDK's directory,
-  // where — in the mobile-only CI job — they are not installed. Metro resolves
-  // them at runtime via `config.resolver.nodeModulesPaths` (see metro.config.js),
-  // but `tsc` has no equivalent, so we map those two specifiers to the copies in
-  // the mobile app's own `node_modules` for typechecking only.
+  // own imports (`react`, `@stellar/stellar-sdk`, and the Noble cryptography
+  // modules) from the SDK's directory, where — in the mobile-only CI job — they
+  // are not installed. Metro resolves them at runtime via
+  // `config.resolver.nodeModulesPaths` (see metro.config.js), but `tsc` has no
+  // equivalent, so we map those specifiers to the copies in the mobile app's own
+  // `node_modules` for typechecking only.
   //
   // `extends` replaces the parent `paths` object wholesale rather than merging,
   // so every alias from tsconfig.json is repeated here.
@@ -29,7 +30,10 @@
       "@veil/sep7": ["../../sdk/src/sep7"],
       "react": ["./node_modules/@types/react"],
       "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
-      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"]
+      "@stellar/stellar-sdk": ["./node_modules/@stellar/stellar-sdk"],
+      "@noble/curves/ed25519": ["./node_modules/@noble/curves/ed25519"],
+      "@noble/curves/utils": ["./node_modules/@noble/curves/utils"],
+      "@noble/hashes/sha2.js": ["./node_modules/@noble/hashes/sha2"]
     }
   }
 }

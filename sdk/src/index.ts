@@ -66,6 +66,7 @@ export * from './bulkPayout';
 export * from './counterfactual';
 export type { TransactionSigner, SignTransactionContext, SignerInput } from './signer';
 export * from './claimableBalance';
+export * from './stealthPayment';
 export * from './network';
 export * from './fees';
 export * from './reserves';

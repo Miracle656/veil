@@ -129,5 +129,22 @@ export async function signWith<T extends Transaction | FeeBumpTransaction>(
     if (signed.signatures.length <= tx.signatures.length) {
         throw new Error('The signer returned the transaction without adding a signature.');
     }
+    for (let index = 0; index < tx.signatures.length; index++) {
+        const original = tx.signatures[index];
+        const returned = signed.signatures[index];
+        if (original.hint().toString('hex') !== returned.hint().toString('hex')
+            || original.signature().toString('hex') !== returned.signature().toString('hex')) {
+            throw new Error('The signer changed a signature that was already present on the transaction.');
+        }
+    }
+    const keypair = Keypair.fromPublicKey(resolved.publicKey);
+    const hash = signed.hash();
+    const expectedHint = keypair.rawPublicKey().slice(-4).toString('hex');
+    const addedSignatures = signed.signatures.slice(tx.signatures.length);
+    if (addedSignatures.some((signature) =>
+        signature.hint().toString('hex') !== expectedHint
+        || !keypair.verify(hash, signature.signature()))) {
+        throw new Error('The signer did not add a valid signature for its public key.');
+    }
     return signed as T;
 }
