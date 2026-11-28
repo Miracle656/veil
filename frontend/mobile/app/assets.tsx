@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, Text, View } 
 
 import { errorMessage } from '../lib/errorMessage';
 import { AssetRow } from '../components/AssetRow';
+import { Skeleton } from '../components/Skeleton';
 import { TokenIcon } from '../components/TokenIcon';
 import { ScreenScaffold } from '../components/ScreenScaffold';
 import { useTheme } from '../hooks/useTheme';
@@ -217,7 +218,34 @@ export default function AssetsScreen() {
 
   const renderBody = () => {
     if (state.kind === 'loading') {
-      return <ActivityIndicator color={colors.accent} style={styles.spinner} />;
+      // Trustline cards in the shape of the held-asset list — icon, code over
+      // name, two detail lines and a footer — so the page does not jump.
+      return (
+        <View
+          style={styles.body}
+          accessibilityState={{ busy: true }}
+          accessibilityLabel="Loading"
+          testID="assets-loading-state"
+        >
+          {[0, 1, 2].map((i) => (
+            <View key={i} style={styles.assetCard}>
+              <View style={styles.offerHead}>
+                <Skeleton width={38} height={38} radius={19} style={styles.skeletonFill} />
+                <View style={styles.skeletonText}>
+                  <Skeleton width={64} height={15} style={styles.skeletonFill} />
+                  <Skeleton width={98} height={11} style={styles.skeletonFill} />
+                </View>
+              </View>
+              <Skeleton width="72%" height={12} style={styles.skeletonFill} />
+              <Skeleton width="54%" height={12} style={styles.skeletonFill} />
+              <View style={styles.trustlineFooter}>
+                <Skeleton width={88} height={10} style={styles.skeletonFill} />
+                <Skeleton width={62} height={26} radius={13} style={styles.skeletonFill} />
+              </View>
+            </View>
+          ))}
+        </View>
+      );
     }
     if (state.kind === 'no-wallet') {
       return <Text style={styles.muted}>No wallet found on this device yet.</Text>;
@@ -396,7 +424,8 @@ export default function AssetsScreen() {
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     body: { gap: 20, paddingBottom: 24 },
-    spinner: { marginTop: 32 },
+    skeletonText: { flexShrink: 1, gap: 5 },
+    skeletonFill: { backgroundColor: colors.surfaceMd },
     muted: {
       color: colors.textMuted,
       fontFamily: fontFamily.body,

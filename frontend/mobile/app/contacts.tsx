@@ -13,7 +13,6 @@
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
@@ -26,6 +25,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FlowHeader } from '../components/FlowHeader';
 import { PlusIcon, SendIcon, UsersIcon } from '../components/icons';
+import { Skeleton } from '../components/Skeleton';
 import { useTheme } from '../hooks/useTheme';
 import { Contact, useContacts } from '../hooks/useContacts';
 import { errorMessage } from '../lib/errorMessage';
@@ -178,7 +178,30 @@ export default function ContactsScreen() {
         )}
 
         {!isLoaded ? (
-          <ActivityIndicator style={styles.loader} color={colors.accent} />
+          // Three address-book rows in the shape the real ones take — avatar,
+          // name over address, the edit/delete footer — so nothing shifts.
+          <View
+            style={styles.list}
+            accessibilityState={{ busy: true }}
+            accessibilityLabel="Loading"
+            testID="contacts-loading-state"
+          >
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={styles.item}>
+                <View style={styles.itemMain}>
+                  <Skeleton width={40} height={40} radius={20} style={styles.skeletonFill} />
+                  <View style={styles.itemText}>
+                    <Skeleton width={104} height={14} style={styles.skeletonFill} />
+                    <Skeleton width={148} height={11} style={styles.skeletonFill} />
+                  </View>
+                </View>
+                <View style={styles.itemActions}>
+                  <Skeleton width={26} height={12} style={styles.skeletonFill} />
+                  <Skeleton width={38} height={12} style={styles.skeletonFill} />
+                </View>
+              </View>
+            ))}
+          </View>
         ) : contacts.length === 0 ? (
           <View style={styles.empty}>
             <UsersIcon size={28} color={colors.textFaint} />
@@ -310,7 +333,7 @@ const createStyles = (colors: ThemeColors) =>
     },
     secondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodyMedium, fontSize: 15 },
 
-    loader: { marginTop: 32 },
+    skeletonFill: { backgroundColor: colors.surfaceMd },
     empty: { alignItems: 'center', gap: 8, paddingVertical: 40, paddingHorizontal: 20 },
     emptyTitle: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 15 },
     emptyText: {

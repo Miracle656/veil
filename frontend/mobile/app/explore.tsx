@@ -22,7 +22,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -35,6 +34,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { FlowHeader } from '../components/FlowHeader';
+import { Skeleton } from '../components/Skeleton';
 import { useTheme } from '../hooks/useTheme';
 import { useNetwork } from '../hooks/useNetwork';
 import type { ThemeColors } from '../lib/theme';
@@ -250,8 +250,27 @@ export default function ExploreScreen() {
         </View>
 
         {loading && markets.length === 0 ? (
-          <View style={styles.loading}>
-            <ActivityIndicator color={colors.accent} />
+          // Rows in the shape of the market list, so nothing moves when the
+          // prices land.
+          <View
+            style={styles.section}
+            accessibilityState={{ busy: true }}
+            accessibilityLabel="Loading"
+            testID="explore-loading-state"
+          >
+            <Skeleton width={92} height={20} style={styles.skeletonFill} />
+            <View style={styles.card}>
+              {[0, 1, 2, 3].map((i) => (
+                <View key={i} style={[styles.row, i > 0 && styles.rowDivided]}>
+                  <Skeleton width={36} height={36} radius={18} style={styles.skeletonFill} />
+                  <View style={styles.skeletonRowText}>
+                    <Skeleton width={64} height={14} style={styles.skeletonFill} />
+                    <Skeleton width={132} height={11} style={styles.skeletonFill} />
+                  </View>
+                  <Skeleton width={56} height={14} style={styles.skeletonFill} />
+                </View>
+              ))}
+            </View>
           </View>
         ) : null}
 
@@ -464,7 +483,8 @@ const createStyles = (colors: ThemeColors) =>
     chipText: { color: colors.textMuted, fontFamily: fontFamily.bodyMedium, fontSize: 13 },
     chipTextActive: { color: colors.onAccent, fontFamily: fontFamily.bodySemiBold },
 
-    loading: { paddingVertical: 32, alignItems: 'center' },
+    skeletonRowText: { flex: 1, gap: 5 },
+    skeletonFill: { backgroundColor: colors.surfaceMd },
 
     section: { gap: 6 },
     sectionTitle: { color: colors.textStrong, fontFamily: fontFamily.heading, fontSize: 20 },

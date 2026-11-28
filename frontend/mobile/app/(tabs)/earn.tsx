@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 
 import { Button, Card, Screen } from '../../components/ui';
+import { Skeleton } from '../../components/Skeleton';
 import { useTheme } from '../../hooks/useTheme';
 import { useHiddenAmounts } from '../../hooks/useHiddenAmounts';
 import type { ThemeColors } from '../../lib/theme';
@@ -381,8 +382,28 @@ export default function EarnRoute() {
                 <Text style={[typography.accent, styles.sectionLabel]}>Pools</Text>
 
                 {loadingPools ? (
-                  <View style={styles.centered}>
-                    <ActivityIndicator color={colors.accent} />
+                  // Shaped like the pool cards that replace it — a title line and
+                  // two reserve rows — so the section keeps its height on load.
+                  <View
+                    style={styles.skeletonList}
+                    accessibilityState={{ busy: true }}
+                    accessibilityLabel="Loading"
+                    testID="earn-loading-state"
+                  >
+                    {[0, 1, 2].map((i) => (
+                      <Card key={i} style={styles.card}>
+                        <Skeleton width={132} height={18} style={styles.skeletonFill} />
+                        {[0, 1].map((row) => (
+                          <View key={row} style={styles.reserveRow}>
+                            <View style={styles.reserveText}>
+                              <Skeleton width={54} height={14} style={styles.skeletonFill} />
+                              <Skeleton width={72} height={11} style={styles.skeletonFill} />
+                            </View>
+                            <Skeleton width={92} height={34} radius={17} style={styles.skeletonFill} />
+                          </View>
+                        ))}
+                      </Card>
+                    ))}
                   </View>
                 ) : pools.length === 0 ? (
                   <Card style={styles.card}>
@@ -586,7 +607,8 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: 4,
     },
     amountUnit: { fontFamily: fontFamily.accent, fontSize: 16, letterSpacing: 1, color: colors.textMuted },
-    centered: { paddingVertical: 24, alignItems: 'center' },
+    skeletonList: { gap: 12 },
+    skeletonFill: { backgroundColor: colors.surfaceMd },
     center: { textAlign: 'center' },
     successMark: { fontFamily: fontFamily.bodySemiBold, color: colors.positive, fontSize: 34 },
     errorMark: { fontFamily: fontFamily.bodySemiBold, color: colors.danger, fontSize: 34 },

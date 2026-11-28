@@ -37,6 +37,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { FlowHeader } from '../components/FlowHeader';
 import { SlideToConfirm } from '../components/SlideToConfirm';
+import { Skeleton } from '../components/Skeleton';
 import { useTheme } from '../hooks/useTheme';
 import { getOwnAddresses, listOwn } from '../lib/ownAddresses';
 import { fetchOwnedVeilIans } from '../lib/veilIansOwned';
@@ -250,7 +251,28 @@ export default function VeilIansScreen() {
       )}
 
       {loading ? (
-        <ActivityIndicator color={colors.accent} style={styles.loading} />
+        // Four tiles at the grid's own proportions — art over title, price and
+        // traits — so the collection lands without the page jumping.
+        <View
+          style={styles.grid}
+          accessibilityState={{ busy: true }}
+          accessibilityLabel="Loading"
+          testID="veil-ians-loading-state"
+        >
+          {[0, 1, 2, 3].map((i) => (
+            <View key={i} style={styles.tile}>
+              <Skeleton width="100%" height={168} radius={0} style={styles.skeletonFill} />
+              <View style={styles.tileBody}>
+                <View style={styles.tileTopRow}>
+                  <Skeleton width={44} height={13} style={styles.skeletonFill} />
+                  <Skeleton width={32} height={11} style={styles.skeletonFill} />
+                </View>
+                <Skeleton width={72} height={12} style={styles.skeletonFill} />
+                <Skeleton width={96} height={10} style={styles.skeletonFill} />
+              </View>
+            </View>
+          ))}
+        </View>
       ) : (
         <View style={styles.grid}>
           {FIGURES.map((figure) => {
@@ -577,7 +599,7 @@ const createStyles = (colors: ThemeColors) => {
     secondaryText: { color: colors.textPrimary, fontFamily: fontFamily.bodySemiBold, fontSize: 16 },
 
     pressed: { opacity: 0.85 },
-    loading: { marginTop: 32 },
+    skeletonFill: { backgroundColor: colors.surfaceMd },
   });
 
   return {
