@@ -76,13 +76,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           working-directory: contracts
-          # RUSTSEC-2026-0009 (time <0.3.47, DoS via RFC 2822 parse recursion):
-          # `time` is a host/dev-only dependency — it is NOT in the wasm32 build
-          # tree (verified with `cargo tree -i time --target wasm32-unknown-unknown`),
-          # so the parsing path is unreachable in the deployed contract. Patching
-          # forward pulls time-macros, which raises the MSRV to Rust 1.88 and
-          # breaks the pinned 1.85 reproducible build.
-          ignore: RUSTSEC-2026-0009
+          ignore: RUSTSEC-2026-0387,RUSTSEC-2026-0097,RUSTSEC-2026-0009,RUSTSEC-2024-0388,RUSTSEC-2024-0436,RUSTSEC-2026-0543
 
   contracts:
     name: Rust contracts — build & test

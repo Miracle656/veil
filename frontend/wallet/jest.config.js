@@ -42,6 +42,8 @@ const config = {
     // The ONE dApp allow-list — mobile's module, imported by the web wallet
     // (see dappParity.test.ts, which pins this mapping to the real file).
     '^@veil/dapps$':    '<rootDir>/../mobile/lib/dappAllowlist',
+    // The ONE backstop disclosure component (#1301) — mobile's module, imported by both
+    '^@veil/backstop-disclosure$': '<rootDir>/../mobile/components/BackstopDisclosure',
   },
   setupFilesAfterEnv: [],
   collectCoverageFrom: [
