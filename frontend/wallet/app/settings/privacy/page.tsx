@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { ChevronLeft, ShieldCheck, Shield, ArrowRight } from 'lucide-react'
 import { getSentryOptIn, setSentryOptIn, initSentry } from '@/lib/sentry'
 import { isPrivacyEnabled } from '@/lib/privacy/config'
+import { StealthSweepCard } from '@/components/StealthSweepCard'
 
 export default function PrivacySettingsPage() {
   const router = useRouter()
@@ -104,6 +105,9 @@ export default function PrivacySettingsPage() {
           Reports are sent to Sentry and contain only stack traces with wallet addresses and
           amounts stripped out. You can opt out at any time.
         </p>
+
+        {/* Stealth Payments: Pending Sweeps & Honest Linkage Disclosure */}
+        <StealthSweepCard />
 
         {isPrivacyEnabled() && (
           <>
