@@ -149,6 +149,25 @@ describe('stealth address derivation', () => {
         })).toThrow('different Stellar network');
     });
 
+    it('keeps the recovered network bound when the options object is reused', () => {
+        const options = {
+            secretKey: RECIPIENT_SECRET,
+            ephemeralPublicKey: EPHEMERAL_PUBLIC_KEY,
+            oneTimeAddress: ONE_TIME_ADDRESS,
+            balanceId: BALANCE_ID,
+            networkPassphrase: NETWORK,
+        };
+        const signer = recoverStealthSigner(options);
+        options.networkPassphrase = Networks.PUBLIC;
+
+        expect(() => signer.signTransaction(claimTransaction().toXDR(), {
+            networkPassphrase: Networks.PUBLIC,
+        })).toThrow('different Stellar network');
+        expect(() => signer.signTransaction(claimTransaction().toXDR(), {
+            networkPassphrase: NETWORK,
+        })).not.toThrow();
+    });
+
     it('only signs the bound claim from the one-time address', () => {
         const signer = recoverStealthSigner({
             secretKey: RECIPIENT_SECRET,

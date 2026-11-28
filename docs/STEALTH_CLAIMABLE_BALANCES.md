@@ -1,13 +1,13 @@
 # Stealth payments with Stellar claimable balances
 
 **Issue:** #1321
-**Scope:** the send half of a Stellar stealth payment. Creating and sponsoring the receiver's account or trustline at claim time is a separate flow.
+**Scope:** the send half of a Stellar stealth payment, plus current main's fee-bump claim helper for a missing one-time account. Creating an issued-asset trustline at claim time remains a separate flow.
 
 ## Decision: the sender carries the unclaimed reserve
 
 The account that signs and funds `create_claimable_balance` is the reserve holder while the balance is unclaimed. For this implementation that is the sender, not Veil.
 
-This keeps Veil out of custody and avoids a platform account that every stealth payment passes through. CAP-33 sponsorship is not needed for the unclaimed send because the sender is already the transaction source and ledger account. Sponsorship can still be used later when the receiver creates and funds the one-time account and, for an issued asset, its trustline.
+This keeps Veil out of custody and avoids a platform account that every stealth payment passes through. CAP-33 sponsorship is not needed for the unclaimed send because the sender is already the transaction source and ledger account. Current main's claim helper can create a missing one-time account from the fee payer; sponsorship remains available for later trustline setup.
 
 The tradeoff is explicit: the sender must have enough spendable XLM for the two-claimant claimable-balance reserve and the transaction fee until the receiver claims or the sender reclaims.
 
@@ -95,7 +95,7 @@ const payment = await sendStealthPayment({
 // payment.balanceId, and the network to the receiver.
 ```
 
-Recovery, after the receiver has a signer for the one-time account:
+Recovery and claim, with a separately chosen fee payer:
 
 ```ts
 const signer = recoverStealthSigner({
@@ -105,11 +105,21 @@ const signer = recoverStealthSigner({
   balanceId: payment.balanceId,
   networkPassphrase: Networks.PUBLIC,
 });
+
+const claim = await claimEscrowWithFeeBump({
+  claimant: signer,
+  feePayer,
+  balanceId: payment.balanceId,
+  config: {
+    horizonUrl: 'https://horizon.stellar.org',
+    networkPassphrase: Networks.PUBLIC,
+  },
+});
 ```
 
 `recoverStealthSigner` does not expose the private scalar. It rejects a different network or a recovered address that does not match the supplied one-time address. The returned signer accepts only a classic transaction sourced by that one-time address with exactly one `claimClaimableBalance` operation for the bound balance ID.
 
-Recovery provides signing capability only. A Stellar transaction source account must exist, so the one-time account must be created before this signer can submit a claim. Creating and sponsoring that account, and creating an issued-asset trustline when needed, are deliberately deferred to the separate claim-time flow.
+`claimEscrowWithFeeBump` separates authorization from payment: the one-time key signs the inner claim, and the fee payer signs the fee bump. An existing one-time account needs no XLM to pay the claim fee. If the account does not exist, the helper first creates it with 1 XLM from the fee payer, then submits the claim. The fee source and any account creation are public ledger links; the helper does not create an issued-asset trustline, which the receiver must establish before claiming that asset.
 
 ## Reserve and fee accounting
 
@@ -124,7 +134,7 @@ CAP-23 reserves `claimants.size × baseReserve` for a claimable balance, regardl
 
 The reserved XLM becomes unavailable to the sender, but Horizon's displayed native `balance` does not decrease merely because the reserve becomes unavailable. The measurement harness therefore sums live sponsored claimable balances as `claimants.length × baseReserve` and measures that delta separately from native-asset debits and fees. Its preflight uses the account minimum-balance formula, including `num_sponsoring`, without subtracting those same sponsored reserves a second time.
 
-The sender must already have a trustline for an issued asset, and that trustline's existing 0.5 XLM reserve remains separate; creating this claimable balance does not add another trustline reserve. The issue's 1.5 XLM receiver cost is the 1.0 XLM account reserve plus a 0.5 XLM trustline reserve. This send path creates neither the receiver account nor its trustline, so that cost is deferred to the separate claim-time flow.
+The sender must already have a trustline for an issued asset, and that trustline's existing 0.5 XLM reserve remains separate; creating this claimable balance does not add another trustline reserve. The issue's 1.5 XLM receiver cost is the 1.0 XLM account reserve plus a 0.5 XLM trustline reserve. The send path creates neither the receiver account nor its trustline. The fee-bump claim helper can fund account creation when needed, but trustline setup remains separate.
 
 ## If the balance is never claimed
 
@@ -218,7 +228,7 @@ node scripts/measure-claimable-balance.mjs --network testnet --asset usdc --test
 
 ## Testnet evidence: receiver claim consumes the balance
 
-A final testnet run created a minimal native balance, funded the derived one-time account with friendbot to satisfy the transaction-source requirement, recovered the v2 signer, and claimed successfully. After the deadline, the sender's reclaim was rejected by Stellar with `op_does_not_exist`, confirming that the time predicate cannot reclaim an already-consumed balance.
+A final testnet run created a minimal native balance, funded the derived one-time account with friendbot to satisfy the transaction-source requirement, recovered the v2 signer, and claimed successfully. It exercises first-claim consumption rather than fee-bump account creation, which has separate unit coverage. After the deadline, the sender's reclaim was rejected by Stellar with `op_does_not_exist`, confirming that the time predicate cannot reclaim an already-consumed balance.
 
 | Field | Value |
 |---|---|
@@ -239,9 +249,9 @@ The root SDK bundle includes the Noble X25519/Ed25519 implementation, SHA-256, S
 
 Measured with the repository's `size-limit` configuration, minified and brotlied:
 
-| Entry point | Committed `HEAD` | This change | Delta | Budget | Headroom |
+| Entry point | Current main (`b95d6a08`) | This change | Delta | Budget | Headroom |
 |---|---:|---:|---:|---:|---:|
-| Main SDK | 235,175 B | 255,520 B | +20,345 B | 256,000 B | 480 B |
-| Vanilla | 216,259 B | 216,582 B | +323 B | 225,000 B | 8,418 B |
+| Main SDK | 235,539 B | 255,768 B | +20,229 B | 256,000 B | 232 B |
+| Vanilla | 216,234 B | 216,502 B | +268 B | 225,000 B | 8,498 B |
 
-The main entry point grows by 20,345 B. The committed bundle was already 175 B over its 235,000 B ceiling, so the new 256,000 B ceiling both clears that pre-existing drift and leaves 480 B after the complete secure v2 implementation, including SHA-512 scalar signing. No feature was removed to meet the budget.
+The main entry point grows by 20,229 B. Current main is already 539 B over its former 235,000 B ceiling, so the 256,000 B ceiling clears that pre-existing drift and leaves 232 B after the complete secure v2 implementation, including SHA-512 scalar signing. Reusing Noble's existing byte-conversion helpers brought the final bundle 267 B below the pre-trim measurement and kept the gate at 256 KB. No feature was removed to meet the budget.

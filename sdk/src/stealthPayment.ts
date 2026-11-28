@@ -1,6 +1,15 @@
 import { Buffer } from 'buffer';
 import { StrKey, Transaction, TransactionBuilder, xdr } from '@stellar/stellar-sdk';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
+import {
+    bytesToHex,
+    bytesToNumberBE,
+    bytesToNumberLE,
+    concatBytes,
+    hexToBytes,
+    numberToBytesBE,
+    numberToBytesLE,
+} from '@noble/curves/utils';
 import { sha256 } from '@noble/hashes/sha256';
 import { sha512 } from '@noble/hashes/sha512';
 import type { TransactionSigner } from './signer';
@@ -62,69 +71,23 @@ function decodeHex(value: string, name: string, bytes = 32): Uint8Array {
     if (!new RegExp(`^[0-9a-f]{${bytes * 2}}$`, 'i').test(value)) {
         throw new Error(`${name} must be ${bytes} bytes encoded as ${bytes * 2} hexadecimal characters.`);
     }
-    return Uint8Array.from(value.match(/.{2}/g)!, (byte) => Number.parseInt(byte, 16));
-}
-
-function encodeHex(bytes: Uint8Array): string {
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function bytesToBigInt(bytes: Uint8Array): bigint {
-    let value = 0n;
-    for (const byte of bytes) value = (value << 8n) | BigInt(byte);
-    return value;
-}
-
-function bigIntToBytes(value: bigint): Uint8Array {
-    return decodeHex(value.toString(16).padStart(64, '0'), 'scalar');
-}
-
-function bytesToBigIntLittleEndian(bytes: Uint8Array): bigint {
-    let value = 0n;
-    for (let index = bytes.length - 1; index >= 0; index--) {
-        value = (value << 8n) | BigInt(bytes[index]);
-    }
-    return value;
-}
-
-function bigIntToBytesLittleEndian(value: bigint): Uint8Array {
-    const bytes = new Uint8Array(32);
-    for (let index = 0; index < bytes.length; index++) {
-        bytes[index] = Number(value & 0xffn);
-        value >>= 8n;
-    }
-    return bytes;
-}
-
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
-    const result = new Uint8Array(parts.reduce((length, part) => length + part.length, 0));
-    let offset = 0;
-    for (const part of parts) {
-        result.set(part, offset);
-        offset += part.length;
-    }
-    return result;
+    return hexToBytes(value);
 }
 
 function signWithScalar(message: Uint8Array, privateScalar: bigint, publicKey: Uint8Array): Uint8Array {
-    const prefix = sha512(concatBytes(SIGNING_DOMAIN, bigIntToBytes(privateScalar))).slice(0, 32);
-    const nonce = bytesToBigIntLittleEndian(sha512(concatBytes(prefix, message))) % ED25519_ORDER;
+    const prefix = sha512(concatBytes(SIGNING_DOMAIN, numberToBytesBE(privateScalar, 32))).slice(0, 32);
+    const nonce = bytesToNumberLE(sha512(concatBytes(prefix, message))) % ED25519_ORDER;
     const noncePublicKey = ed25519.Point.BASE.multiply(nonce).toBytes();
-    const challenge = bytesToBigIntLittleEndian(
+    const challenge = bytesToNumberLE(
         sha512(concatBytes(noncePublicKey, publicKey, message)),
     ) % ED25519_ORDER;
     const signatureScalar = (nonce + challenge * privateScalar) % ED25519_ORDER;
-    return concatBytes(noncePublicKey, bigIntToBytesLittleEndian(signatureScalar));
+    return concatBytes(noncePublicKey, numberToBytesLE(signatureScalar, 32));
 }
 
 function oneTimeScalar(sharedSecret: Uint8Array, ephemeralPublicKey: Uint8Array, networkPassphrase: string): bigint {
     const network = new TextEncoder().encode(networkPassphrase);
-    const input = new Uint8Array(DOMAIN.length + network.length + sharedSecret.length + ephemeralPublicKey.length);
-    input.set(DOMAIN);
-    input.set(network, DOMAIN.length);
-    input.set(sharedSecret, DOMAIN.length + network.length);
-    input.set(ephemeralPublicKey, DOMAIN.length + network.length + sharedSecret.length);
-    const scalar = bytesToBigInt(sha256(input)) % ED25519_ORDER;
+    const scalar = bytesToNumberBE(sha256(concatBytes(DOMAIN, network, sharedSecret, ephemeralPublicKey))) % ED25519_ORDER;
     if (scalar === 0n) throw new Error('The derived one-time scalar is invalid.');
     return scalar;
 }
@@ -132,7 +95,7 @@ function oneTimeScalar(sharedSecret: Uint8Array, ephemeralPublicKey: Uint8Array,
 function randomEd25519Secret(): Uint8Array {
     for (;;) {
         const secret = x25519.utils.randomSecretKey();
-        if (bytesToBigInt(secret) % ED25519_ORDER !== 0n) return secret;
+        if (bytesToNumberBE(secret) % ED25519_ORDER !== 0n) return secret;
     }
 }
 
@@ -140,11 +103,11 @@ export function createStealthIdentity(): StealthIdentity {
     const x25519Secret = x25519.utils.randomSecretKey();
     const ed25519Secret = randomEd25519Secret();
     const ed25519PublicKey = ed25519.Point.BASE.multiply(
-        bytesToBigInt(ed25519Secret) % ED25519_ORDER,
+        bytesToNumberBE(ed25519Secret) % ED25519_ORDER,
     ).toBytes();
     return {
-        publicKey: encodeHex(new Uint8Array([...x25519.getPublicKey(x25519Secret), ...ed25519PublicKey])),
-        secretKey: encodeHex(new Uint8Array([...x25519Secret, ...ed25519Secret])),
+        publicKey: bytesToHex(concatBytes(x25519.getPublicKey(x25519Secret), ed25519PublicKey)),
+        secretKey: bytesToHex(concatBytes(x25519Secret, ed25519Secret)),
     };
 }
 
@@ -168,7 +131,7 @@ export function deriveStealthAddress(options: StealthAddressOptions): DerivedSte
     }
     let recipientPoint;
     try {
-        recipientPoint = ed25519.Point.fromHex(encodeHex(recipientEd25519PublicKey));
+        recipientPoint = ed25519.Point.fromHex(bytesToHex(recipientEd25519PublicKey));
     } catch {
         throw new Error('recipientPublicKey contains an invalid Ed25519 public key.');
     }
@@ -181,14 +144,15 @@ export function deriveStealthAddress(options: StealthAddressOptions): DerivedSte
         address: StrKey.encodeEd25519PublicKey(
             publicKey as unknown as Parameters<typeof StrKey.encodeEd25519PublicKey>[0],
         ),
-        ephemeralPublicKey: encodeHex(ephemeralPublicKey),
+        ephemeralPublicKey: bytesToHex(ephemeralPublicKey),
     };
 }
 
 export function recoverStealthSigner(options: RecoverStealthSignerOptions): StealthSigner {
+    const networkPassphrase = options.networkPassphrase;
     const secretKey = decodeHex(options.secretKey, 'secretKey', 64);
     const x25519Secret = secretKey.slice(0, 32);
-    const ed25519Secret = bytesToBigInt(secretKey.slice(32)) % ED25519_ORDER;
+    const ed25519Secret = bytesToNumberBE(secretKey.slice(32)) % ED25519_ORDER;
     if (ed25519Secret === 0n) throw new Error('secretKey contains an invalid Ed25519 secret key.');
     const ephemeralPublicKey = decodeHex(options.ephemeralPublicKey, 'ephemeralPublicKey');
     let sharedSecret: Uint8Array;
@@ -200,7 +164,7 @@ export function recoverStealthSigner(options: RecoverStealthSignerOptions): Stea
     if (sharedSecret.every((byte) => byte === 0)) {
         throw new Error('ephemeralPublicKey is not a valid X25519 public key.');
     }
-    const scalar = oneTimeScalar(sharedSecret, ephemeralPublicKey, options.networkPassphrase);
+    const scalar = oneTimeScalar(sharedSecret, ephemeralPublicKey, networkPassphrase);
     const privateScalar = scalar * ed25519Secret % ED25519_ORDER;
     const publicKey = ed25519.Point.BASE.multiply(privateScalar).toBytes();
     const address = StrKey.encodeEd25519PublicKey(
@@ -219,7 +183,7 @@ export function recoverStealthSigner(options: RecoverStealthSignerOptions): Stea
         address,
         balanceId,
         signTransaction(xdr, context) {
-            if (context.networkPassphrase !== options.networkPassphrase) {
+            if (context.networkPassphrase !== networkPassphrase) {
                 throw new Error('The one-time signer cannot sign for a different Stellar network.');
             }
             const transaction = TransactionBuilder.fromXDR(xdr, context.networkPassphrase);
