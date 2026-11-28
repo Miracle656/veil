@@ -19,6 +19,7 @@
 
 import {
   Account,
+  Address,
   BASE_FEE,
   Operation,
   TransactionBuilder,
@@ -505,6 +506,129 @@ export function lpForPercent(userLp: bigint, percent: number): bigint {
   return floorDiv(userLp * bps, 10_000n)
 }
 
+/** 0.5 XLM in stroops: one Stellar base reserve. */
+export const BASE_RESERVE_STROOPS = 5_000_000n
+
+export interface AccountReserveFields {
+  subentries: number
+  /** Horizon `num_sponsored`: subentries another account pays the reserve for. */
+  sponsoredByOthers?: number
+  /** Horizon `num_sponsoring`: subentries this account pays the reserve for. */
+  sponsoringOthers?: number
+}
+
+/**
+ * The minimum XLM balance the account must keep: two base reserves for the
+ * account itself, plus one per subentry (trustlines, offers, signers, data
+ * entries), plus the ones it sponsors and minus the ones sponsored for it.
+ * Horizon does not return this as a number on the account record, so it is
+ * computed from the account's own fields rather than assumed.
+ */
+export function baseReserveStroops(fields: AccountReserveFields): bigint {
+  const entries =
+    2 +
+    Math.max(0, Math.trunc(fields.subentries)) +
+    Math.max(0, Math.trunc(fields.sponsoringOthers ?? 0)) -
+    Math.max(0, Math.trunc(fields.sponsoredByOthers ?? 0))
+  return BigInt(Math.max(2, entries)) * BASE_RESERVE_STROOPS
+}
+
+export interface XlmCapacity {
+  balance: bigint
+  reserve: bigint
+  fee: bigint
+  /** The most XLM a transaction may spend after the reserve and the fee. */
+  spendable: bigint
+}
+
+export function xlmCapacity(
+  fields: AccountReserveFields & { balance: bigint; fee: bigint },
+): XlmCapacity {
+  const reserve = baseReserveStroops(fields)
+  const spendable = fields.balance - reserve - fields.fee
+  return {
+    balance: fields.balance,
+    reserve,
+    fee: fields.fee,
+    spendable: spendable > 0n ? spendable : 0n,
+  }
+}
+
+/**
+ * Why a native-XLM deposit cannot be accepted, or null when it fits.
+ *
+ * A deposit that takes the whole XLM balance leaves nothing for the account's
+ * base reserves or the network fee, so the account falls below its minimum
+ * balance and the transaction fails after signing. This is checked before
+ * signing, against the amount the router call will actually take.
+ */
+export function nativeXlmDepositIssue(params: {
+  xlmAmount: bigint
+  capacity: XlmCapacity
+  label?: string
+}): string | null {
+  const { xlmAmount, capacity } = params
+  if (xlmAmount <= 0n || xlmAmount <= capacity.spendable) return null
+  const label = params.label ?? 'XLM'
+  const feeClause =
+    capacity.fee > 0n
+      ? ` plus ${formatStroops(capacity.fee)} XLM for the network fee`
+      : ''
+  return (
+    `This deposit would put ${formatStroops(xlmAmount)} XLM into the pool, but the account must ` +
+    `keep ${formatStroops(capacity.reserve)} XLM in base reserves${feeClause}, leaving at most ` +
+    `${formatStroops(capacity.spendable)} ${label} for the pool. Lower the amount — a deposit ` +
+    'cannot take the whole XLM balance.'
+  )
+}
+
+/** The simulated cost of a liquidity transaction, in stroops. */
+export interface LiquidityFeeEstimate {
+  inclusionFeeStroops: bigint
+  minResourceFeeStroops: bigint
+  totalStroops: bigint
+}
+
+export const FEE_UNAVAILABLE_SENTENCE =
+  'Unavailable — the transaction could not be simulated, so the network fee cannot be shown.'
+
+/**
+ * Simulate the transaction the wallet is about to sign and read its cost from
+ * the network: the transaction's own inclusion fee plus Soroban's minimum
+ * resource fee. Returns null when the simulation does not answer, and the
+ * caller says so rather than showing a constant.
+ */
+export async function simulateLiquidityFee(params: {
+  xdr: string
+  networkPassphrase: string
+  rpcUrl: string
+}): Promise<LiquidityFeeEstimate | null> {
+  try {
+    const transaction = TransactionBuilder.fromXDR(params.xdr, params.networkPassphrase)
+    const inner = 'innerTransaction' in transaction ? transaction.innerTransaction : transaction
+    const inclusionFeeStroops = BigInt(inner.fee)
+    const server = new SorobanRpc.Server(params.rpcUrl)
+    const sim = await server.simulateTransaction(transaction)
+    if (SorobanRpc.Api.isSimulationError(sim)) return null
+    const minResourceFeeStroops = toBigInt(sim.minResourceFee)
+    if (minResourceFeeStroops === null) return null
+    return {
+      inclusionFeeStroops,
+      minResourceFeeStroops,
+      totalStroops: inclusionFeeStroops + minResourceFeeStroops,
+    }
+  } catch (err) {
+    console.warn('[soroswap-liquidity] fee simulation failed:', err)
+    return null
+  }
+}
+
+/** The fee line on the review step: the simulated total, or an honest refusal. */
+export function formatNetworkFee(estimate: LiquidityFeeEstimate | null): string {
+  if (!estimate) return FEE_UNAVAILABLE_SENTENCE
+  return `${formatStroops(estimate.totalStroops)} XLM`
+}
+
 function errorReason(err: unknown): string {
   if (typeof err === 'string') return err
   if (err instanceof Error) return err.message
@@ -528,18 +652,63 @@ export type BuildLiquidityResult =
   | { ok: false; reason: string }
 
 /**
+ * The official SoroswapRouter contract ids, by the network the wallet is on.
+ *
+ * These are public on-chain contract addresses, published by Soroswap in
+ * `soroswap/core` (`public/mainnet.contracts.json` and
+ * `public/testnet.contracts.json`) and listed on
+ * docs.soroswap.finance/amm/technical-reference/deployed-addresses. Both were
+ * cross-checked against `api.soroswap.finance/api/<network>/router`. They are
+ * deliberately literal: the point of pinning them is that no API response and
+ * no returned transaction can change which contract the wallet signs for. A
+ * network that is not in this table is refused, not guessed at.
+ */
+export const SOROSWAP_ROUTER_IDS = {
+  mainnet: 'CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH',
+  testnet: 'CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD',
+} as const
+
+export type PinnedSoroswapNetwork = keyof typeof SOROSWAP_ROUTER_IDS
+
+/** The pinned Soroswap router for a network name, or null when it is not pinned. */
+export function pinnedSoroswapRouter(network: string): string | null {
+  return network === 'mainnet' || network === 'testnet' ? SOROSWAP_ROUTER_IDS[network] : null
+}
+
+/**
  * What the user approved on the review step, in the terms the router call
  * itself uses, so the transaction the API returned can be checked against it.
+ *
+ * `network` is the wallet's active network name; the router id is looked up
+ * from it, never from the transaction or an API response. `amountA`/`amountB`
+ * are the most the reviewed deposit may take — B is the slippage maximum,
+ * because the review allows the pool to move up to that bound — and
+ * `liquidity` is the most LP a reviewed withdrawal may burn.
  */
-export interface LiquidityTransactionExpectation {
-  action: 'add_liquidity' | 'remove_liquidity'
-  tokenA: string
-  tokenB: string
-  /** The account that must own the LP position and the tokens. */
-  to: string
-  minAmountA: bigint
-  minAmountB: bigint
-}
+export type LiquidityTransactionExpectation =
+  | {
+      action: 'add_liquidity'
+      network: string
+      tokenA: string
+      tokenB: string
+      /** The account that must own the LP position and the tokens. */
+      to: string
+      minAmountA: bigint
+      minAmountB: bigint
+      amountA: bigint
+      amountB: bigint
+    }
+  | {
+      action: 'remove_liquidity'
+      network: string
+      tokenA: string
+      tokenB: string
+      /** The account that must own the LP position and the tokens. */
+      to: string
+      minAmountA: bigint
+      minAmountB: bigint
+      liquidity: bigint
+    }
 
 /**
  * The argument positions of the Soroswap router's liquidity calls, from the
@@ -551,8 +720,8 @@ export interface LiquidityTransactionExpectation {
  *                  to, deadline)
  */
 const LIQUIDITY_ARG_LAYOUT = {
-  add_liquidity: { count: 8, minA: 4, minB: 5, to: 6 },
-  remove_liquidity: { count: 7, minA: 3, minB: 4, to: 5 },
+  add_liquidity: { count: 8, desiredA: 2, desiredB: 3, minA: 4, minB: 5, to: 6 },
+  remove_liquidity: { count: 7, liquidity: 2, minA: 3, minB: 4, to: 5 },
 } as const
 
 function addressArg(value: unknown): string | null {
@@ -576,9 +745,10 @@ function intArg(value: unknown): bigint | null {
  * Check the transaction Soroswap returned against the reviewed quote BEFORE it
  * is signed. The API builds and returns a transaction the wallet signs as it
  * comes, so this is the only place the reviewed promise is enforced on the
- * bytes that will actually be submitted: the call must be the liquidity
- * function for this pair, it must pay the user's own account, and neither
- * minimum may sit below what the review step showed.
+ * bytes that will actually be submitted: the call must be the pinned router
+ * for the wallet's network, be the liquidity function for this pair, pay the
+ * user's own account, take no more than the reviewed amounts, and hold
+ * minimums no lower than the review step showed.
  *
  * Returns null when the transaction passes, or a user-facing reason when it
  * must not be signed.
@@ -589,6 +759,14 @@ export function verifyLiquidityTransaction(params: {
   expected: LiquidityTransactionExpectation
 }): string | null {
   const { expected } = params
+  const router = pinnedSoroswapRouter(expected.network)
+  if (!router) {
+    return (
+      `Veil has no pinned Soroswap router for ${expected.network || 'an unknown network'}, ` +
+      'so this liquidity call cannot be checked. Nothing was signed.'
+    )
+  }
+
   let transaction
   try {
     transaction = TransactionBuilder.fromXDR(params.xdr, params.networkPassphrase)
@@ -607,6 +785,20 @@ export function verifyLiquidityTransaction(params: {
     return 'Soroswap returned a transaction that does not call the liquidity router. Nothing was signed.'
   }
   const call = hostFunction.invokeContract()
+
+  let contractId: string
+  try {
+    contractId = Address.fromScAddress(call.contractAddress()).toString()
+  } catch {
+    return 'Soroswap returned a liquidity call whose contract address could not be read. Nothing was signed.'
+  }
+  if (contractId !== router) {
+    return (
+      `Soroswap returned a call to ${contractId}, not the pinned ${expected.network} Soroswap ` +
+      `router ${router}. Nothing was signed.`
+    )
+  }
+
   const functionName = call.functionName().toString()
   if (functionName !== expected.action) {
     return `Soroswap returned a ${functionName} call instead of ${expected.action}. Nothing was signed.`
@@ -640,6 +832,32 @@ export function verifyLiquidityTransaction(params: {
       `${formatStroops(expected.minAmountA)} / ${formatStroops(expected.minAmountB)} you approved. ` +
       'Nothing was signed — review a fresh quote.'
     )
+  }
+
+  if (expected.action === 'add_liquidity') {
+    const desiredA = intArg(args[LIQUIDITY_ARG_LAYOUT.add_liquidity.desiredA])
+    const desiredB = intArg(args[LIQUIDITY_ARG_LAYOUT.add_liquidity.desiredB])
+    if (desiredA === null || desiredB === null) {
+      return 'Soroswap returned a liquidity call whose amounts could not be read. Nothing was signed.'
+    }
+    if (desiredA > expected.amountA || desiredB > expected.amountB) {
+      return (
+        `Soroswap would take ${formatStroops(desiredA)} / ${formatStroops(desiredB)}, more than the ` +
+        `${formatStroops(expected.amountA)} / ${formatStroops(expected.amountB)} you reviewed. ` +
+        'Nothing was signed — review a fresh quote.'
+      )
+    }
+  } else {
+    const liquidity = intArg(args[LIQUIDITY_ARG_LAYOUT.remove_liquidity.liquidity])
+    if (liquidity === null) {
+      return 'Soroswap returned a liquidity call whose LP amount could not be read. Nothing was signed.'
+    }
+    if (liquidity > expected.liquidity) {
+      return (
+        `Soroswap would burn ${formatStroops(liquidity)} LP tokens, more than the ` +
+        `${formatStroops(expected.liquidity)} you reviewed. Nothing was signed — review a fresh quote.`
+      )
+    }
   }
 
   return null

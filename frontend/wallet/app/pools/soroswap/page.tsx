@@ -33,25 +33,31 @@ import {
 } from '@/lib/swapAssets'
 import {
   DEFAULT_LIQUIDITY_SLIPPAGE_BPS,
+  FEE_UNAVAILABLE_SENTENCE,
   IMPERMANENT_LOSS_SENTENCE,
   LIQUIDITY_SLIPPAGE_OPTIONS,
   addLiquiditySlippageBreach,
   buildAddLiquidityXdr,
   buildRemoveLiquidityXdr,
+  formatNetworkFee,
   formatStroops,
   getSoroswapLiquidityPool,
   getSoroswapPositions,
   heldStroops,
   liquidityBalanceIssue,
   lpForPercent,
+  nativeXlmDepositIssue,
   parseAmountToStroops,
   quoteAddLiquidity,
   quoteRemoveLiquidity,
   readLpTotalSupply,
   removeLiquiditySlippageBreach,
+  simulateLiquidityFee,
   verifyLiquidityTransaction,
+  xlmCapacity,
   type AddLiquidityQuote,
   type HeldBalance,
+  type LiquidityFeeEstimate,
   type LpPosition,
   type RemoveLiquidityQuote,
   type SoroswapPoolView,
@@ -79,6 +85,17 @@ type PoolState =
 
 function toSwapAsset(balance: HeldBalance): SwapAsset {
   return { code: balance.code, issuer: balance.issuer }
+}
+
+/** Horizon balances, without LP shares, in the shape the helpers use. */
+function toHeldBalances(raw: unknown): HeldBalance[] {
+  return (raw as Array<Record<string, unknown>>)
+    .filter((b) => b.asset_type !== 'liquidity_pool_shares')
+    .map((b) => ({
+      code: typeof b.asset_code === 'string' ? b.asset_code : 'XLM',
+      issuer: typeof b.asset_issuer === 'string' ? b.asset_issuer : null,
+      balance: String(b.balance ?? '0'),
+    }))
 }
 
 /**
@@ -138,6 +155,12 @@ export default function SoroswapLiquidityPage() {
   const [balances, setBalances] = useState<HeldBalance[]>([])
   const [loadingAccount, setLoadingAccount] = useState(true)
   const [accountError, setAccountError] = useState<string | null>(null)
+  /** What the account's reserve is computed from — see baseReserveStroops. */
+  const [reserveFields, setReserveFields] = useState({
+    subentries: 0,
+    sponsoredByOthers: 0,
+    sponsoringOthers: 0,
+  })
 
   const [pairKey, setPairKey] = useState<string | null>(null)
   const [mode, setMode] = useState<Mode>('add')
@@ -161,6 +184,8 @@ export default function SoroswapLiquidityPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [feeEstimate, setFeeEstimate] = useState<LiquidityFeeEstimate | null>(null)
+  const [feeStatus, setFeeStatus] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle')
 
   const pairs = useMemo(() => candidatePairs(balances), [balances])
   const pair = pairs.find((p) => p.key === pairKey) ?? pairs[0] ?? null
@@ -194,14 +219,12 @@ export default function SoroswapLiquidityPage() {
       try {
         const account = await server.loadAccount(signerAddress)
         if (cancelled) return
-        const held: HeldBalance[] = (account.balances as unknown as Array<Record<string, unknown>>)
-          .filter((b) => b.asset_type !== 'liquidity_pool_shares')
-          .map((b) => ({
-            code: typeof b.asset_code === 'string' ? b.asset_code : 'XLM',
-            issuer: typeof b.asset_issuer === 'string' ? b.asset_issuer : null,
-            balance: String(b.balance ?? '0'),
-          }))
-        setBalances(held)
+        setBalances(toHeldBalances(account.balances))
+        setReserveFields({
+          subentries: account.subentry_count ?? 0,
+          sponsoredByOthers: account.num_sponsored ?? 0,
+          sponsoringOthers: account.num_sponsoring ?? 0,
+        })
       } catch (err) {
         if (!cancelled) setAccountError(errorMessage(err))
       } finally {
@@ -317,9 +340,36 @@ export default function SoroswapLiquidityPage() {
     })
   }, [addResult, balances, pair])
 
+  /** Which side of the pair is native XLM, if either. */
+  const nativeXlmSide: 'a' | 'b' | null = pair
+    ? pair.a.code === 'XLM' && !pair.a.issuer
+      ? 'a'
+      : pair.b.code === 'XLM' && !pair.b.issuer
+        ? 'b'
+        : null
+    : null
+
+  /**
+   * The XLM a deposit would take against what the account must keep back. The
+   * fee is 0 here because it is only known once the transaction exists; the
+   * confirm step repeats this check with the simulated fee.
+   */
+  const xlmDepositNote = useMemo(() => {
+    if (mode !== 'add' || !nativeXlmSide || !addResult?.ok) return null
+    const xlmAmount = nativeXlmSide === 'a' ? addResult.quote.amountA : addResult.quote.amountB
+    return nativeXlmDepositIssue({
+      xlmAmount,
+      capacity: xlmCapacity({
+        balance: heldStroops(balances, { code: 'XLM', issuer: null }),
+        ...reserveFields,
+        fee: 0n,
+      }),
+    })
+  }, [addResult, balances, mode, nativeXlmSide, reserveFields])
+
   const readyToReview =
     mode === 'add'
-      ? Boolean(addResult?.ok) && !balanceNote
+      ? Boolean(addResult?.ok) && !balanceNote && !xlmDepositNote
       : Boolean(removeResult?.ok) && userLp > 0n
 
   // ── Submit ─────────────────────────────────────────────────────────────────
@@ -391,6 +441,40 @@ export default function SoroswapLiquidityPage() {
         })
         if (!built.ok) throw new Error(built.reason)
 
+        // A deposit that spends native XLM must leave the account's base
+        // reserves and this transaction's fee behind. The fee only exists once
+        // the transaction does, so it is simulated here; without a simulation
+        // the reserve cannot be checked and the deposit is refused.
+        if (nativeXlmSide) {
+          const fee = await simulateLiquidityFee({
+            xdr: built.built.xdr,
+            networkPassphrase: network.networkPassphrase,
+            rpcUrl: network.rpcUrl,
+          })
+          if (!fee) {
+            setErrorMsg(FEE_UNAVAILABLE_SENTENCE)
+            setStep('error')
+            return
+          }
+          const account = await server.loadAccount(signerPubKey)
+          const xlmAmount = nativeXlmSide === 'a' ? fresh.quote.amountA : fresh.quote.amountB
+          const reserveIssue = nativeXlmDepositIssue({
+            xlmAmount,
+            capacity: xlmCapacity({
+              balance: heldStroops(toHeldBalances(account.balances), { code: 'XLM', issuer: null }),
+              subentries: account.subentry_count ?? 0,
+              sponsoredByOthers: account.num_sponsored ?? 0,
+              sponsoringOthers: account.num_sponsoring ?? 0,
+              fee: fee.totalStroops,
+            }),
+          })
+          if (reserveIssue) {
+            setErrorMsg(reserveIssue)
+            setStep('error')
+            return
+          }
+        }
+
         // The API returns the transaction already built; check the bytes we
         // are about to sign against what the review step promised.
         const depositGuard = verifyLiquidityTransaction({
@@ -398,11 +482,14 @@ export default function SoroswapLiquidityPage() {
           networkPassphrase: network.networkPassphrase,
           expected: {
             action: 'add_liquidity',
+            network: network.name,
             tokenA: route.tokenIn,
             tokenB: route.tokenOut,
             to: signerPubKey,
             minAmountA: reviewedAdd.minA,
             minAmountB: reviewedAdd.minB,
+            amountA: reviewedAdd.amountA,
+            amountB: reviewedAdd.maxB,
           },
         })
         if (depositGuard) {
@@ -460,11 +547,13 @@ export default function SoroswapLiquidityPage() {
         networkPassphrase: network.networkPassphrase,
         expected: {
           action: 'remove_liquidity',
+          network: network.name,
           tokenA: route.tokenIn,
           tokenB: route.tokenOut,
           to: signerPubKey,
           minAmountA: reviewedRemove.minA,
           minAmountB: reviewedRemove.minB,
+          liquidity: reviewedRemove.liquidity,
         },
       })
       if (withdrawalGuard) {
@@ -495,10 +584,11 @@ export default function SoroswapLiquidityPage() {
     }
   }
 
-  function review() {
-    setReviewedSlippageBps(slippageBps)
+  async function review() {
+    const bps = slippageBps
+    setReviewedSlippageBps(bps)
     if (mode === 'add') {
-      if (!addResult?.ok || balanceNote) return
+      if (!addResult?.ok || balanceNote || xlmDepositNote) return
       setReviewedAdd(addResult.quote)
       setReviewedRemove(null)
     } else {
@@ -507,11 +597,66 @@ export default function SoroswapLiquidityPage() {
       setReviewedAdd(null)
     }
     setErrorMsg(null)
+    setFeeEstimate(null)
+    setFeeStatus('loading')
     setStep('confirm')
+
+    // The review step shows the fee of the transaction that will be signed, so
+    // that transaction is built here and priced by the network. A build or a
+    // simulation that does not answer leaves the fee unavailable — no constant
+    // stands in for it.
+    if (!route || !route.ok || !signerAddress) {
+      setFeeStatus('unavailable')
+      return
+    }
+    const built =
+      mode === 'add' && addResult?.ok
+        ? await buildAddLiquidityXdr({
+            tokenA: route.tokenIn,
+            tokenB: route.tokenOut,
+            amountA: addResult.quote.amountA,
+            amountB: addResult.quote.amountB,
+            to: signerAddress,
+            slippageBps: bps,
+          })
+        : mode === 'remove' && removeResult?.ok
+          ? await buildRemoveLiquidityXdr({
+              tokenA: route.tokenIn,
+              tokenB: route.tokenOut,
+              liquidity: removeResult.quote.liquidity,
+              amountA: removeResult.quote.amountA,
+              amountB: removeResult.quote.amountB,
+              to: signerAddress,
+              slippageBps: bps,
+            })
+          : { ok: false as const, reason: 'Nothing to review.' }
+    if (!built.ok) {
+      setFeeStatus('unavailable')
+      return
+    }
+
+    const estimate = await simulateLiquidityFee({
+      xdr: built.built.xdr,
+      networkPassphrase: network.networkPassphrase,
+      rpcUrl: network.rpcUrl,
+    })
+    if (!estimate) {
+      setFeeStatus('unavailable')
+      return
+    }
+    setFeeEstimate(estimate)
+    setFeeStatus('ready')
   }
 
-  const feeXlm = '0.00001'
   const pairTitle = pair ? `${pair.labelA} / ${pair.labelB}` : 'No pair selected'
+  const feeText =
+    feeStatus === 'loading'
+      ? 'Simulating the transaction…'
+      : feeStatus === 'ready'
+        ? formatNetworkFee(feeEstimate)
+        : feeStatus === 'unavailable'
+          ? formatNetworkFee(null)
+          : 'Simulated on review — the fee comes from the transaction you sign'
 
   return (
     <div className="wallet-shell">
@@ -791,6 +936,12 @@ export default function SoroswapLiquidityPage() {
                     </Card>
                   )}
 
+                  {xlmDepositNote && (
+                    <Card>
+                      <p className="text-[13px] text-teal">{xlmDepositNote}</p>
+                    </Card>
+                  )}
+
                   {mode === 'add' && addResult && !addResult.ok && (
                     <Card>
                       <p className="text-[13px] text-teal">{addResult.reason}</p>
@@ -865,7 +1016,7 @@ export default function SoroswapLiquidityPage() {
                     }
                   />
                   <Row label="Slippage" value={`${slippageBps / 100}%`} />
-                  <Row label="Network fee" value={`${feeXlm} XLM`} />
+                  <Row label="Network fee" value={feeText} />
                 </div>
               </Card>
               <p className="text-[12px] text-[rgba(246,247,248,0.4)] mt-3" style={{ lineHeight: 1.6 }}>
@@ -897,6 +1048,10 @@ export default function SoroswapLiquidityPage() {
                     <Row
                       label="Second asset required"
                       value={`${formatStroops(reviewedAdd.amountB)} ${pair.b.code}`}
+                    />
+                    <Row
+                      label="Most second asset (with slippage)"
+                      value={`${formatStroops(reviewedAdd.maxB)} ${pair.b.code}`}
                     />
                     <Row
                       label="Ratio required"
@@ -942,7 +1097,7 @@ export default function SoroswapLiquidityPage() {
                   </>
                 ) : null}
                 <Row label="Slippage tolerance" value={`${reviewedSlippageBps / 100}%`} />
-                <Row label="Network fee" value={`${feeXlm} XLM`} />
+                <Row label="Network fee" value={feeText} />
               </div>
               <div
                 className="mt-4"

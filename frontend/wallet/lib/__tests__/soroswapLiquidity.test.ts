@@ -15,14 +15,19 @@ import { Account, Address, BASE_FEE, Keypair, Networks, Operation, StrKey, Trans
 import { SupportedProtocols } from '@soroswap/sdk'
 import { getSoroswapClient } from '@/lib/soroswap'
 import {
+  FEE_UNAVAILABLE_SENTENCE,
+  SOROSWAP_ROUTER_IDS,
   addLiquiditySlippageBreach,
+  baseReserveStroops,
   buildAddLiquidityXdr,
   buildRemoveLiquidityXdr,
+  formatNetworkFee,
   formatStroops,
   getSoroswapLiquidityPool,
   heldStroops,
   liquidityBalanceIssue,
   lpForPercent,
+  nativeXlmDepositIssue,
   parseAmountToStroops,
   parseSoroswapPool,
   parseSoroswapPosition,
@@ -30,7 +35,9 @@ import {
   quoteRemoveLiquidity,
   readLpTotalSupply,
   removeLiquiditySlippageBreach,
+  simulateLiquidityFee,
   verifyLiquidityTransaction,
+  xlmCapacity,
   type HeldBalance,
   type LiquidityTransactionExpectation,
   type SoroswapPoolView,
@@ -64,13 +71,21 @@ const client = {
 const XLM = { code: 'XLM', issuer: null }
 const USDC = { code: 'USDC', issuer: Keypair.random().publicKey() }
 
-/** A router call shaped exactly like the Soroswap router interface. */
+/**
+ * A router call shaped exactly like the Soroswap router interface. The contract
+ * defaults to the pinned testnet router, so a passing fixture is a call to the
+ * contract the wallet is supposed to sign for.
+ */
 function liquidityXdr(params: {
   fn: 'add_liquidity' | 'remove_liquidity'
   to: string
   minA: bigint
   minB: bigint
   tokenA?: string
+  contract?: string
+  amountA?: bigint
+  amountB?: bigint
+  liquidity?: bigint
 }): string {
   const account = new Account(Keypair.random().publicKey(), '0')
   const tokens = [
@@ -87,14 +102,22 @@ function liquidityXdr(params: {
     params.fn === 'add_liquidity'
       ? [
           ...tokens,
-          nativeToScVal(1_000_0000000n, { type: 'i128' }),
-          nativeToScVal(500_0000000n, { type: 'i128' }),
+          nativeToScVal(params.amountA ?? 1_000_0000000n, { type: 'i128' }),
+          nativeToScVal(params.amountB ?? 500_0000000n, { type: 'i128' }),
           ...tail,
         ]
-      : [...tokens, nativeToScVal(250_0000000n, { type: 'i128' }), ...tail]
+      : [
+          ...tokens,
+          nativeToScVal(params.liquidity ?? 250_0000000n, { type: 'i128' }),
+          ...tail,
+        ]
   return new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: Networks.TESTNET })
     .addOperation(
-      Operation.invokeContractFunction({ contract: POOL_ADDRESS, function: params.fn, args }),
+      Operation.invokeContractFunction({
+        contract: params.contract ?? SOROSWAP_ROUTER_IDS.testnet,
+        function: params.fn,
+        args,
+      }),
     )
     .setTimeout(30)
     .build()
@@ -408,11 +431,14 @@ describe('the transaction is checked against the reviewed quote before signing',
   const to = Keypair.random().publicKey()
   const expected = {
     action: 'add_liquidity' as const,
+    network: 'testnet',
     tokenA: TOKEN_A,
     tokenB: TOKEN_B,
     to,
     minAmountA: 995_0000000n,
     minAmountB: 497_5000000n,
+    amountA: 1_000_0000000n,
+    amountB: 500_0000000n,
   }
 
   const verify = (xdr: string, expectation: LiquidityTransactionExpectation = expected) =>
@@ -472,11 +498,13 @@ describe('the transaction is checked against the reviewed quote before signing',
   it('accepts a removal whose minimums cover the reviewed quote', () => {
     const removal = {
       action: 'remove_liquidity' as const,
+      network: 'testnet',
       tokenA: TOKEN_A,
       tokenB: TOKEN_B,
       to,
       minAmountA: 248_7500000n,
       minAmountB: 124_3750000n,
+      liquidity: 250_0000000n,
     }
     const xdr = liquidityXdr({
       fn: 'remove_liquidity',
@@ -526,6 +554,210 @@ describe('helpers', () => {
         sourceAddress: 'GTEST',
         rpcUrl: 'not-a-url',
         networkPassphrase: 'Test SDF Network ; September 2015',
+      }),
+    ).toBeNull()
+  })
+})
+
+describe('the pinned router', () => {
+  const to = Keypair.random().publicKey()
+  const expected: LiquidityTransactionExpectation = {
+    action: 'add_liquidity',
+    network: 'testnet',
+    tokenA: TOKEN_A,
+    tokenB: TOKEN_B,
+    to,
+    minAmountA: 995_0000000n,
+    minAmountB: 497_5000000n,
+    amountA: 1_000_0000000n,
+    amountB: 500_0000000n,
+  }
+
+  const verify = (xdr: string, expectation: LiquidityTransactionExpectation = expected) =>
+    verifyLiquidityTransaction({ xdr, networkPassphrase: Networks.TESTNET, expected: expectation })
+
+  it('pins the official Soroswap router ids for both networks', () => {
+    // Public on-chain contract ids, from soroswap/core
+    // public/{mainnet,testnet}.contracts.json and
+    // api.soroswap.finance/api/<network>/router. Not secrets, and deliberately
+    // literal: changing them must be a reviewed change.
+    expect(SOROSWAP_ROUTER_IDS).toEqual({
+      mainnet: 'CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH',
+      testnet: 'CCJUD55AG6W5HAI5LRVNKAE5WDP5XGZBUDS5WNTIVDU7O264UZZE7BRD',
+    })
+  })
+
+  it('accepts a liquidity call to the pinned testnet router', () => {
+    const xdr = liquidityXdr({
+      fn: 'add_liquidity',
+      to,
+      minA: expected.minAmountA,
+      minB: expected.minAmountB,
+    })
+    expect(verify(xdr)).toBeNull()
+  })
+
+  it('refuses an add_liquidity call to any other contract', () => {
+    const xdr = liquidityXdr({
+      fn: 'add_liquidity',
+      contract: randomContract(),
+      to,
+      minA: expected.minAmountA,
+      minB: expected.minAmountB,
+    })
+    expect(verify(xdr)).toMatch(/not the pinned testnet Soroswap router/)
+  })
+
+  it('refuses an unknown network instead of choosing a router', () => {
+    const xdr = liquidityXdr({
+      fn: 'add_liquidity',
+      to,
+      minA: expected.minAmountA,
+      minB: expected.minAmountB,
+    })
+    expect(verify(xdr, { ...expected, network: 'futurenet' })).toMatch(/no pinned Soroswap router/)
+  })
+})
+
+describe('amounts spent are checked against the review', () => {
+  const to = Keypair.random().publicKey()
+  const addition: LiquidityTransactionExpectation = {
+    action: 'add_liquidity',
+    network: 'testnet',
+    tokenA: TOKEN_A,
+    tokenB: TOKEN_B,
+    to,
+    minAmountA: 995_0000000n,
+    minAmountB: 497_5000000n,
+    amountA: 1_000_0000000n,
+    amountB: 500_0000000n,
+  }
+  const removal: LiquidityTransactionExpectation = {
+    action: 'remove_liquidity',
+    network: 'testnet',
+    tokenA: TOKEN_A,
+    tokenB: TOKEN_B,
+    to,
+    minAmountA: 248_7500000n,
+    minAmountB: 124_3750000n,
+    liquidity: 250_0000000n,
+  }
+
+  const verify = (xdr: string, expectation: LiquidityTransactionExpectation) =>
+    verifyLiquidityTransaction({ xdr, networkPassphrase: Networks.TESTNET, expected: expectation })
+
+  it('refuses a deposit whose first desired amount is above the reviewed amount', () => {
+    const xdr = liquidityXdr({
+      fn: 'add_liquidity',
+      to,
+      minA: addition.minAmountA,
+      minB: addition.minAmountB,
+      amountA: addition.amountA + 1n,
+    })
+    expect(verify(xdr, addition)).toMatch(/more than the/)
+  })
+
+  it('refuses a deposit whose second desired amount is above the reviewed maximum', () => {
+    const xdr = liquidityXdr({
+      fn: 'add_liquidity',
+      to,
+      minA: addition.minAmountA,
+      minB: addition.minAmountB,
+      amountB: addition.amountB + 1n,
+    })
+    expect(verify(xdr, addition)).toMatch(/more than the/)
+  })
+
+  it('accepts a deposit at exactly the reviewed amounts', () => {
+    const xdr = liquidityXdr({
+      fn: 'add_liquidity',
+      to,
+      minA: addition.minAmountA,
+      minB: addition.minAmountB,
+      amountA: addition.amountA,
+      amountB: addition.amountB,
+    })
+    expect(verify(xdr, addition)).toBeNull()
+  })
+
+  it('refuses a withdrawal that would burn more LP than reviewed', () => {
+    const xdr = liquidityXdr({
+      fn: 'remove_liquidity',
+      to,
+      minA: removal.minAmountA,
+      minB: removal.minAmountB,
+      liquidity: removal.liquidity + 1n,
+    })
+    expect(verify(xdr, removal)).toMatch(/would burn/)
+  })
+
+  it('accepts a withdrawal that burns exactly the reviewed LP', () => {
+    const xdr = liquidityXdr({
+      fn: 'remove_liquidity',
+      to,
+      minA: removal.minAmountA,
+      minB: removal.minAmountB,
+      liquidity: removal.liquidity,
+    })
+    expect(verify(xdr, removal)).toBeNull()
+  })
+})
+
+describe('keeping the XLM reserve', () => {
+  it('computes the base reserve from the account and its subentries', () => {
+    expect(baseReserveStroops({ subentries: 0 })).toBe(10_000_000n) // 1 XLM
+    expect(baseReserveStroops({ subentries: 4 })).toBe(30_000_000n) // 3 XLM
+    expect(baseReserveStroops({ subentries: 4, sponsoredByOthers: 2 })).toBe(20_000_000n)
+    expect(baseReserveStroops({ subentries: 4, sponsoringOthers: 1 })).toBe(35_000_000n)
+  })
+
+  it('subtracts the reserve and the simulated fee from what may be spent', () => {
+    const capacity = xlmCapacity({ balance: 100_000_000n, subentries: 3, fee: 12_345n })
+    expect(capacity.reserve).toBe(25_000_000n)
+    expect(capacity.spendable).toBe(74_987_655n)
+  })
+
+  it('never reports a negative spendable balance', () => {
+    expect(xlmCapacity({ balance: 1_000_000n, subentries: 0, fee: 100n }).spendable).toBe(0n)
+  })
+
+  it('accepts a deposit that leaves the reserve and the fee behind', () => {
+    const capacity = xlmCapacity({ balance: 100_000_000n, subentries: 0, fee: 10_000n })
+    expect(nativeXlmDepositIssue({ xlmAmount: 89_990_000n, capacity })).toBeNull()
+  })
+
+  it('refuses a deposit that would take the whole XLM balance', () => {
+    const capacity = xlmCapacity({ balance: 100_000_000n, subentries: 0, fee: 10_000n })
+    expect(nativeXlmDepositIssue({ xlmAmount: 100_000_000n, capacity })).toBe(
+      'This deposit would put 10 XLM into the pool, but the account must keep 1 XLM in base '
+        + 'reserves plus 0.001 XLM for the network fee, leaving at most 8.999 XLM for the pool. '
+        + 'Lower the amount — a deposit cannot take the whole XLM balance.',
+    )
+  })
+})
+
+describe('the network fee shown on review', () => {
+  it('shows the simulated inclusion plus resource fee, not a constant', () => {
+    expect(
+      formatNetworkFee({
+        inclusionFeeStroops: 100n,
+        minResourceFeeStroops: 2_345n,
+        totalStroops: 2_445n,
+      }),
+    ).toBe('0.0002445 XLM')
+  })
+
+  it('says the fee is unavailable when the simulation did not answer', () => {
+    expect(formatNetworkFee(null)).toBe(FEE_UNAVAILABLE_SENTENCE)
+    expect(FEE_UNAVAILABLE_SENTENCE).toMatch(/could not be simulated/)
+  })
+
+  it('returns no estimate when the transaction cannot be simulated', async () => {
+    expect(
+      await simulateLiquidityFee({
+        xdr: 'not-an-xdr',
+        networkPassphrase: Networks.TESTNET,
+        rpcUrl: 'not-a-url',
       }),
     ).toBeNull()
   })
