@@ -44,6 +44,8 @@ export interface OrderBookSpread {
   bidDepth: number;
   /** Summed `amount` across the ask side, as Horizon reports it. */
   askDepth: number;
+  /** Maximum source-asset size available on the ask side of this directed pair. */
+  askInputDepth: number;
 }
 
 /**
@@ -132,8 +134,20 @@ export async function fetchOrderBookSpread(
 
   let bidDepth = 0;
   let askDepth = 0;
+  let askInputDepth = 0;
   for (const bid of bids) bidDepth += Number(bid.amount);
-  for (const ask of asks) askDepth += Number(ask.amount);
+  for (const ask of asks) {
+    const amount = Number(ask.amount);
+    const price = Number(ask.price);
+    if (!Number.isFinite(amount) || amount < 0 || !Number.isFinite(price) || price <= 0) {
+      return {
+        status: 'unavailable',
+        reason: 'The order book contained an invalid offer, so available depth is unknown.',
+      };
+    }
+    askDepth += amount;
+    askInputDepth += amount * price;
+  }
 
   return {
     status: 'measured',
@@ -145,6 +159,7 @@ export async function fetchOrderBookSpread(
       askCount: asks.length,
       bidDepth,
       askDepth,
+      askInputDepth,
     },
   };
 }

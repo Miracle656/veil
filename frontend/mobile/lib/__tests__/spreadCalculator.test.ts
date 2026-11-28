@@ -29,6 +29,7 @@ jest.mock('../network', () => ({
 
 const USDC = new Asset('USDC', 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN');
 const USDY = new Asset('USDY', 'GAJMPX5NBOG6TQFPQGRABJEEB2YE7RFRLUKJDZAZGAD5GFX4J7TADAZ6');
+const CETES = new Asset('CETES', 'GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC');
 
 /** Point `new Horizon.Server()` at a stub order book, returning the spy. */
 function mockOrderbook(result: unknown, { reject = false } = {}) {
@@ -69,6 +70,12 @@ describe('fetchOrderBookSpread', () => {
     expect(orderbook).toHaveBeenCalledWith(USDY, USDC);
   });
 
+  it('requests the long-code stablebond by its exact code and issuer', async () => {
+    const orderbook = mockOrderbook(thinBook);
+    await fetchOrderBookSpread(USDC, CETES);
+    expect(orderbook).toHaveBeenCalledWith(CETES, USDC);
+  });
+
   it('reports a two-sided book as measured', async () => {
     mockOrderbook(thinBook);
 
@@ -82,6 +89,7 @@ describe('fetchOrderBookSpread', () => {
     expect(result.spread.askCount).toBe(2);
     expect(result.spread.bidDepth).toBe(800); // 500 + 300
     expect(result.spread.askDepth).toBe(600); // 200 + 400
+    expect(result.spread.askInputDepth).toBeCloseTo(200 * 1.1445 + 400 * 1.15);
     // (1.1445 - 1.082) / 1.082 * 100
     expect(result.spread.spreadPct).toBeCloseTo(5.79, 1);
   });
@@ -258,6 +266,7 @@ describe('formatSpreadDisplay', () => {
       askCount: 2,
       bidDepth: 800,
       askDepth: 600,
+      askInputDepth: 200 * 1.1445 + 400 * 1.15,
     });
 
     expect(out.bid).toBe('1.0820');

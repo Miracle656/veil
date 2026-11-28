@@ -20,6 +20,7 @@ export interface PreConfirmationData {
   sellbackAmount?: number;
   spreadLossPct?: number;
   roundTripImpactPct?: number;
+  trustlineReserveXlm?: number;
 }
 
 interface Props {
@@ -74,6 +75,11 @@ export function PreConfirmationPanel({ data, colors }: Props) {
           <Text style={styles.label}>Exchange rate</Text>
           <Text style={styles.value}>1 {data.tokenIn} = {formatNumber(data.rate, 4)} {data.tokenOut}</Text>
         </View>
+        {data.trustlineReserveXlm !== undefined ? (
+          <Text style={styles.disclosure}>
+            Receiving this asset requires a trustline. Stellar will lock {formatNumber(data.trustlineReserveXlm, 1)} XLM as refundable reserve before the swap; the reserve is not a transaction fee.
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.section}>

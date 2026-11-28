@@ -14,7 +14,7 @@
  */
 
 import type { SwapQuote } from './soroswap';
-import { classicAsset, type SwapAsset } from './swapAssets';
+import { classicAsset, isStablebondUsdcPair, type SwapAsset } from './swapAssets';
 import {
   fetchOrderBookSpread,
   analyzePriceImpact,
@@ -39,6 +39,8 @@ export interface HonestSwapQuote extends SwapQuote {
   shouldRefuse: boolean;
   /** Reason to refuse, if it is refused. */
   refusalReason?: string;
+  /** Maximum source amount currently available in the live ask book. */
+  maxBookInput?: number;
 }
 
 /**
@@ -58,6 +60,7 @@ export async function enhanceQuoteWithSpread(
 
   const lookup = await fetchOrderBookSpread(classicAsset(from), classicAsset(to));
   const spread = lookup.status === 'measured' ? lookup.spread : undefined;
+  const stablebondPair = isStablebondUsdcPair(from, to);
 
   // A spread we could not measure goes in as null, not 0.
   const impactAnalysis = analyzePriceImpact(
@@ -75,11 +78,20 @@ export async function enhanceQuoteWithSpread(
     ...quote,
     spread,
     impactAnalysis,
-    shouldRefuse: impactAnalysis.exceedsThreshold,
-    refusalReason: impactAnalysis.refusalReason,
+    shouldRefuse: impactAnalysis.exceedsThreshold || (stablebondPair && lookup.status !== 'measured'),
+    refusalReason: impactAnalysis.refusalReason ??
+      (stablebondPair && lookup.status !== 'measured'
+        ? 'The live USDC order book for this stablebond is unavailable or one-sided. This asset cannot be safely bought and sold right now.'
+        : undefined),
   };
 
   if (spread) {
+    enhanced.maxBookInput = spread.askInputDepth;
+    if (stablebondPair && amountIn > spread.askInputDepth) {
+      enhanced.shouldRefuse = true;
+      enhanced.refusalReason =
+        `The live order book can fill at most ${spread.askInputDepth.toFixed(7)} ${from.code} for this pair. Reduce the amount and refresh the quote.`;
+    }
     const amountOut = Number(quote.amountOut) / 1e7;
     enhanced.reverseQuote = calculateReverseQuote(
       amountIn,
