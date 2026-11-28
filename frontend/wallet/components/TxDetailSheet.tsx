@@ -97,7 +97,7 @@ export function TxDetailSheet({ tx, onClose }: TxDetailSheetProps) {
           {tx.hash && (
             <DetailRow
               label="Tx Hash"
-              value={`${tx.hash.slice(0, 12)}...${tx.hash.slice(-12)}`}
+              value={tx.hash}
               mono
               href={`https://stellar.expert/explorer/${getNetwork().name === 'mainnet' ? 'public' : 'testnet'}/tx/${tx.hash}`}
             />

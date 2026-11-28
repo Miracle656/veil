@@ -279,6 +279,58 @@ export const TOOL_REGISTRY: VeilTool[] = [
     },
   },
   {
+    name: 'prepare_recurring_topup',
+    screen: 'Spending permissions screen',
+    kind: 'prepare',
+    approval: 'screen',
+    description:
+      'Prepare a repeating airtime or data top-up plan paid automatically from the user\'s allowance. ' +
+      'Requires category ("airtime" or "data"), provider (MTN, AIRTEL, GLO, 9MOBILE), phone_number, amount_ngn, ' +
+      'frequency ("daily", "weekly", "biweekly", or "monthly"), and total_periods (number of top-ups). ' +
+      'Shows the plan so the user confirms it once. Never pass or request a NIN.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        category: { type: 'string', enum: ['airtime', 'data'] },
+        provider: { type: 'string', enum: ['MTN', 'AIRTEL', 'GLO', '9MOBILE'] },
+        phone_number: { type: 'string', description: 'Nigerian mobile number to top up' },
+        amount_ngn: { type: 'number', description: 'Amount per top-up in naira (NGN)' },
+        frequency: { type: 'string', enum: ['daily', 'weekly', 'biweekly', 'monthly'] },
+        total_periods: { type: 'number', description: 'How many top-ups to run in total (1-52)' },
+        coin: { type: 'string', enum: ['usdc', 'xlm'], description: 'Token used from allowance (default: usdc)' },
+      },
+      required: ['category', 'provider', 'phone_number', 'amount_ngn', 'frequency', 'total_periods'],
+    },
+  },
+  {
+    name: 'list_recurring_topups',
+    screen: 'Spending permissions screen',
+    kind: 'read',
+    description:
+      'List this wallet\'s repeating airtime and data top-up plans, including active, completed, stopped, and cancelled plans, ' +
+      'with masked phone numbers, full transaction hashes for every payment, and why any stopped plan stopped.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {},
+    },
+  },
+  {
+    name: 'cancel_recurring_topup',
+    screen: 'Spending permissions screen',
+    kind: 'prepare',
+    approval: 'screen',
+    description:
+      'Prepare cancellation of an existing repeating airtime or data top-up plan by its plan_id. ' +
+      'The user confirms cancellation in chat or from the Spending permissions screen.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        plan_id: { type: 'string', description: 'The plan ID to cancel (e.g. plan_...)' },
+      },
+      required: ['plan_id'],
+    },
+  },
+  {
     name: 'request_user_approval',
     screen: 'wallet approval screen',
     kind: 'prepare',
@@ -465,8 +517,13 @@ export async function runAgent(
   profile: UserProfile | undefined,
   /** The model provider (see llm.ts). Reuse one per process. */
   llm: LlmProvider,
-  /** Service URLs — if not provided, falls back to process.env. */
-  urls?: { wraithUrl?: string; horizonUrl?: string; lensUrl?: string },
+  /** Service URLs and optional server hooks — if not provided, falls back to process.env. */
+  urls?: {
+    wraithUrl?: string
+    horizonUrl?: string
+    lensUrl?: string
+    listRecurringPlans?: (walletAddress: string) => Promise<PublicRecurringTopupPlan[]>
+  },
 ): Promise<AgentResult> {
   let pendingTxXdr: string | undefined
   let pendingTxSummary: string | undefined
@@ -811,6 +868,81 @@ export async function runAgent(
         })
       }
 
+      case 'prepare_recurring_topup': {
+        assertNoNin(input)
+        const category = String(input.category ?? '').trim().toLowerCase() as TopupCategory
+        if (category !== 'airtime' && category !== 'data') {
+          return JSON.stringify({ error: 'category must be "airtime" or "data".' })
+        }
+        const provider = String(input.provider ?? '').trim().toUpperCase() as TopupProvider
+        if (!['MTN', 'AIRTEL', 'GLO', '9MOBILE'].includes(provider)) {
+          return JSON.stringify({ error: 'provider must be MTN, AIRTEL, GLO, or 9MOBILE.' })
+        }
+        const normalizedPhone = normalizeNigerianPhone(String(input.phone_number ?? ''))
+        if (!normalizedPhone) {
+          return JSON.stringify({ error: 'phone_number must be a valid Nigerian mobile number.' })
+        }
+        const amountNgn = Number(input.amount_ngn)
+        if (!Number.isFinite(amountNgn) || amountNgn < MIN_AMOUNT_NGN || amountNgn > MAX_AMOUNT_NGN) {
+          return JSON.stringify({
+            error: `amount_ngn must be between ₦${MIN_AMOUNT_NGN} and ₦${MAX_AMOUNT_NGN.toLocaleString('en-NG')}.`,
+          })
+        }
+        const frequency = String(input.frequency ?? '').trim().toLowerCase() as TopupFrequency
+        if (!['daily', 'weekly', 'biweekly', 'monthly'].includes(frequency)) {
+          return JSON.stringify({ error: 'frequency must be daily, weekly, biweekly, or monthly.' })
+        }
+        const totalPeriods = Number(input.total_periods)
+        if (!Number.isInteger(totalPeriods) || totalPeriods < 1 || totalPeriods > MAX_TOTAL_PERIODS) {
+          return JSON.stringify({ error: `total_periods must be an integer between 1 and ${MAX_TOTAL_PERIODS}.` })
+        }
+        const coin = (String(input.coin ?? 'usdc').trim().toLowerCase() || 'usdc') as NairaCoin
+        if (coin !== 'usdc' && coin !== 'xlm') {
+          return JSON.stringify({ error: 'coin must be "usdc" or "xlm".' })
+        }
+
+        const maskedPhone = maskPhoneNumber(normalizedPhone)
+        recurringTopupIntent = {
+          category,
+          provider,
+          maskedPhone,
+          phoneNumber: normalizedPhone,
+          amountNgn: Math.round(amountNgn),
+          coin,
+          frequency,
+          totalPeriods,
+        }
+        return JSON.stringify({
+          status: 'plan_awaiting_confirmation',
+          category,
+          provider,
+          maskedPhone,
+          amountNgn: Math.round(amountNgn),
+          coin,
+          frequency,
+          totalPeriods,
+        })
+      }
+
+      case 'list_recurring_topups': {
+        assertNoNin(input)
+        if (!urls?.listRecurringPlans) {
+          return JSON.stringify({ plans: [] })
+        }
+        const plans = await urls.listRecurringPlans(walletAddress)
+        return JSON.stringify({ plans })
+      }
+
+      case 'cancel_recurring_topup': {
+        assertNoNin(input)
+        const planId = String(input.plan_id ?? '').trim()
+        if (!planId || !/^plan_[a-zA-Z0-9_-]+$/.test(planId)) {
+          return JSON.stringify({ error: 'plan_id must be a valid recurring top-up plan ID.' })
+        }
+        cancelTopupIntent = { planId }
+        return JSON.stringify({ status: 'cancel_awaiting_confirmation', planId })
+      }
+
       case 'request_user_approval': {
         if (cashOutToolUsed) {
           cashOutPaymentBlocked = true
@@ -909,6 +1041,10 @@ export async function runAgent(
             ? 'Your swap is ready in the Swap screen.'
             : investIntent
             ? 'Routing to the Invest section (destination screen under construction).'
+            : recurringTopupIntent
+            ? 'Your repeating top-up plan is ready to review and confirm.'
+            : cancelTopupIntent
+            ? `Ready to cancel recurring top-up plan ${cancelTopupIntent.planId}.`
             : 'Your transaction is ready to review.',
           pendingTxXdr,
           pendingTxSummary,

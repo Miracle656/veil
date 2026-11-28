@@ -17,6 +17,7 @@ import {
   shortenAddress,
   type ProposalReview,
 } from '@veil/agent-review'
+import type { CancelTopupIntent, RecurringTopupIntent } from '@veil/agent-recurring'
 
 const network = getNetwork()
 
@@ -400,6 +401,105 @@ export default function AgentPage() {
       setIsThinking(false)
     }
   }, [input, isThinking, messages, walletAddress, feePayerAddress])
+
+  const confirmRecurringPlan = async (index: number, intent: RecurringTopupIntent) => {
+    const spenderAddress =
+      process.env.NEXT_PUBLIC_ASSISTANT_SPENDER_ADDRESS?.trim() || feePayerAddress
+    const tokenContractId =
+      intent.coin === 'usdc'
+        ? KNOWN_SAC_CONTRACT_IDS[network.name === 'mainnet' ? 'mainnet' : 'testnet']?.USDC ?? ''
+        : getNativeAssetContractId()
+    const customerRef = getCustomerRef()
+    if (!customerRef || !tokenContractId || !spenderAddress) {
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? {
+                ...m,
+                planActionState: 'error',
+                planActionNote: 'Wallet details or assistant spender address are not configured.',
+              }
+            : m,
+        ),
+      )
+      return
+    }
+
+    setMessages((prev) =>
+      prev.map((m, idx) => (idx === index ? { ...m, planActionState: 'submitting', planActionNote: undefined } : m)),
+    )
+    try {
+      const res = await fetch('/api/recurring-topups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          walletAddress,
+          refundAddress: feePayerAddress,
+          spenderAddress,
+          tokenContractId,
+          customerRef,
+          category: intent.category,
+          provider: intent.provider,
+          phoneNumber: intent.phoneNumber,
+          amountNgn: intent.amountNgn,
+          coin: intent.coin,
+          frequency: intent.frequency,
+          totalPeriods: intent.totalPeriods,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Could not confirm plan (${res.status})`)
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? {
+                ...m,
+                planActionState: 'done',
+                planActionNote: `Confirmed (${data.plan?.id ?? 'active'}). Manage or cancel anytime on Spending permissions.`,
+              }
+            : m,
+        ),
+      )
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? { ...m, planActionState: 'error', planActionNote: (err as Error).message }
+            : m,
+        ),
+      )
+    }
+  }
+
+  const confirmCancelPlan = async (index: number, planId: string) => {
+    setMessages((prev) =>
+      prev.map((m, idx) => (idx === index ? { ...m, planActionState: 'submitting', planActionNote: undefined } : m)),
+    )
+    try {
+      const res = await fetch(`/api/recurring-topups/${encodeURIComponent(planId)}/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ walletAddress }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data?.error ?? `Could not cancel plan (${res.status})`)
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? { ...m, planActionState: 'done', planActionNote: `Plan ${planId} has been cancelled.` }
+            : m,
+        ),
+      )
+    } catch (err) {
+      setMessages((prev) =>
+        prev.map((m, idx) =>
+          idx === index
+            ? { ...m, planActionState: 'error', planActionNote: (err as Error).message }
+            : m,
+        ),
+      )
+    }
+  }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {

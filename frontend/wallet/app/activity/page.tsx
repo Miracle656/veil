@@ -12,13 +12,15 @@
  * `activityFeed` store, so this screen renders whatever has been fetched
  * rather than starting its own scan.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { PageHeader } from '@/components/ui/primitives'
 import { TxDetailSheet, type TxRecord } from '@/components/TxDetailSheet'
 import { useActivityFeed } from '@/lib/activityFeed'
 import { StellarIdenticon } from '@/components/StellarIdenticon'
 import { useReverseName } from '@/hooks/useReverseName'
+import { walletSession } from '@/lib/walletStorage'
+import type { RecurringTopupActivityItem } from '@veil/agent-recurring'
 
 type Filter = 'all' | 'sent' | 'received' | 'swapped'
 
@@ -93,6 +95,37 @@ export default function ActivityPage() {
   const transactions = useActivityFeed()
   const [filter, setFilter] = useState<Filter>('all')
   const [selected, setSelected] = useState<TxRecord | null>(null)
+
+  useEffect(() => {
+    const walletAddress = walletSession.getItem('invisible_wallet_address')
+    if (!walletAddress) return
+    let cancelled = false
+    fetch(`/api/recurring-topups/activity?walletAddress=${encodeURIComponent(walletAddress)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { activity?: RecurringTopupActivityItem[] } | null) => {
+        if (cancelled || !data?.activity?.length) return
+        const records: TxRecord[] = data.activity.map((item) => ({
+          id: item.id,
+          type: 'sent',
+          amount: String(item.amountStableCoin),
+          asset: item.coin.toUpperCase(),
+          counterparty: item.depositAddress,
+          timestamp: item.timestamp,
+          hash: item.txHash,
+          memo:
+            item.status === 'failed_after_payment'
+              ? `Recurring ${item.provider} ${item.category} (₦${item.amountNgn}) — order failed after payment`
+              : `Recurring ${item.provider} ${item.category} (₦${item.amountNgn})`,
+        }))
+        appendActivityFeed(records)
+      })
+      .catch(() => {
+        // Best-effort merge when recurring top-up activity endpoint is available.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const rows = filter === 'all' ? transactions : transactions.filter((t) => t.type === filter)
 

@@ -139,6 +139,9 @@ describe('tool registry declares the boundary', () => {
       open_screen: 'prepare',
       open_swap: 'prepare',
       build_payment: 'prepare',
+      prepare_recurring_topup: 'prepare',
+      list_recurring_topups: 'read',
+      cancel_recurring_topup: 'prepare',
       request_user_approval: 'prepare',
     })
   })
