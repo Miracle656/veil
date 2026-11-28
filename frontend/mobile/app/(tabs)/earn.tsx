@@ -319,7 +319,7 @@ export default function EarnRoute() {
             <Text style={[typography.accent, styles.eyebrow]}>Earn</Text>
             <Text style={[typography.heading, styles.title]}>Put idle money to work</Text>
             <Text style={styles.lede}>
-              Lend USDC or XLM to Blend and earn interest. Nothing is locked, withdraw any time.
+              Lend USDC or XLM to Blend and earn interest. Withdrawals are subject to pool liquidity. A fully utilised pool cannot pay out until liquidity returns.
             </Text>
           </View>
 

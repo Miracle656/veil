@@ -1,6 +1,6 @@
 'use client'
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import React, { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { Keypair } from '@stellar/stellar-sdk'
 import { useRouter } from 'next/navigation'
 
@@ -18,8 +18,8 @@ import {
   fetchVaultDetails,
   queueVaultWithdrawal,
   type VaultDetails,
-  type VaultWithdrawal,
 } from '@/lib/vault'
+import { formatLocalDateTime, vaultWithdrawalState } from '@/lib/savings'
 import { walletLocal, walletSession } from '@/lib/walletStorage'
 
 const VAULT_STORAGE_KEY = 'veil_vault_contract'
@@ -43,10 +43,6 @@ function formatDelay(seconds: number): string {
   return `${seconds.toLocaleString()} seconds`
 }
 
-function formatTimestamp(timestamp: number): string {
-  return new Date(timestamp * 1_000).toLocaleString()
-}
-
 function formatCountdown(unlockAt: number, now: number): string {
   const remaining = Math.max(0, unlockAt - now)
   if (remaining === 0) return 'Ready to execute'
@@ -59,13 +55,6 @@ function formatCountdown(unlockAt: number, now: number): string {
   if (days > 0) return `${days}d ${hours}h ${minutes}m`
   if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
   return `${minutes}m ${seconds}s`
-}
-
-function withdrawalStatus(withdrawal: VaultWithdrawal, now: number): string {
-  if (withdrawal.executed) return 'Executed'
-  if (withdrawal.cancelled) return 'Cancelled'
-  if (now >= withdrawal.unlockAt) return 'Ready'
-  return 'Time-locked'
 }
 
 export default function VaultPage() {
@@ -414,7 +403,9 @@ export default function VaultPage() {
 
               <section className="card">
                 <h2 style={sectionHeadingStyle}>Queue withdrawal</h2>
-                <p style={sectionCopyStyle}>The destination and amount cannot change after queueing.</p>
+                <p style={sectionCopyStyle}>
+                  Queueing starts the configured delay. You can cancel a pending withdrawal; cancellation releases its reservation but does not take funds out of the vault. After the delay, execute to send funds to the chosen destination.
+                </p>
                 <form onSubmit={handleQueue} style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   <div>
                     <label style={labelStyle}>DESTINATION</label>
@@ -474,7 +465,7 @@ export default function VaultPage() {
                   {details.withdrawals.map((withdrawal) => {
                     const pending = !withdrawal.cancelled && !withdrawal.executed
                     const ready = pending && now >= withdrawal.unlockAt
-                    const status = withdrawalStatus(withdrawal, now)
+                    const status = vaultWithdrawalState(withdrawal, now)
                     const currentAction = action === `cancel-${withdrawal.id}`
                       || action === `execute-${withdrawal.id}`
 
@@ -499,12 +490,12 @@ export default function VaultPage() {
                         <div style={{ display: 'grid', gap: '0.75rem', marginTop: '1rem' }}>
                           <InfoRow label="Amount" value={`${withdrawal.amountXlm} XLM`} />
                           <InfoRow label="Destination" value={withdrawal.to} mono />
-                          <InfoRow label="Queued" value={formatTimestamp(withdrawal.queuedAt)} />
+                          <InfoRow label="Queued" value={formatLocalDateTime(withdrawal.queuedAt)} />
                           <InfoRow
                             label="Unlocks"
                             value={pending
-                              ? `${formatTimestamp(withdrawal.unlockAt)} (${formatCountdown(withdrawal.unlockAt, now)})`
-                              : formatTimestamp(withdrawal.unlockAt)}
+                              ? `${formatLocalDateTime(withdrawal.unlockAt)} (${formatCountdown(withdrawal.unlockAt, now)})`
+                              : formatLocalDateTime(withdrawal.unlockAt)}
                           />
                         </div>
 
