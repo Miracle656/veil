@@ -11,6 +11,8 @@
           { "/": "/receive", "comment": "Receive flow" },
           { "/": "/receive/*", "comment": "Receive flow" },
           { "/": "/create-wallet", "comment": "Onboarding" },
+          { "/": "/claim", "comment": "Claim links" },
+          { "/": "/claim/*", "comment": "Claim links" },
           { "/": "/*", "exclude": true, "comment": "Everything else stays on the web" }
         ]
       }
