@@ -7,14 +7,14 @@
 <body>
   <h1>Veil SDK Browser Matrix Test</h1>
   <script type="module">
+    // Module imports are evaluated before their body. Keep the Buffer polyfill
+    // in a preceding module so it is installed before vanilla.ts is evaluated.
     import { Buffer } from 'buffer';
     window.Buffer = Buffer;
-    // Expose a promise so Playwright waits for the SDK module to finish loading
-    // before attempting to construct the wallet.
-    window.__walletReady = import('../src/vanilla.ts').then(({ InvisibleWallet }) => {
-      window.InvisibleWallet = InvisibleWallet;
-      return InvisibleWallet;
-    });
+  </script>
+  <script type="module">
+    import { InvisibleWallet } from '../src/vanilla.ts';
+    window.InvisibleWallet = InvisibleWallet;
   </script>
 </body>
 </html>
