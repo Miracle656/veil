@@ -924,6 +924,20 @@ function ReviewScreen({
           </ListRow>
         )}
 
+        {action.kind === 'deposit' && (
+          // A deposit has no unlock date of its own, so say that rather than
+          // leaving the one row the user needs to reason about out of the
+          // review. The duration is quoted only when it has been read.
+          <ListRow>
+            <span style={{ fontSize: '13px', color: 'rgba(246,247,248,0.6)' }}>Unlocks</span>
+            <Mono>
+              {queueLockSeconds !== null
+                ? `only after you queue it and the ${formatLockDuration(queueLockSeconds)} lock passes`
+                : 'only after you queue it and its lock passes'}
+            </Mono>
+          </ListRow>
+        )}
+
         <ListRow last>
           <span style={{ fontSize: '13px', color: 'rgba(246,247,248,0.6)' }}>Pool</span>
           <Mono>{position ? `Pool ${position.poolId.slice(0, 6)}…` : 'this pool'}</Mono>

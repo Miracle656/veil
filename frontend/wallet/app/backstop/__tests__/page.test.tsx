@@ -268,6 +268,10 @@ describe('the confirm step', () => {
     expect(screen.getByText('Unit')).toBeTruthy()
     expect(screen.getByText('BLND:USDC LP tokens')).toBeTruthy()
     expect(screen.getByText('12.5')).toBeTruthy()
+    // Every action states its unlock status, including the one that has none
+    // yet: a deposit cannot be withdrawn until it is queued and the lock runs.
+    expect(screen.getByText('Unlocks')).toBeTruthy()
+    expect(screen.getByText(/only after you queue it and its lock passes/i)).toBeTruthy()
     expect(mockDeposit).not.toHaveBeenCalled()
     expect(mockSignAndSubmit).not.toHaveBeenCalled()
 
