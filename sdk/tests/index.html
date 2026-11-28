@@ -9,7 +9,7 @@
   <script type="module">
     import { Buffer } from 'buffer';
     window.Buffer = Buffer;
-    import { InvisibleWallet } from '../src/vanilla.ts';
+    const { InvisibleWallet } = await import('../src/vanilla.ts');
     window.InvisibleWallet = InvisibleWallet;
   </script>
 </body>

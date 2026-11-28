@@ -1,4 +1,4 @@
-import { StrKey, xdr, hash as stellarHash } from '@stellar/stellar-sdk';
+import { Address, StrKey, xdr, hash as stellarHash } from '@stellar/stellar-sdk';
 
 // ── Wallet address derivation ─────────────────────────────────────────────────
 
@@ -36,10 +36,6 @@ export function computeWalletAddress(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const networkId = (stellarHash as any)(new TextEncoder().encode(networkPassphrase)) as Buffer;
 
-    // Step 3: Decode the factory's strkey → raw 32-byte contract hash.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const factoryHash = StrKey.decodeContract(factoryId) as any;
-
     // Step 4: Build the XDR preimage that Soroban hashes to derive contract addresses.
     //   This is the canonical HashIdPreimage::ContractId structure from the Stellar XDR spec.
     //   It encodes: "this contract was deployed by <factory> with <salt> on <network>".
@@ -49,7 +45,7 @@ export function computeWalletAddress(
             networkId: networkId as any,
             contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
                 new xdr.ContractIdPreimageFromAddress({
-                    address: xdr.ScAddress.scAddressTypeContract(factoryHash),
+                    address: new Address(factoryId).toScAddress(),
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     salt: salt as any,
                 })
