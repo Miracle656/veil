@@ -378,6 +378,27 @@ export default function EarnRoute() {
               ) : null}
 
               <View style={styles.section}>
+                <Text style={[typography.accent, styles.sectionLabel]}>Managed Vaults</Text>
+                <Card style={styles.card}>
+                  <View style={styles.rowBetween}>
+                    <View>
+                      <Text style={[typography.heading, styles.cardTitle]}>DeFindex USDC Vault</Text>
+                      <Text style={styles.muted}>Automated yield aggregator</Text>
+                    </View>
+                    <Text style={[typography.accent, styles.badge]}>DeFindex</Text>
+                  </View>
+                  <Text style={styles.footnote}>
+                    Single strategy: Blend USDC Fixed pool. Performance fee: 18.09% of yield · Veil fee: 0.00%.
+                  </Text>
+                  <Button
+                    label="Open Vault"
+                    variant="ghost"
+                    onPress={() => router.push('/defindex-vault')}
+                  />
+                </Card>
+              </View>
+
+              <View style={styles.section}>
                 <Text style={[typography.accent, styles.sectionLabel]}>Pools</Text>
 
                 {loadingPools ? (
