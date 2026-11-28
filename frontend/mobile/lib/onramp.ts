@@ -500,6 +500,44 @@ export function getOnrampStatus(customerRef: string, orderId: string): Promise<O
 
 export type BillCategory = 'airtime' | 'data' | 'electricity' | 'cabletv' | 'betting';
 
+/**
+ * A data bundle product returned by wraith for a given operator.
+ *
+ * The `id` is opaque — pass it straight to `payBill` as `bundleId`, never as
+ * `customerId`, which stays the subscriber's phone number.
+ * `sizeMb` and `validityDays` are the two things a user actually needs to see:
+ * a list of naira prices alone tells them nothing about what they are buying.
+ */
+export interface DataBundle {
+  id: string;
+  /** Human-readable label, e.g. "1 GB" or "500 MB". */
+  label: string;
+  /** Size in megabytes. Use this to sort and to render "1 GB / 500 MB". */
+  sizeMb: number;
+  /** How many days the bundle lasts once activated. */
+  validityDays: number;
+  /** Cost in naira, as returned by the provider. */
+  amountNgn: number;
+}
+
+/**
+ * Fetch the available data bundles for a given mobile operator.
+ *
+ * Returns an empty array — **not** an error — when the operator has no bundles
+ * configured on wraith's side. The screen must surface this state gracefully
+ * rather than treating it as a failure: the user has already chosen an operator
+ * and done nothing wrong.
+ *
+ * This is mainnet-gated at the router level (same as `/ngn/bills`), so it will
+ * always return an empty array on testnet unless the backend strips that gate.
+ */
+export async function fetchDataBundles(operator: string): Promise<DataBundle[]> {
+  const { bundles } = await call<{ bundles: DataBundle[] }>(
+    `/ngn/bills/data/bundles?operator=${encodeURIComponent(operator)}`,
+  );
+  return Array.isArray(bundles) ? bundles : [];
+}
+
 export interface BillOrder {
   id: string;
   customerRef: string;
@@ -521,6 +559,12 @@ export function payBill(params: {
   provider: string;
   /** The phone number for airtime, the meter number for electricity. */
   customerId: string;
+  /**
+   * The provider's opaque product id for a data purchase. Travelling next to
+   * `customerId` rather than replacing it is the whole point: the phone number
+   * says who, the bundle id says what. Mirrors wraith#305's purchase field.
+   */
+  bundleId?: string;
   amountNgn: number;
   amountStableCoin: number;
   rate: number;
