@@ -1,0 +1,98 @@
+name: SDK end-to-end (local network)
+
+# The SDK signs; the real wallet contract, on a real local network, decides.
+#
+# SDK unit tests mock the RPC and the Rust tests use fixtures, so neither checks
+# the SDK against the contract — which is how the signature vector drifted
+# before (#1313). This job deploys the built wallet wasm to a standalone Stellar
+# network and has `signSorobanAuthEntry` authorise a spend that the contract's
+# own `__check_auth` must accept.
+#
+# It runs on pull requests as well as on main, so a change to either side of the
+# format is caught before it merges, not after.
+on:
+  pull_request:
+    paths:
+      - 'sdk/**'
+      - 'contracts/invisible_wallet/**'
+      - 'contracts/Cargo.toml'
+      - 'contracts/Cargo.lock'
+      - '.github/workflows/sdk-e2e-local.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/**'
+      - 'contracts/invisible_wallet/**'
+      - 'contracts/Cargo.toml'
+      - 'contracts/Cargo.lock'
+      - '.github/workflows/sdk-e2e-local.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: sdk-e2e-local-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: SDK signs, wallet contract accepts (standalone network)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Pinned by digest: a moving `latest` would change the network under a
+      # test that is meant to catch our drift, not Stellar's.
+      QUICKSTART_IMAGE: stellar/quickstart@sha256:a61ce821add98adb4f3e3d6e757b2615dd169a2b39c7e30cd47cfa95074f97d9
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Started first: the network takes a couple of minutes to be ready, which
+      # overlaps with the wasm build and the npm install below.
+      - name: Start a standalone Stellar network
+        run: |
+          docker run -d --name stellar -p 8000:8000 \
+            "$QUICKSTART_IMAGE" --local --enable rpc
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: contracts
+
+      # contracts/rust-toolchain.toml pins the toolchain, so the wasm target has
+      # to be added to that one, not only to the `stable` installed above.
+      - name: Build the wallet contract wasm
+        working-directory: contracts
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --release --locked --target wasm32-unknown-unknown -p invisible-wallet
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: sdk/package-lock.json
+
+      # --ignore-scripts: nothing the e2e test needs runs at install time, and
+      # a dependency's install script has no business running here.
+      - name: Install SDK dependencies
+        working-directory: sdk
+        run: npm ci --legacy-peer-deps --ignore-scripts
+
+      - name: Run the end-to-end test
+        working-directory: sdk
+        run: npm run test:e2e:local
+
+      - name: Network logs
+        if: failure()
+        run: docker logs --tail 200 stellar || true
+
+      - name: Stop the network
+        if: always()
+        run: docker rm -f stellar || true
