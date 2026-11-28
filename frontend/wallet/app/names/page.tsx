@@ -20,6 +20,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import { walletSession } from '@/lib/walletStorage'
+import { isPasskeyCancellation } from '@/lib/passkeyOutcome'
 import { buildSignAuthEntry, getFeePayerKeypair } from '@/lib/passkeySigner'
 import {
   type ChainAvailability,
@@ -260,7 +261,7 @@ export default function NamesPage() {
       const raw = err instanceof Error ? err.message : String(err)
       // A dismissed passkey prompt is not a failure worth a red error about a
       // broken purchase — nothing was charged and nothing was signed.
-      if (/cancelled|NotAllowedError/i.test(raw)) {
+      if (isPasskeyCancellation(err) || /WebAuthn signing was cancelled/i.test(raw)) {
         setBuyError('Passkey verification was cancelled. Nothing was charged.')
       } else {
         setBuyError(nameErrorMessage(err) ?? raw)

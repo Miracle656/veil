@@ -57,13 +57,53 @@ type Stage = 'who' | 'nin' | 'rejected' | 'done';
 
 const NIN_LENGTH = 11;
 
+/**
+ * The routes that send anyone here, and so the only routes a `returnTo` may
+ * name. Each of the five naira rails passes its own path as a literal —
+ * airtime, betting, buy-ngn, cabletv, electricity — and nothing else in the
+ * app links here, so nothing else is a place verification can have
+ * interrupted. A list this small can be checked against the senders by eye,
+ * which a rule about paths in general cannot.
+ */
+const VERIFY_RETURN_ROUTES: readonly string[] = [
+  '/airtime',
+  '/betting',
+  '/buy-ngn',
+  '/cabletv',
+  '/electricity',
+];
+
+/**
+ * The route to hand the user back to, or null when the param is not one.
+ *
+ * It arrives from a navigation param, which means it can be anything a deep
+ * link put there. Returning `//host.example` or `https://…` to the navigator
+ * would send them out of the app instead of back to their airtime purchase, so
+ * anything that is not a plain in-app path is dropped — and, since the five
+ * rails above are the only senders, anything that is not one of their paths
+ * is dropped too, however in-app it looks. The caller falls back to its
+ * default destination either way.
+ *
+ * An array is dropped whole rather than unwrapped: a repeated `returnTo`
+ * param is how a deep link parks a second value behind a checked first one,
+ * and no sender produces an array.
+ */
+export function inAppPath(raw: string | string[] | undefined): Href | null {
+  if (Array.isArray(raw)) return null;
+  const value = raw;
+  if (!value || !value.startsWith('/')) return null;
+  if (value.includes('//') || value.includes('\\') || value.includes(':')) return null;
+  if (!VERIFY_RETURN_ROUTES.includes(value)) return null;
+  return value as Href;
+}
+
 export default function VerifyScreen() {
   const router = useRouter();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const params = useLocalSearchParams<{ returnTo?: string; summary?: string; label?: string }>();
-  const returnTo = (params.returnTo as Href) || ('/dashboard' as Href);
+  const returnTo = inAppPath(params.returnTo) ?? ('/dashboard' as Href);
   const summary = params.summary ?? '';
   const label = params.label ?? 'where you were';
 
@@ -255,7 +295,14 @@ export default function VerifyScreen() {
   }, [customerRef, nin, firstName, lastName, email, phone, mainnetOnly]);
 
   const finish = useCallback(() => {
-    router.replace(returnTo);
+    // `dismissTo`, not `replace`. The rail that pushed here is still on the
+    // stack with the form half-filled: replacing would lay a second, empty
+    // copy of it on top of this one, and the purchase they came to finish
+    // would be gone — the exact loss this screen exists to prevent. When
+    // `/verify` was entered cold there is nothing to dismiss, and expo-router
+    // replaces the current screen with the target, which is the other thing
+    // wanted.
+    router.dismissTo(returnTo);
   }, [router, returnTo]);
 
   const stepOfTwo = stage === 'who' ? 1 : 2;

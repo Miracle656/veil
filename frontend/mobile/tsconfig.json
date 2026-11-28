@@ -16,6 +16,7 @@
         "./assets/*"
       ],
       "@veil/sdk": ["../../sdk/src/index"],
+      "@veil/agent/assets": ["../../packages/agent/src/assets"],
       "@veil/events": ["../../sdk/src/events"],
       "@veil/utils": ["../../sdk/src/utils"],
       "@veil/recovery": ["../../sdk/src/recovery/sep30"],

@@ -1,0 +1,5 @@
+---
+'@veil/agent': minor
+---
+
+Bind agent requests to a wallet-signed session instead of a claimed address. The route issues a short-lived challenge token, the client signs purpose-bound bytes ("veil-agent-login-v1") with its passkey through the existing VEIL_SIGNED_MESSAGE_V1 path, and chat/clear_history resolve the wallet address from the verified session. Challenges and sessions are HMAC-signed stateless tokens, so any instance of the deployment verifies the others' given a shared AGENT_SESSION_SECRET (unset: instance-local keys, as before). The serverless route now replaces the retired WebSocket server outright; requests WITHOUT a session are still served under the shape-checked claimed address until a mobile build that performs the challenge ships, after which AGENT_REQUIRE_SESSION=true turns enforcement on (classic G… wallets have no passkey and cannot verify — during the grace period they keep working via the session-less path). Assertion verification also checks rpIdHash, clientData origin, and the user-presence/user-verification flags.

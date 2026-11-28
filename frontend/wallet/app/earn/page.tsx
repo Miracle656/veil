@@ -6,6 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Asset, Keypair } from '@stellar/stellar-sdk'
 import { VeilMark } from '@/components/ui/VeilMark'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
+import { PoolStatusNotice } from '@/components/PoolStatusNotice'
+import { formatApy, reserveFor, reserveLabel, yearlyEarnings } from '@/lib/blendReserves'
+import { poolStatusInfo } from '@/lib/blendStatus'
 import { getNetwork } from '@/lib/network'
 import { beginTx, endTx } from '@/lib/txState'
 import { requirePasskey } from '@/lib/passkeyAuth'
@@ -40,6 +43,8 @@ export default function EarnPage() {
 
   const [selectedPool, setSelectedPool] = useState<BlendPool | null>(null)
   const [selectedAssetContract, setSelectedAssetContract] = useState<string | null>(null)
+  // Every rate on the deposit form is read from this row, the asset being deposited.
+  const selectedReserve = selectedPool ? reserveFor(selectedPool.reserves, selectedAssetContract) : null
   const [depositAmount, setDepositAmount] = useState('')
   const [selectedPosition, setSelectedPosition] = useState<BlendPosition | null>(null)
 
@@ -107,7 +112,13 @@ export default function EarnPage() {
 
       const amountInStroops = BigInt(Math.round(parseFloat(depositAmount) * 1e7))
       // Use XLM native asset contract for XLM pools, or first asset otherwise
-      const assetContract = selectedAssetContract ?? selectedPool.assets[0] ?? ''
+      // The asset is the one whose rate was shown. There is no fallback to
+      // "the pool's first asset": that is how XLM got deposited under a rate
+      // that was not XLM's.
+      const assetContract = selectedAssetContract
+      if (!assetContract || !reserveFor(selectedPool.reserves, assetContract)) {
+        throw new Error('Choose which asset to deposit first.')
+      }
 
       const xdr = await buildBlendSupplyXdr({
         poolId: selectedPool.id,
@@ -377,26 +388,53 @@ export default function EarnPage() {
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
                     <span style={{ fontWeight: 500 }}>{pool.name}</span>
-                    <span
+                  </div>
+                  <PoolStatusNotice status={pool.status} />
+                  {pool.reserves.length === 0 && (
+                    <p style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)' }}>
+                      This pool is not lending any asset right now.
+                    </p>
+                  )}
+                  {/* One row per asset: each has its own rate, and you deposit that asset. */}
+                  {pool.reserves.map((reserve) => (
+                    <div
+                      key={reserve.asset}
                       style={{
-                        fontFamily: 'Inconsolata, monospace',
-                        color: 'var(--teal)',
-                        fontWeight: 600,
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '0.5rem',
+                        padding: '0.625rem 0',
+                        borderTop: '1px solid var(--border-dim)',
                       }}
                     >
-                      {(pool.supplyApy * 100).toFixed(2)}% APY
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '0.8125rem', color: 'rgba(246,247,248,0.4)', marginBottom: '0.75rem' }}>
-                    Total liquidity: {(Number(pool.totalSupply) / 1e7).toLocaleString()}
-                  </div>
-                  <button
-                    className="btn-secondary"
-                    style={{ width: '100%', fontSize: '0.875rem', padding: '0.5rem' }}
-                    onClick={() => { setSelectedPool(pool); setSelectedAssetContract(pool.assets[0] ?? null); setStep('deposit-form') }}
-                  >
-                    Deposit &amp; earn
-                  </button>
+                      <div style={{ minWidth: 0, flex: '1 1 8rem' }}>
+                        <div style={{ fontWeight: 500, overflowWrap: 'anywhere' }}>
+                          {reserve.code ?? 'Unverified asset'}
+                        </div>
+                        {!reserve.code && (
+                          <div style={{ fontSize: '0.6875rem', color: 'rgba(246,247,248,0.4)', overflowWrap: 'anywhere' }}>
+                            {reserve.asset}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)' }}>
+                          {reserve.totalSupplied.toLocaleString('en-US', { maximumFractionDigits: 0 })} supplied
+                        </div>
+                      </div>
+                      <span style={{ fontFamily: 'Inconsolata, monospace', color: 'var(--teal)', fontWeight: 600 }}>
+                        {formatApy(reserve.supplyApy)} APY
+                      </span>
+                      <button
+                        className="btn-secondary"
+                        style={{ fontSize: '0.875rem', padding: '0.5rem 0.75rem' }}
+                        disabled={!poolStatusInfo(pool.status).canSupply}
+                        onClick={() => { setSelectedPool(pool); setSelectedAssetContract(reserve.asset); setStep('deposit-form') }}
+                      >
+                        Deposit {reserve.code ?? ''}
+                      </button>
+                    </div>
+                  ))}
                 </div>
               ))
             )}
@@ -408,7 +446,8 @@ export default function EarnPage() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
             <div className="card" style={{ padding: '1.25rem' }}>
               <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.4)', marginBottom: '0.5rem' }}>
-                Pool: {selectedPool.name} · Est. APY {(selectedPool.supplyApy * 100).toFixed(2)}%
+                Pool: {selectedPool.name} · {selectedReserve ? reserveLabel(selectedReserve) : 'asset'} · Est. APY{' '}
+                {formatApy(selectedReserve?.supplyApy)}
               </p>
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                 <input
@@ -420,22 +459,28 @@ export default function EarnPage() {
                   style={{ flex: 1, fontSize: '1.5rem', background: 'none', border: 'none', padding: 0 }}
                 />
                 <span style={{ color: 'rgba(246,247,248,0.4)', fontSize: '0.875rem' }}>
-                  {selectedAssetContract?.slice(0, 6) ?? 'asset'}
+                  {selectedReserve?.code ?? 'asset'}
                 </span>
               </div>
-              {depositAmount && (
+              {yearlyEarnings(depositAmount, selectedReserve?.supplyApy) !== null && (
                 <p style={{ fontSize: '0.75rem', color: 'rgba(246,247,248,0.35)', marginTop: '0.5rem' }}>
                   Est. earned in 1 year:{' '}
                   <span style={{ color: 'var(--teal)' }}>
-                    {(parseFloat(depositAmount || '0') * selectedPool.supplyApy).toFixed(4)}
+                    {yearlyEarnings(depositAmount, selectedReserve?.supplyApy)} {selectedReserve?.code ?? ''}
                   </span>
                 </p>
               )}
+              {selectedReserve && selectedReserve.supplyApy === 0 && (
+                <p style={{ fontSize: '0.75rem', color: 'var(--gold)', marginTop: '0.5rem' }}>
+                  {reserveLabel(selectedReserve)} is earning nothing in this pool right now.
+                </p>
+              )}
             </div>
+            <PoolStatusNotice status={selectedPool.status} />
             <button
               className="btn-gold"
               onClick={handleDeposit}
-              disabled={!depositAmount || parseFloat(depositAmount) <= 0}
+              disabled={!depositAmount || parseFloat(depositAmount) <= 0 || !poolStatusInfo(selectedPool.status).canSupply}
             >
               Deposit &amp; earn
             </button>

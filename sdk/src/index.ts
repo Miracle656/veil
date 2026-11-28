@@ -77,3 +77,5 @@ export * from './signatureVector';
 export * from './sep43';
 
 
+export * from './sessionKey';
+export { AuthEntryRejected, hostFunctionCalls } from './authEntryGuard';

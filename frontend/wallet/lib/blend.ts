@@ -7,6 +7,7 @@ import {
   xdr,
 } from '@stellar/stellar-sdk'
 import { getNetwork } from '@/lib/network'
+import { verifiedCodeForContract, type BlendReserve } from './blendReserves'
 import {
   PoolV1,
   PoolV2,
@@ -71,9 +72,17 @@ export function configuredPoolIds(): string[] {
 export interface BlendPool {
   id: string
   name: string
-  supplyApy: number // e.g. 0.042 = 4.2%
-  totalSupply: string
+  /**
+   * One row per asset the pool lends, each with its own rate. There is no
+   * pool-wide rate: see lib/blendReserves.ts.
+   */
+  reserves: BlendReserve[]
   assets: string[]
+  /**
+   * The pool contract's status number, or null when it was not reported.
+   * Read it through `poolStatusInfo` (lib/blendStatus.ts).
+   */
+  status: number | null
 }
 
 export interface BlendPosition {
@@ -92,6 +101,12 @@ export interface BlendPosition {
   accruedInterest: string
 }
 
+/** The status number from a loaded pool, or null when it is missing or not a whole number. */
+export function readPoolStatus(pool: { metadata?: { status?: unknown } }): number | null {
+  const status = pool.metadata?.status
+  return typeof status === 'number' && Number.isInteger(status) ? status : null
+}
+
 /** Load configured Blend pools and their reserve APYs. */
 export async function loadBlendPools(): Promise<BlendPool[]> {
   const poolIds = configuredPoolIds()
@@ -101,22 +116,20 @@ export async function loadBlendPools(): Promise<BlendPool[]> {
     poolIds.map(async (poolId): Promise<BlendPool | null> => {
       try {
         const pool = await loadPool(poolId)
-        const reserves = [...pool.reserves.values()]
-        const totalSupply = reserves
-          .reduce((acc, reserve) => acc + reserve.totalSupply(), 0n)
-          .toString()
-
-        const avgSupplyApy =
-          reserves.length > 0
-            ? reserves.reduce((acc, reserve) => acc + reserve.estSupplyApy, 0) / reserves.length
-            : 0
+        const networkName = net.name === 'mainnet' ? 'mainnet' : 'testnet'
+        const reserves: BlendReserve[] = [...pool.reserves.values()].map((reserve) => ({
+          asset: reserve.assetId,
+          code: verifiedCodeForContract(reserve.assetId, networkName, net.networkPassphrase),
+          supplyApy: reserve.estSupplyApy,
+          totalSupplied: reserve.totalSupplyFloat(),
+        }))
 
         return {
           id: pool.id,
           name: pool.metadata.name || pool.id.slice(0, 8),
-          supplyApy: avgSupplyApy,
-          totalSupply,
+          reserves,
           assets: pool.metadata.reserveList,
+          status: readPoolStatus(pool),
         }
       } catch (err) {
         console.warn(`[blend] failed loading pool ${poolId}:`, err)

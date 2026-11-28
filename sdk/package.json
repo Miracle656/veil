@@ -123,6 +123,7 @@
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && tsc -p tsconfig.esm.json && node scripts/flatten-dist.js",
     "test": "jest",
+    "test:network": "jest --config jest.network.config.cjs --runInBand",
     "test:vitest": "vitest run --coverage",
     "size": "npm run build && size-limit",
     "test:surface": "jest api-surface.test.ts",
@@ -281,7 +282,11 @@
           "experimentalDecorators": true
         }
       }
-    }
+    },
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/tests/network/"
+    ]
   },
   "size-limit": [
     {
