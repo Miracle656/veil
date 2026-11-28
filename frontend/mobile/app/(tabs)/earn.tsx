@@ -32,6 +32,7 @@ import {
 } from '../../lib/blend';
 import { fundDeposit, loadEarnBalances, type EarnBalances } from '../../lib/earnFunding';
 import { useNetwork } from '../../hooks/useNetwork';
+import { isBackstopEnabled } from '../../lib/backstopFlag';
 import { useWallet } from '../../components/WalletProvider';
 import { requirePasskey } from '../../lib/passkey';
 import { isPasskeyCancellation, PasskeyCeremonyError } from '../../lib/passkeyOutcome';
@@ -375,6 +376,20 @@ export default function EarnRoute() {
                     </Card>
                   ))}
                 </View>
+              ) : null}
+
+              {isBackstopEnabled(network.name) ? (
+              <Card style={styles.card}>
+                <View style={styles.rowBetween}>
+                  <Text style={[typography.heading, styles.cardTitle]}>Backstop</Text>
+                  <Text style={[typography.accent, styles.badge]}>Higher risk</Text>
+                </View>
+                <Text style={styles.muted}>
+                  Back a pool&apos;s safety net for BLND emissions and a share of its interest. Unlike lending, the
+                  value can fall and withdrawals are queued.
+                </Text>
+                <Button label="Open backstop" variant="ghost" onPress={() => router.push('/backstop')} />
+              </Card>
               ) : null}
 
               <View style={styles.section}>
