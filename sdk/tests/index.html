@@ -9,8 +9,12 @@
   <script type="module">
     import { Buffer } from 'buffer';
     window.Buffer = Buffer;
-    const { InvisibleWallet } = await import('../src/vanilla.ts');
-    window.InvisibleWallet = InvisibleWallet;
+    // Expose a promise so Playwright waits for the SDK module to finish loading
+    // before attempting to construct the wallet.
+    window.__walletReady = import('../src/vanilla.ts').then(({ InvisibleWallet }) => {
+      window.InvisibleWallet = InvisibleWallet;
+      return InvisibleWallet;
+    });
   </script>
 </body>
 </html>
