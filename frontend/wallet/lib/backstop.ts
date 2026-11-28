@@ -18,6 +18,7 @@ import {
   type Network,
 } from '@blend-capital/blend-sdk'
 
+import { FALLBACK_QUEUE_LOCK_SECONDS, stroopsToShares } from './backstopAmounts'
 import { configuredBackstopId } from './backstopConfig'
 import { requireAddress } from './backstopTx'
 import { inclusionFee } from './fees'
@@ -25,6 +26,15 @@ import { configuredPoolIds } from './blend'
 import { getNetwork } from './network'
 
 export { configuredBackstopId } from './backstopConfig'
+// Amount and date formatting lives in its own SDK-free module so the screen and
+// its test use the implementation that ships rather than a copy of it.
+export {
+  FALLBACK_QUEUE_LOCK_SECONDS,
+  formatLockDuration,
+  formatUnlockDate,
+  sharesToStroops,
+  stroopsToShares,
+} from './backstopAmounts'
 export {
   buildBackstopCancelWithdrawalXdr,
   buildBackstopDepositXdr,
@@ -59,19 +69,8 @@ export {
  * entries the RPC hands back — would propagate into a new money path.
  */
 
-const STROOPS_PER_SHARE = 10_000_000n
-
 /** Stellar base reserve per ledger entry, in XLM. */
 const BASE_RESERVE_XLM = 0.5
-
-/**
- * Blend's `Q4W_LOCK_TIME` — the queue lock — in seconds. Used only when the
- * deployed contract cannot be asked (see {@link loadBackstopQueueLockSeconds}).
- * The value is the constant in `blend-contracts-v2/backstop/src/constants.rs`;
- * the contract exposes no getter for it, so it is read out of a simulated
- * `queue_withdrawal` and this is the documented fallback.
- */
-export const FALLBACK_QUEUE_LOCK_SECONDS = 17 * 24 * 60 * 60
 
 export interface BackstopQueuedWithdrawal {
   /** Shares in this queue entry — the unit queue/cancel/withdraw take. */
@@ -114,63 +113,6 @@ export interface BackstopPositionsResult {
 function blendNetwork(): Network {
   const net = getNetwork()
   return { rpc: net.rpcUrl, passphrase: net.networkPassphrase }
-}
-
-/** LP shares carry the same 7 decimals as every other Stellar amount. */
-export function sharesToStroops(value: string): bigint {
-  const amount = value.trim()
-  if (!/^\d+(?:\.\d{0,7})?$/.test(amount)) {
-    throw new Error('Enter a valid amount with no more than 7 decimal places.')
-  }
-  const [whole, fraction = ''] = amount.split('.')
-  const stroops = BigInt(whole) * STROOPS_PER_SHARE + BigInt(fraction.padEnd(7, '0'))
-  if (stroops <= 0n) {
-    throw new Error('Amount must be greater than zero.')
-  }
-  return stroops
-}
-
-export function stroopsToShares(stroops: bigint): string {
-  const negative = stroops < 0n
-  const absolute = negative ? -stroops : stroops
-  const whole = absolute / STROOPS_PER_SHARE
-  const fraction = (absolute % STROOPS_PER_SHARE)
-    .toString()
-    .padStart(7, '0')
-    .replace(/0+$/, '')
-  return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`
-}
-
-/**
- * A duration in seconds as the words the screen uses: "17 days", "2 days
- * 4 hours", "45 minutes". Rounded at the minute, because the contract's lock is
- * read from a simulated queue entry and is only as exact as the close time.
- */
-export function formatLockDuration(seconds: number): string {
-  const totalMinutes = Math.max(0, Math.round(seconds / 60))
-  const days = Math.floor(totalMinutes / 1_440)
-  const hours = Math.floor((totalMinutes % 1_440) / 60)
-  const minutes = totalMinutes % 60
-  const parts: string[] = []
-  if (days > 0) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`)
-  if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`)
-  if (days === 0 && minutes > 0) {
-    parts.push(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`)
-  }
-  return parts.length > 0 ? parts.join(' ') : '0 minutes'
-}
-
-/** An absolute unlock time, in UTC, so two devices agree on the date. */
-export function formatUnlockDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1_000).toLocaleString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'UTC',
-    timeZoneName: 'short',
-  })
 }
 
 /**

@@ -24,10 +24,14 @@
  * there is one simulate/assemble/sign implementation and this screen does not
  * get a second).
  *
+ * Opening the screen is a ledger read plus nothing else: the queue lock is a
+ * second contract call and is only made once the user starts a queue, so a
+ * deposit-only visit never pays for it.
+ *
  * No issuer `stellar.toml` read happens here: BLND and USDC marks are the
  * wallet's own, so the CSP never has to be widened for this screen.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Keypair } from '@stellar/stellar-sdk'
 
 import {
@@ -43,21 +47,23 @@ import {
 } from '@/components/ui/primitives'
 import { useInactivityLock } from '@/hooks/useInactivityLock'
 import {
-  FALLBACK_QUEUE_LOCK_SECONDS,
   buildBackstopCancelWithdrawalXdr,
   buildBackstopDepositXdr,
   buildBackstopQueueWithdrawalXdr,
   buildBackstopWithdrawXdr,
   configuredBackstopId,
-  formatLockDuration,
-  formatUnlockDate,
   loadBackstopPositions,
   loadBackstopQueueLockSeconds,
   runBackstopPreflight,
-  sharesToStroops,
-  stroopsToShares,
   type BackstopPosition,
 } from '@/lib/backstop'
+import {
+  FALLBACK_QUEUE_LOCK_SECONDS,
+  formatLockDuration,
+  formatUnlockDate,
+  sharesToStroops,
+  stroopsToShares,
+} from '@/lib/backstopAmounts'
 import { isBackstopEnabled } from '@/lib/backstopFeature'
 import { configuredPoolIds } from '@/lib/blend'
 import { getNetwork } from '@/lib/network'
@@ -178,7 +184,14 @@ export default function BackstopPage() {
     status: 'checking',
     problems: [],
   })
-  const [queueLockSeconds, setQueueLockSeconds] = useState(FALLBACK_QUEUE_LOCK_SECONDS)
+  // Null until the contract has been read. The fallback belongs to a failed
+  // read, not to the first paint: a duration the screen has not been told is
+  // not printed as if it had been.
+  const [queueLockSeconds, setQueueLockSeconds] = useState<number | null>(null)
+  // The lock is a contract read, so it is not paid for on arrival: it is
+  // fetched the first time a queue amount is about to be shown as a date.
+  const queueLockRef = useRef<number | null>(null)
+  const queueLockRequestRef = useRef<Promise<number> | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [txHash, setTxHash] = useState<string | null>(null)
@@ -208,19 +221,35 @@ export default function BackstopPage() {
     } finally {
       setLoading(false)
     }
+  }, [])
 
-    // The queue lock is a contract read; if it fails the fallback already in
-    // state is still a safe number, so this never blocks the screen.
-    try {
-      const lock = await loadBackstopQueueLockSeconds({
-        backstopId: BACKSTOP_ID,
-        poolId: CONFIGURED_POOLS[0],
-        sourceAddress: address,
+  /**
+   * The queue lock, read from the contract at most once.
+   *
+   * Opening this screen must not cost an RPC round trip for a number the user
+   * may never need, so nothing asks for the lock until they start a queue. The
+   * in-flight promise is shared, so warming it from the form and then awaiting
+   * it on Review is a single request.
+   */
+  const resolveQueueLock = useCallback((address: string): Promise<number> => {
+    if (queueLockRef.current !== null) return Promise.resolve(queueLockRef.current)
+    if (queueLockRequestRef.current) return queueLockRequestRef.current
+
+    const request = loadBackstopQueueLockSeconds({
+      backstopId: BACKSTOP_ID,
+      poolId: CONFIGURED_POOLS[0],
+      sourceAddress: address,
+    })
+      // The module already falls back when the read fails; this guards against
+      // an unexpected throw so a queue can still be reviewed and signed.
+      .catch(() => FALLBACK_QUEUE_LOCK_SECONDS)
+      .then((lock) => {
+        queueLockRef.current = lock
+        setQueueLockSeconds(lock)
+        return lock
       })
-      setQueueLockSeconds(lock)
-    } catch {
-      // Fallback stays.
-    }
+    queueLockRequestRef.current = request
+    return request
   }, [])
 
   useEffect(() => {
@@ -250,6 +279,13 @@ export default function BackstopPage() {
     const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 60_000)
     return () => clearInterval(timer)
   }, [])
+
+  // Warm the lock when the queue form opens, so its copy is the contract's
+  // number rather than the fallback before the user reaches the review step.
+  useEffect(() => {
+    if (step !== 'queue-form' || !accountAddress) return
+    void resolveQueueLock(accountAddress)
+  }, [step, accountAddress, resolveQueueLock])
 
   // Pre-flight runs while the review step is open, so the user sees why a
   // signature is blocked before the passkey prompt, not after it.
@@ -282,6 +318,9 @@ export default function BackstopPage() {
   }, [step, review, accountAddress])
 
   const position = positions.find((entry) => entry.poolId === poolId) ?? null
+
+  /** "17 days", or null until the lock has actually been read. */
+  const lockDuration = queueLockSeconds === null ? null : formatLockDuration(queueLockSeconds)
 
   function signerSecret(): string {
     const secret =
@@ -360,14 +399,16 @@ export default function BackstopPage() {
   }
 
   /** Move a form to the review step; signing only ever starts from there. */
-  function startReview(kind: ActionKind) {
+  async function startReview(kind: ActionKind) {
     const amount = parseAmount(kind)
     if (amount <= 0n) return
-    setReview({
-      kind,
-      amount,
-      unlockAt: kind === 'queue' ? Math.floor(Date.now() / 1000) + queueLockSeconds : undefined,
-    })
+    // A queue's unlock date is the contract's lock added to now, so the number
+    // has to be resolved before the date is shown — never after.
+    const unlockAt =
+      kind === 'queue' && accountAddress
+        ? Math.floor(Date.now() / 1000) + (await resolveQueueLock(accountAddress))
+        : undefined
+    setReview({ kind, amount, unlockAt })
     setStep('review')
   }
 
@@ -494,7 +535,8 @@ export default function BackstopPage() {
               token for BLND and USDC, and in return you earn emissions and a share of the interest
               the pool charges borrowers. If a borrower&apos;s debt cannot be liquidated, the shortfall
               is taken from this deposit before anyone else&apos;s. Withdrawing is not instant: you
-              queue it, wait out the {formatLockDuration(queueLockSeconds)} lock, then withdraw.
+              queue it, wait out {lockDuration ? `the ${lockDuration} lock` : 'the queue lock'},
+              then withdraw.
             </p>
             {!hasPosition && !loadError && (
               <p style={{ fontSize: '13px', lineHeight: 1.6, color: 'rgba(246,247,248,0.45)', marginTop: '12px' }}>
@@ -612,8 +654,8 @@ export default function BackstopPage() {
             ) : (
               <p style={{ fontSize: '13px', lineHeight: 1.6, color: 'rgba(246,247,248,0.45)', marginTop: '12px' }}>
                 Queued shares keep backing the pool and stop earning emissions until you either
-                cancel the queue or withdraw once the {formatLockDuration(queueLockSeconds)} lock
-                expires.
+                cancel the queue or withdraw once{' '}
+                {lockDuration ? `the ${lockDuration} lock` : 'the queue lock'} expires.
               </p>
             )}
           </Card>
@@ -668,7 +710,7 @@ export default function BackstopPage() {
                   Earn
                 </a>
                 . The deposit earns emissions from the moment it confirms, and cannot be withdrawn
-                without the {formatLockDuration(queueLockSeconds)} queue.
+                without the {lockDuration ? `${lockDuration} queue` : 'queue'}.
               </p>
               {loadError && (
                 <p style={{ fontSize: '12px', color: 'rgba(246,247,248,0.6)', marginTop: '10px', lineHeight: 1.55 }}>
@@ -677,7 +719,7 @@ export default function BackstopPage() {
               )}
               <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
                 <PrimaryAction
-                  onClick={() => startReview('deposit')}
+                  onClick={() => void startReview('deposit')}
                   disabled={!canDeposit}
                   className="flex-1"
                 >
@@ -713,12 +755,12 @@ export default function BackstopPage() {
               />
               <Mono>Amount is in shares · {position ? stroopsToShares(position.shares) : '0'} available</Mono>
               <p style={{ fontSize: '12px', color: 'rgba(246,247,248,0.4)', marginTop: '10px', lineHeight: 1.55 }}>
-                Queued shares stay in the backstop for {formatLockDuration(queueLockSeconds)} and
-                stop earning emissions for that time. You can cancel the queue before you withdraw.
+                Queued shares stay in the backstop for {lockDuration ?? 'the queue lock'} and stop
+                earning emissions for that time. You can cancel the queue before you withdraw.
               </p>
               <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
                 <PrimaryAction
-                  onClick={() => startReview('queue')}
+                  onClick={() => void startReview('queue')}
                   disabled={!canQueue}
                   className="flex-1"
                 >
@@ -749,12 +791,13 @@ export default function BackstopPage() {
                 />
                 <Mono>Amount is in shares</Mono>
                 <p style={{ fontSize: '12px', color: 'rgba(246,247,248,0.4)', marginTop: '10px', lineHeight: 1.55 }}>
-                  Withdraw releases shares whose {formatLockDuration(queueLockSeconds)} lock has
-                  expired. It cannot touch shares that are still locked.
+                  Withdraw releases shares whose{' '}
+                  {lockDuration ? `${lockDuration} lock` : 'queue lock'} has expired. It cannot
+                  touch shares that are still locked.
                 </p>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
                   <PrimaryAction
-                    onClick={() => startReview('withdraw')}
+                    onClick={() => void startReview('withdraw')}
                     disabled={!canWithdraw}
                     className="flex-1"
                   >
@@ -794,7 +837,7 @@ export default function BackstopPage() {
                 </p>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
                   <PrimaryAction
-                    onClick={() => startReview('cancel')}
+                    onClick={() => void startReview('cancel')}
                     disabled={!canCancel}
                     className="flex-1"
                   >
@@ -832,7 +875,7 @@ function ReviewScreen({
 }: {
   action: ReviewAction
   position: BackstopPosition | null
-  queueLockSeconds: number
+  queueLockSeconds: number | null
   preflight: PreflightState
   onBack: () => void
   onConfirm: () => void
@@ -858,9 +901,11 @@ function ReviewScreen({
             <span style={{ fontSize: '13px', color: 'rgba(246,247,248,0.6)' }}>Unlocks</span>
             <span style={{ textAlign: 'right' }}>
               <Mono>{formatUnlockDate(action.unlockAt)}</Mono>
-              <span style={{ display: 'block', fontSize: '12px', color: 'rgba(246,247,248,0.4)' }}>
-                in {formatLockDuration(queueLockSeconds)}
-              </span>
+              {queueLockSeconds !== null && (
+                <span style={{ display: 'block', fontSize: '12px', color: 'rgba(246,247,248,0.4)' }}>
+                  in {formatLockDuration(queueLockSeconds)}
+                </span>
+              )}
             </span>
           </ListRow>
         )}

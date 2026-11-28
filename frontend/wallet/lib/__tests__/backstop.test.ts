@@ -104,9 +104,11 @@ import {
   loadBackstopPositions,
   loadBackstopQueueLockSeconds,
   runBackstopPreflight,
-  sharesToStroops,
   stroopsToShares,
 } from '../backstop'
+
+// The pure amount/date helpers are covered in `backstopAmounts.test.ts`, where
+// they are imported from the SDK-free module that ships them.
 
 const BACKSTOP = 'CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7'
 const POOL = 'CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD'
@@ -201,28 +203,6 @@ beforeEach(() => {
   })
 })
 
-describe('share amounts', () => {
-  it('converts every supported decimal shape to stroops', () => {
-    expect(sharesToStroops('1')).toBe(10_000_000n)
-    expect(sharesToStroops('0.0000001')).toBe(1n)
-    expect(sharesToStroops('1234.5')).toBe(12_345_000_000n)
-  })
-
-  it('refuses zero, negatives, and precision the contract cannot represent', () => {
-    expect(() => sharesToStroops('0')).toThrow('greater than zero')
-    expect(() => sharesToStroops('-1')).toThrow()
-    expect(() => sharesToStroops('1.00000001')).toThrow()
-    expect(() => sharesToStroops('abc')).toThrow()
-  })
-
-  it('round-trips without losing a stroop', () => {
-    for (const value of ['1', '0.5', '1042.0000001']) {
-      expect(stroopsToShares(sharesToStroops(value))).toBe(value)
-    }
-    expect(stroopsToShares(0n)).toBe('0')
-  })
-})
-
 describe('configuredBackstopId', () => {
   const original = process.env.NEXT_PUBLIC_BLEND_BACKSTOP_ID_MAINNET
 
@@ -239,15 +219,6 @@ describe('configuredBackstopId', () => {
   it('prefers an explicitly configured contract', () => {
     process.env.NEXT_PUBLIC_BLEND_BACKSTOP_ID_MAINNET = POOL
     expect(configuredBackstopId()).toBe(POOL)
-  })
-})
-
-describe('formatLockDuration', () => {
-  it('reads the contract lock as days, not a hardcoded label', () => {
-    expect(formatLockDuration(17 * 24 * 60 * 60)).toBe('17 days')
-    expect(formatLockDuration(24 * 60 * 60)).toBe('1 day')
-    expect(formatLockDuration(2 * 24 * 60 * 60 + 4 * 60 * 60)).toBe('2 days 4 hours')
-    expect(formatLockDuration(45 * 60)).toBe('45 minutes')
   })
 })
 

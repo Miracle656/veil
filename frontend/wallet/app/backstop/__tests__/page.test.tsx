@@ -17,6 +17,10 @@
  * entries) is proved against the actual SDK in `lib/__tests__/backstop.test.ts`;
  * this suite mocks `lib/backstop` because rendering the screen in jsdom must not
  * talk to an RPC, and asserts what the screen asks for and what it refuses.
+ *
+ * The amount and date helpers are *not* mocked: `lib/backstopAmounts.ts` has no
+ * SDK import, so the formatting asserted here is the implementation that ships
+ * rather than a copy of it kept in step by hand.
  */
 import { webcrypto } from 'crypto'
 import { TextEncoder, TextDecoder } from 'util'
@@ -108,43 +112,12 @@ const mockCancel = jest.fn().mockResolvedValue('cancel-xdr')
 const mockWithdraw = jest.fn().mockResolvedValue('withdraw-xdr')
 
 // The real module pulls @blend-capital/blend-sdk, whose nested
-// @stellar/stellar-sdk ships ESM that this Jest config does not transform. The
-// amount conversion and the contract calls are covered against the real
-// implementation in lib/__tests__/backstop.test.ts; here they only have to
-// behave the same way.
-function realFormatLockDuration(seconds: number): string {
-  const totalMinutes = Math.max(0, Math.round(seconds / 60))
-  const days = Math.floor(totalMinutes / 1_440)
-  const hours = Math.floor((totalMinutes % 1_440) / 60)
-  const minutes = totalMinutes % 60
-  const parts: string[] = []
-  if (days > 0) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`)
-  if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`)
-  if (days === 0 && minutes > 0) {
-    parts.push(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`)
-  }
-  return parts.length > 0 ? parts.join(' ') : '0 minutes'
-}
-
+// @stellar/stellar-sdk ships ESM that this Jest config does not transform, so
+// the ledger reads and the XDR builders are mocked here and covered against the
+// real implementation in lib/__tests__/backstop.test.ts. The amount and date
+// helpers come from the real `@/lib/backstopAmounts`, which imports no SDK.
 jest.mock('@/lib/backstop', () => ({
-  FALLBACK_QUEUE_LOCK_SECONDS: 17 * 24 * 60 * 60,
   configuredBackstopId: () => 'CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7',
-  sharesToStroops: (value: string) => {
-    const [whole, fraction = ''] = value.trim().split('.')
-    return BigInt(whole) * 10_000_000n + BigInt(fraction.padEnd(7, '0'))
-  },
-  stroopsToShares: (stroops: bigint) => {
-    const negative = stroops < 0n
-    const absolute = negative ? -stroops : stroops
-    const whole = absolute / 10_000_000n
-    const fraction = (absolute % 10_000_000n)
-      .toString()
-      .padStart(7, '0')
-      .replace(/0+$/, '')
-    return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`
-  },
-  formatLockDuration: (seconds: number) => realFormatLockDuration(seconds),
-  formatUnlockDate: (unixSeconds: number) => new Date(unixSeconds * 1_000).toISOString(),
   loadBackstopPositions: (...args: unknown[]) => mockLoadPositions(...args),
   loadBackstopQueueLockSeconds: (...args: unknown[]) => mockLoadQueueLock(...args),
   runBackstopPreflight: (...args: unknown[]) => mockPreflight(...args),
@@ -260,11 +233,24 @@ describe('position display', () => {
     expect(screen.queryByText('4 LP')).toBeNull()
   })
 
-  it('states the queue lock it read from the contract, not a fixed 17', async () => {
+  it('does not pay a contract round trip for the queue lock until a queue starts', async () => {
     mockLoadQueueLock.mockResolvedValue(3 * 24 * 60 * 60)
+    const user = userEvent.setup()
     await renderPage()
+
+    // Rendering the position is one ledger read; the lock is not a second one.
+    expect(mockLoadQueueLock).not.toHaveBeenCalled()
+    // And with no lock read there is no duration to print: the view screen
+    // says "the queue lock" rather than quoting the 17-day fallback as fact.
+    expect(screen.queryByText(/17 days/)).toBeNull()
+    expect(screen.getByText(/wait out the queue lock, then withdraw/i)).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Queue withdrawal' }))
+    await waitFor(() => expect(mockLoadQueueLock).toHaveBeenCalledTimes(1))
+
+    // And what it renders is the contract's lock, not the 17-day fallback.
     await waitFor(() =>
-      expect(screen.getByText(/wait out the 3 days lock/i)).toBeTruthy(),
+      expect(screen.getByText(/stay in the backstop for 3 days/i)).toBeTruthy(),
     )
   })
 })
