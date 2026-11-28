@@ -54,6 +54,18 @@ export interface PushDeviceRegistration {
   platform: 'ios' | 'android';
   appVersion: string;
   locale: string;
+  /** Random per-install identifier generated on-device (never a wallet identifier). */
+  installId?: string;
+  /** Category preferences stored against this install record (#1287). */
+  categories?: Record<string, boolean>;
+}
+
+/** Last Expo push token obtained by this module during the current session. */
+let cachedPushToken: string | null = null;
+
+/** Forget any in-memory cached token. Tests only. */
+export function resetPushTokenCacheForTests(): void {
+  cachedPushToken = null;
 }
 
 /**
@@ -126,13 +138,81 @@ export async function registerPushDevice(
   const base = options.wraithUrl === undefined ? getWraithUrl() : options.wraithUrl;
   if (!base) return false;
   const doFetch = options.fetchImpl ?? fetch;
-  const response = await doFetch(`${base}/push/devices`, {
+  const normalizedBase = base.replace(/\/+$/, '');
+  const response = await doFetch(`${normalizedBase}/push/devices`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(registration),
   });
   if (!response.ok) throw new Error(`device registry answered ${response.status}`);
+  cachedPushToken = registration.token;
   return true;
+}
+
+/**
+ * Remove this install's token from the device registry (`DELETE /push/devices/:token`).
+ *
+ * Returns false when the build has no registry configured; throws on any
+ * non-2xx answer (including 404 — when #1274 is not deployed yet, a 404 is a
+ * missing route, not confirmation that a token was deregistered).
+ */
+export async function deregisterPushDevice(
+  token: string,
+  options: { wraithUrl?: string | null; fetchImpl?: typeof fetch } = {},
+): Promise<boolean> {
+  const base = options.wraithUrl === undefined ? getWraithUrl() : options.wraithUrl;
+  if (!base) return false;
+  const doFetch = options.fetchImpl ?? fetch;
+  const normalizedBase = base.replace(/\/+$/, '');
+  const response = await doFetch(`${normalizedBase}/push/devices/${encodeURIComponent(token)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(`device registry answered ${response.status}`);
+  if (cachedPushToken === token) cachedPushToken = null;
+  return true;
+}
+
+export interface GetPushTokenDeps {
+  platform?: string;
+  remotePushEnabled?: () => boolean;
+  hasPermission?: () => Promise<boolean>;
+  projectId?: () => string | null;
+  getToken?: (projectId: string) => Promise<string>;
+}
+
+/**
+ * Return the Expo push token owned by this module, or `null` when remote push
+ * is disabled, unsupported on this platform, lacks notification permission, or
+ * has no EAS project id.
+ *
+ * Respects {@link isRemotePushEnabled} first so no caller can obtain a push
+ * token while `EXPO_PUBLIC_REMOTE_PUSH` is off.
+ */
+export async function getPushToken(overrides: GetPushTokenDeps = {}): Promise<string | null> {
+  const platform = overrides.platform ?? Platform.OS;
+  if (platform !== 'ios' && platform !== 'android') return null;
+
+  const enabled = (overrides.remotePushEnabled ?? (() => isRemotePushEnabled()))();
+  if (!enabled) return null;
+
+  if (cachedPushToken && !overrides.getToken) return cachedPushToken;
+
+  const hasPermission =
+    overrides.hasPermission ??
+    (async () => {
+      const perm = (await Notifications.getPermissionsAsync()) as { granted?: boolean } | undefined;
+      return !!perm?.granted;
+    });
+  if (!(await hasPermission())) return null;
+
+  const projectId = (overrides.projectId ?? (() => resolveProjectId()))();
+  if (!projectId) return null;
+
+  const fetchToken = overrides.getToken ?? defaultDeps.getToken;
+  const token = await fetchToken(projectId);
+  if (!token) return null;
+  cachedPushToken = token;
+  return token;
 }
 
 export interface PushRegistrationDeps {
@@ -189,6 +269,7 @@ export async function ensurePushRegistration(
   let token: string;
   try {
     token = await deps.getToken(projectId);
+    if (token) cachedPushToken = token;
   } catch (err) {
     return failed(deps, 'push token request', err);
   }

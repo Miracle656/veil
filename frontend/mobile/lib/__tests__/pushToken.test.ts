@@ -1,10 +1,13 @@
 import * as Notifications from 'expo-notifications';
 
 import {
+  deregisterPushDevice,
   ensurePushRegistration,
+  getPushToken,
   isRemotePushEnabled,
   redactPushToken,
   registerPushDevice,
+  resetPushTokenCacheForTests,
   resolveProjectId,
   watchPushTokenRotation,
   type PushRegistrationDeps,
@@ -256,5 +259,56 @@ describe('watchPushTokenRotation', () => {
 
     expect(addPushTokenListener).not.toHaveBeenCalled();
     expect(() => stop()).not.toThrow();
+  });
+});
+
+describe('getPushToken and deregisterPushDevice', () => {
+  beforeEach(() => {
+    resetPushTokenCacheForTests();
+  });
+
+  it('returns null without requesting a token when remote push is off (the default)', async () => {
+    const getToken = jest.fn(async () => TOKEN);
+
+    await expect(
+      getPushToken({
+        platform: 'android',
+        hasPermission: async () => true,
+        projectId: () => 'project-id',
+        getToken,
+      }),
+    ).resolves.toBeNull();
+    expect(getToken).not.toHaveBeenCalled();
+  });
+
+  it('reuses the token cached by ensurePushRegistration when remote push is on', async () => {
+    const { deps } = happy();
+    await ensurePushRegistration(deps);
+
+    const hasPermission = jest.fn(async () => true);
+    await expect(
+      getPushToken({
+        platform: 'android',
+        remotePushEnabled: () => true,
+        hasPermission,
+      }),
+    ).resolves.toBe(TOKEN);
+    expect(hasPermission).not.toHaveBeenCalled();
+  });
+
+  it('deletes the device with DELETE /push/devices/:token and throws on 404 instead of treating it as success', async () => {
+    const okFetch = jest.fn(async () => ({ ok: true, status: 204 }) as Response);
+    await expect(
+      deregisterPushDevice(TOKEN, { wraithUrl: 'https://wraith.example/', fetchImpl: okFetch }),
+    ).resolves.toBe(true);
+    expect(okFetch).toHaveBeenCalledWith(
+      `https://wraith.example/push/devices/${encodeURIComponent(TOKEN)}`,
+      { method: 'DELETE' },
+    );
+
+    const notFoundFetch = jest.fn(async () => ({ ok: false, status: 404 }) as Response);
+    await expect(
+      deregisterPushDevice(TOKEN, { wraithUrl: 'https://wraith.example', fetchImpl: notFoundFetch }),
+    ).rejects.toThrow('404');
   });
 });
