@@ -1,6 +1,7 @@
 import { Tabs } from 'expo-router';
 
 import { VeilTabBar } from '../../components/VeilTabBar';
+import { useTransitions } from '../../lib/transitions';
 
 /**
  * Bottom tabs — Wallet / Earn / Agent / Settings, drawn by VeilTabBar as one
@@ -9,6 +10,8 @@ import { VeilTabBar } from '../../components/VeilTabBar';
  * without the tab bar, reached from this bar and from the balance card.
  */
 export default function TabsLayout() {
+  const transitions = useTransitions();
+
   return (
     <Tabs
       tabBar={(props) => {
@@ -20,7 +23,7 @@ export default function TabsLayout() {
         if (focused?.name === 'agent') return null;
         return <VeilTabBar {...props} />;
       }}
-      screenOptions={{ headerShown: false }}
+      screenOptions={{ headerShown: false, animation: transitions.tab }}
     >
       <Tabs.Screen name="dashboard" options={{ title: 'Home' }} />
       <Tabs.Screen name="earn" options={{ title: 'Earn' }} />

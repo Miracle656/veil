@@ -1,5 +1,8 @@
-import { Stack } from "expo-router";
+import { Stack } from 'expo-router';
+
+import { useTransitions } from '../../lib/transitions';
 
 export default function OnboardingLayout() {
-  return <Stack screenOptions={{ headerShown: false }} />;
+  const transitions = useTransitions();
+  return <Stack screenOptions={{ headerShown: false, animation: transitions.stack }} />;
 }
