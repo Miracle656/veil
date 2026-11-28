@@ -321,6 +321,7 @@ const REGISTRY: Record<StellarNetwork, Record<string, VerifiedAsset>> = {
     USTRY: { code: 'USTRY', issuer: ETHERFUSE_MAINNET_ISSUER, name: 'US Treasury Notes' },
     TESOURO: { code: 'TESOURO', issuer: ETHERFUSE_MAINNET_ISSUER, name: 'Brazilian Treasury' },
   },
+  // There is no verified USDT0 on testnet: any holding of that code is unverified.
   testnet: {
     USDC: { code: 'USDC', issuer: USDC_TESTNET_ISSUER, name: 'USD Coin' },
   },
