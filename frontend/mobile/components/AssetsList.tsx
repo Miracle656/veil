@@ -14,12 +14,22 @@ import { fontFamily } from '../theme/typography';
 // address and threw; keep the implementations unified or the dashboard and the
 // flow screens will disagree again.
 import { loadHoldings, type Holding } from '../lib/holdings';
+import { loadSoroswapLpPositions, type LpPosition } from '../lib/soroswapLpPositions';
 
 /** Trim a raw balance to at most 4 decimals, grouped. */
 function fmtAmount(raw: string): string {
   const n = Number(raw);
   if (!isFinite(n)) return raw;
   return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+}
+
+function fmtPositionAmount(raw: string): string {
+  const [whole, fraction = ''] = raw.split('.');
+  const scaled = BigInt(whole || '0') * 10_000n + BigInt((fraction + '0000').slice(0, 4));
+  const rounded = scaled + (Number(fraction[4] ?? '0') >= 5 ? 1n : 0n);
+  const groupedWhole = (rounded / 10_000n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const visibleFraction = (rounded % 10_000n).toString().padStart(4, '0').replace(/0+$/, '');
+  return `${groupedWhole}${visibleFraction ? `.${visibleFraction}` : ''}`;
 }
 
 /**
@@ -132,6 +142,86 @@ export function AssetsList({
           </Pressable>
         ))
       )}
+      {address && <LpPositionsSection address={address} format={format} styles={styles} />}
+    </View>
+  );
+}
+
+function LpPositionsSection({
+  address,
+  format,
+  styles,
+}: {
+  address: string;
+  format: (amount: number) => string;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const { mask } = useHiddenAmounts();
+  const [positions, setPositions] = useState<LpPosition[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      setPositions(null);
+      setLoadError(false);
+      void loadSoroswapLpPositions(address)
+        .then((loaded) => {
+          if (active) {
+            setPositions(loaded);
+            setLoadError(false);
+          }
+        })
+        .catch((err: unknown) => {
+          console.warn(
+            '[assets] loadSoroswapLpPositions failed:',
+            err instanceof Error ? `${err.name}: ${err.message}` : err
+          );
+          if (active) {
+            setPositions([]);
+            setLoadError(true);
+          }
+        });
+      return () => {
+        active = false;
+      };
+    }, [address])
+  );
+
+  return (
+    <View style={styles.lpSection}>
+      <Text style={styles.heading}>LP Positions</Text>
+      {positions === null ? (
+        <Text style={styles.empty}>Loading LP positions…</Text>
+      ) : loadError ? (
+        <Text style={styles.empty}>Couldn’t load LP positions. Reopen this screen to retry.</Text>
+      ) : positions.length === 0 ? (
+        <Text style={styles.empty}>No Soroswap LP positions found.</Text>
+      ) : (
+        positions.map((position, index) => (
+          <View key={position.pairId} style={[styles.lpPosition, index > 0 && styles.rowBorder]}>
+            <View style={styles.lpPositionHeader}>
+              <View>
+                <Text style={styles.name}>LP Position</Text>
+                <Text style={styles.code}>
+                  {position.tokenA}/{position.tokenB}
+                </Text>
+              </View>
+              <Text style={styles.balance}>{mask(fmtPositionAmount(position.lpBalance))} LP</Text>
+            </View>
+            <Text style={styles.lpDetail}>
+              {mask(fmtPositionAmount(position.underlyingA))} {position.tokenA} +{' '}
+              {mask(fmtPositionAmount(position.underlyingB))} {position.tokenB}
+            </Text>
+            <View style={styles.lpPositionFooter}>
+              <Text style={styles.code}>{position.ownershipPercent}% of pool</Text>
+              <Text style={styles.fiat}>
+                {position.usd === null ? 'Value unavailable' : mask(format(position.usd))}
+              </Text>
+            </View>
+          </View>
+        ))
+      )}
     </View>
   );
 }
@@ -146,6 +236,12 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: 18,
       paddingTop: 12,
       paddingBottom: 6,
+    },
+    lpSection: {
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      marginTop: 8,
+      paddingTop: 8,
     },
     heading: {
       color: colors.accent,
@@ -209,5 +305,25 @@ const createStyles = (colors: ThemeColors) =>
       fontFamily: fontFamily.body,
       fontSize: 11,
       marginTop: 2,
+    },
+    lpPosition: {
+      paddingVertical: 13,
+      gap: 7,
+    },
+    lpPositionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+    },
+    lpDetail: {
+      color: colors.textSecondary,
+      fontFamily: fontFamily.body,
+      fontSize: 12,
+    },
+    lpPositionFooter: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
     },
   });
