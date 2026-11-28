@@ -1,14 +1,22 @@
 /**
  * The backstop screen.
  *
- * Three things matter here and none of them is layout:
- *   1. Before the first deposit the screen has to say what the position is, in
- *      the wallet's own words, instead of showing a zero balance with no
- *      explanation.
+ * What matters here is that nothing is signed that the user was not shown, and
+ * that the screen never guesses when it cannot see the position:
+ *   1. Before the first deposit it says what the position is, in the wallet's
+ *      own words, instead of showing a zero balance with no explanation.
  *   2. The share value and the emissions are different numbers from different
  *      sources, and they must not be merged into one "total".
- *   3. Deposit, queue, cancel and withdraw each route to their own contract
- *      call, with the amount the user typed.
+ *   3. Deposit, queue, cancel and withdraw each stop at a review step that
+ *      repeats the amount, the unit and any unlock date before the passkey.
+ *   4. The queue limit for a cancel is the queued shares, not the balance.
+ *   5. A position that failed to load blocks Deposit and never reads as
+ *      "nothing at risk".
+ *
+ * The real transaction construction (contract invocation, footprint, auth
+ * entries) is proved against the actual SDK in `lib/__tests__/backstop.test.ts`;
+ * this suite mocks `lib/backstop` because rendering the screen in jsdom must not
+ * talk to an RPC, and asserts what the screen asks for and what it refuses.
  */
 import { webcrypto } from 'crypto'
 import { TextEncoder, TextDecoder } from 'util'
@@ -30,9 +38,9 @@ const POSITION = {
   blnd: 25.1217,
   usdc: 6.2804,
   emissions: 2.75,
-  queued: [{ amount: 4, exp: 1_900_000_000 }],
-  totalQueued: 4,
-  unlockedQueued: 0,
+  // 4 shares queued, still locked.
+  queued: [{ shares: 40_000_000n, exp: 1_900_000_000 }],
+  queuedShares: 40_000_000n,
   unlockedShares: 0n,
 }
 
@@ -44,10 +52,13 @@ const EMPTY_POSITION = {
   usdc: 0,
   emissions: 0,
   queued: [],
-  totalQueued: 0,
-  unlockedQueued: 0,
+  queuedShares: 0n,
   unlockedShares: 0n,
 }
+
+const LOCK_SECONDS = 17 * 24 * 60 * 60
+const FULL_TX_HASH =
+  'f1e2d3c4b5a6978877665544332211ffeeddccbbaa99887766554433221100ff'
 
 const mockStore = new Map<string, string>()
 jest.mock('@/lib/walletStorage', () => ({
@@ -67,13 +78,14 @@ jest.mock('@/lib/txState', () => ({ beginTx: jest.fn(), endTx: jest.fn() }))
 jest.mock('@/lib/network', () => ({
   getNetwork: () => ({
     name: 'mainnet',
-    displayName: 'Mainnet',
+    displayName: 'Stellar Mainnet',
     rpcUrl: 'https://rpc.invalid',
+    horizonUrl: 'https://horizon.invalid',
     networkPassphrase: 'Public Global Stellar Network ; September 2015',
   }),
 }))
 
-const mockSignAndSubmit = jest.fn().mockResolvedValue('abc123hash')
+const mockSignAndSubmit = jest.fn().mockResolvedValue(FULL_TX_HASH)
 jest.mock('@/lib/sorobanTx', () => ({
   signAndSubmitSorobanXdr: (...args: unknown[]) => mockSignAndSubmit(...args),
 }))
@@ -82,23 +94,60 @@ jest.mock('@/lib/blend', () => ({
   configuredPoolIds: () => ['CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD'],
 }))
 
+const mockIsBackstopEnabled = jest.fn().mockReturnValue(true)
+jest.mock('@/lib/backstopFeature', () => ({
+  isBackstopEnabled: (...args: unknown[]) => mockIsBackstopEnabled(...args),
+}))
+
 const mockLoadPositions = jest.fn()
+const mockLoadQueueLock = jest.fn()
+const mockPreflight = jest.fn()
 const mockDeposit = jest.fn().mockResolvedValue('deposit-xdr')
 const mockQueue = jest.fn().mockResolvedValue('queue-xdr')
 const mockCancel = jest.fn().mockResolvedValue('cancel-xdr')
 const mockWithdraw = jest.fn().mockResolvedValue('withdraw-xdr')
+
 // The real module pulls @blend-capital/blend-sdk, whose nested
 // @stellar/stellar-sdk ships ESM that this Jest config does not transform. The
-// amount conversion is covered against the real implementation in
-// lib/__tests__/backstop.test.ts; here it only has to behave the same way.
+// amount conversion and the contract calls are covered against the real
+// implementation in lib/__tests__/backstop.test.ts; here they only have to
+// behave the same way.
+function realFormatLockDuration(seconds: number): string {
+  const totalMinutes = Math.max(0, Math.round(seconds / 60))
+  const days = Math.floor(totalMinutes / 1_440)
+  const hours = Math.floor((totalMinutes % 1_440) / 60)
+  const minutes = totalMinutes % 60
+  const parts: string[] = []
+  if (days > 0) parts.push(`${days} ${days === 1 ? 'day' : 'days'}`)
+  if (hours > 0) parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`)
+  if (days === 0 && minutes > 0) {
+    parts.push(`${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`)
+  }
+  return parts.length > 0 ? parts.join(' ') : '0 minutes'
+}
+
 jest.mock('@/lib/backstop', () => ({
+  FALLBACK_QUEUE_LOCK_SECONDS: 17 * 24 * 60 * 60,
   configuredBackstopId: () => 'CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7',
   sharesToStroops: (value: string) => {
     const [whole, fraction = ''] = value.trim().split('.')
     return BigInt(whole) * 10_000_000n + BigInt(fraction.padEnd(7, '0'))
   },
-  stroopsToShares: (stroops: bigint) => (Number(stroops) / 1e7).toString(),
+  stroopsToShares: (stroops: bigint) => {
+    const negative = stroops < 0n
+    const absolute = negative ? -stroops : stroops
+    const whole = absolute / 10_000_000n
+    const fraction = (absolute % 10_000_000n)
+      .toString()
+      .padStart(7, '0')
+      .replace(/0+$/, '')
+    return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`
+  },
+  formatLockDuration: (seconds: number) => realFormatLockDuration(seconds),
+  formatUnlockDate: (unixSeconds: number) => new Date(unixSeconds * 1_000).toISOString(),
   loadBackstopPositions: (...args: unknown[]) => mockLoadPositions(...args),
+  loadBackstopQueueLockSeconds: (...args: unknown[]) => mockLoadQueueLock(...args),
+  runBackstopPreflight: (...args: unknown[]) => mockPreflight(...args),
   buildBackstopDepositXdr: (...args: unknown[]) => mockDeposit(...args),
   buildBackstopQueueWithdrawalXdr: (...args: unknown[]) => mockQueue(...args),
   buildBackstopCancelWithdrawalXdr: (...args: unknown[]) => mockCancel(...args),
@@ -119,7 +168,16 @@ beforeEach(() => {
   // The page resolves the signing address from this key.
   mockStore.set('veil_signer_secret', TEST_SECRET)
   mockStore.set('veil_signer_public_key', USER)
-  mockLoadPositions.mockResolvedValue([POSITION])
+  mockLoadPositions.mockResolvedValue({ positions: [POSITION], failedPoolIds: [] })
+  mockLoadQueueLock.mockResolvedValue(LOCK_SECONDS)
+  mockPreflight.mockResolvedValue({
+    ok: true,
+    problems: [],
+    xlmBalance: 100,
+    requiredXlm: 1.01,
+    lpBalance: '5000',
+  })
+  mockIsBackstopEnabled.mockReturnValue(true)
 })
 
 async function renderPage() {
@@ -127,19 +185,53 @@ async function renderPage() {
   await waitFor(() => expect(screen.getByText('Your position')).toBeTruthy())
 }
 
+/** The review step's confirm button only enables once the pre-flight clears. */
+async function waitForConfirm() {
+  await waitFor(() =>
+    expect(
+      (screen.getByRole('button', { name: 'Confirm and sign' }) as HTMLButtonElement).disabled,
+    ).toBe(false),
+  )
+}
+
+describe('feature flag', () => {
+  it('does not open the screen where the flag is off', async () => {
+    mockIsBackstopEnabled.mockReturnValue(false)
+    render(<BackstopPage />)
+
+    await waitFor(() =>
+      expect(screen.getByText(/Backstop is not available on Stellar Mainnet yet/i)).toBeTruthy(),
+    )
+    expect(screen.queryByText('Your position')).toBeNull()
+    expect(mockLoadPositions).not.toHaveBeenCalled()
+  })
+})
+
 describe('before the first deposit', () => {
   it('states what the position is and that nothing is at risk yet', async () => {
-    mockLoadPositions.mockResolvedValue([EMPTY_POSITION])
+    mockLoadPositions.mockResolvedValue({ positions: [EMPTY_POSITION], failedPoolIds: [] })
     await renderPage()
 
     expect(screen.getByText('What this position is')).toBeTruthy()
-    expect(
-      screen.getByText(/first-loss capital for a Blend lending pool/i),
-    ).toBeTruthy()
+    expect(screen.getByText(/first-loss capital for a Blend lending pool/i)).toBeTruthy()
     expect(
       screen.getByText(/You have no backstop position in this pool yet, so nothing of yours is at risk here/i),
     ).toBeTruthy()
     expect(screen.getByText('no deposit')).toBeTruthy()
+  })
+})
+
+describe('a position that failed to load', () => {
+  it('says so, never says "nothing at risk", and disables Deposit', async () => {
+    mockLoadPositions.mockResolvedValue({ positions: [], failedPoolIds: [POSITION.poolId] })
+    await renderPage()
+
+    expect(screen.getByText(/could not load your backstop position/i)).toBeTruthy()
+    expect(screen.queryByText(/nothing of yours is at risk/i)).toBeNull()
+    expect(screen.queryByText('no deposit')).toBeNull()
+    expect((screen.getByRole('button', { name: 'Deposit' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    )
   })
 })
 
@@ -159,22 +251,42 @@ describe('position display', () => {
     expect(screen.queryByText('34.1521')).toBeNull()
   })
 
-  it('shows each queued entry with its lock state', async () => {
+  it('shows queued entries in shares, the unit the contract takes', async () => {
     await renderPage()
-    expect(screen.getByText('4 LP')).toBeTruthy()
+    expect(screen.getByText('4 shares')).toBeTruthy()
+    expect(screen.getByText('4 shares queued')).toBeTruthy()
     expect(screen.getByText('locked')).toBeTruthy()
-    expect(screen.getByText('4 LP queued')).toBeTruthy()
+    // LP-token wording for the queue was the units bug.
+    expect(screen.queryByText('4 LP')).toBeNull()
+  })
+
+  it('states the queue lock it read from the contract, not a fixed 17', async () => {
+    mockLoadQueueLock.mockResolvedValue(3 * 24 * 60 * 60)
+    await renderPage()
+    await waitFor(() =>
+      expect(screen.getByText(/wait out the 3 days lock/i)).toBeTruthy(),
+    )
   })
 })
 
-describe('the deposit and withdrawal cycle', () => {
-  it('deposits the amount the user typed', async () => {
+describe('the confirm step', () => {
+  it('shows amount and unit before any deposit is signed', async () => {
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: 'Deposit' }))
-    await user.type(screen.getByPlaceholderText('0.00'), '12.5')
-    await user.click(screen.getByRole('button', { name: 'Deposit' }))
+    await user.type(screen.getByLabelText(/Deposit amount/i), '12.5')
+    await user.click(screen.getByRole('button', { name: 'Review deposit' }))
+
+    // The review step is shown and nothing has been built or signed yet.
+    expect(screen.getByText('Unit')).toBeTruthy()
+    expect(screen.getByText('BLND:USDC LP tokens')).toBeTruthy()
+    expect(screen.getByText('12.5')).toBeTruthy()
+    expect(mockDeposit).not.toHaveBeenCalled()
+    expect(mockSignAndSubmit).not.toHaveBeenCalled()
+
+    await waitForConfirm()
+    await user.click(screen.getByRole('button', { name: 'Confirm and sign' }))
 
     await waitFor(() => expect(mockDeposit).toHaveBeenCalledTimes(1))
     expect(mockDeposit.mock.calls[0][0]).toMatchObject({
@@ -192,41 +304,70 @@ describe('the deposit and withdrawal cycle', () => {
     )
   })
 
-  it('queues shares for withdrawal', async () => {
+  it('shows the unlock date when queueing, before signing', async () => {
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: 'Queue withdrawal' }))
-    await user.click(screen.getByRole('button', { name: 'Use all' }))
-    await user.click(screen.getByRole('button', { name: 'Queue' }))
+    await user.type(screen.getByLabelText(/Queue amount/i), '5')
+    await user.click(screen.getByRole('button', { name: 'Review queue' }))
+
+    expect(screen.getByText('Unlocks')).toBeTruthy()
+    expect(screen.getByText(/in 17 days/)).toBeTruthy()
+    expect(screen.getByText('backstop shares')).toBeTruthy()
+    expect(mockQueue).not.toHaveBeenCalled()
+
+    await waitForConfirm()
+    await user.click(screen.getByRole('button', { name: 'Confirm and sign' }))
 
     await waitFor(() => expect(mockQueue).toHaveBeenCalledTimes(1))
-    expect(mockQueue.mock.calls[0][0]).toMatchObject({ amountStroops: 250_000_000n })
+    expect(mockQueue.mock.calls[0][0]).toMatchObject({ amountStroops: 50_000_000n })
   })
+})
 
-  it('cancels a queued withdrawal', async () => {
+describe('the withdraw and cancel split', () => {
+  it('limits a cancel to the queued shares, not the un-queued balance', async () => {
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: 'Manage queue' }))
-    await user.type(screen.getByPlaceholderText('0.00'), '4')
-    await user.click(screen.getByRole('button', { name: 'Cancel queued shares' }))
+
+    const cancel = screen.getByRole('button', { name: 'Review cancel' }) as HTMLButtonElement
+    const cancelInput = screen.getByLabelText(/Cancel amount/i)
+
+    // 5 shares is above the 4 queued but well below the 25 deposited.
+    await user.type(cancelInput, '5')
+    expect(cancel.disabled).toBe(true)
+
+    await user.clear(cancelInput)
+    await user.type(cancelInput, '4')
+    expect(cancel.disabled).toBe(false)
+
+    await user.clear(cancelInput)
+    await user.type(cancelInput, '4')
+    await user.click(cancel)
+    await waitForConfirm()
+    await user.click(screen.getByRole('button', { name: 'Confirm and sign' }))
 
     await waitFor(() => expect(mockCancel).toHaveBeenCalledTimes(1))
     expect(mockCancel.mock.calls[0][0]).toMatchObject({ amountStroops: 40_000_000n })
   })
 
-  it('withdraws unlocked shares', async () => {
-    // 4 LP unlocked: the queue has been through its 17-day lock.
-    mockLoadPositions.mockResolvedValue([
-      { ...POSITION, unlockedQueued: 4, unlockedShares: 40_000_000n },
-    ])
+  it('gives withdraw its own input, limited to unlocked shares', async () => {
+    mockLoadPositions.mockResolvedValue({
+      positions: [{ ...POSITION, unlockedShares: 40_000_000n }],
+      failedPoolIds: [],
+    })
     const user = userEvent.setup()
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: 'Manage queue' }))
-    await user.click(screen.getByRole('button', { name: 'Use all withdrawable' }))
-    await user.click(screen.getByRole('button', { name: 'Withdraw' }))
+    await user.click(screen.getByRole('button', { name: 'Use all unlockable' }))
+    await user.click(screen.getByRole('button', { name: 'Review withdraw' }))
+
+    expect(screen.getByText('now — the lock has expired')).toBeTruthy()
+    await waitForConfirm()
+    await user.click(screen.getByRole('button', { name: 'Confirm and sign' }))
 
     await waitFor(() => expect(mockWithdraw).toHaveBeenCalledTimes(1))
     expect(mockWithdraw.mock.calls[0][0]).toMatchObject({ amountStroops: 40_000_000n })
@@ -237,9 +378,57 @@ describe('the deposit and withdrawal cycle', () => {
     await renderPage()
 
     await user.click(screen.getByRole('button', { name: 'Manage queue' }))
-    await user.type(screen.getByPlaceholderText('0.00'), '4')
+    await user.type(screen.getByLabelText(/Withdraw amount/i), '4')
     expect(
-      (screen.getByRole('button', { name: 'Withdraw' }) as HTMLButtonElement).disabled,
+      (screen.getByRole('button', { name: 'Review withdraw' }) as HTMLButtonElement).disabled,
     ).toBe(true)
+  })
+})
+
+describe('pre-flight', () => {
+  it('blocks the signature when the fee or LP balance check fails', async () => {
+    mockPreflight.mockResolvedValue({
+      ok: false,
+      problems: ['This deposit needs 12.5 BLND:USDC LP tokens and you hold 2.'],
+      xlmBalance: 100,
+      requiredXlm: 1.01,
+      lpBalance: '2',
+    })
+    const user = userEvent.setup()
+    await renderPage()
+
+    await user.click(screen.getByRole('button', { name: 'Deposit' }))
+    await user.type(screen.getByLabelText(/Deposit amount/i), '12.5')
+    await user.click(screen.getByRole('button', { name: 'Review deposit' }))
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/This deposit needs 12.5 BLND:USDC LP tokens and you hold 2\./),
+      ).toBeTruthy(),
+    )
+    expect(
+      (screen.getByRole('button', { name: 'Confirm and sign' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(mockDeposit).not.toHaveBeenCalled()
+    expect(mockSignAndSubmit).not.toHaveBeenCalled()
+  })
+})
+
+describe('the success screen', () => {
+  it('shows the full, untruncated transaction hash', async () => {
+    const user = userEvent.setup()
+    await renderPage()
+
+    await user.click(screen.getByRole('button', { name: 'Deposit' }))
+    await user.type(screen.getByLabelText(/Deposit amount/i), '1')
+    await user.click(screen.getByRole('button', { name: 'Review deposit' }))
+    await waitForConfirm()
+    await user.click(screen.getByRole('button', { name: 'Confirm and sign' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Backstop transaction submitted')).toBeTruthy(),
+    )
+    expect(screen.getByText(FULL_TX_HASH)).toBeTruthy()
+    expect(screen.queryByText(/…/)).toBeNull()
   })
 })

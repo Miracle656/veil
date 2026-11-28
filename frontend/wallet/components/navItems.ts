@@ -22,7 +22,6 @@ import {
   LayoutGrid,
   House,
   Settings,
-  Shield,
   Users,
   Wallet,
   type LucideIcon,
@@ -41,6 +40,10 @@ export type NavItem = {
  *
  * Buy with naira sits directly above Cash out: they are the two halves of the
  * naira rail and reading one without the other makes the wallet look one-way.
+ *
+ * The Blend backstop screen (#1298) is deliberately absent: it is behind
+ * `isBackstopEnabled` (`lib/backstopFeature.ts`) and must not appear in mainnet
+ * navigation until its live testnet cycle is done.
  */
 export const NAV_MAIN: NavItem[] = [
   { href: '/dashboard', label: 'Home',           Icon: House             },
@@ -50,7 +53,6 @@ export const NAV_MAIN: NavItem[] = [
   { href: '/buy-ngn',   label: 'Buy with naira',  Icon: BanknoteArrowDown },
   { href: '/cashout',   label: 'Cash out',        Icon: BanknoteArrowUp   },
   { href: '/earn',      label: 'Earn',            Icon: CircleDollarSign  },
-  { href: '/backstop',  label: 'Backstop',        Icon: Shield            },
   { href: '/bills',     label: 'Bills & airtime', Icon: CreditCard        },
   { href: '/dapps',     label: 'dApps',           Icon: LayoutGrid        },
   { href: '/agent',     label: 'Agent',           Icon: Bot               },
