@@ -386,11 +386,7 @@ export async function readSessionKey(
 
 /** The network limits {@link buildRegisterSessionKeyCall} needs, read from the network itself. */
 export async function readSessionKeyNetworkLimits(server: rpc.Server): Promise<SessionKeyNetworkLimits> {
-    const [latest, settings] = await Promise.all([
-        // The public call: `_getLatestLedger` is a private 15.1-only method
-        // that does not exist on the SDK 14 types the wallet/mobile jobs
-        // typecheck this file against, so it broke their builds. Only the
-        // close time is needed, and the public response carries it.
+    const [{ sequence }, settings] = await Promise.all([
         server.getLatestLedger(),
         server.getLedgerEntries(
             xdr.LedgerKey.configSetting(
@@ -400,9 +396,17 @@ export async function readSessionKeyNetworkLimits(server: rpc.Server): Promise<S
             ),
         ),
     ]);
+    // `getLatestLedger` has no close time on the SDK 14 types the
+    // wallet/mobile jobs typecheck against, and `_getLatestLedger` is a
+    // private 15.1-only method — so read the close time of the latest
+    // ledger via the public `getLedgers`, which carries it on both.
+    const { latestLedgerCloseTime } = await server.getLedgers({
+        startLedger: sequence,
+        pagination: { limit: 1 },
+    });
     if (settings.entries.length !== 1) throw new SessionKeyError('The network did not return its state archival settings.');
     return {
-        ledgerTime: BigInt(latest.closeTime),
+        ledgerTime: BigInt(latestLedgerCloseTime),
         maxEntryTtl: settings.entries[0].val.configSetting().stateArchivalSettings().maxEntryTtl(),
     };
 }

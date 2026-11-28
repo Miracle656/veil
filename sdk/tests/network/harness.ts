@@ -514,8 +514,14 @@ export async function balanceOf(tokenId: string, holder: string): Promise<bigint
 
 /** The ledger's own clock, in unix seconds. */
 export async function ledgerTime(): Promise<bigint> {
-    const latest = await server.getLatestLedger();
-    return BigInt(latest.closeTime);
+    // `getLatestLedger` has no close time on SDK 14 types, so read it via
+    // the public `getLedgers` (see readSessionKeyNetworkLimits).
+    const { sequence } = await server.getLatestLedger();
+    const { latestLedgerCloseTime } = await server.getLedgers({
+        startLedger: sequence,
+        pagination: { limit: 1 },
+    });
+    return BigInt(latestLedgerCloseTime);
 }
 
 export async function waitForLedgerTime(target: bigint): Promise<void> {
