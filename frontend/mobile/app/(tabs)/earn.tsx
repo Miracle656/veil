@@ -24,8 +24,10 @@ import { fontFamily, typography } from '../../theme/typography';
 import {
   buildBlendSupplyXdr,
   buildBlendWithdrawXdr,
+  checkEarnAssetParam,
   loadBlendPools,
   loadBlendPositions,
+  unavailableEarnAssets,
   type BlendPool,
   type BlendPosition,
   type BlendReserve,
@@ -120,6 +122,7 @@ export default function EarnRoute() {
 
   const [progress, setProgress] = useState('Waiting for passkey…');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [paramNotice, setParamNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   const loadData = useCallback(async (address: string) => {
@@ -184,6 +187,18 @@ export default function EarnRoute() {
     const asset = typeof params.asset === 'string' ? params.asset.trim().toUpperCase() : '';
     const issuer = typeof params.issuer === 'string' ? params.issuer.trim() : '';
     const amount = typeof params.amount === 'string' ? params.amount.trim() : '';
+    if (!asset) {
+      setParamNotice(null);
+      return;
+    }
+
+    const check = checkEarnAssetParam(asset, issuer, network.name);
+    if (check.kind !== 'ok') {
+      setParamNotice(check.message);
+      return;
+    }
+    setParamNotice(null);
+
     if (!/^[A-Z0-9]{1,12}$/.test(asset) || !StrKey.isValidEd25519PublicKey(issuer)) return;
     if (!/^\d+(\.\d{1,7})?$/.test(amount) || Number(amount) <= 0 || pools.length === 0) return;
     const assetId = new Asset(asset, issuer).contractId(network.networkPassphrase);
@@ -193,7 +208,7 @@ export default function EarnRoute() {
     if (!match) return;
     openDeposit(match.pool, match.reserve);
     setDepositAmount(amount);
-  }, [pools, params.asset, params.issuer, params.amount, network.networkPassphrase]);
+  }, [pools, params.asset, params.issuer, params.amount, network.name, network.networkPassphrase]);
 
   const available = balances ? balances.inSpending + balances.inWallet : null;
   const parsedAmount = parseFloat(depositAmount);
@@ -301,6 +316,10 @@ export default function EarnRoute() {
   const poolName = (poolId: string) =>
     pools.find((p) => p.id === poolId)?.name ?? `${poolId.slice(0, 6)}…`;
   const bestApy = pools.flatMap((p) => p.reserves).reduce((m, r) => Math.max(m, r.supplyApy), 0);
+  const unavailableAssets = useMemo(
+    () => unavailableEarnAssets(network.name, network.networkPassphrase, pools),
+    [network.name, network.networkPassphrase, pools]
+  );
 
   return (
     <Screen edges={['top']}>
@@ -325,6 +344,15 @@ export default function EarnRoute() {
 
           {step === 'pools' ? (
             <>
+              {paramNotice ? (
+                <View testID="earn-param-notice">
+                  <Card style={styles.disclosureCard}>
+                    <Text style={[typography.accent, styles.disclosureLabel]}>Asset unavailable</Text>
+                    <Text style={styles.disclosureText}>{paramNotice}</Text>
+                  </Card>
+                </View>
+              ) : null}
+
               <Card style={styles.disclosureCard}>
                 <View style={styles.rowBetween}>
                   <Text style={[typography.accent, styles.disclosureLabel]}>Disclosures</Text>
@@ -416,6 +444,26 @@ export default function EarnRoute() {
                   ))
                 )}
               </View>
+
+              {unavailableAssets.length > 0 ? (
+                <View style={styles.section} testID="earn-unavailable-section">
+                  <Text style={[typography.accent, styles.sectionLabel]}>Not available yet</Text>
+                  {unavailableAssets.map((asset) => (
+                    <View key={asset.assetId} testID={`earn-unavailable-${asset.code}`}>
+                      <Card style={styles.card}>
+                        <View style={styles.rowBetween}>
+                          <Text style={styles.assetCode}>{asset.label}</Text>
+                          <Text style={[typography.accent, styles.unavailableBadge]}>Unavailable</Text>
+                        </View>
+                        <Text style={styles.unavailableStatus}>{asset.status}</Text>
+                        <Text style={styles.muted}>{asset.reason}</Text>
+                        <Text style={styles.footnote}>{asset.holdingStatement}</Text>
+                      </Card>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
             </>
           ) : null}
 
@@ -469,7 +517,7 @@ export default function EarnRoute() {
                 ) : null}
               </Card>
               <Text style={styles.footnote}>
-                In the {selected.pool.name} pool on Blend. Withdrawals return to your spending account.
+                You will hold a {selected.reserve.code} supply position in the {selected.pool.name} pool on Blend — no asset conversion happens. Withdrawals return {selected.reserve.code} to your spending account.
               </Text>
               <Button label="Deposit" disabled={!depositIsValid} onPress={handleDeposit} />
               <Button label="Cancel" variant="ghost" onPress={() => setStep('pools')} />
@@ -558,6 +606,8 @@ const createStyles = (colors: ThemeColors) =>
     cardCentered: { padding: 18, gap: 12, alignItems: 'center' },
     cardTitle: { color: colors.textStrong, fontSize: 20, lineHeight: 26 },
     badge: { color: colors.accent, fontSize: 11 },
+    unavailableBadge: { color: colors.textMuted, fontSize: 11 },
+    unavailableStatus: { fontFamily: fontFamily.bodySemiBold, fontSize: 14, color: colors.textStrong },
     rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
     reserveRow: {
       flexDirection: 'row',
