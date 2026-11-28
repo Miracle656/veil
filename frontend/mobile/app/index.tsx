@@ -7,6 +7,7 @@ import { useTheme } from "../hooks/useTheme";
 import type { ThemeColors } from "../lib/theme";
 import { fontFamily } from "../theme/typography";
 import { VeilLogo } from "../components/VeilLogo";
+import { getPendingClaimResumeRoute } from "../lib/claimFlow";
 import { getWalletAddress, getSignerSecret, getPasskeyId } from "../lib/walletStore";
 
 // Whether the intro has been seen is presentation state, not a secret, so it
@@ -69,10 +70,17 @@ export default function Index() {
   useEffect(() => {
     (async () => {
       try {
-        const { wallet } = await readEntryState();
+        const [entry, pendingClaimRoute] = await Promise.all([
+          readEntryState(),
+          getPendingClaimResumeRoute().catch(() => null),
+        ]);
         if (navigated.current) return;
         navigated.current = true;
-        router.replace(wallet ? "/dashboard" : "/welcome");
+        if (pendingClaimRoute) {
+          router.replace(pendingClaimRoute as never);
+          return;
+        }
+        router.replace(entry.wallet ? "/dashboard" : "/welcome");
       } catch {
         if (navigated.current) return;
         navigated.current = true;
@@ -81,7 +89,7 @@ export default function Index() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [router]);
 
   return (
     <View style={styles.container}>

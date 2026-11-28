@@ -1,4 +1,10 @@
-import { FALLBACK_ROUTE, MAX_DEEP_LINK_LENGTH, resolveDeepLink } from '../deepLinks';
+import {
+  FALLBACK_ROUTE,
+  MAX_DEEP_LINK_LENGTH,
+  clearClaimLinkSecret,
+  peekClaimLinkSecret,
+  resolveDeepLink,
+} from '../deepLinks';
 import { resolveRequestedAsset } from '../requestedAsset';
 
 const DESTINATION = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
@@ -285,6 +291,27 @@ describe('resolveDeepLink — memo-carrying SEP-7 URIs (#704)', () => {
     expect(
       resolveDeepLink(`veil://send?to=${DESTINATION}&amount=9&memo=invoice-9`),
     ).toBe(`/send?to=${DESTINATION}&amount=9&memo=invoice-9`);
+  });
+});
+
+describe('resolveDeepLink — /claim universal links (#1285)', () => {
+  afterEach(() => {
+    clearClaimLinkSecret();
+  });
+
+  it('routes /claim/<balanceId> preserving network and note while keeping #s= strictly in memory', () => {
+    const balanceId = '00000000' + 'ef'.repeat(32);
+    const link = `https://app.useveilapp.xyz/claim/${balanceId}?network=mainnet&amount=100&asset=USDC&note=Taxi#s=STESTSECRETSEED`;
+    const resolved = resolveDeepLink(link);
+
+    expect(resolved).toBe(`/claim?id=${balanceId}&network=mainnet&note=Taxi`);
+    expect(resolved).not.toContain('STESTSECRETSEED');
+    expect(resolved).not.toContain('amount=');
+    expect(peekClaimLinkSecret(balanceId)).toBe('STESTSECRETSEED');
+  });
+
+  it('routes bare /claim for intent-filter verification', () => {
+    expect(resolveDeepLink('https://app.useveilapp.xyz/claim')).toBe('/claim');
   });
 });
 
