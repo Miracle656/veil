@@ -245,13 +245,13 @@ A final testnet run created a minimal native balance, funded the derived one-tim
 
 ## SDK bundle budget
 
-The root SDK bundle includes the Noble X25519/Ed25519 implementation, SHA-256, SHA-512, the browser Buffer polyfill, and the send/recovery wrapper. Removing that cryptography would make the required one-time-address protocol unimplementable; moving the feature to an unexported helper would make it unusable by SDK consumers. The reserve helper, fee reporting, and signer recovery are required by the issue and were retained.
+The root SDK bundle includes the Noble X25519/Ed25519 implementation, SHA-256, SHA-512, and the send/recovery wrapper. It does not add a Buffer polyfill: Stellar's XDR constructor accepts `Uint8Array` signature hints and signatures directly. Removing that redundant polyfill saved 5,269 B after Brotli compression. The reserve helper, fee reporting, and signer recovery are required by the issue and were retained.
 
 Measured with the repository's `size-limit` configuration, minified and brotlied:
 
-| Entry point | Current main (`b95d6a08`) | This change | Delta | Budget | Headroom |
+| Entry point | Current main (`4035923a`) | This change | Delta | Budget | Headroom |
 |---|---:|---:|---:|---:|---:|
-| Main SDK | 235,539 B | 255,768 B | +20,229 B | 256,000 B | 232 B |
+| Main SDK | 237,314 B | 252,898 B | +15,584 B | 256,000 B | 3,102 B |
 | Vanilla | 216,234 B | 216,502 B | +268 B | 225,000 B | 8,498 B |
 
-The main entry point grows by 20,229 B. Current main is already 539 B over its former 235,000 B ceiling, so the 256,000 B ceiling clears that pre-existing drift and leaves 232 B after the complete secure v2 implementation, including SHA-512 scalar signing. Reusing Noble's existing byte-conversion helpers brought the final bundle 267 B below the pre-trim measurement and kept the gate at 256 KB. No feature was removed to meet the budget.
+The main entry point grows by 15,584 B. Current main is already 2,314 B over its former 235,000 B ceiling, so the 256,000 B ceiling clears that pre-existing drift and leaves 3,102 B after the complete secure v2 implementation, including SHA-512 scalar signing. Reusing Noble's existing byte-conversion helpers avoids duplicate implementations, and passing byte arrays directly to Stellar XDR avoids bundling a second Buffer implementation. No feature was removed to meet the budget.

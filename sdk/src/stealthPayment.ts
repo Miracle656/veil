@@ -1,4 +1,3 @@
-import { Buffer } from 'buffer';
 import { StrKey, Transaction, TransactionBuilder, xdr } from '@stellar/stellar-sdk';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import {
@@ -24,8 +23,8 @@ const SIGNING_DOMAIN = new TextEncoder().encode('veil/stealth-payment/v2/sign');
 const ED25519_ORDER = (1n << 252n) + 27742317777372353535851937790883648493n;
 const StellarXdr = xdr as unknown as {
     DecoratedSignature: new (attributes: {
-        hint: Buffer;
-        signature: Buffer;
+        hint: Uint8Array;
+        signature: Uint8Array;
     }) => Parameters<Transaction['addDecoratedSignature']>[0];
 };
 
@@ -209,8 +208,8 @@ export function recoverStealthSigner(options: RecoverStealthSignerOptions): Stea
                 publicKey,
             );
             transaction.addDecoratedSignature(new StellarXdr.DecoratedSignature({
-                hint: Buffer.from(publicKey.slice(-4)),
-                signature: Buffer.from(signature),
+                hint: publicKey.slice(-4),
+                signature,
             }));
             return transaction.toXDR();
         },
